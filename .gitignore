@@ -1,0 +1,19 @@
+target/
+**/*.rs.bk
+.DS_Store
+# *.lock (Cargo.lock should be tracked for apps)
+.vscode/
+.idea/
+*.log
+tmp/
+temp/
+
+arquitecture.md
+interface.md
+ecualizadores-aspectos-tecnicos.pdf
+diseño.png
+biblioteca.png
+equalizador.png
+modular.png
+opciones.png
+

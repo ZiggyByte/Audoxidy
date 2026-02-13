@@ -1,0 +1,63 @@
+[package]
+name = "audoxidy"
+version = "0.1.0"
+edition = "2024"
+authors = ["ZiggyCrue"]
+description = "Reproductor de audio de alta fidelidad, alto rendimiento y personalizable."
+
+[dependencies]
+# Audio Core
+cpal = "0.17.1"
+symphonia = { version = "0.5.5", features = ["all", "opt-simd"] }
+rubato = "1.0.1"
+audioadapter = "2.0.0"
+audioadapter-buffers = "2.0.0"
+rustfft = "6.4.1"
+hrtf = "0.8.1"
+dasp = { version = "0.11.0", features = ["signal", "interpolate", "interpolate-linear", "ring_buffer"] }
+ringbuf = "0.4.8"
+souvlaki = "0.7.3" # Media Controls (MPRIS/SMTC)
+
+# UI
+egui = "0.33.3"
+eframe = { version = "0.33.3", features = ["default", "wgpu"] }
+egui_dock = "0.18.0"
+egui_extras = { version = "0.33.3", features = ["image", "svg", "file"] }
+image = { version = "0.25.5", features = ["default", "png", "jpeg", "webp"] }
+resvg = "0.46.0"
+usvg = "0.46.0"
+
+# Async & Network
+tokio = { version = "1.43.0", features = ["full"] }
+reqwest = { version = "0.12.12", features = ["json", "rustls-tls"] }
+async_ftp = "6.0.0"
+
+# Database & Metadata
+rusqlite = { version = "0.38.0", features = ["bundled"] }
+lofty = "0.22.4"
+walkdir = "2.5.0"
+
+# Serialization & Config
+serde = { version = "1.0.228", features = ["derive"] }
+ron = "0.12.0"
+
+# Utils
+crossbeam = "0.8"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.22"
+parking_lot = "0.12.5"
+rayon = "1.11.0"
+color-thief = "0.2.2"
+kmeans_colors = "0.7.1"
+zbus = "5.13.2"
+base64 = "0.22.1"
+regex = "1.12.3"
+rfd = "0.17.2"
+libloading = "0.9.0"
+rand = "0.9.2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = 'abort'

@@ -21,22 +21,37 @@ impl Default for DspChain {
 }
 
 impl DspChain {
-    pub fn process(&mut self, sample: &mut f32) {
+    pub fn process(&mut self, sample: &mut f32, channel_idx: usize) {
         if !self.enabled {
             return;
         }
 
-        // Apply Preamp
-        *sample *= self.preamp_gain;
+        // Apply Preamp (Only if Equalizer module is active/enabled as per UI logic)
+        // User requested: "cuando el toggle switch ... esta activado ... cambio ... se debe escuchar"
+        // "cuando ... en desactivado ... no se debera escuchar"
+        if self.equalizer.enabled {
+            *sample *= self.preamp_gain;
+        }
 
         // Apply EQ
-        self.equalizer.process(sample);
+        self.equalizer.process(sample, channel_idx);
         
-        // Apply Compressor
-        self.compressor.process(sample);
+        // Apply Compressor (TODO: Make multichannel aware)
+        // For now, compressor is single-channel naive, will mix envelope across channels :(
+        // self.compressor.process(sample);
         
-        // Apply Reverb
-        self.reverb.process(sample);
+        // Apply Reverb (TODO: Make multichannel aware)
+        // self.reverb.process(sample);
+    }
+    
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.equalizer.set_sample_rate(sample_rate);
+        // self.compressor.set_sample_rate(sample_rate);
+        // self.reverb.set_sample_rate(sample_rate);
+    }
+
+    pub fn set_channel_count(&mut self, channels: usize) {
+        self.equalizer.set_channel_count(channels);
     }
 
     pub fn get_preamp_db(&self) -> f32 {
@@ -56,50 +71,137 @@ impl DspChain {
 pub struct Equalizer {
     pub bands: Vec<EqBand>,
     pub enabled: bool,
+    // Persistence
+    saved_bands_20: Vec<EqBand>,
+    saved_bands_31: Vec<EqBand>,
+    last_sample_rate: f32,
+    last_channel_count: usize,
 }
 
 impl Equalizer {
     pub fn new(num_bands: usize) -> Self {
-        let mut eq = Self {
-            bands: Vec::new(),
+        // Create both sets initially
+        let bands_20 = Self::create_bands(20);
+        let bands_31 = Self::create_bands(31);
+        
+        // Default to num_bands, or fallback to 31 if invalid
+        let active = if num_bands == 20 { bands_20.clone() } else { bands_31.clone() };
+
+        Self {
+            bands: active,
             enabled: true,
-        };
-        eq.setup_bands(num_bands);
-        eq
+            saved_bands_20: bands_20,
+            saved_bands_31: bands_31,
+            last_sample_rate: 44100.0, // Default
+            last_channel_count: 2, // Default
+        }
     }
 
-    fn setup_bands(&mut self, num_bands: usize) {
+    fn create_bands(num_bands: usize) -> Vec<EqBand> {
         let freqs = match num_bands {
-            10 => vec![31.5, 63.0, 125.0, 250.0, 500.0, 1000.0, 2000.0, 4000.0, 8000.0, 16000.0],
-            15 => vec![25.0, 40.0, 63.0, 100.0, 160.0, 250.0, 400.0, 630.0, 1000.0, 1600.0, 2500.0, 4000.0, 6300.0, 10000.0, 16000.0],
-            31 => vec![
-                20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 
-                1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0
+            20 => vec![
+                22.4, 31.5, 45.0, 63.0, 90.0, 125.0, 180.0, 250.0, 355.0, 500.0, 
+                710.0, 1000.0, 1400.0, 2000.0, 2800.0, 4000.0, 5600.0, 8000.0, 11200.0, 16000.0
             ],
-            _ => vec![100.0, 1000.0, 10000.0], // Fallback
+            31 => vec![
+                20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 
+                200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 
+                2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0
+            ],
+            _ => vec![1000.0], // Should not happen for our UI
         };
 
-        self.bands = freqs.into_iter().map(|f| EqBand::new(f)).collect();
+        if num_bands == 20 {
+             freqs.into_iter().map(|f| {
+                 let mut b = EqBand::new(f);
+                 b.set_q(2.87); 
+                 b
+             }).collect()
+        } else {
+             freqs.into_iter().map(|f| {
+                 let mut b = EqBand::new(f);
+                 b.set_q(4.4); 
+                 b
+             }).collect()
+        }
+    }
+    
+    pub fn set_mode(&mut self, num_bands: usize) {
+        // 1. Save current state
+        if self.bands.len() == 20 {
+            self.saved_bands_20 = self.bands.clone();
+        } else if self.bands.len() == 31 {
+            self.saved_bands_31 = self.bands.clone();
+        }
+
+        // 2. Load requested state
+        if num_bands == 20 {
+            self.bands = self.saved_bands_20.clone();
+        } else {
+            self.bands = self.saved_bands_31.clone();
+        }
+
+        // 3. Update coefficients with current settings immediately
+        // This fixes the "frequency shift" bug when switching
+        for band in &mut self.bands {
+            band.resize_channels(self.last_channel_count);
+            band.update_coefficients(self.last_sample_rate);
+        }
     }
 
-    pub fn process(&mut self, sample: &mut f32) {
+    // Initialize/Update Sample Rate
+    pub fn set_sample_rate(&mut self, sample_rate: f32) {
+        self.last_sample_rate = sample_rate;
+        for band in &mut self.bands {
+            band.update_coefficients(sample_rate);
+        }
+        // Also update saved states to prevent stale filters?
+        // Actually no, filters need re-update on load anyway. 
+        // But gains are what we care about saving.
+    }
+
+    // Initialize/Update Channels
+    pub fn set_channel_count(&mut self, channels: usize) {
+        self.last_channel_count = channels;
+        for band in &mut self.bands {
+            band.resize_channels(channels);
+        }
+    }
+
+    pub fn process(&mut self, sample: &mut f32, channel_idx: usize) {
         if !self.enabled {
             return;
         }
         for band in &mut self.bands {
-            band.process(sample);
+            band.process(sample, channel_idx);
         }
     }
+    
+    pub fn reset_all(&mut self) {
+        for band in &mut self.bands { band.set_gain(0.0); }
+        for band in &mut self.saved_bands_20 { band.set_gain(0.0); }
+        for band in &mut self.saved_bands_31 { band.set_gain(0.0); }
+    }
+
+
+}
+
+#[derive(Clone, Default)]
+struct BiquadState {
+    x1: f32, x2: f32, y1: f32, y2: f32,
 }
 
 #[derive(Clone)]
 pub struct EqBand {
     pub frequency: f32,
     pub gain: f32, // dB
-    // Biquad state
+    pub q: f32,
+    // Biquad coefficients (shared across channels)
     #[allow(dead_code)]
     a0: f32, a1: f32, a2: f32, b0: f32, b1: f32, b2: f32,
-    x1: f32, x2: f32, y1: f32, y2: f32,
+    // State per channel
+    states: Vec<BiquadState>,
+    last_sample_rate: f32, // Store last SR to re-calculate if needed in set_gain/q
 }
 
 impl EqBand {
@@ -107,27 +209,44 @@ impl EqBand {
         let mut band = Self {
             frequency: freq,
             gain: 0.0,
+            q: 1.41, 
             a0: 1.0, a1: 0.0, a2: 0.0, b0: 1.0, b1: 0.0, b2: 0.0,
-            x1: 0.0, x2: 0.0, y1: 0.0, y2: 0.0,
+            states: vec![BiquadState::default(); 8], // Pre-alloc for 7.1/8 channels default
+            last_sample_rate: 44100.0,
         };
-        band.update_coefficients(44100.0); // Default sample rate, must be updated
+        band.update_coefficients(44100.0);
         band
     }
 
-    pub fn set_gain(&mut self, gain_db: f32, sample_rate: f32) {
+    pub fn set_gain(&mut self, gain_db: f32) {
         self.gain = gain_db;
-        self.update_coefficients(sample_rate);
+        self.update_coefficients(self.last_sample_rate);
+    }
+    
+    // Add set_sample_rate aware setter if needed, or just update coeffs after.
+
+    pub fn set_q(&mut self, q: f32) {
+        self.q = q;
+        self.update_coefficients(self.last_sample_rate);
+    }
+
+    pub fn resize_channels(&mut self, channels: usize) {
+        if self.states.len() != channels {
+            self.states.resize(channels, BiquadState::default());
+        }
     }
 
     /* 
      * Peaking EQ Filter Design
-     * Based on Robert Bristow-Johnson's Audio EQ Cookbook
      */
     pub fn update_coefficients(&mut self, sample_rate: f32) {
+        self.last_sample_rate = sample_rate;
+        if sample_rate <= 0.0 { return; }
+
         let w0 = 2.0 * std::f32::consts::PI * self.frequency / sample_rate;
         let c = w0.cos();
         let s = w0.sin();
-        let alpha = s / (2.0 * 1.0); // Q = 1.0 (Approx 1.4 bandwidth)
+        let alpha = s / (2.0 * self.q); 
         
         let a = 10.0f32.powf(self.gain / 40.0); // A = 10^(dB/40)
 
@@ -140,24 +259,40 @@ impl EqBand {
         let a2 = 1.0 - alpha / a;
 
         // Normalized
-        self.b0 = b0 / a0;
-        self.b1 = b1 / a0;
-        self.b2 = b2 / a0;
-        self.a1 = a1 / a0;
-        self.a2 = a2 / a0;
+        if a0.abs() > 1e-6 {
+             self.b0 = b0 / a0;
+             self.b1 = b1 / a0;
+             self.b2 = b2 / a0;
+             self.a1 = a1 / a0;
+             self.a2 = a2 / a0;
+        } else {
+             // Fallback bypass
+             self.b0 = 1.0; self.b1 = 0.0; self.b2 = 0.0;
+             self.a1 = 0.0; self.a2 = 0.0;
+        }
     }
 
-    pub fn process(&mut self, sample: &mut f32) {
+    pub fn process(&mut self, sample: &mut f32, channel_idx: usize) {
+        // Validate channel index
+        if channel_idx >= self.states.len() {
+             // Optionally resize? Or just return.
+             // Resizing in audio thread is bad. We assume set_channel_count was called.
+             // Fallback: if index out of bounds, do nothing (bypass).
+             return;
+        }
+
+        let state = &mut self.states[channel_idx];
+        
         let x = *sample;
-        let y = self.b0 * x + self.b1 * self.x1 + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2;
+        let y = self.b0 * x + self.b1 * state.x1 + self.b2 * state.x2 - self.a1 * state.y1 - self.a2 * state.y2;
         
         // Denormal protection (simple)
         let y = if y.abs() < 1e-10 { 0.0 } else { y };
         
-        self.x2 = self.x1;
-        self.x1 = x;
-        self.y2 = self.y1;
-        self.y1 = y;
+        state.x2 = state.x1;
+        state.x1 = x;
+        state.y2 = state.y1;
+        state.y1 = y;
         
         *sample = y;
     }

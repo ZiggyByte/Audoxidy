@@ -81,8 +81,7 @@ impl AudioManager {
             // Let's assume 44100 for update, or better:
             // The bands update_coefficients should be called when sample rate changes too.
             // For now let's pass 44100.0 or the current output rate.
-            let sr = self.engine.state.read().sample_rate as f32;
-            dsp.equalizer.bands[index].set_gain(db, sr);
+            dsp.equalizer.bands[index].set_gain(db);
         }
     }
 
@@ -98,6 +97,19 @@ impl AudioManager {
     pub fn get_eq_band_info(&self, index: usize) -> Option<(f32, f32)> {
         let dsp = self.engine.dsp.read();
         dsp.equalizer.bands.get(index).map(|b| (b.frequency, b.gain))
+    }
+
+    pub fn set_eq_mode(&self, num_bands: usize) {
+        let mut dsp = self.engine.dsp.write();
+        if dsp.equalizer.bands.len() != num_bands {
+            dsp.equalizer.set_mode(num_bands);
+        }
+    }
+    
+    pub fn reset_dsp_defaults(&self) {
+        let mut dsp = self.engine.dsp.write();
+        dsp.set_preamp_db(0.0);
+        dsp.equalizer.reset_all();
     }
 
     pub fn get_state(&self) -> crate::audio::engine::AudioState {

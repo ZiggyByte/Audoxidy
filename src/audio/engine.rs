@@ -292,13 +292,24 @@ impl AudioEngine {
 
         if let Some(consumer) = consumer_mutex.lock().as_mut() {
              let mut dsp_lock = dsp.write();
-             for frame in output.chunks_mut(channels) {
-                 for (ch_idx, sample) in frame.iter_mut().enumerate() {
+             for frame_out in output.chunks_mut(channels) {
+                 let mut frame_f32 = [0.0; 8];
+                 let mut valid = true;
+                 for ch_idx in 0..channels {
                      if let Some(val) = consumer.try_pop() {
-                         let mut p = val * vol;
-                         dsp_lock.process(&mut p, ch_idx);
-                         *sample = T::from_sample(p);
+                         frame_f32[ch_idx] = val * vol;
                      } else {
+                         valid = false;
+                     }
+                 }
+                 
+                 if valid {
+                     dsp_lock.process_frame(&mut frame_f32[..channels]);
+                     for (ch_idx, sample) in frame_out.iter_mut().enumerate() {
+                         *sample = T::from_sample(frame_f32[ch_idx]);
+                     }
+                 } else {
+                     for sample in frame_out.iter_mut() {
                          *sample = T::from_sample(0.0);
                      }
                  }

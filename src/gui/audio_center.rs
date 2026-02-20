@@ -53,6 +53,8 @@ struct AudioCenterState {
     selected_preset_index: Option<usize>,
     temp_eq_backup: Option<(f32, Vec<f32>)>, // preamp, active bands
 
+    focused_slider: Option<String>,
+
     apply_enabled: bool, // Para activar botón "Aplicar" solo si hay cambios
 }
 
@@ -83,6 +85,8 @@ impl Default for AudioCenterState {
             presets: EqPreset::default_presets(),
             selected_preset_index: None,
             temp_eq_backup: None,
+
+            focused_slider: None,
 
             apply_enabled: false,
         }
@@ -129,6 +133,10 @@ impl AudioCenter {
             .title_bar(false)
             .frame(egui::Frame::NONE.fill(color_bg).stroke(egui::Stroke::new(2.0, color_accent)))
             .show(ctx, |ui| {
+                if ctx.input(|i| i.pointer.any_click()) {
+                    ui_state.focused_slider = None;
+                }
+                
                 ui.add_enabled_ui(interact_enabled, |ui| {
                     let rect = ui.max_rect();
                     ui.allocate_rect(rect, egui::Sense::click()); // Consume clicks
@@ -217,7 +225,7 @@ impl AudioCenter {
                         match ui_state.selected_tab {
                             0 => Self::tab_audio_config(ui, audio_manager, ui_state, color_accent, color_text_main, color_text_sec, color_contrast),
                             1 => Self::tab_equalizer(ui, ui_state, color_accent, color_text_main, color_contrast, audio_manager),
-                            2 => Self::tab_placeholder(ui, "Efectos de Audio", audio_manager, color_accent, color_text_main),
+                            2 => Self::tab_audio_effects(ui, ui_state, color_accent, color_text_main, color_contrast, color_text_sec, audio_manager),
                             _ => {}
                         }
                     });
@@ -251,10 +259,22 @@ impl AudioCenter {
                     ui.painter().rect_stroke(popup_rect, 4.0, egui::Stroke::new(2.0, color_accent), egui::StrokeKind::Middle);
                     
                     // Sort presets first
+                    let default_names = [
+                        "Default", "Pop", "Party", "Electronic", "Rock And Roll", "Rock",
+                        "Hard Rock", "Heavy Metal", "Punk Rock", "Jazz", "Soul", "Funk",
+                        "Classical", "Ballad", "Mariachi", "Salsa", "Hip-Hop", "Reggaeton"
+                    ];
+                    
                     ui_state.presets.sort_by(|a, b| {
-                        if a.name == "Default" { std::cmp::Ordering::Less }
-                        else if b.name == "Default" { std::cmp::Ordering::Greater }
-                        else {
+                        if a.name == "Default" { return std::cmp::Ordering::Less; }
+                        if b.name == "Default" { return std::cmp::Ordering::Greater; }
+                        
+                        let a_is_default = default_names.contains(&a.name.as_str());
+                        let b_is_default = default_names.contains(&b.name.as_str());
+                        
+                        if a_is_default != b_is_default {
+                            if a_is_default { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Less }
+                        } else {
                             let a_first = a.name.chars().next().unwrap_or('a');
                             let b_first = b.name.chars().next().unwrap_or('a');
                             let a_is_alpha = a_first.is_alphabetic();
@@ -267,14 +287,21 @@ impl AudioCenter {
                         }
                     });
 
-                    ui.allocate_ui_at_rect(popup_rect.shrink(15.0), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(popup_rect.shrink(15.0)), |ui| {
                         ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                             // Columna Izquierda: Lista de Presets
                             ui.allocate_ui(egui::vec2(136.0, 268.0), |ui| {
                                 ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                                    egui::Frame::none().fill(color_contrast).stroke(egui::Stroke::new(2.0, color_text_main)).inner_margin(5.0).show(ui, |ui| {
+                                    egui::Frame::NONE.fill(color_contrast).stroke(egui::Stroke::new(2.0, color_text_main)).inner_margin(5.0).show(ui, |ui| {
                                         egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+                                            let mut last_was_custom = false;
                                             for (idx, preset) in ui_state.presets.iter().enumerate() {
+                                                let is_default = default_names.contains(&preset.name.as_str());
+                                                if idx > 0 && is_default && last_was_custom {
+                                                    ui.add(egui::Separator::default().spacing(10.0));
+                                                }
+                                                last_was_custom = !is_default && preset.name != "Default";
+                                                
                                                 let selected = ui_state.selected_preset_index == Some(idx);
                                                 let label_color = if selected { color_accent } else { color_text_main };
                                                 
@@ -302,7 +329,7 @@ impl AudioCenter {
                             // Columna Derecha: Botones
                             ui.allocate_ui(egui::vec2(140.0, 268.0), |ui| {
                                  ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
-                                      ui.add_space(8.0);
+                                      ui.add_space(0.0);
                                       let btn_size = egui::vec2(120.0, 20.0);
                                       if ui.add(egui::Button::new(egui::RichText::new("Aceptar").color(color_text_main).size(14.0)).min_size(btn_size)).clicked() {
                                           close_modal = true;
@@ -395,7 +422,7 @@ impl AudioCenter {
                     
                     if bg_response.clicked() { close_modal = true; }
                     
-                    let popup_size = egui::vec2(160.0, 150.0);
+                    let popup_size = egui::vec2(180.0, 180.0);
                     let popup_rect = egui::Rect::from_center_size(screen_rect.center(), popup_size);
                     
                     let _popup_interact = ui.allocate_rect(popup_rect, egui::Sense::click());
@@ -403,20 +430,38 @@ impl AudioCenter {
                     ui.painter().rect_filled(popup_rect, 4.0, color_bg);
                     ui.painter().rect_stroke(popup_rect, 4.0, egui::Stroke::new(2.0, color_accent), egui::StrokeKind::Middle);
                     
-                    ui.allocate_ui_at_rect(popup_rect.shrink(15.0), |ui| {
+                    ui.scope_builder(egui::UiBuilder::new().max_rect(popup_rect.shrink(15.0)), |ui| {
                         ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
                             ui.label(egui::RichText::new("Guardar Preset").color(color_text_main).size(14.0).strong());
                             ui.add_space(15.0);
                             
                             let name_input = egui::TextEdit::singleline(&mut ui_state.preset_name_input)
                                 .text_color(color_text_main)
-                                .margin(egui::vec2(5.0, 5.0));
-                            ui.add(name_input);
+                                .margin(egui::vec2(5.0, 5.0))
+                                .frame(false);
+                                
+                            egui::Frame::NONE
+                                .fill(color_contrast)
+                                .stroke(egui::Stroke::new(1.0, color_text_main))
+                                .inner_margin(2.0)
+                                .show(ui, |ui| {
+                                    ui.add(name_input);
+                                });
+                                
+                            ui.add_space(10.0);
                             
-                            ui.add_space(20.0);
+                            let save_disabled = ui_state.preset_name_input.trim().is_empty();
+                            let exists = ui_state.presets.iter().any(|p| p.name == ui_state.preset_name_input.trim());
+                            
+                            if exists && !save_disabled {
+                                ui.label(egui::RichText::new("Ya existe un preset con ese nombre. ¿Quieres sobrescribirlo?").color(color_accent).size(10.0));
+                            } else {
+                                ui.add_space(10.0); // Maintain height
+                            }
+                            
+                            ui.add_space(10.0);
                             
                             ui.horizontal(|ui| {
-                                let save_disabled = ui_state.preset_name_input.trim().is_empty();
                                 ui.add_enabled_ui(!save_disabled, |ui| {
                                     if ui.button(egui::RichText::new("Guardar").color(color_accent)).clicked() {
                                         let preamp = ui_state.preamp_gain;
@@ -428,12 +473,16 @@ impl AudioCenter {
                                         }
                                         
                                         let new_preset = if is_31 {
-                                            EqPreset::new(&ui_state.preset_name_input, preamp, None, Some(active_gains))
+                                            EqPreset::new(ui_state.preset_name_input.trim(), preamp, None, Some(active_gains))
                                         } else {
-                                            EqPreset::new(&ui_state.preset_name_input, preamp, Some(active_gains), None)
+                                            EqPreset::new(ui_state.preset_name_input.trim(), preamp, Some(active_gains), None)
                                         };
                                         
-                                        ui_state.presets.push(new_preset);
+                                        if let Some(existing) = ui_state.presets.iter_mut().find(|p| p.name == new_preset.name) {
+                                            *existing = new_preset;
+                                        } else {
+                                            ui_state.presets.push(new_preset);
+                                        }
                                         close_modal = true;
                                     }
                                 });
@@ -975,12 +1024,13 @@ impl AudioCenter {
                             
                             // Custom Vertical Slider
                             let slider_size = egui::vec2(14.0, slider_height);
-                            let (rect, mut response) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
-                            response = ui.interact(rect, ui.id().with("preamp_slider_id"), egui::Sense::click_and_drag());
+                            let (rect, _) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
+                            let mut response = ui.interact(rect, ui.id().with("preamp_slider_id"), egui::Sense::click_and_drag());
                             
                             // Input Handling
+                            let is_focused = ui_state.focused_slider.as_deref() == Some("preamp");
                             if response.clicked() || response.dragged() {
-                                response.request_focus();
+                                ui_state.focused_slider = Some("preamp".to_string());
                             }
                             if response.clicked_by(egui::PointerButton::Secondary) {
                                 ui_state.preamp_gain = 0.0;
@@ -1004,7 +1054,7 @@ impl AudioCenter {
                             }
                             
                             // Keyboard handling
-                            if response.has_focus() {
+                            if is_focused {
                                 let mut step = 0.0;
                                 ui.input_mut(|i| {
                                     if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) { step = 0.1; }
@@ -1016,7 +1066,6 @@ impl AudioCenter {
                                     if (ui_state.preamp_gain - val_snapped).abs() > 0.001 {
                                          ui_state.preamp_gain = val_snapped;
                                          if ui_state.equalizer_enabled { audio_manager.set_preamp_gain(val_snapped); }
-                                         response.request_focus(); // Maintain focus
                                          response.mark_changed();
                                     }
                                 }
@@ -1035,12 +1084,12 @@ impl AudioCenter {
                             
                             let handle_color = if ui_state.equalizer_enabled { color_accent } else { color_contrast };
                             ui.painter().rect_filled(handle_rect, 2.0, handle_color);
-                            if response.has_focus() {
+                            if is_focused {
                                 ui.painter().rect_stroke(handle_rect, 2.0, egui::Stroke::new(1.0, color_main), egui::StrokeKind::Middle);
                             }
                             
                             // Tooltip Zero-Latency
-                            if response.hovered() || response.dragged() || response.has_focus() {
+                            if response.hovered() || response.dragged() || is_focused {
                                  let val_display = Self::format_value(ui_state.preamp_gain);
                                  let tooltip_pos = egui::pos2(handle_rect.right() + 8.0, handle_rect.center().y);
                                  let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, response.id));
@@ -1122,12 +1171,14 @@ impl AudioCenter {
 
                                        // Custom Vertical Slider
                                        let slider_size = egui::vec2(14.0, slider_height);
-                                       let (rect, mut response) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
-                                       response = ui.interact(rect, ui.id().with("eq_band_20_slider_id").with(i), egui::Sense::click_and_drag());
+                                       let (rect, _) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
+                                       let mut response = ui.interact(rect, ui.id().with("eq_band_20_slider_id").with(i), egui::Sense::click_and_drag());
                                        
                                        // Interaction
+                                       let slider_id = format!("eq_20_{}", i);
+                                       let is_focused = ui_state.focused_slider.as_deref() == Some(&slider_id);
                                        if response.clicked() || response.dragged() {
-                                           response.request_focus();
+                                           ui_state.focused_slider = Some(slider_id);
                                        }
                                        if response.clicked_by(egui::PointerButton::Secondary) {
                                            gain = 0.0;
@@ -1150,7 +1201,7 @@ impl AudioCenter {
                                        }
                                        
                                        // Keyboard
-                                       if response.has_focus() {
+                                       if is_focused {
                                            let mut step = 0.0;
                                            ui.input_mut(|inp| {
                                                if inp.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) { step = 0.1; }
@@ -1162,7 +1213,6 @@ impl AudioCenter {
                                                if (gain - val_snapped).abs() > 0.001 {
                                                     gain = val_snapped;
                                                     audio_manager.set_eq_band_gain(i, gain);
-                                                    response.request_focus(); // Maintain focus
                                                     response.mark_changed();
                                                }
                                            }
@@ -1182,12 +1232,12 @@ impl AudioCenter {
                                        
                                        let handle_color = if ui_state.equalizer_enabled { color_accent } else { color_contrast };
                                        ui.painter().rect_filled(handle_rect, 2.0, handle_color); 
-                                       if response.has_focus() {
+                                       if is_focused {
                                            ui.painter().rect_stroke(handle_rect, 2.0, egui::Stroke::new(1.0, color_main), egui::StrokeKind::Middle);
                                        }
                                        
                                        // Tooltip Zero-Latency
-                                       if response.hovered() || response.dragged() || response.has_focus() {
+                                       if response.hovered() || response.dragged() || is_focused {
                                            let val_display = Self::format_value(gain);
                                            let tooltip_pos = egui::pos2(handle_rect.right() + 8.0, handle_rect.center().y);
                                            let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, response.id));
@@ -1243,12 +1293,14 @@ impl AudioCenter {
 
                                        // Custom Vertical Slider
                                        let slider_size = egui::vec2(14.0, slider_height);
-                                       let (rect, mut response) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
-                                       response = ui.interact(rect, ui.id().with("eq_band_31_slider_id").with(i), egui::Sense::click_and_drag());
+                                       let (rect, _) = ui.allocate_exact_size(slider_size, egui::Sense::hover());
+                                       let mut response = ui.interact(rect, ui.id().with("eq_band_31_slider_id").with(i), egui::Sense::click_and_drag());
                                        
                                        // Interaction
+                                       let slider_id = format!("eq_31_{}", i);
+                                       let is_focused = ui_state.focused_slider.as_deref() == Some(&slider_id);
                                        if response.clicked() || response.dragged() {
-                                           response.request_focus();
+                                           ui_state.focused_slider = Some(slider_id);
                                        }
                                        // Reset on right click
                                        if response.clicked_by(egui::PointerButton::Secondary) {
@@ -1272,7 +1324,7 @@ impl AudioCenter {
                                        }
                                        
                                        // Keyboard
-                                       if response.has_focus() {
+                                       if is_focused {
                                            let mut step = 0.0;
                                            ui.input_mut(|inp| {
                                                if inp.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp) { step = 0.1; }
@@ -1284,7 +1336,6 @@ impl AudioCenter {
                                                if (gain - val_snapped).abs() > 0.001 {
                                                     gain = val_snapped;
                                                     audio_manager.set_eq_band_gain(i, gain);
-                                                    response.request_focus(); // Maintain focus
                                                     response.mark_changed();
                                                }
                                            }
@@ -1304,12 +1355,12 @@ impl AudioCenter {
                                        
                                        let handle_color = if ui_state.equalizer_enabled { color_accent } else { color_contrast };
                                        ui.painter().rect_filled(handle_rect, 2.0, handle_color); 
-                                       if response.has_focus() {
+                                       if is_focused {
                                            ui.painter().rect_stroke(handle_rect, 2.0, egui::Stroke::new(1.0, color_main), egui::StrokeKind::Middle);
                                        }
                                        
                                        // Tooltip Zero-Latency
-                                       if response.hovered() || response.dragged() || response.has_focus() {
+                                       if response.hovered() || response.dragged() || is_focused {
                                            let val_display = Self::format_value(gain);
                                            let tooltip_pos = egui::pos2(handle_rect.right() + 8.0, handle_rect.center().y);
                                            let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Tooltip, response.id));
@@ -1349,14 +1400,297 @@ fn format_value(v: f32) -> String {
 
 
 
-    fn tab_placeholder(ui: &mut egui::Ui, title: &str, _manager: &AudioManager, _color_accent: egui::Color32, color_main: egui::Color32) {
-        ui.label(egui::RichText::new(title).color(color_main));
-        ui.add_space(20.0);
-        
-        ui.label("Esta característica aún no está implementada.");
-        ui.add_space(20.0);
-        
-        ui.label("¡Próximamente más funciones!");
+    fn tab_audio_effects(
+        ui: &mut egui::Ui,
+        _ui_state: &mut AudioCenterState,
+        color_accent: egui::Color32,
+        color_main: egui::Color32,
+        color_contrast: egui::Color32,
+        color_sec: egui::Color32,
+        audio_manager: &AudioManager,
+    ) {
+        egui::ScrollArea::vertical().auto_shrink([false; 2]).show(ui, |ui| {
+            ui.horizontal_top(|ui| {
+                let col_width = (ui.available_width() - 40.0) / 3.0; // 3 columns
+                
+                // Column 1: Base & Frequencies
+                ui.allocate_ui_with_layout(egui::vec2(col_width, ui.available_height()), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new("Base y Frecuencias").color(color_accent).strong());
+                    ui.add_space(10.0);
+                    
+                    Self::draw_effect_control(ui, "Aumento de Graves", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.bass_boost.enabled,
+                        |dsp, v| dsp.bass_boost.enabled = v,
+                        "Nivel", |dsp| dsp.bass_boost.gain, |dsp, v| dsp.bass_boost.gain = v, 0.0..=24.0, 0.0);
+                    
+                    Self::draw_effect_control(ui, "ReplayGain", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.replay_gain.enabled,
+                        |dsp, v| dsp.replay_gain.enabled = v,
+                        "Pre-amp (dB)", |dsp| dsp.replay_gain.preamp, |dsp, v| dsp.replay_gain.preamp = v, -12.0..=12.0, 0.0);
+                        
+                    Self::draw_effect_control(ui, "Compresor", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.compressor.enabled,
+                        |dsp, v| dsp.compressor.enabled = v,
+                        "Umbral (dB)", |dsp| dsp.compressor.threshold, |dsp, v| dsp.compressor.threshold = v, -60.0..=0.0, -10.0);
+                        
+                    Self::draw_effect_control(ui, "Túnel 3D (HRTF)", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.hrtf.enabled,
+                        |dsp, v| dsp.hrtf.enabled = v,
+                        "Mix", |_| 100.0, |_, _| {}, 0.0..=100.0, 100.0); // Placeholder mix
+                        
+                    Self::draw_effect_control(ui, "Flanger", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.flanger.enabled,
+                        |dsp, v| dsp.flanger.enabled = v,
+                        "Mix", |dsp| dsp.flanger.mix, |dsp, v| dsp.flanger.mix = v, 0.0..=1.0, 0.5);
+                });
+                
+                ui.add_space(20.0);
+                
+                // Column 2: Voices, Noise & Modulation
+                ui.allocate_ui_with_layout(egui::vec2(col_width, ui.available_height()), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new("Voces y Modulación").color(color_accent).strong());
+                    ui.add_space(10.0);
+                    
+                    Self::draw_effect_control(ui, "Aumento de Voces", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.voice_boost.enabled,
+                        |dsp, v| dsp.voice_boost.enabled = v,
+                        "Nivel", |dsp| dsp.voice_boost.gain, |dsp, v| dsp.voice_boost.gain = v, -3.0..=24.0, 0.0);
+                        
+                    Self::draw_effect_control(ui, "Reducción de Ruido", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.noise_gate.enabled,
+                        |dsp, v| dsp.noise_gate.enabled = v,
+                        "Umbral (dB)", |dsp| dsp.noise_gate.threshold, |dsp, v| dsp.noise_gate.threshold = v, -90.0..=0.0, -60.0);
+                        
+                    Self::draw_effect_control(ui, "Limitador", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.limiter.enabled,
+                        |dsp, v| dsp.limiter.enabled = v,
+                        "Techo (dB)", |dsp| dsp.limiter.ceiling, |dsp, v| dsp.limiter.ceiling = v, -6.0..=0.0, -0.1);
+                        
+                    Self::draw_effect_control(ui, "Delay", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.delay.enabled,
+                        |dsp, v| dsp.delay.enabled = v,
+                        "Tiempo (s)", |dsp| dsp.delay.time, |dsp, v| dsp.delay.time = v, 0.01..=2.0, 0.3);
+                        
+                    Self::draw_effect_control(ui, "Phaser", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.phaser.enabled,
+                        |dsp, v| dsp.phaser.enabled = v,
+                        "Mix", |dsp| dsp.phaser.mix, |dsp, v| dsp.phaser.mix = v, 0.0..=1.0, 0.5);
+                });
+                
+                ui.add_space(20.0);
+                
+                // Column 3: Space & Stereo Mix
+                ui.allocate_ui_with_layout(egui::vec2(col_width, ui.available_height()), egui::Layout::top_down(egui::Align::Center), |ui| {
+                    ui.label(egui::RichText::new("Espacio y Estéreo").color(color_accent).strong());
+                    ui.add_space(10.0);
+                    
+                    Self::draw_effect_control(ui, "Expansor Estéreo", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.stereo_expander.enabled,
+                        |dsp, v| dsp.stereo_expander.enabled = v,
+                        "Ancho (%)", |dsp| dsp.stereo_expander.width * 100.0, |dsp, v| dsp.stereo_expander.width = v / 100.0, 0.0..=200.0, 100.0);
+                        
+                    Self::draw_effect_control(ui, "Crossfeed", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.crossfeed.enabled,
+                        |dsp, v| dsp.crossfeed.enabled = v,
+                        "Nivel", |dsp| dsp.crossfeed.amount, |dsp, v| dsp.crossfeed.amount = v, 0.0..=1.0, 0.0);
+                        
+                    Self::draw_effect_control(ui, "Reverberación", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.reverb.enabled,
+                        |dsp, v| dsp.reverb.enabled = v,
+                        "Wet", |dsp| dsp.reverb.wet, |dsp, v| dsp.reverb.set_wet(v), 0.0..=1.0, 0.3);
+                        
+                    Self::draw_effect_control(ui, "Chorus", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.chorus.enabled,
+                        |dsp, v| dsp.chorus.enabled = v,
+                        "Prof.", |dsp| dsp.chorus.depth, |dsp, v| dsp.chorus.depth = v, 0.0..=1.0, 0.5);
+                        
+                    Self::draw_effect_control(ui, "Balance Estéreo", color_main, color_contrast, color_accent, color_sec, audio_manager,
+                        |dsp| dsp.stereo_balance.enabled,
+                        |dsp, v| dsp.stereo_balance.enabled = v,
+                        "L/R", |dsp| dsp.stereo_balance.balance, |dsp, v| dsp.stereo_balance.balance = v, -1.0..=1.0, 0.0);
+                });
+            });
+        });
+    }
+
+    fn draw_effect_control<FGetEn, FSetEn, FGetVal, FSetVal>(
+        ui: &mut egui::Ui,
+        title: &str,
+        color_main: egui::Color32,
+        color_contrast: egui::Color32,
+        color_accent: egui::Color32,
+        color_sec: egui::Color32,
+        audio_manager: &AudioManager,
+        get_enabled: FGetEn,
+        set_enabled: FSetEn,
+        primary_param_name: &str,
+        get_val: FGetVal,
+        set_val: FSetVal,
+        val_range: std::ops::RangeInclusive<f32>,
+        default_val: f32,
+    ) where 
+        FGetEn: Fn(&crate::audio::dsp::DspChain) -> bool,
+        FSetEn: Fn(&mut crate::audio::dsp::DspChain, bool),
+        FGetVal: Fn(&crate::audio::dsp::DspChain) -> f32,
+        FSetVal: Fn(&mut crate::audio::dsp::DspChain, f32),
+    {
+        ui.vertical(|ui| {
+            let stroke_color = if audio_manager.with_dsp(&get_enabled) { color_accent } else { color_contrast };
+            
+            let frame = egui::Frame::NONE
+                .fill(color_contrast)
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(10, 8))
+                .stroke(egui::Stroke::new(1.0, stroke_color));
+                
+            let is_enabled = audio_manager.with_dsp(&get_enabled);
+            
+            frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(title).size(13.0).color(color_main));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut enabled_mut = is_enabled;
+                        if Self::custom_toggle(ui, &mut enabled_mut, color_accent, color_contrast, color_sec).changed() {
+                            audio_manager.with_dsp_mut(|dsp| set_enabled(dsp, enabled_mut));
+                        }
+                    });
+                });
+                
+                ui.add_space(5.0);
+                
+                // Primary Slider
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(primary_param_name).size(11.0).color(color_sec));
+                    
+                    // Num Edit will be on the right, Slider will take remaining space
+                    let edit_width = 40.0;
+                    let slider_width = ui.available_width() - edit_width - 10.0; 
+                    let slider_size = egui::vec2(slider_width, 20.0);
+                    
+                    let (rect, mut response) = ui.allocate_exact_size(slider_size, egui::Sense::click_and_drag());
+                    let id = response.id;
+                    
+                    if response.clicked() || response.dragged() {
+                        ui.memory_mut(|m| m.request_focus(id));
+                    }
+                    let is_focused = ui.memory(|m| m.has_focus(id));
+                    
+                    // Right click reset
+                    if response.clicked_by(egui::PointerButton::Secondary) {
+                        audio_manager.with_dsp_mut(|dsp| set_val(dsp, default_val));
+                        response.mark_changed();
+                    } else if response.dragged() || response.clicked() {
+                        if let Some(pos) = response.interact_pointer_pos() {
+                            let t = (pos.x - rect.min.x) / rect.width();
+                            let t_clamped = t.clamp(0.0, 1.0);
+                            let min_v = *val_range.start();
+                            let max_v = *val_range.end();
+                            let mut val = min_v + t_clamped * (max_v - min_v);
+                            val = (val * 100.0).round() / 100.0;
+                            
+                            audio_manager.with_dsp_mut(|dsp| set_val(dsp, val));
+                            response.mark_changed();
+                        }
+                    }
+                    
+                    // Keyboard arrows handling
+                    if is_focused {
+                        let mut step = 0.0;
+                        ui.input_mut(|i| {
+                            if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowRight) {
+                                step = (*val_range.end() - *val_range.start()) * 0.01;
+                            } else if i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowLeft) {
+                                step = -((*val_range.end() - *val_range.start()) * 0.01);
+                            }
+                        });
+                        
+                        if step != 0.0 {
+                            let curr = audio_manager.with_dsp(&get_val);
+                            let mut new_val = (curr + step).clamp(*val_range.start(), *val_range.end());
+                            new_val = (new_val * 100.0).round() / 100.0;
+                            audio_manager.with_dsp_mut(|dsp| set_val(dsp, new_val));
+                            response.mark_changed();
+                        }
+                    }
+                    
+                    // Drawing Slider
+                    let val = audio_manager.with_dsp(&get_val);
+                    let min_v = *val_range.start();
+                    let max_v = *val_range.end();
+                    let t = if max_v > min_v { ((val - min_v) / (max_v - min_v)).clamp(0.0, 1.0) } else { 0.0 };
+                    
+                    // Track Black #000000
+                    let track_height = 8.0;
+                    let track_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), track_height));
+                    ui.painter().rect_filled(track_rect, 2.0, egui::Color32::from_rgb(0, 0, 0));
+                    
+                    // Colored trailing fill
+                    if is_enabled && t > 0.0 {
+                        let mut filled_rect = track_rect;
+                        filled_rect.max.x = rect.min.x + t * rect.width();
+                        ui.painter().rect_filled(filled_rect, 2.0, color_accent);
+                    }
+                    
+                    // Handle Match PreAmp (14x16)
+                    let handle_x = rect.min.x + t * rect.width();
+                    let handle_size = egui::vec2(14.0, 16.0);
+                    let handle_rect = egui::Rect::from_center_size(egui::pos2(handle_x, rect.center().y), handle_size);
+                    
+                    let handle_color = if is_enabled { color_accent } else { color_contrast };
+                    ui.painter().rect_filled(handle_rect, 2.0, handle_color);
+                    
+                    if is_focused {
+                        ui.painter().rect_stroke(handle_rect, 2.0, egui::Stroke::new(1.0, color_main), egui::StrokeKind::Middle);
+                    }
+
+                    // Input Text Box
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let mut val_str = format!("{:.2}", val);
+                        let response = ui.add(egui::TextEdit::singleline(&mut val_str).desired_width(edit_width).text_color(color_main));
+                        if response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            if let Ok(parsed) = val_str.parse::<f32>() {
+                                let clamped = parsed.clamp(*val_range.start(), *val_range.end());
+                                audio_manager.with_dsp_mut(|dsp| set_val(dsp, clamped));
+                            }
+                        }
+                    });
+                });
+            });
+            ui.add_space(10.0);
+        });
+    }
+
+    fn custom_toggle(ui: &mut egui::Ui, on: &mut bool, color_accent: egui::Color32, color_contrast: egui::Color32, color_sec: egui::Color32) -> egui::Response {
+        let desired_size = egui::vec2(34.0, 17.0);
+        let (rect, mut response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+        if response.clicked() {
+            *on = !*on;
+            response.mark_changed();
+        }
+        response.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, ""));
+
+        if ui.is_rect_visible(rect) {
+            let how_on = ui.ctx().animate_bool_responsive(response.id, *on);
+            
+            let fill = if *on { color_accent } else { color_contrast };
+            
+            ui.painter().rect(
+                rect,
+                rect.height() / 2.0,
+                fill,
+                egui::Stroke::NONE,
+                egui::StrokeKind::Middle
+            );
+            
+            let circle_x = egui::lerp((rect.left() + rect.height() / 2.0)..=(rect.right() - rect.height() / 2.0), how_on);
+            let center = egui::pos2(circle_x, rect.center().y);
+            let radius = rect.height() / 2.0 - 2.0;
+            // White knob or dark depending on background
+            let knob_color = if *on { color_contrast } else { color_sec };
+            ui.painter().circle_filled(center, radius, knob_color);
+        }
+
+        response
     }
 }
 

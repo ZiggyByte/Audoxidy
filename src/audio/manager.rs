@@ -158,4 +158,17 @@ impl AudioManager {
     pub fn set_compressor_params(&self, threshold: f32, ratio: f32, attack: f32, release: f32) {
         self.engine.dsp.write().compressor.set_params(threshold, ratio, attack, release);
     }
+
+    // --- Direct DSP Access ---
+    pub fn with_dsp<F, R>(&self, f: F) -> R 
+    where F: FnOnce(&crate::audio::dsp::DspChain) -> R {
+        let dsp = self.engine.dsp.read();
+        f(&dsp)
+    }
+
+    pub fn with_dsp_mut<F>(&self, f: F)
+    where F: FnOnce(&mut crate::audio::dsp::DspChain) {
+        let mut dsp = self.engine.dsp.write();
+        f(&mut dsp);
+    }
 }

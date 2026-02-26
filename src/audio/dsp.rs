@@ -5,18 +5,12 @@ pub struct DspChain {
     pub equalizer: Equalizer,
     pub reverb: Reverb,
     pub compressor: Compressor,
-    pub bass_boost: BassBoost,
+    pub sub_bass: SubBass,
+    pub mid_bass: MidBass,
     pub voice_boost: VoiceBoost,
     pub stereo_expander: StereoExpander,
-    pub replay_gain: ReplayGain,
     pub noise_gate: NoiseGate,
-    pub crossfeed: Crossfeed,
     pub limiter: Limiter,
-    pub hrtf: HrtfSpatializer,
-    pub delay: Delay,
-    pub chorus: Chorus,
-    pub flanger: Flanger,
-    pub phaser: Phaser,
     pub stereo_balance: StereoBalance,
     pub enabled: bool,
 }
@@ -28,18 +22,12 @@ impl Default for DspChain {
             equalizer: Equalizer::new(31), // Default 31 bands
             reverb: Reverb::new(),
             compressor: Compressor::new(),
-            bass_boost: BassBoost::default(),
+            sub_bass: SubBass::default(),
+            mid_bass: MidBass::default(),
             voice_boost: VoiceBoost::default(),
             stereo_expander: StereoExpander::default(),
-            replay_gain: ReplayGain::default(),
             noise_gate: NoiseGate::default(),
-            crossfeed: Crossfeed::default(),
             limiter: Limiter::default(),
-            hrtf: HrtfSpatializer::default(),
-            delay: Delay::default(),
-            chorus: Chorus::default(),
-            flanger: Flanger::default(),
-            phaser: Phaser::default(),
             stereo_balance: StereoBalance::default(),
             enabled: true,
         }
@@ -50,14 +38,6 @@ impl DspChain {
     pub fn process_frame(&mut self, frame: &mut [f32]) {
         if !self.enabled {
             return;
-        }
-
-        // 1. ReplayGain (Pre-amp)
-        if self.replay_gain.enabled {
-            let gain = 10.0f32.powf(self.replay_gain.preamp / 20.0);
-            for s in frame.iter_mut() {
-                *s *= gain;
-            }
         }
 
         // Apply Preamp (Only if Equalizer module is active/enabled as per UI logic)
@@ -76,9 +56,14 @@ impl DspChain {
             self.noise_gate.process(frame);
         }
 
-        // Bass Boost
-        if self.bass_boost.enabled {
-            self.bass_boost.process(frame);
+        // Sub Bass
+        if self.sub_bass.enabled {
+            self.sub_bass.process(frame);
+        }
+
+        // Mid Bass
+        if self.mid_bass.enabled {
+            self.mid_bass.process(frame);
         }
 
         // Voice Boost
@@ -91,26 +76,6 @@ impl DspChain {
             self.compressor.process(frame);
         }
 
-        // Flanger
-        if self.flanger.enabled {
-            self.flanger.process(frame);
-        }
-
-        // Phaser
-        if self.phaser.enabled {
-            self.phaser.process(frame);
-        }
-
-        // Chorus
-        if self.chorus.enabled {
-            self.chorus.process(frame);
-        }
-
-        // Delay
-        if self.delay.enabled {
-            self.delay.process(frame);
-        }
-
         // Reverb
         if self.reverb.enabled {
             self.reverb.process(frame);
@@ -121,14 +86,8 @@ impl DspChain {
             if self.stereo_expander.enabled {
                 self.stereo_expander.process(frame);
             }
-            if self.crossfeed.enabled {
-                self.crossfeed.process(frame);
-            }
             if self.stereo_balance.enabled {
                 self.stereo_balance.process(frame);
-            }
-            if self.hrtf.enabled {
-                self.hrtf.process(frame);
             }
         }
 
@@ -140,23 +99,17 @@ impl DspChain {
     
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.equalizer.set_sample_rate(sample_rate);
-        self.bass_boost.set_sample_rate(sample_rate);
+        self.sub_bass.set_sample_rate(sample_rate);
+        self.mid_bass.set_sample_rate(sample_rate);
         self.voice_boost.set_sample_rate(sample_rate);
         // FIXME: self.compressor does not have set_sample_rate on basic setup, keeping it simple for now
-        self.delay.set_sample_rate(sample_rate);
-        self.chorus.set_sample_rate(sample_rate);
-        self.flanger.set_sample_rate(sample_rate);
-        self.phaser.set_sample_rate(sample_rate);
     }
 
     pub fn set_channel_count(&mut self, channels: usize) {
         self.equalizer.set_channel_count(channels);
-        self.bass_boost.resize_channels(channels);
+        self.sub_bass.resize_channels(channels);
+        self.mid_bass.resize_channels(channels);
         self.voice_boost.resize_channels(channels);
-        self.delay.resize_channels(channels);
-        self.chorus.resize_channels(channels);
-        self.flanger.resize_channels(channels);
-        self.phaser.resize_channels(channels);
     }
 
     pub fn get_preamp_db(&self) -> f32 {
@@ -505,9 +458,8 @@ pub struct Reverb {
 
 impl Reverb {
     pub fn new() -> Self {
-        // Freeverb tunings (Stereo spread usually handled by offsetting sizes, here mono simplified for clarity then duplicated or offset)
-        // Standard Schroeder/Moorer comb tunings
-        let comb_tunings = [1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617];
+        // Peines un 50% más amplios para un efecto "Hall" Premium mucho más notorio
+        let comb_tunings = [1617, 1693, 1781, 1867, 1951, 2053, 2153, 2251];
         let allpass_tunings = [556, 441, 341, 225];
 
         let combs = comb_tunings.iter().map(|&size| CombFilter::new(size)).collect();
@@ -517,12 +469,12 @@ impl Reverb {
             combs,
             allpasses,
             enabled: false,
-            room_size: 0.5,
-            damping: 0.5,
+            room_size: 0.92, // Tamaño muy grande de habitación
+            damping: 0.35,
             width: 1.0,
-            wet: 0.3,
-            dry: 0.8,
-            gain: 0.015,
+            wet: 0.85, // Altamente presente en la mezcla
+            dry: 0.6,
+            gain: 0.025, // Mayor ganancia de la señal húmeda
         };
         r.update_params();
         r
@@ -771,23 +723,46 @@ impl BiquadFilter {
 // --- New Audio Effects Definitions ---
 
 #[derive(Clone)]
-pub struct BassBoost { 
+pub struct SubBass { 
     pub enabled: bool, 
     pub freq: f32, 
     pub gain: f32,
     filter: BiquadFilter,
 }
-impl Default for BassBoost { 
+impl Default for SubBass { 
     fn default() -> Self { 
-        Self { enabled: false, freq: 100.0, gain: 0.0, filter: BiquadFilter::new(BiquadFilterType::LowShelf, 100.0, 0.0, 0.707) } 
+        Self { enabled: false, freq: 45.0, gain: 0.0, filter: BiquadFilter::new(BiquadFilterType::LowShelf, 45.0, 0.0, 1.0) } 
     } 
 }
-impl BassBoost {
+impl SubBass {
     pub fn set_sample_rate(&mut self, rate: f32) { self.filter.set_sample_rate(rate); }
     pub fn resize_channels(&mut self, ch: usize) { self.filter.resize_channels(ch); }
     pub fn process(&mut self, frame: &mut [f32]) {
         if self.filter.gain != self.gain {
-            self.filter.set_params(self.freq, self.gain, 0.707);
+            self.filter.set_params(self.freq, self.gain, 1.0);
+        }
+        self.filter.process_frame(frame);
+    }
+}
+
+#[derive(Clone)]
+pub struct MidBass { 
+    pub enabled: bool, 
+    pub freq: f32, 
+    pub gain: f32,
+    filter: BiquadFilter,
+}
+impl Default for MidBass { 
+    fn default() -> Self { 
+        Self { enabled: false, freq: 100.0, gain: 0.0, filter: BiquadFilter::new(BiquadFilterType::Peak, 100.0, 0.0, 0.8) } 
+    } 
+}
+impl MidBass {
+    pub fn set_sample_rate(&mut self, rate: f32) { self.filter.set_sample_rate(rate); }
+    pub fn resize_channels(&mut self, ch: usize) { self.filter.resize_channels(ch); }
+    pub fn process(&mut self, frame: &mut [f32]) {
+        if self.filter.gain != self.gain {
+            self.filter.set_params(self.freq, self.gain, 0.8);
         }
         self.filter.process_frame(frame);
     }
@@ -796,34 +771,47 @@ impl BassBoost {
 #[derive(Clone)]
 pub struct VoiceBoost { 
     pub enabled: bool, 
-    pub freq: f32, 
     pub gain: f32, 
-    pub bandwidth: f32,
-    filter: BiquadFilter,
+    filter1: BiquadFilter,
+    filter2: BiquadFilter,
 }
 impl Default for VoiceBoost { 
     fn default() -> Self { 
-        Self { enabled: false, freq: 2000.0, gain: 0.0, bandwidth: 1.0, filter: BiquadFilter::new(BiquadFilterType::Peak, 2000.0, 0.0, 1.0) } 
+        Self { 
+            enabled: false, 
+            gain: 0.0, 
+            filter1: BiquadFilter::new(BiquadFilterType::Peak, 1500.0, 0.0, 0.8),
+            filter2: BiquadFilter::new(BiquadFilterType::Peak, 3000.0, 0.0, 0.8)
+        } 
     } 
 }
 impl VoiceBoost {
-    pub fn set_sample_rate(&mut self, rate: f32) { self.filter.set_sample_rate(rate); }
-    pub fn resize_channels(&mut self, ch: usize) { self.filter.resize_channels(ch); }
+    pub fn set_sample_rate(&mut self, rate: f32) { 
+        self.filter1.set_sample_rate(rate); 
+        self.filter2.set_sample_rate(rate); 
+    }
+    pub fn resize_channels(&mut self, ch: usize) { 
+        self.filter1.resize_channels(ch);
+        self.filter2.resize_channels(ch);
+    }
     pub fn process(&mut self, frame: &mut [f32]) {
-        if self.filter.gain != self.gain {
-            self.filter.set_params(self.freq, self.gain, self.bandwidth);
+        if self.filter1.gain != (self.gain * 0.6) {
+            self.filter1.set_params(1500.0, self.gain * 0.6, 0.8);
+            self.filter2.set_params(3000.0, self.gain * 0.4, 0.8);
         }
-        self.filter.process_frame(frame);
+        self.filter1.process_frame(frame);
+        self.filter2.process_frame(frame);
     }
 }
 
 #[derive(Clone)]
 pub struct StereoExpander { 
     pub enabled: bool, 
-    pub width: f32 
+    pub width: f32,
+    delay_l: f32, 
 }
 impl Default for StereoExpander { 
-    fn default() -> Self { Self { enabled: false, width: 1.0 } } 
+    fn default() -> Self { Self { enabled: false, width: 1.0, delay_l: 0.0 } } 
 }
 impl StereoExpander {
     pub fn process(&mut self, frame: &mut [f32]) {
@@ -832,15 +820,23 @@ impl StereoExpander {
             let r = frame[1];
             let mid = (l + r) * 0.5;
             let side = (l - r) * 0.5;
-            frame[0] = mid + side * self.width;
-            frame[1] = mid - side * self.width;
+            
+            if self.width <= 1.0 {
+                // Downmix a mono
+                frame[0] = mid + side * self.width;
+                frame[1] = mid - side * self.width;
+            } else {
+                // Decorrelación sutil usando delay de 1 muestra para evitar artificialidad y expandir la fase
+                let delayed_side = self.delay_l;
+                self.delay_l = side;
+                
+                let extra = delayed_side * (self.width - 1.0) * 0.5;
+                frame[0] = l + extra;
+                frame[1] = r - extra;
+            }
         }
     }
 }
-
-#[derive(Clone)]
-pub struct ReplayGain { pub enabled: bool, pub preamp: f32 }
-impl Default for ReplayGain { fn default() -> Self { Self { enabled: false, preamp: 0.0 } } }
 
 #[derive(Clone)]
 pub struct NoiseGate { 
@@ -876,36 +872,6 @@ impl NoiseGate {
         }
     }
 }
-
-#[derive(Clone)]
-pub struct Crossfeed { 
-    pub enabled: bool, 
-    pub amount: f32,
-    // Simple 1-pole lowpass for crossfeed signal to simulate head shadowing
-    lp_l: f32, lp_r: f32,
-}
-impl Default for Crossfeed { 
-    fn default() -> Self { Self { enabled: false, amount: 0.0, lp_l: 0.0, lp_r: 0.0 } } 
-}
-impl Crossfeed {
-    pub fn process(&mut self, frame: &mut [f32]) {
-        if frame.len() == 2 && self.amount > 0.0 {
-            let l = frame[0];
-            let r = frame[1];
-            // Simple ~700Hz lowpass for the crossfeed
-            self.lp_l = 0.9 * self.lp_l + 0.1 * l;
-            self.lp_r = 0.9 * self.lp_r + 0.1 * r;
-            frame[0] = l + self.lp_r * self.amount;
-            frame[1] = r + self.lp_l * self.amount;
-            
-            // Normalize level slightly
-            let norm = 1.0 / (1.0 + self.amount * 0.5);
-            frame[0] *= norm;
-            frame[1] *= norm;
-        }
-    }
-}
-
 #[derive(Clone)]
 pub struct Limiter { 
     pub enabled: bool, 
@@ -935,202 +901,6 @@ impl Limiter {
             for s in frame.iter_mut() {
                 *s *= attenuation;
             }
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct HrtfSpatializer { pub enabled: bool }
-impl Default for HrtfSpatializer { fn default() -> Self { Self { enabled: false } } }
-impl HrtfSpatializer {
-    pub fn process(&mut self, frame: &mut [f32]) {
-        if !self.enabled || frame.len() < 2 { return; }
-        // Placeholder para futura integración con crate `hrtf` + `rustfft`.
-        // Por el momento previene el error en la llamada process_frame y hace bypass.
-    }
-}
-
-#[derive(Clone)]
-pub struct Delay { 
-    pub enabled: bool, 
-    pub time: f32, 
-    pub feedback: f32, 
-    pub mix: f32,
-    buffer: Vec<Vec<f32>>,
-    write_idx: usize,
-    sample_rate: f32,
-}
-impl Default for Delay { 
-    fn default() -> Self { Self { enabled: false, time: 0.3, feedback: 0.3, mix: 0.3, buffer: vec![vec![0.0; 88200]; 2], write_idx: 0, sample_rate: 44100.0 } } 
-}
-impl Delay {
-    pub fn resize_channels(&mut self, ch: usize) {
-        self.buffer.resize(ch, vec![0.0; (self.sample_rate * 2.0) as usize]);
-    }
-    pub fn set_sample_rate(&mut self, rate: f32) {
-        self.sample_rate = rate;
-        for b in &mut self.buffer { b.resize((rate * 2.0) as usize, 0.0); }
-    }
-    pub fn process(&mut self, frame: &mut [f32]) {
-        let delay_samples = (self.time * self.sample_rate) as usize;
-        let max_samples = self.buffer[0].len();
-        if delay_samples == 0 || max_samples == 0 { return; }
-        
-        for (i, sample) in frame.iter_mut().enumerate() {
-            if i >= self.buffer.len() { continue; }
-            let buf = &mut self.buffer[i];
-            
-            let read_idx = (self.write_idx + max_samples - delay_samples) % max_samples;
-            let delayed = buf[read_idx];
-            
-            buf[self.write_idx] = *sample + delayed * self.feedback;
-            *sample = *sample * (1.0 - self.mix) + delayed * self.mix;
-        }
-        self.write_idx = (self.write_idx + 1) % max_samples;
-    }
-}
-
-#[derive(Clone)]
-pub struct Chorus { 
-    pub enabled: bool, 
-    pub rate: f32, 
-    pub depth: f32, 
-    pub mix: f32,
-    buffer: Vec<Vec<f32>>,
-    write_idx: usize,
-    lfo_phase: f32,
-    sample_rate: f32,
-}
-impl Default for Chorus { 
-    fn default() -> Self { Self { enabled: false, rate: 1.0, depth: 0.5, mix: 0.5, buffer: vec![vec![0.0; 4410]; 2], write_idx: 0, lfo_phase: 0.0, sample_rate: 44100.0 } } 
-}
-impl Chorus {
-    pub fn resize_channels(&mut self, ch: usize) { self.buffer.resize(ch, vec![0.0; (self.sample_rate * 0.1) as usize]); }
-    pub fn set_sample_rate(&mut self, rate: f32) { self.sample_rate = rate; for b in &mut self.buffer { b.resize((rate * 0.1) as usize, 0.0); } }
-    pub fn process(&mut self, frame: &mut [f32]) {
-        let base_delay = 0.02; // 20ms
-        let mod_delay = 0.01;  // 10ms
-        let max_samples = self.buffer[0].len();
-        if max_samples < 2 { return; }
-        
-        use std::f32::consts::PI;
-        let lfo = (self.lfo_phase * 2.0 * PI).sin();
-        self.lfo_phase += self.rate / self.sample_rate;
-        if self.lfo_phase > 1.0 { self.lfo_phase -= 1.0; }
-        
-        let current_delay = base_delay + mod_delay * self.depth * lfo;
-        let delay_samples = current_delay * self.sample_rate;
-        
-        for (i, sample) in frame.iter_mut().enumerate() {
-            if i >= self.buffer.len() { continue; }
-            let buf = &mut self.buffer[i];
-            
-            let read_idx_f = (self.write_idx as f32 + max_samples as f32 - delay_samples) % (max_samples as f32);
-            let read_idx_i = read_idx_f as usize;
-            let frac = read_idx_f - read_idx_i as f32;
-            let next_idx = (read_idx_i + 1) % max_samples;
-            
-            let delayed = buf[read_idx_i] * (1.0 - frac) + buf[next_idx] * frac;
-            buf[self.write_idx] = *sample;
-            *sample = *sample * (1.0 - self.mix) + delayed * self.mix;
-        }
-        self.write_idx = (self.write_idx + 1) % max_samples;
-    }
-}
-
-#[derive(Clone)]
-pub struct Flanger { 
-    pub enabled: bool, 
-    pub rate: f32, 
-    pub depth: f32, 
-    pub feedback: f32, 
-    pub mix: f32,
-    buffer: Vec<Vec<f32>>,
-    write_idx: usize,
-    lfo_phase: f32,
-    sample_rate: f32,
-}
-impl Default for Flanger { 
-    fn default() -> Self { Self { enabled: false, rate: 0.5, depth: 0.5, feedback: 0.5, mix: 0.5, buffer: vec![vec![0.0; 882]; 2], write_idx: 0, lfo_phase: 0.0, sample_rate: 44100.0 } } 
-}
-impl Flanger {
-    pub fn resize_channels(&mut self, ch: usize) { self.buffer.resize(ch, vec![0.0; (self.sample_rate * 0.02) as usize]); }
-    pub fn set_sample_rate(&mut self, rate: f32) { self.sample_rate = rate; for b in &mut self.buffer { b.resize((rate * 0.02) as usize, 0.0); } }
-    pub fn process(&mut self, frame: &mut [f32]) {
-        let base_delay = 0.001; // 1ms
-        let mod_delay = 0.004;  // 4ms
-        let max_samples = self.buffer[0].len();
-        if max_samples < 2 { return; }
-        
-        use std::f32::consts::PI;
-        // Sweep 0 to 1 instead of -1 to 1 for distinct flanger comb effect
-        let lfo = ((self.lfo_phase * 2.0 * PI).sin() * 0.5) + 0.5;
-        self.lfo_phase += self.rate / self.sample_rate;
-        if self.lfo_phase > 1.0 { self.lfo_phase -= 1.0; }
-        
-        let current_delay = base_delay + mod_delay * self.depth * lfo;
-        let delay_samples = current_delay * self.sample_rate;
-        
-        for (i, sample) in frame.iter_mut().enumerate() {
-            if i >= self.buffer.len() { continue; }
-            let buf = &mut self.buffer[i];
-            
-            let read_idx_f = (self.write_idx as f32 + max_samples as f32 - delay_samples) % (max_samples as f32);
-            let read_idx_i = read_idx_f as usize;
-            let frac = read_idx_f - read_idx_i as f32;
-            let next_idx = (read_idx_i + 1) % max_samples;
-            
-            let delayed = buf[read_idx_i] * (1.0 - frac) + buf[next_idx] * frac;
-            buf[self.write_idx] = *sample + delayed * self.feedback;
-            *sample = *sample * (1.0 - self.mix) + delayed * self.mix;
-        }
-        self.write_idx = (self.write_idx + 1) % max_samples;
-    }
-}
-
-#[derive(Clone)]
-pub struct Phaser { 
-    pub enabled: bool, 
-    pub rate: f32, 
-    pub depth: f32, 
-    pub feedback: f32, 
-    pub mix: f32,
-    filters: [BiquadFilter; 4],
-    lfo_phase: f32,
-    sample_rate: f32,
-}
-impl Default for Phaser { 
-    fn default() -> Self { 
-        let f = BiquadFilter::new(BiquadFilterType::AllPass, 1000.0, 0.0, 0.707);
-        Self { enabled: false, rate: 0.5, depth: 0.5, feedback: 0.5, mix: 0.5, filters: [f.clone(), f.clone(), f.clone(), f.clone()], lfo_phase: 0.0, sample_rate: 44100.0 } 
-    } 
-}
-impl Phaser {
-    pub fn resize_channels(&mut self, ch: usize) { for f in &mut self.filters { f.resize_channels(ch); } }
-    pub fn set_sample_rate(&mut self, rate: f32) { self.sample_rate = rate; for f in &mut self.filters { f.set_sample_rate(rate); } }
-    pub fn process(&mut self, frame: &mut [f32]) {
-        use std::f32::consts::PI;
-        let lfo = ((self.lfo_phase * 2.0 * PI).sin() * 0.5) + 0.5; // 0..1
-        self.lfo_phase += self.rate / self.sample_rate;
-        if self.lfo_phase > 1.0 { self.lfo_phase -= 1.0; }
-        
-        let min_freq = 400.0f32;
-        let max_freq = 4000.0f32;
-        // Exponential sweep for better perception
-        let current_freq = min_freq * (max_freq / min_freq).powf(lfo * self.depth);
-        
-        for f in &mut self.filters {
-            f.set_params(current_freq, 0.0, 0.707);
-        }
-        
-        let mut f_frame = frame.to_vec(); // Copy for dry/wet mix
-        self.filters[0].process_frame(&mut f_frame);
-        self.filters[1].process_frame(&mut f_frame);
-        self.filters[2].process_frame(&mut f_frame);
-        self.filters[3].process_frame(&mut f_frame);
-        
-        for (i, sample) in frame.iter_mut().enumerate() {
-            *sample = *sample * (1.0 - self.mix) + f_frame[i] * self.mix;
         }
     }
 }

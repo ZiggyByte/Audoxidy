@@ -7,7 +7,7 @@ use symphonia::core::probe::Hint;
 use symphonia::core::formats::FormatOptions;
 use symphonia::core::meta::MetadataOptions;
 use symphonia::core::codecs::DecoderOptions;
-use ringbuf::{HeapRb, traits::{Split, Consumer, Producer}};
+use ringbuf::{HeapRb, traits::{Split, Consumer, Producer, Observer}};
 use ringbuf::wrap::caching::Caching;
 
 // Define aliases based on ringbuf 0.4 structure
@@ -121,6 +121,14 @@ pub struct AudioState {
     pub bit_depth_display: String,
     pub buffer_size: u32,
     pub config_channels: ChannelConfig, // Store intent
+    
+    // Downmix Variables Config
+    pub downmix_center: f32,
+    pub downmix_lfe: f32,
+    pub downmix_surround: f32,
+    pub downmix_center_enabled: bool,
+    pub downmix_lfe_enabled: bool,
+    pub downmix_surround_enabled: bool,
 }
 
 // Adapters removed (not needed for Rubato 1.0 with Vec<Vec<f32>>)
@@ -142,6 +150,13 @@ impl Default for AudioState {
             bit_depth_display: "Unknown".to_string(),
             buffer_size: 0,
             config_channels: ChannelConfig::Auto,
+            
+            downmix_center: 0.81,
+            downmix_lfe: 0.66,
+            downmix_surround: 0.73,
+            downmix_center_enabled: false,
+            downmix_lfe_enabled: false,
+            downmix_surround_enabled: false,
         }
     }
 }
@@ -621,6 +636,24 @@ impl AudioEngine {
                 }
             }
 
+             // Control de Latencia (Virtual Buffer Size) limitando el RingBuffer
+             let (out_rate, out_channels) = {
+                 let s = state.read();
+                 (s.device_sample_rate, s.channels as usize)
+             };
+             
+             // Target: 30ms of latency (0.030 seconds) for zero-latency slider response
+             let target_latency_samples = (out_rate as usize * out_channels * 30) / 1000;
+             
+             let should_wait = if let Some(producer) = engine.buffer_producer.lock().as_ref() {
+                 producer.occupied_len() >= target_latency_samples
+             } else { false };
+             
+             if should_wait {
+                 std::thread::sleep(std::time::Duration::from_millis(2));
+                 continue;
+             }
+
              if let (Some(fmt), Some(dec)) = (current_format.as_mut(), current_decoder.as_mut()) {
                  let packet = match fmt.next_packet() {
                      Ok(packet) => packet,
@@ -719,14 +752,33 @@ impl AudioEngine {
                              let input_adapter = SequentialSliceOfVecs::new(&inputs, src_channels, needed).unwrap();
                              let mut output_adapter = SequentialSliceOfVecs::new_mut(&mut outputs, src_channels, out_frames).unwrap();
                              
+                             let downmix_conf = {
+                                 let s = state.read();
+                                 (
+                                     if s.downmix_center_enabled { s.downmix_center } else { 0.7071 },
+                                     if s.downmix_lfe_enabled { s.downmix_lfe } else { 0.6666 },
+                                     if s.downmix_surround_enabled { s.downmix_surround } else { 0.7671 },
+                                     if s.downmix_surround_enabled { s.downmix_surround } else { 0.8071 },
+                                 )
+                             };
+                             
                              if let Ok(_) = rs.process_into_buffer(&input_adapter, &mut output_adapter, None) {
-                                  let mixed = Self::mix_channels_planar(&outputs, out_frames, src_channels, out_channels as usize, &channel_map);
+                                  let mixed = Self::mix_channels_planar(&outputs, out_frames, src_channels, out_channels as usize, &channel_map, downmix_conf);
                                   output_accumulator.extend(mixed);
                              }
                          }
 
                       } else {
-                           let mixed = Self::mix_channels_direct(&audio_buf, audio_buf.frames(), spec.channels.count(), out_channels as usize, &channel_map);
+                           let downmix_conf = {
+                               let s = state.read();
+                               (
+                                   if s.downmix_center_enabled { s.downmix_center } else { 0.7071 },
+                                   if s.downmix_lfe_enabled { s.downmix_lfe } else { 0.6666 },
+                                   if s.downmix_surround_enabled { s.downmix_surround } else { 0.7671 },
+                                   if s.downmix_surround_enabled { s.downmix_surround } else { 0.8071 },
+                               )
+                           };
+                           let mixed = Self::mix_channels_direct(&audio_buf, audio_buf.frames(), spec.channels.count(), out_channels as usize, &channel_map, downmix_conf);
                            output_accumulator.extend(mixed);
                       }
 
@@ -755,7 +807,7 @@ impl AudioEngine {
         }
     }
     
-    pub(crate) fn mix_channels_planar(input: &Vec<Vec<f32>>, frames: usize, in_channels: usize, out_channels: usize, map: &ChannelMap) -> Vec<f32> {
+    pub(crate) fn mix_channels_planar(input: &Vec<Vec<f32>>, frames: usize, in_channels: usize, out_channels: usize, map: &ChannelMap, dm_conf: (f32, f32, f32, f32)) -> Vec<f32> {
         let mut out = Vec::with_capacity(frames * out_channels);
         
         for i in 0..frames {
@@ -768,12 +820,12 @@ impl AudioEngine {
              let sbl = map.sbl.and_then(|idx| input.get(idx)).map(|v| v[i]).unwrap_or(0.0);
              let sbr = map.sbr.and_then(|idx| input.get(idx)).map(|v| v[i]).unwrap_or(0.0);
 
-             Self::mix_sample_into_vec(&mut out, out_channels, fl, fr, c, lfe, sl, sr, sbl, sbr, in_channels);
+             Self::mix_sample_into_vec(&mut out, out_channels, fl, fr, c, lfe, sl, sr, sbl, sbr, in_channels, dm_conf);
         }
         out
     }
 
-    fn mix_channels_direct(buffer: &symphonia::core::audio::AudioBuffer<f32>, frames: usize, src_ch: usize, dst_ch: usize, map: &ChannelMap) -> Vec<f32> {
+    fn mix_channels_direct(buffer: &symphonia::core::audio::AudioBuffer<f32>, frames: usize, src_ch: usize, dst_ch: usize, map: &ChannelMap, dm_conf: (f32, f32, f32, f32)) -> Vec<f32> {
          let planes = buffer.planes();
          let mut out = Vec::with_capacity(frames * dst_ch);
          
@@ -791,7 +843,7 @@ impl AudioEngine {
                let sbl = map.sbl.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
                let sbr = map.sbr.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
               
-              Self::mix_sample_into_vec(&mut out, dst_ch, fl, fr, c, lfe, sl, sr, sbl, sbr, src_ch);
+              Self::mix_sample_into_vec(&mut out, dst_ch, fl, fr, c, lfe, sl, sr, sbl, sbr, src_ch, dm_conf);
          }
          out
     }
@@ -834,22 +886,16 @@ impl AudioEngine {
          map
     }
 
-    fn mix_sample_into_vec(out: &mut Vec<f32>, dst_ch: usize, fl: f32, fr: f32, c: f32, lfe: f32, sl: f32, sr: f32, sbl: f32, sbr: f32, src_ch_count: usize) {
+    fn mix_sample_into_vec(out: &mut Vec<f32>, dst_ch: usize, fl: f32, fr: f32, c: f32, lfe: f32, sl: f32, sr: f32, sbl: f32, sbr: f32, src_ch_count: usize, dm_conf: (f32, f32, f32, f32)) {
         // Lógica de mezcla robusta y normalizada
-
-        // Coeficientes estándar para downmix
-        // Center a L/R: -3dB (~0.707)
-        // LFE a L/R: generalmente se descarta en estéreo puro o se mezcla bajito si los altavoces son full-range.
-        // Surround a L/R: -3dB o -6dB.
         
         // Si la fuente es multicanal (>=5.1) y el destino es estéreo/2.1/4.0
         let is_downmix = src_ch_count >= 6 && dst_ch < 6;
         
-        let center_mix = if is_downmix { c * 0.7071 } else { c };
-        let sur_mix_l = if is_downmix { sl * 0.7071 + sbl * 0.5 } else { sl };
-        let sur_mix_r = if is_downmix { sr * 0.7071 + sbr * 0.5 } else { sr };
-        // LFE mixing: often controversial. Let's keep it low if downmixing to stereo.
-        let lfe_mix = if is_downmix { lfe * 0.5 } else { lfe };
+        let center_mix = if is_downmix { c * dm_conf.0 } else { c };
+        let sur_mix_l = if is_downmix { sl * dm_conf.2 + sbl * dm_conf.3 } else { sl };
+        let sur_mix_r = if is_downmix { sr * dm_conf.2 + sbr * dm_conf.3 } else { sr };
+        let lfe_mix = if is_downmix { lfe * dm_conf.1 } else { lfe };
 
         match dst_ch {
              1 => { 

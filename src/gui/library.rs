@@ -1,227 +1,194 @@
-use eframe::egui;
-use std::sync::Arc;
-use crate::library::db::MediaLibrary;
-use crate::library::scanner::LibraryScanner;
-use crate::audio::AudioManager;
-use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_BG};
+use iced::{
+    widget::{button, column, container, row, scrollable, text, text_input, Space, image},
+    Alignment, Color, Element, Length, Theme,
+};
+use std::sync::{Arc, Mutex};
+use crate::db::Database;
+use crate::gui::app::Message;
+use crate::gui::theme::*;
 
-#[derive(Debug, Clone, Copy, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-enum LibraryView {
-    #[default]
-    List,
-    DetailedList,
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LibraryViewMode {
     Grid,
+    DetailedList,
+    SimpleList,
 }
 
-pub fn show_library(
-    ui: &mut egui::Ui,
-    audio_manager: &AudioManager,
-    library: Arc<MediaLibrary>,
-    scanner: &LibraryScanner,
-) {
-    // Usamos un ID fijo para que el estado persista independientemente del docking
-    let view_id = egui::Id::new("library_view_state_global");
-    let mut view = ui.data_mut(|d| *d.get_temp_mut_or_default::<LibraryView>(view_id));
+pub struct LibraryManager {
+    pub view_mode: LibraryViewMode,
+    pub search_query: String,
+    pub expanded_album: Option<String>,
+}
 
-    ui.vertical(|ui| {
-        ui.horizontal(|ui| {
-            ui.heading("Biblioteca Musical");
-            
-            ui.add_space(20.0);
-            
-            // Selector de vistas
-            ui.selectable_value(&mut view, LibraryView::List, "📄");
-            ui.selectable_value(&mut view, LibraryView::DetailedList, "🖼️ Lista");
-            ui.selectable_value(&mut view, LibraryView::Grid, "📱 Cuadrícula");
-
-            ui.data_mut(|d| d.insert_temp(view_id, view));
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("📁 Escanear Carpeta").clicked() {
-                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        scanner.scan_directory(path);
-                    }
-                }
-            });
-        });
-
-        ui.separator();
-
-        // Obtener canciones de la base de datos
-        let songs = library.get_all_songs().unwrap_or_default();
-
-        if songs.is_empty() {
-            ui.vertical_centered(|ui| {
-                ui.add_space(20.0);
-                ui.label("Tu biblioteca está vacía.");
-                ui.label("Haz clic en 'Escanear Carpeta' para añadir música.");
-            });
-        } else {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                match view {
-                    LibraryView::List => draw_list_view(ui, audio_manager, &songs),
-                    LibraryView::DetailedList => draw_detailed_list_view(ui, audio_manager, &songs),
-                    LibraryView::Grid => draw_grid_view(ui, audio_manager, &songs),
-                }
-            });
+impl Default for LibraryManager {
+    fn default() -> Self {
+        Self {
+            view_mode: LibraryViewMode::Grid,
+            search_query: String::new(),
+            expanded_album: None,
         }
-    });
-}
-
-fn draw_list_view(ui: &mut egui::Ui, audio_manager: &AudioManager, songs: &[crate::library::metadata::LibrarySong]) {
-    for song in songs {
-        ui.horizontal(|ui| {
-            ui.add(egui::Image::new(egui::include_image!("../../assets/icons/library-music-outlined.svg"))
-                .tint(COLOR_TEXT_PRIMARY)
-                .max_width(14.0));
-            
-            let label = format!("{} - {}", song.artist, song.title);
-            if ui.add(egui::Button::new(label).selected(false).frame(false)).clicked() {
-                let _ = audio_manager.load_file(&song.path);
-                audio_manager.play();
-            }
-        });
     }
 }
 
-fn draw_detailed_list_view(ui: &mut egui::Ui, audio_manager: &AudioManager, songs: &[crate::library::metadata::LibrarySong]) {
-    for song in songs {
-        ui.horizontal(|ui| {
-            // Miniatura (Placeholder o extracción rápida)
-            let thumb_size = 40.0;
-            let thumb_rect = ui.allocate_exact_size(egui::vec2(thumb_size, thumb_size), egui::Sense::hover()).0;
-            ui.painter().rect_filled(thumb_rect, 4.0, egui::Color32::from_gray(50));
-            ui.painter().text(thumb_rect.center(), egui::Align2::CENTER_CENTER, "🎵", egui::FontId::proportional(20.0), COLOR_TEXT_PRIMARY);
-
-            ui.vertical(|ui| {
-                ui.label(egui::RichText::new(&song.title).strong());
-                ui.label(egui::RichText::new(&song.artist).size(12.0));
-            });
-
-            if ui.interact(ui.max_rect(), ui.id().with(&song.path), egui::Sense::click()).clicked() {
-                let _ = audio_manager.load_file(&song.path);
-                audio_manager.play();
-            }
-        });
-        ui.add_space(5.0);
-    }
-}
-
-fn draw_grid_view(ui: &mut egui::Ui, audio_manager: &AudioManager, songs: &[crate::library::metadata::LibrarySong]) {
-    // Agrupar por álbum
-    let mut albums: std::collections::HashMap<String, Vec<&crate::library::metadata::LibrarySong>> = std::collections::HashMap::new();
-    for song in songs {
-        albums.entry(song.album.clone()).or_default().push(song);
-    }
-
-    let item_width = 140.0;
-    let spacing = 15.0;
-    let available_width = ui.available_width();
-    let columns = (available_width / (item_width + spacing)).floor().max(1.0) as usize;
+pub fn view<'a>(
+    manager: &'a LibraryManager,
+    database: &'a Arc<Mutex<Database>>,
+) -> Element<'a, Message> {
     
-    // Estado de expansión
-    let expanded_album_key = egui::Id::new("library_expanded_album_global");
-    let mut expanded_album = ui.data_mut(|d| d.get_temp::<String>(expanded_album_key));
-
-    let mut album_list: Vec<_> = albums.keys().cloned().collect();
-    album_list.sort();
-
-    let rows = (album_list.len() as f32 / columns as f32).ceil() as usize;
-
-    for row in 0..rows {
-        ui.horizontal(|ui| {
-            for col in 0..columns {
-                let idx = row * columns + col;
-                if idx >= album_list.len() { break; }
-                
-                let album_name = &album_list[idx];
-                let songs_in_album = &albums[album_name];
-                let artist_name = songs_in_album[0].artist.clone();
-                let year = songs_in_album[0].year.map(|y| y.to_string()).unwrap_or_default();
-
-                ui.vertical(|ui| {
-                    let rect = ui.allocate_exact_size(egui::vec2(item_width, item_width), egui::Sense::click()).0;
-                    
-                    // Tarjeta de álbum (Capa 2: Portada o Placeholder)
-                    ui.painter().rect_filled(rect, 8.0, COLOR_BG.linear_multiply(1.5));
-                    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "💿", egui::FontId::proportional(40.0), COLOR_TEXT_PRIMARY);
-
-                    ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.add(egui::Label::new(egui::RichText::new(album_name).strong()).truncate());
-                            ui.add(egui::Label::new(egui::RichText::new(&artist_name).size(11.0).color(egui::Color32::from_gray(150))).truncate());
-                            if !year.is_empty() {
-                                ui.label(egui::RichText::new(&year).size(10.0).color(egui::Color32::from_gray(100)));
-                            }
-                        });
-                        
-                        // Flecha de Despliegue (Chevron)
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let is_expanded = expanded_album.as_ref() == Some(album_name);
-                            let icon = if is_expanded { "🔼" } else { "🔽" };
-                            if ui.selectable_label(is_expanded, icon).clicked() {
-                                if is_expanded {
-                                    expanded_album = None;
-                                } else {
-                                    expanded_album = Some(album_name.clone());
-                                }
-                                ui.data_mut(|d| d.insert_temp(expanded_album_key, expanded_album.clone()));
-                            }
-                        });
-                    });
-
-                    if ui.interact(rect, ui.id().with(album_name), egui::Sense::click()).clicked() {
-                        // Play album logic
-                    }
-                });
+    // Contenido Superior (Lista o Cuadrícula)
+    let content: Element<'a, Message> = match manager.view_mode {
+        LibraryViewMode::Grid => {
+            // Recolectar álbumes en items con Strings owned para evitar el error E0597 de lifetimes.
+            let mut db_albums: Vec<(String, String, String, String, Option<String>)> = Vec::new();
+            if let Ok(db) = database.lock() {
+                if let Ok(albums) = db.get_all_albums() {
+                    db_albums = albums;
+                }
             }
-        });
 
-        // Contenido Expandido (Inline Expansion)
-        if let Some(expanded_name) = &expanded_album {
-            // Verificar si el álbum expandido está en esta fila
-            let start_idx = row * columns;
-            let end_idx = (row + 1) * columns;
-            let current_row_albums = &album_list[start_idx..end_idx.min(album_list.len())];
-            
-            if current_row_albums.contains(expanded_name) {
-                ui.add_space(10.0);
-                ui.vertical(|ui| {
-                    ui.painter().rect_filled(ui.available_rect_before_wrap(), 4.0, egui::Color32::from_black_alpha(50));
-                    ui.indent("tracklist", |ui| {
-                        let album_songs = &albums[expanded_name];
-                        for song in album_songs {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}.", song.track_number.unwrap_or(0)));
-                                if ui.link(&song.title).clicked() {
-                                    let _ = audio_manager.load_file(&song.path);
-                                    audio_manager.play();
-                                }
-                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    ui.label(format!("{}:{:02}", song.duration_sec / 60, song.duration_sec % 60));
-                                });
-                            });
+            if db_albums.is_empty() {
+                container(text("No hay álbumes o escaneando la biblioteca...").color(COLOR_TEXT_SECONDARY))
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .center_x(Length::Fill)
+                    .center_y(Length::Fill)
+                    .into()
+            } else {
+                // Dibujamos una columna principal con el scroll
+                let mut grid_col = column![].spacing(20).padding(20);
+                
+                // Agrupamos de a 4 o 5 (hardcoded "responsive" manual en row por simplicidad de flex box)
+                // TODO: Wrap widget de Iced 0.14 nativo.
+                let columns_count = 5; 
+                for row_chunk in db_albums.chunks(columns_count) {
+                    let mut current_row = row![].spacing(20);
+                    let mut active_expansion = None;
+
+                    for (album, artist, _genre, _year, cover_path) in row_chunk {
+                        let is_expanded = manager.expanded_album.as_deref() == Some(album.as_str());
+                        if is_expanded {
+                            active_expansion = Some(album.clone());
                         }
-                    });
-                });
-                ui.add_space(20.0);
+
+                        let album_art: Element<'a, Message> = if let Some(path) = cover_path {
+                            image(iced::widget::image::Handle::from_path(path.clone()))
+                                .width(Length::Fixed(150.0))
+                                .height(Length::Fixed(150.0))
+                                .into()
+                        } else {
+                            container(text("No Cover").color(COLOR_TEXT_SECONDARY))
+                                .width(Length::Fixed(150.0))
+                                .height(Length::Fixed(150.0))
+                                .center_x(Length::Fill)
+                                .center_y(Length::Fill)
+                                .style(|_t: &Theme| container::Style::default().background(Color::from_rgb(0.05, 0.05, 0.05)))
+                                .into()
+                        };
+
+                        let item_col = column![
+                            album_art,
+                            text(artist.clone()).size(13).color(COLOR_TEXT_PRIMARY),
+                            text(album.clone()).size(12).color(COLOR_TEXT_SECONDARY)
+                        ].spacing(5);
+
+                        let card = button(item_col)
+                            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+                            .on_press(Message::ToggleAlbumExpansion(album.clone()));
+                        
+                        current_row = current_row.push(card);
+                    }
+
+                    grid_col = grid_col.push(current_row);
+
+                    // Si hay una expansión activa en esta fila, la dibujamos debajo
+                    if let Some(exp_album) = active_expansion {
+                        let mut album_songs_col = column![].spacing(8).padding(15);
+                        
+                        if let Ok(db) = database.lock() {
+                            if let Ok(songs) = db.get_songs_by_album(&exp_album) {
+                                // Muestra botón para reproducir todo
+                                let play_album_btn = button(text("▶ Reproducir Todo").color(COLOR_BG))
+                                    .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_ACCENT))
+                                    .on_press(Message::PlayAlbum(songs.clone()));
+
+                                album_songs_col = album_songs_col.push(
+                                    row![
+                                        text(format!("Canciones de: {}", exp_album)).size(16).color(COLOR_TEXT_PRIMARY).width(Length::Fill),
+                                        play_album_btn
+                                    ].align_y(Alignment::Center)
+                                );
+
+                                for song in songs {
+                                    let s_clone = song.clone();
+                                    
+                                    let song_row = row![
+                                        text(song.title.clone().unwrap_or_else(|| "Unknown Track".to_string())).color(COLOR_TEXT_PRIMARY).size(14).width(Length::Fill),
+                                        iced::widget::Space::new().width(Length::Fixed(15.0)),
+                                        button(text("+").size(14)).on_press(Message::AddSongToPlaylist(s_clone))
+                                    ].align_y(Alignment::Center);
+                                    
+                                    album_songs_col = album_songs_col.push(song_row);
+                                }
+                            } else {
+                                album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY));
+                            }
+                        }
+
+                        let exp_container = container(album_songs_col)
+                            .width(Length::Fill)
+                            .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+                        grid_col = grid_col.push(exp_container);
+                    }
+                }
+
+                scrollable(grid_col)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
             }
         }
-    }
-}
+        LibraryViewMode::DetailedList => {
+            container(text("Vista Detallada - En desarrollo").color(COLOR_TEXT_PRIMARY)).into()
+        }
+        LibraryViewMode::SimpleList => {
+             container(text("Vista Simple - En desarrollo").color(COLOR_TEXT_PRIMARY)).into()
+        }
+    };
 
-pub fn show_library_filters(ui: &mut egui::Ui, _library: Arc<MediaLibrary>) {
-    ui.vertical(|ui| {
-        ui.heading("Filtros");
-        ui.separator();
+    // Barra de Búsqueda Inferior
+    let bottom_bar = row![
+        text_input("Buscar en Biblioteca...", &manager.search_query)
+            .on_input(Message::LibrarySearchQueryChanged)
+            .width(Length::Fixed(200.0)),
         
-        let _ = ui.selectable_label(true, "📋 Todas las canciones");
-        let _ = ui.selectable_label(false, "👤 Artistas");
-        let _ = ui.selectable_label(false, "💿 Álbumes");
-        let _ = ui.selectable_label(false, "🎸 Géneros");
+        Space::new().width(Length::Fill),
         
-        ui.add_space(20.0);
-        ui.heading("Carpetas");
-        ui.label("📁 Música");
-    });
+        button(text("▶ Todo").size(14))
+            .on_press(Message::PlayLibraryAll),
+        button(text(" Añadir 📁").size(14))
+            .on_press(Message::OpenFolderPicker),
+        button(text(" Cuadrícula").size(14))
+            .on_press(Message::ChangeLibraryViewMode(LibraryViewMode::Grid)),
+        button(text(" Lista").size(14))
+            .on_press(Message::ChangeLibraryViewMode(LibraryViewMode::DetailedList))
+    ]
+    .padding(10)
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    let bottom_container = container(bottom_bar)
+        .width(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // Estructura Final (Resto -> Búsqueda)
+    container(
+        column![
+            content,
+            bottom_container
+        ]
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+    .into()
 }

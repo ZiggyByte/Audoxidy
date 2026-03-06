@@ -6,6 +6,7 @@ pub struct AudioManager {
     engine: AudioEngine,
 }
 
+#[allow(dead_code)]
 impl AudioManager {
     pub fn new() -> Result<Self, String> {
         let engine = AudioEngine::new()?;
@@ -54,6 +55,10 @@ impl AudioManager {
         self.engine.state.read().total_duration_sec
     }
 
+        pub fn clear_eof(&self) {
+        self.engine.state.write().eof_reached = false;
+    }
+
     pub fn load_file(&self, path: &str) -> Result<(), String> {
         self.engine.decode_file(path)
     }
@@ -88,6 +93,10 @@ impl AudioManager {
     #[allow(dead_code)]
     pub fn set_eq_enabled(&self, enabled: bool) {
         self.engine.dsp.write().equalizer.enabled = enabled;
+    }
+
+    pub fn get_eq_enabled(&self) -> bool {
+        self.engine.dsp.read().equalizer.enabled
     }
     
     pub fn get_eq_bands_count(&self) -> usize {

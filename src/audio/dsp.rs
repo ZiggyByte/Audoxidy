@@ -34,6 +34,7 @@ impl Default for DspChain {
     }
 }
 
+#[allow(dead_code)]
 impl DspChain {
     pub fn process_frame(&mut self, frame: &mut [f32]) {
         if !self.enabled {
@@ -456,6 +457,7 @@ pub struct Reverb {
     gain: f32,
 }
 
+#[allow(dead_code)]
 impl Reverb {
     pub fn new() -> Self {
         // Peines un 50% más amplios para un efecto "Hall" Premium mucho más notorio
@@ -544,6 +546,7 @@ pub struct Compressor {
     sample_rate: f32,
 }
 
+#[allow(dead_code)]
 impl Compressor {
     pub fn new() -> Self {
         Self {
@@ -597,6 +600,7 @@ impl Compressor {
 // --- Biquad General Filter ---
 
 #[derive(Clone, Copy, PartialEq)]
+#[allow(dead_code)]
 pub enum BiquadFilterType {
     Peak,
     LowShelf,

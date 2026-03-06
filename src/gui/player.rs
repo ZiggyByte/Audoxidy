@@ -1,347 +1,408 @@
-use eframe::egui;
+use iced::{
+    widget::{container, column, row, text, button, slider, Stack, opaque, svg, mouse_area, Space},
+    Element, Length, Alignment, Color, Theme
+};
 use crate::audio::AudioManager;
-use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST};
+use crate::gui::app::Message;
+use crate::gui::theme::*;
 
-pub fn show_player(ui: &mut egui::Ui, audio_manager: &AudioManager, audio_center_open: &mut bool) {
-    let available_size = ui.available_size();
-    let side = available_size.x.min(available_size.y);
-    
-    // --- CAPA 1: Capa Madre (Ratio 1:1 forzado) ---
-    let rect = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover()).0;
-    let painter = ui.painter_at(rect);
-
-    // Capturamos los datos necesarios y liberamos el bloqueo de lectura inmediatamente
-    // para evitar deadlocks cuando hagamos escrituras (volumen, seek, etc.)
-    let (state_snap, album_art) = {
-        let state_lock = audio_manager.state();
-        let s = state_lock.read();
-        (s.clone(), s.album_art.clone())
-    };
-
-    // --- CAPA 0: Gestión de Volumen (Rueda del ratón) y Arrastre de Ventana ---
-    // Colocamos esto PRIMERO para que los botones (que se añaden después) queden "encima"
-    // en el orden de widgets de egui y capturen los clics antes que esta capa de fondo.
-    let response = ui.interact(rect, ui.id().with("bg_interact"), egui::Sense::click_and_drag());
-    
-    if response.hovered() {
-        let scroll = ui.input(|i| i.smooth_scroll_delta.y);
-        if scroll != 0.0 {
-            audio_manager.set_volume(state_snap.volume + scroll * 0.001);
-            *VOLUME_FEEDBACK_TIME.lock() = ui.input(|i| i.time);
-        }
-    }
-    
-    // Arrastre de ventana (Drag) - Solo si no se está interactuando con otra cosa
-    if response.dragged_by(egui::PointerButton::Primary) {
-        ui.ctx().send_viewport_cmd(egui::ViewportCommand::StartDrag);
-    }
-
-    // --- CAPA 2: Carátula del Álbum ---
-    if let Some(art_bytes) = album_art {
-        let image_source = egui::ImageSource::Bytes {
-            uri: "album_art_main".into(), // egui cacheará esto por la URI
-            bytes: egui::load::Bytes::from(art_bytes),
-        };
-        ui.put(rect, egui::Image::new(image_source)
-            .fit_to_exact_size(egui::vec2(side, side)));
-    } else {
-        painter.rect_filled(rect, 0.0, COLOR_CONTRAST);
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "AuDoxiDY",
-             egui::FontId::new(side * 0.15, egui::FontFamily::Name("logo".into())),
-            COLOR_TEXT_PRIMARY
-        );
-    }
-
-    // --- CAPA 3: Opacidad del 30% ---
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(76));
-
-    // --- CAPA 4: Información (10 Divisiones) ---
-    let h_unit = side / 10.0;
-
-    // 1/10: Cabecera
-    let r1 = egui::Rect::from_min_size(rect.min, egui::vec2(side, h_unit));
-    draw_layer4_header(ui, &painter, r1, &state_snap, audio_center_open);
-
-    // 8/10: Título (Marquesina)
-    let r8 = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, h_unit * 7.0), egui::vec2(side, h_unit));
-    draw_layer4_marquee_text(ui, &painter, r8, &state_snap.title, true);
-
-    // 9/10: Artista y Tiempo
-    let r9 = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, h_unit * 8.0), egui::vec2(side, h_unit));
-    let time_str = if state_snap.is_playing || state_snap.current_pos_sec > 0.0 {
-        format!("{}:{:02}", (state_snap.current_pos_sec / 60.0) as u32, (state_snap.current_pos_sec % 60.0) as u32)
-    } else {
-        String::new()
-    };
-    draw_layer4_artist_time(ui, &painter, r9, &state_snap.artist, &time_str);
-
-    // 10/10: Barra de Progreso y Seek
-    let r10 = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, h_unit * 9.0), egui::vec2(side, h_unit));
-    let progress = if state_snap.total_duration_sec > 0.0 {
-        (state_snap.current_pos_sec / state_snap.total_duration_sec) as f32
-    } else {
-        0.0
-    };
-    draw_layer4_progress_seek(ui, &painter, r10, progress, audio_manager, state_snap.total_duration_sec as f32);
-
-    // --- CAPA 5: Controles de Audio ---
-    let controls_rect = egui::Rect::from_min_max(
-        rect.min + egui::vec2(0.0, h_unit),
-        rect.min + egui::vec2(side, h_unit * 9.0)
-    );
-    draw_layer5_transport_zones(ui, controls_rect, audio_manager);
-
-    // (La interacción de fondo se movió al principio)
-    
-    draw_volume_feedback(ui, &painter, rect, state_snap.volume);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverZone {
+    None,
+    Previous,
+    PlayPause,
+    Next,
 }
 
-fn draw_layer4_header(ui: &mut egui::Ui, _painter: &egui::Painter, rect: egui::Rect, state: &crate::audio::engine::AudioState, audio_center_open: &mut bool) {
-    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        ui.horizontal(|ui| {
-            ui.add_space(10.0);
-            // Menú Hamburguesa (Abre Audio Center)
-            let menu_icon = egui::Image::new(egui::include_image!("../../assets/icons/menu.svg"))
-                .tint(COLOR_TEXT_PRIMARY).max_width(24.0).sense(egui::Sense::click());
-            if ui.add(menu_icon).clicked() {
-                *audio_center_open = !*audio_center_open;
-            }
-
-            ui.add_space(20.0);
-            
-            // Info Canales (Centro)
-            // Solo se muestra si no es Estéreo (2.0)
-            if state.channels != 2 && state.channels > 0 {
-                let chan_text = match state.channels {
-                    1 => "Mono",
-                    3 => "2.1",
-                    4 => "4.0",
-                    6 => "5.1",
-                    8 => "7.1",
-                    _ => "Multi",
-                };
-                ui.add(egui::Label::new(egui::RichText::new(chan_text)
-                    .background_color(egui::Color32::from_black_alpha(100))
-                    .color(COLOR_TEXT_PRIMARY)).truncate());
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.add_space(10.0);
-                // Cerrar
-                if ui.add(egui::Image::new(egui::include_image!("../../assets/icons/close-small.svg"))
-                    .tint(COLOR_TEXT_PRIMARY).max_width(24.0).sense(egui::Sense::click())).clicked() 
-                {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
-                }
-                // Maximizar
-                if ui.add(egui::Image::new(egui::include_image!("../../assets/icons/maximize1.svg"))
-                    .tint(COLOR_TEXT_PRIMARY).max_width(24.0).sense(egui::Sense::click())).clicked() 
-                {
-                    let is_max = ui.input(|i| i.viewport().maximized.unwrap_or(false));
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Maximized(!is_max));
-                }
-                // Minimizar
-                if ui.add(egui::Image::new(egui::include_image!("../../assets/icons/minimize.svg"))
-                    .tint(COLOR_TEXT_PRIMARY).max_width(24.0).sense(egui::Sense::click())).clicked() 
-                {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-                }
-            });
-        });
-    });
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowAction {
+    Minimize,
+    Maximize,
+    Close,
 }
 
-fn draw_layer4_marquee_text(ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect, text: &str, is_title: bool) {
-    let font_id = if is_title { egui::FontId::proportional(22.0) } else { egui::FontId::proportional(14.0) };
-    let galley = ui.painter().layout(text.to_string(), font_id.clone(), COLOR_TEXT_PRIMARY, f32::INFINITY);
-    
-    if galley.rect.width() > rect.width() - 20.0 {
-        let time = ui.input(|i| i.time);
-        let speed = 40.0;
-        let total_width = galley.rect.width() + 50.0;
-        let offset = (time * speed) % total_width as f64;
-        
-        painter.with_clip_rect(rect).text(
-            rect.left_center() + egui::vec2(10.0 - offset as f32, 0.0),
-            egui::Align2::LEFT_CENTER, text, font_id.clone(), COLOR_TEXT_PRIMARY
-        );
-        painter.with_clip_rect(rect).text(
-            rect.left_center() + egui::vec2(10.0 - offset as f32 + total_width, 0.0),
-            egui::Align2::LEFT_CENTER, text, font_id, COLOR_TEXT_PRIMARY
-        );
-        ui.ctx().request_repaint();
-    } else {
-        painter.text(
-            rect.left_center() + egui::vec2(10.0, 0.0),
-            egui::Align2::LEFT_CENTER, text, font_id, COLOR_TEXT_PRIMARY
-        );
-    }
+pub struct PlayerUiState {
+    pub hover_zone: HoverZone,
+    pub showing_volume: Option<f32>,
+    pub is_menu_open: bool,
+    pub volume_tick_id: u64,
+    pub tick_count: u64,
+    pub current_art_len: usize,
+    pub cached_art_handle: Option<iced::widget::image::Handle>,
 }
 
-fn draw_layer4_artist_time(ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect, artist: &str, time_str: &str) {
-    let font_id = egui::FontId::proportional(14.0);
-    // El artista también puede tener marquesina si es largo
-    let galley = ui.painter().layout(artist.to_string(), font_id.clone(), COLOR_TEXT_PRIMARY, f32::INFINITY);
-    
-    if galley.rect.width() > rect.width() * 0.7 {
-        draw_layer4_marquee_text(ui, painter, rect, artist, false);
-    } else {
-        painter.text(rect.left_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER, artist, font_id, COLOR_TEXT_PRIMARY);
-    }
-    
-    // Tiempo alineado a la derecha
-    painter.text(
-        rect.right_center() - egui::vec2(10.0, 0.0),
-        egui::Align2::RIGHT_CENTER,
-        time_str,
-        egui::FontId::proportional(14.0),
-        COLOR_TEXT_PRIMARY
-    );
-}
-
-fn draw_layer4_progress_seek(ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect, progress: f32, audio_manager: &AudioManager, duration: f32) {
-    // Fondo desenfoque (Simulado con rectángulo semi-transparente)
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(150));
-    
-    let bar_rect = egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width() - 20.0, 2.0));
-    painter.rect_filled(bar_rect, 1.0, COLOR_CONTRAST);
-    
-    let mut prog_paint = bar_rect;
-    prog_paint.set_width(bar_rect.width() * progress.clamp(0.0, 1.0));
-    painter.rect_filled(prog_paint, 1.0, COLOR_TEXT_PRIMARY); // INTERFACE.md dice COLOR_TEXT_PRIMARY al avanzar
-
-    // Interacción Seek
-    let response = ui.interact(rect, ui.id().with("seek"), egui::Sense::click_and_drag());
-    if response.clicked() || response.dragged() {
-        if let Some(pos) = response.interact_pointer_pos() {
-            let relative_x = (pos.x - bar_rect.left()).clamp(0.0, bar_rect.width());
-            let new_progress = relative_x / bar_rect.width();
-            let new_pos = new_progress * duration;
-            audio_manager.seek(new_pos as f64);
+impl Default for PlayerUiState {
+    fn default() -> Self {
+        Self {
+            hover_zone: HoverZone::None,
+            showing_volume: None,
+            is_menu_open: false,
+            volume_tick_id: 0,
+            tick_count: 0,
+            current_art_len: 0,
+            cached_art_handle: None,
         }
     }
 }
 
-fn draw_layer5_transport_zones(ui: &mut egui::Ui, rect: egui::Rect, audio_manager: &AudioManager) {
-    let zone_w = rect.width() / 3.0;
+pub fn view<'a>(
+    audio_manager: &'a AudioManager,
+    ui_state: &'a PlayerUiState,
+) -> Element<'a, Message> {
+    let state = audio_manager.get_state();
+    let bounds = Length::Fixed(400.0);
+
+    // --- Capa 1 y 2: Fondo y Cover Art / Logo ---
+    let background_layer: Element<'a, Message> = if let Some(handle) = ui_state.cached_art_handle.clone() {
+        let img = iced::widget::image(handle)
+            .width(bounds)
+            .height(bounds)
+            .content_fit(iced::ContentFit::Cover);
+        container(img).width(bounds).height(bounds).into()
+    } else {
+        container(
+            text("AuDoxiDY")
+                .font(FONT_STAGE_WANDER)
+                .size(40)
+                .color(COLOR_TEXT_PRIMARY)
+        )
+        .width(bounds)
+        .height(bounds)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .padding(20)
+        .style(|_theme: &Theme| container::Style::default().background(COLOR_BG))
+        .into()
+    };
+
+    // --- Capa 3: Oscurecimiento ---
+    let blackout_layer: Element<'a, Message> = container(opaque(
+        Space::new().width(Length::Fill).height(Length::Fill)
+    ))
+    .width(bounds)
+    .height(bounds)
+    .style(|_theme: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)))
+    .into();
+
+    // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
+    // Botones Top sin fondo usando styling transparente
+    fn transparent_btn<'b>(icon: &str) -> iced::widget::Button<'b, Message> {
+        button(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32))
+            .padding(0)
+            .style(iced::widget::button::text)
+    }
+
+    let top_row = row![
+        transparent_btn("menu.svg").on_press(Message::ToggleMenu),
+        Space::new().width(Length::Fill),
+        // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
+        Space::new().width(Length::Fill),
+        transparent_btn("minimize.svg").on_press(Message::PlayerWindowAction(WindowAction::Minimize)),
+        transparent_btn("maximize.svg").on_press(Message::PlayerWindowAction(WindowAction::Maximize)),
+        transparent_btn("close.svg").on_press(Message::PlayerWindowAction(WindowAction::Close)),
+    ]
+    .height(Length::Fixed(40.0))
+    .align_y(Alignment::Center)
+    .padding([0, 10]); // padding horizontal
+
+    let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
     
-    // Zona Anterior
-    let r_prev = egui::Rect::from_min_max(rect.min, egui::pos2(rect.min.x + zone_w, rect.max.y));
-    let prev_resp = ui.interact(r_prev, ui.id().with("zone_prev"), egui::Sense::click());
-    if prev_resp.clicked() {
-        // audio_manager.prev(); // Todo: Implement prev
-        show_transient_icon("skip-previous-rounded-fill");
-    }
-    // Icono visible
-    let icon_size = zone_w * 0.4;
-    if prev_resp.hovered() || rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-         ui.put(egui::Rect::from_center_size(r_prev.center(), egui::vec2(icon_size, icon_size)),
-            egui::Image::new(egui::include_image!("../../assets/icons/skip-previous-rounded-fill.svg"))
-                .tint(egui::Color32::from_white_alpha(200)));
-    }
+    let apply_marquee = |text_str: &str, limit: usize| -> String {
+        let chars: Vec<char> = text_str.chars().collect();
+        if chars.len() <= limit { return text_str.to_string(); }
+        let tick = ui_state.tick_count;
+        let offset = (tick / 2) as usize % (chars.len() + 10);
+        if offset < chars.len() {
+            let end = (offset + limit).min(chars.len());
+            let mut s: String = chars[offset..end].iter().collect();
+            if offset + limit > chars.len() {
+                s.push_str("   ");
+                let needed = (offset + limit) - chars.len();
+                if needed > 3 {
+                    let rem = needed - 3;
+                    s.push_str(&chars[0..rem.min(chars.len())].iter().collect::<String>());
+                }
+            }
+            s
+        } else { chars[0..limit.min(chars.len())].iter().collect() }
+    };
 
-    // Zona Play/Pause/Stop
-    let r_play = egui::Rect::from_min_max(egui::pos2(rect.min.x + zone_w, rect.min.y), egui::pos2(rect.min.x + zone_w * 2.0, rect.max.y));
-    let play_resp = ui.interact(r_play, ui.id().with("zone_play"), egui::Sense::click());
-    if play_resp.clicked() {
-        audio_manager.toggle_play_pause();
-        let icon = if audio_manager.is_playing() { "pause-rounded-fill" } else { "play-rounded-fill" };
-        show_transient_icon(icon);
-    }
-    if play_resp.long_touched() {
-        audio_manager.stop();
-        show_transient_icon("stop-rounded-fill");
-    }
-    // Icono visible Play/Pause
-    let icon_size = zone_w * 0.4;
-    // let _play_icon_path = format!("../../assets/icons/{}.svg", play_icon); // Unused
+    let info_col = if is_playing_or_paused {
+        column![
+            container(
+                text(apply_marquee(&state.title, 32))
+                    .size(18)
+                    .color(Color::WHITE)
+            )
+            .height(Length::Fixed(35.0))
+            .center_y(Length::Fill)
+            .width(Length::Fill),
+            row![
+                container(
+                    text(apply_marquee(&state.artist, 30))
+                        .size(16)
+                        .color(Color::WHITE)
+                )
+                .height(Length::Fixed(30.0))
+                .center_y(Length::Fill)
+                .width(Length::Fill),
+                text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
+                    .size(16)
+                    .color(Color::WHITE)
+            ]
+            .height(Length::Fixed(30.0))
+            .align_y(Alignment::Center)
+        ]
+        .width(Length::Fill)
+    } else {
+        column![Space::new().height(Length::Fixed(65.0))]
+        .width(Length::Fill)
+    };
+
+    let progress = if state.total_duration_sec > 0.0 {
+        state.current_pos_sec as f32 / state.total_duration_sec as f32
+    } else { 0.0 };
     
-    // Aquí usamos include_image! si es estático, pero image name es dinámico.
-    // Usaremos uri para dinamismo o carga condicional.
-    // Para simplificar, cargamos ambos y mostramos uno.
-    if play_resp.hovered() || rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-         let icon_img = if audio_manager.is_playing() {
-             egui::Image::new(egui::include_image!("../../assets/icons/pause-circle-rounded-fill.svg"))
-         } else {
-             egui::Image::new(egui::include_image!("../../assets/icons/play-circle-rounded-fill.svg"))
-         };
-         
-         ui.put(egui::Rect::from_center_size(r_play.center(), egui::vec2(icon_size, icon_size)),
-            icon_img.tint(egui::Color32::from_white_alpha(200)));
-    }
+    let progress_bar = container(
+        slider(0.0..=1.0, progress, move |v| Message::SeekTo(v * state.total_duration_sec as f32))
+            .step(0.001)
+            .style(move |theme: &Theme, status| {
+                let mut st = iced::widget::slider::default(theme, status);
+                st.handle.background = Color::TRANSPARENT.into();
+                st.handle.border_color = Color::TRANSPARENT;
+                if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
+                    *radius = 0.0;
+                }
+                st.rail.width = 30.0;
+                st.rail.backgrounds = (COLOR_ACCENT.into(), Color::from_rgba(1.0, 1.0, 1.0, 0.2).into());
+                st
+            })
+    )
+    .height(Length::Fixed(30.0))
+    .center_y(Length::Fill)
+    .padding([0, 0])
+    .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)));
 
+    let capa4: Element<'a, Message> = column![
+        top_row,
+        Space::new().height(Length::Fixed(255.0)),
+        info_col.padding([0, 10]),
+        progress_bar
+    ]
+    .width(bounds)
+    .height(bounds)
+    .into();
 
-    // Zona Siguiente
-    let r_next = egui::Rect::from_min_max(egui::pos2(rect.min.x + zone_w * 2.0, rect.min.y), rect.max);
-    let next_resp = ui.interact(r_next, ui.id().with("zone_next"), egui::Sense::click());
-    if next_resp.clicked() {
-        // audio_manager.next(); // Todo: Implement next
-        show_transient_icon("skip-next-rounded-fill");
-    }
-    if next_resp.hovered() || rect.contains(ui.input(|i| i.pointer.hover_pos().unwrap_or_default())) {
-         ui.put(egui::Rect::from_center_size(r_next.center(), egui::vec2(icon_size, icon_size)),
-            egui::Image::new(egui::include_image!("../../assets/icons/skip-next-rounded-fill.svg"))
-                .tint(egui::Color32::from_white_alpha(200)));
-    }
-
-    // Dibujar iconos transitorios si es necesario
-    draw_transient_icon_ui(ui, rect);
-}
-
-static VOLUME_FEEDBACK_TIME: parking_lot::Mutex<f64> = parking_lot::Mutex::new(0.0);
-static TRANSIENT_ICON: parking_lot::Mutex<Option<(&'static str, f64)>> = parking_lot::Mutex::new(None);
-
-fn show_transient_icon(icon: &'static str) {
-    *TRANSIENT_ICON.lock() = Some((icon, -1.0)); // Se inicializará el tiempo en el siguiente frame
-}
-
-fn draw_transient_icon_ui(ui: &mut egui::Ui, rect: egui::Rect) {
-    let mut icon_data = TRANSIENT_ICON.lock();
-    if let Some((icon_name, ref mut start_time)) = *icon_data {
-        let now = ui.input(|i| i.time);
-        if *start_time < 0.0 { *start_time = now; }
-        
-        let elapsed = now - *start_time;
-        if elapsed < 1.0 {
-            let alpha = ((1.0 - elapsed) * 255.0) as u8;
-            let icon_path = format!("../../assets/icons/{}.svg", icon_name);
-            let icon_size = rect.width() * 0.2;
-            
-            ui.put(egui::Rect::from_center_size(rect.center(), egui::vec2(icon_size, icon_size)),
-                egui::Image::new(egui::ImageSource::Uri(icon_path.into()))
-                    .tint(egui::Color32::from_white_alpha(alpha)));
-            ui.ctx().request_repaint();
+    // --- Capa 5: Controles de Audio ---
+    let make_zone = |icon: &str, zone: HoverZone, action: Message, is_hovered: bool| {
+        let content: Element<'a, Message> = if is_hovered {
+            container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32))
+                .width(Length::Fill).height(Length::Fill)
+                .center_x(Length::Fill).center_y(Length::Fill)
+                .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5)))
+                .into()
         } else {
-            *icon_data = None;
+            container(Space::new()).width(Length::Fill).height(Length::Fill).into()
+        };
+        
+        let area: Element<'a, Message> = mouse_area(button(content).on_press(action).padding(0).style(iced::widget::button::text).width(Length::Fill).height(Length::Fill))
+            .on_enter(Message::PlayerHoverZone(zone))
+            .on_exit(Message::PlayerHoverZone(HoverZone::None))
+            .into();
+        area
+    };
+
+    let play_txt = if state.is_playing { "pause-straight-fill.svg" } else { "play-straight-fill.svg" };
+
+    let controls_content: Element<'a, Message> = match ui_state.showing_volume {
+        Some(vol) => {
+            let icon = if vol == 0.0 { "volume-off-straight-fill.svg" }
+                       else if vol < 50.0 { "volume-down-straight-fill.svg" }
+                       else { "volume-up-straight-fill.svg" };
+            
+            container(
+                column![
+                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32),
+                    text(format!("{:.0}", vol)).size(16).color(Color::WHITE)
+                ]
+                .align_x(Alignment::Center)
+                .spacing(5)
+            )
+            .width(Length::Fill).height(Length::Fill)
+            .center_x(Length::Fill).center_y(Length::Fill)
+            // Cubrir toda el área con 40%
+            .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.4)))
+            .into()
+        },
+        None => {
+            row![
+                make_zone("skip-previous-straight-fill.svg", HoverZone::Previous, Message::PreviousTrack, ui_state.hover_zone == HoverZone::Previous),
+                make_zone(play_txt, HoverZone::PlayPause, Message::PlayPause, ui_state.hover_zone == HoverZone::PlayPause),
+                make_zone("skip-next-straight-fill.svg", HoverZone::Next, Message::NextTrack, ui_state.hover_zone == HoverZone::Next)
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+        }
+    };
+
+    let capa5: Element<'a, Message> = container(VolumeScrollArea::new(controls_content, Message::PlayerScroll))
+        .width(bounds)
+        .height(Length::Fixed(320.0)) // 2/10 a 9/10
+        .into();
+
+    let capa5_positioned: Element<'a, Message> = column![
+        Space::new().height(Length::Fixed(40.0)),
+        capa5,
+        Space::new().height(Length::Fixed(40.0))
+    ]
+    .width(bounds).height(bounds).into();
+
+    // --- Menú Desplegable ---
+    let dropdown: Element<'a, Message> = if ui_state.is_menu_open {
+        let mk_menu_btn = |txt: &'a str, msg: Message| {
+            button(text(txt.to_string()).color(COLOR_TEXT_PRIMARY).size(12))
+                .width(Length::Fill)
+                .padding([5, 15])
+                .on_press(msg)
+                .style(iced::widget::button::text)
+        };
+        
+        let menu_box = container(
+            column![
+                mk_menu_btn("Acerca", Message::ToggleMenu),
+                mk_menu_btn("Abrir Archivo", Message::ToggleMenu),
+                mk_menu_btn("Abrir Carpeta", Message::OpenFolderPicker),
+                mk_menu_btn("Biblioteca", Message::ToggleMenu),
+                mk_menu_btn("Lista de Reproduccion", Message::ToggleMenu),
+                mk_menu_btn("Lirycs", Message::ToggleMenu),
+                mk_menu_btn("Apagado Automatico", Message::ToggleMenu),
+                container(Space::new().height(1)).width(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
+                mk_menu_btn("Configuración de Audio", Message::ToggleAudioCenter),
+                mk_menu_btn("Ecualizador", Message::ToggleAudioCenter), 
+                mk_menu_btn("Efectos de Audio", Message::ToggleAudioCenter), 
+                container(Space::new().height(1)).width(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
+                mk_menu_btn("Personalizacion", Message::ToggleMenu),
+                mk_menu_btn("Preferencias", Message::ToggleMenu),
+                mk_menu_btn("Complementos", Message::ToggleMenu),
+                mk_menu_btn("Salir", Message::PlayerWindowAction(WindowAction::Close)),
+            ]
+        )
+        .width(Length::Fixed(150.0))
+        .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
+
+        let underlay = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+            .on_press(Message::ToggleMenu);
+
+        let menu_wrapper = container(menu_box)
+            .width(bounds) // el wrapper ocupa todo
+            .height(bounds)
+            .padding(iced::Padding { top: 40.0, right: 0.0, bottom: 0.0, left: 15.0 });
+
+        container(
+            Stack::new().push(underlay).push(menu_wrapper)
+        )
+        .width(bounds).height(bounds).into()
+    } else {
+        Space::new().into()
+    };
+
+    // Apilar capas en el Stack
+    container(
+        Stack::new()
+            .push(background_layer)
+            .push(blackout_layer)
+            .push(capa4)
+            .push(capa5_positioned)
+            .push(dropdown)
+    )
+    .width(bounds)
+    .height(bounds)
+    .into()
+}
+
+// ==========================================
+// Custom Widget Area
+// ==========================================
+
+use iced::advanced::{widget::Tree, Widget, Layout, renderer, mouse, Clipboard, Shell};
+use iced::{Event, Rectangle, Size};
+
+pub struct VolumeScrollArea<'a, Message, Theme, Renderer> {
+    content: Element<'a, Message, Theme, Renderer>,
+    on_scroll: Box<dyn Fn(f32) -> Message + 'a>,
+}
+
+impl<'a, Message, Theme, Renderer> VolumeScrollArea<'a, Message, Theme, Renderer> {
+    pub fn new(
+        content: impl Into<Element<'a, Message, Theme, Renderer>>,
+        on_scroll: impl Fn(f32) -> Message + 'a,
+    ) -> Self {
+        Self {
+            content: content.into(),
+            on_scroll: Box::new(on_scroll),
         }
     }
 }
 
-fn draw_volume_feedback(ui: &mut egui::Ui, painter: &egui::Painter, rect: egui::Rect, volume: f32) {
-    let now = ui.input(|i| i.time);
-    let last_time = VOLUME_FEEDBACK_TIME.lock();
-    let elapsed = now - *last_time;
-    
-    if elapsed < 1.0 {
-        let alpha = ((1.0 - elapsed) * 255.0) as u8;
-        let color = egui::Color32::from_white_alpha(alpha);
-        let center = rect.center();
-        
-        let icon_size = rect.width() * 0.15;
-        ui.put(egui::Rect::from_center_size(center - egui::vec2(0.0, 20.0), egui::vec2(icon_size, icon_size)),
-            egui::Image::new(egui::include_image!("../../assets/icons/volume-up-rounded-fill.svg"))
-                .tint(color));
-        
-        painter.text(
-            center + egui::vec2(0.0, 30.0),
-            egui::Align2::CENTER_CENTER,
-            format!("{}", (volume * 100.0) as i32),
-            egui::FontId::proportional(20.0),
-            color
-        );
-        ui.ctx().request_repaint();
+impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for VolumeScrollArea<'a, Message, Theme, Renderer>
+where
+    Renderer: renderer::Renderer,
+{
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &iced::advanced::layout::Limits) -> iced::advanced::layout::Node {
+        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(&self, tree: &Tree, renderer: &mut Renderer, theme: &Theme, style: &renderer::Style, layout: Layout<'_>, cursor: mouse::Cursor, viewport: &Rectangle) {
+        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport)
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content))
+    }
+
+    fn operate(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn iced::advanced::widget::Operation) {
+        self.content.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation)
+    }
+
+    fn update(&mut self, tree: &mut Tree, event: &Event, layout: Layout<'_>, cursor: mouse::Cursor, renderer: &Renderer, clipboard: &mut dyn Clipboard, shell: &mut Shell<'_, Message>, viewport: &Rectangle) {
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
+            if cursor.is_over(layout.bounds()) {
+                let d = match delta {
+                    mouse::ScrollDelta::Lines { y, .. } => *y,
+                    mouse::ScrollDelta::Pixels { y, .. } => *y / 10.0,
+                };
+                shell.publish((self.on_scroll)(d));
+                return; // Evita propagar al contenido hijo si ya lo procesamos
+            }
+        }
+        self.content.as_widget_mut().update(&mut tree.children[0], event, layout, cursor, renderer, clipboard, shell, viewport)
+    }
+
+    fn mouse_interaction(&self, tree: &Tree, layout: Layout<'_>, cursor: mouse::Cursor, viewport: &Rectangle, renderer: &Renderer) -> mouse::Interaction {
+        self.content.as_widget().mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+    }
+
+    fn overlay<'b>(&'b mut self, tree: &'b mut Tree, layout: Layout<'b>, renderer: &Renderer, viewport: &Rectangle, translation: iced::Vector) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<VolumeScrollArea<'a, Message, Theme, Renderer>> for Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: renderer::Renderer + 'a,
+{
+    fn from(area: VolumeScrollArea<'a, Message, Theme, Renderer>) -> Self {
+        Element::new(area)
     }
 }

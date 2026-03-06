@@ -37,6 +37,7 @@ use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use crate::audio::dsp::DspChain;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AudioCommand {
 // ... (lines 39-470 skipped for brevity in replace_file_content, target only changed lines)
 // wait, I can't skip lines in ReplacementContent if they are part of the block I am replacing.
@@ -116,6 +117,7 @@ pub struct AudioState {
     pub title: String,
     pub artist: String,
     pub album_art: Option<Vec<u8>>,
+    pub eof_reached: bool,
 
     pub device_sample_rate: u32,
     pub bit_depth_display: String,
@@ -145,6 +147,7 @@ impl Default for AudioState {
             title: "Sin título".to_string(),
             artist: "Artista desconocido".to_string(),
             album_art: None,
+            eof_reached: false,
 
             device_sample_rate: 44100, // Default Match
             bit_depth_display: "Unknown".to_string(),
@@ -161,6 +164,7 @@ impl Default for AudioState {
     }
 }
 
+#[allow(dead_code)]
 impl AudioEngine {
     pub fn new() -> Result<Self, String> {
         let (command_tx, command_rx) = unbounded::<AudioCommand>();
@@ -593,7 +597,9 @@ impl AudioEngine {
                                          }
                                          
                                          current_format = Some(probed.format);
-                                         state.write().is_playing = true; // Auto-play on load
+                                         let mut s = state.write();
+                                         s.is_playing = true; // Auto-play on load
+                                         s.eof_reached = false;
                                      }
                                  }
 
@@ -661,7 +667,9 @@ impl AudioEngine {
                          // Simplify EOF handling
                          if let symphonia::core::errors::Error::IoError(ref err) = e {
                              if err.kind() == std::io::ErrorKind::UnexpectedEof {
-                                  state.write().is_playing = false;
+                                  let mut s = state.write();
+                                  s.is_playing = false;
+                                  s.eof_reached = true;
                                   current_format = None;
                              }
                          }

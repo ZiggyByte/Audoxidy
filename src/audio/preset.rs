@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EqPreset {
     pub name: String,
     pub preamp_gain: f32, // en dB, como en la UI (-9 a +9), no ganancia lineal.
@@ -182,5 +182,11 @@ impl EqPreset {
             Self::new("Soul", 0.0,
                 Some(vec![2.5, 2.5, 2.0, 2.0, 1.5, 1.0, 1.0, 1.5, 2.0, 2.0, 1.5, 1.0, 0.5, 0.5, 1.0, 1.5, 2.0, 2.0, 2.5, 2.5]), None),
         ]
+    }
+}
+
+impl std::fmt::Display for EqPreset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.name)
     }
 }

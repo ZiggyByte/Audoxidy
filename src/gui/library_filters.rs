@@ -1,0 +1,117 @@
+use iced::{
+    widget::{button, column, container, row, scrollable, text, text_input, Space},
+    Alignment, Color, Element, Length, Theme,
+};
+use crate::gui::app::Message;
+
+// TODO: Consolidar globales en theme.rs
+use crate::gui::theme::*;
+
+pub struct LibraryFiltersManager {
+    pub search_query: String,
+    
+    // Estado Abierto/Cerrado del Arbol
+    pub tree_open_genre: bool,
+    pub tree_open_artist: bool,
+    pub tree_open_album: bool,
+}
+
+impl Default for LibraryFiltersManager {
+    fn default() -> Self {
+        Self {
+            search_query: String::new(),
+            tree_open_genre: false,
+            tree_open_artist: false,
+            tree_open_album: false,
+        }
+    }
+}
+
+pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
+    
+    // Top Bar (Filtros rapidos)
+    let header = row![
+        text("Filtros").size(12).color(COLOR_TEXT_SECONDARY),
+        Space::new().width(Length::Fill),
+        // FIXME: Simplificacion del Combo Box nativo de egui usando por ahora un placeholder
+        button(text("Generos").size(12).color(COLOR_TEXT_PRIMARY))
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+    ]
+    .padding(10)
+    .align_y(Alignment::Center);
+
+    let header_container = container(header)
+        .width(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // Tree nodes (Listas de filtros expandibles)
+    let mut tree_col = column![].spacing(5).padding(10);
+    
+    // Custom inline helper macro-like pattern (desenrollado por move semantics de Iced Builder)
+    let icon_genre = if manager.tree_open_genre { "v " } else { "> " };
+    tree_col = tree_col.push(
+        button(text(format!("{}Generos", icon_genre)).size(14).color(COLOR_TEXT_PRIMARY))
+            .width(Length::Fill)
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .on_press(Message::ToggleGenreFilter)
+    );
+    if manager.tree_open_genre {
+        tree_col = tree_col.push(
+            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+                .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
+        );
+    }
+
+    let icon_artist = if manager.tree_open_artist { "v " } else { "> " };
+    tree_col = tree_col.push(
+        button(text(format!("{}Artistas", icon_artist)).size(14).color(COLOR_TEXT_PRIMARY))
+            .width(Length::Fill)
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .on_press(Message::ToggleArtistFilter)
+    );
+    if manager.tree_open_artist {
+        tree_col = tree_col.push(
+            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+                .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
+        );
+    }
+
+    let icon_album = if manager.tree_open_album { "v " } else { "> " };
+    tree_col = tree_col.push(
+        button(text(format!("{}Albumes", icon_album)).size(14).color(COLOR_TEXT_PRIMARY))
+            .width(Length::Fill)
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .on_press(Message::ToggleAlbumFilter)
+    );
+    if manager.tree_open_album {
+        tree_col = tree_col.push(
+            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+                .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
+        );
+    }
+
+    let filters_scroll = scrollable(tree_col).height(Length::Fill);
+
+    // Barra inferior de busqueda
+    let search_bar = container(
+        text_input("Buscar en Filtros...", &manager.search_query)
+            .on_input(Message::FilterSearchChanged)
+            .padding(5)
+    )
+    .width(Length::Fill)
+    .padding(5)
+    .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // Consolidar Layout (Vertical de 180px Ancho y 100% de Alto)
+    container(
+        column![
+            header_container,
+            filters_scroll,
+            search_bar
+        ]
+    )
+    .width(Length::Fixed(150.0))
+    .height(Length::Fill)
+    .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+    .into()
+}

@@ -6,4 +6,3 @@ pub mod preset;
 pub mod tests;
 
 pub use manager::AudioManager;
-pub use preset::EqPreset;

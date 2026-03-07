@@ -31,10 +31,10 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
     
     // Top Bar (Filtros rapidos)
     let header = row![
-        text("Filtros").size(12).color(COLOR_TEXT_SECONDARY),
+        text("Filtros").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(Length::Fill),
         // FIXME: Simplificacion del Combo Box nativo de egui usando por ahora un placeholder
-        button(text("Generos").size(12).color(COLOR_TEXT_PRIMARY))
+        button(text("Generos").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
     ]
     .padding(10)
@@ -50,42 +50,42 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
     // Custom inline helper macro-like pattern (desenrollado por move semantics de Iced Builder)
     let icon_genre = if manager.tree_open_genre { "v " } else { "> " };
     tree_col = tree_col.push(
-        button(text(format!("{}Generos", icon_genre)).size(14).color(COLOR_TEXT_PRIMARY))
+        button(text(format!("{}Generos", icon_genre)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
             .width(Length::Fill)
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
             .on_press(Message::ToggleGenreFilter)
     );
     if manager.tree_open_genre {
         tree_col = tree_col.push(
-            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+            container(text(" Progressive Rock").size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
                 .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
         );
     }
 
     let icon_artist = if manager.tree_open_artist { "v " } else { "> " };
     tree_col = tree_col.push(
-        button(text(format!("{}Artistas", icon_artist)).size(14).color(COLOR_TEXT_PRIMARY))
+        button(text(format!("{}Artistas", icon_artist)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
             .width(Length::Fill)
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
             .on_press(Message::ToggleArtistFilter)
     );
     if manager.tree_open_artist {
         tree_col = tree_col.push(
-            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
                 .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
         );
     }
 
     let icon_album = if manager.tree_open_album { "v " } else { "> " };
     tree_col = tree_col.push(
-        button(text(format!("{}Albumes", icon_album)).size(14).color(COLOR_TEXT_PRIMARY))
+        button(text(format!("{}Albumes", icon_album)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
             .width(Length::Fill)
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
             .on_press(Message::ToggleAlbumFilter)
     );
     if manager.tree_open_album {
         tree_col = tree_col.push(
-            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY))
+            container(text("  • Elemento (TODO)").size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
                 .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
         );
     }
@@ -96,6 +96,7 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
     let search_bar = container(
         text_input("Buscar en Filtros...", &manager.search_query)
             .on_input(Message::FilterSearchChanged)
+            .font(FONT_INTER_SANS_MEDIUM)
             .padding(5)
     )
     .width(Length::Fill)

@@ -47,7 +47,7 @@ pub fn view<'a>(
             }
 
             if db_albums.is_empty() {
-                container(text("No hay álbumes o escaneando la biblioteca...").color(COLOR_TEXT_SECONDARY))
+                container(text("No hay álbumes o escaneando la biblioteca...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .center_x(Length::Fill)
@@ -87,8 +87,8 @@ pub fn view<'a>(
 
                         let item_col = column![
                             album_art,
-                            text(artist.clone()).size(13).color(COLOR_TEXT_PRIMARY),
-                            text(album.clone()).size(12).color(COLOR_TEXT_SECONDARY)
+                            text(artist.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                            text(album.clone()).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
                         ].spacing(5);
 
                         let card = button(item_col)
@@ -107,13 +107,13 @@ pub fn view<'a>(
                         if let Ok(db) = database.lock() {
                             if let Ok(songs) = db.get_songs_by_album(&exp_album) {
                                 // Muestra botón para reproducir todo
-                                let play_album_btn = button(text("▶ Reproducir Todo").color(COLOR_BG))
+                                let play_album_btn = button(text("▶ Reproducir Todo").color(COLOR_BG).font(FONT_INTER_SANS_MEDIUM))
                                     .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_ACCENT))
                                     .on_press(Message::PlayAlbum(songs.clone()));
 
                                 album_songs_col = album_songs_col.push(
                                     row![
-                                        text(format!("Canciones de: {}", exp_album)).size(16).color(COLOR_TEXT_PRIMARY).width(Length::Fill),
+                                        text(format!("Canciones de: {}", exp_album)).size(16).color(COLOR_TEXT_PRIMARY).width(Length::Fill).font(FONT_INTER_SANS_MEDIUM),
                                         play_album_btn
                                     ].align_y(Alignment::Center)
                                 );
@@ -122,7 +122,7 @@ pub fn view<'a>(
                                     let s_clone = song.clone();
                                     
                                     let song_row = row![
-                                        text(song.title.clone().unwrap_or_else(|| "Unknown Track".to_string())).color(COLOR_TEXT_PRIMARY).size(14).width(Length::Fill),
+                                        text(song.title.clone().unwrap_or_else(|| "Unknown Track".to_string())).color(COLOR_TEXT_PRIMARY).size(14).width(Length::Fill).font(FONT_INTER_SANS_MEDIUM),
                                         iced::widget::Space::new().width(Length::Fixed(15.0)),
                                         button(text("+").size(14)).on_press(Message::AddSongToPlaylist(s_clone))
                                     ].align_y(Alignment::Center);
@@ -130,7 +130,7 @@ pub fn view<'a>(
                                     album_songs_col = album_songs_col.push(song_row);
                                 }
                             } else {
-                                album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY));
+                                album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM));
                             }
                         }
 
@@ -148,10 +148,10 @@ pub fn view<'a>(
             }
         }
         LibraryViewMode::DetailedList => {
-            container(text("Vista Detallada - En desarrollo").color(COLOR_TEXT_PRIMARY)).into()
+            container(text("Vista Detallada - En desarrollo").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)).into()
         }
         LibraryViewMode::SimpleList => {
-             container(text("Vista Simple - En desarrollo").color(COLOR_TEXT_PRIMARY)).into()
+             container(text("Vista Simple - En desarrollo").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)).into()
         }
     };
 
@@ -159,17 +159,18 @@ pub fn view<'a>(
     let bottom_bar = row![
         text_input("Buscar en Biblioteca...", &manager.search_query)
             .on_input(Message::LibrarySearchQueryChanged)
+            .font(FONT_INTER_SANS_MEDIUM)
             .width(Length::Fixed(200.0)),
         
         Space::new().width(Length::Fill),
         
-        button(text("▶ Todo").size(14))
+        button(text("▶ Todo").size(14).font(FONT_INTER_SANS_MEDIUM))
             .on_press(Message::PlayLibraryAll),
-        button(text(" Añadir 📁").size(14))
+        button(text(" Añadir 📁").size(14).font(FONT_INTER_SANS_MEDIUM))
             .on_press(Message::OpenFolderPicker),
-        button(text(" Cuadrícula").size(14))
+        button(text(" Cuadrícula").size(14).font(FONT_INTER_SANS_MEDIUM))
             .on_press(Message::ChangeLibraryViewMode(LibraryViewMode::Grid)),
-        button(text(" Lista").size(14))
+        button(text(" Lista").size(14).font(FONT_INTER_SANS_MEDIUM))
             .on_press(Message::ChangeLibraryViewMode(LibraryViewMode::DetailedList))
     ]
     .padding(10)

@@ -53,6 +53,7 @@ pub enum Message {
     ToggleMenu,
     PlayerWindowAction(crate::gui::player::WindowAction),
     SetWindowId(iced::window::Id),
+    PlayerMouseMoved(iced::Point),
 }
 
 pub struct AudoxidyApp {
@@ -327,6 +328,10 @@ impl AudoxidyApp {
                     }
                 }
             }
+            Message::PlayerMouseMoved(pos) => {
+                self.player_ui_state.mouse_pos = Some(pos);
+                Task::none()
+            }
         }
     }
 
@@ -390,6 +395,13 @@ impl AudoxidyApp {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         let tick = iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::Tick);
         let win_ids = iced::window::open_events().map(Message::SetWindowId);
-        iced::Subscription::batch([tick, win_ids])
+        let mouse_evs = iced::event::listen_with(|event, _status, _window_id| {
+            if let iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) = event {
+                Some(Message::PlayerMouseMoved(position))
+            } else {
+                None
+            }
+        });
+        iced::Subscription::batch([tick, win_ids, mouse_evs])
     }
 }

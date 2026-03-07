@@ -99,9 +99,9 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     
     // Barra superior: Pestañas (mock simple por ahora)
     let tabs = row![
-        text("Default").color(COLOR_TEXT_PRIMARY),
-        text("Favoritos").color(COLOR_TEXT_SECONDARY)
-    ].spacing(20).padding(10);
+        text("Default").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text("Favoritos").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
+    ].spacing(20).padding(15);
     
     let tabs_container = container(tabs)
         .width(Length::Fill)
@@ -114,9 +114,9 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     let secs = (total_secs % 60.0).floor() as u32;
     
     let stats_header = row![
-        text("Todas Las Canciones").size(16).color(COLOR_TEXT_PRIMARY),
+        text("Todas Las Canciones").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(Length::Fill),
-        text(format!("{} pistas • {}:{:02}", active_list.len(), mins, secs)).size(14).color(COLOR_TEXT_SECONDARY)
+        text(format!("{} pistas • {}:{:02}", active_list.len(), mins, secs)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
     ]
     .padding(10)
     .align_y(Alignment::Center);
@@ -130,19 +130,19 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     
     for (i, song) in active_list.iter().enumerate() {
         let is_playing = manager.playing_song_idx == Some(i);
-        let color = if is_playing { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY };
+        let color = if is_playing { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
         
         // Formatear duración
         let s_mins = (song.duration_sec / 60.0).floor() as u32;
         let s_secs = (song.duration_sec % 60.0).floor() as u32;
         
         let song_row = row![
-            text(format!("{:02}", i + 1)).color(COLOR_TEXT_SECONDARY).width(30),
+            text(format!("{:02}", i + 1)).color(COLOR_TEXT_SECONDARY).width(30).size(14).font(FONT_INTER_SANS_MEDIUM),
             column![
-                text(song.title.clone()).color(color).size(14),
-                text(format!("{} • {} • {}", song.artist, song.album, song.year)).color(COLOR_TEXT_SECONDARY).size(14)
+                text(song.title.clone()).color(color).size(14).font(FONT_INTER_SANS_MEDIUM),
+                text(format!("{} • {} • {}", song.artist, song.album, song.year)).color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM)
             ].width(Length::Fill),
-            text(format!("{}:{:02}", s_mins, s_secs)).color(color).size(14)
+            text(format!("{}:{:02}", s_mins, s_secs)).color(color).size(13).font(FONT_INTER_SANS_MEDIUM)
         ].align_y(Alignment::Center);
 
         // Hacemos cada canción un botón transparente que emite el Message al hacer clic
@@ -156,16 +156,16 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     
     let playlist_scroll = scrollable(songs_col).height(Length::Fill);
 
-    // Barra de herramientas inferior
-    let shuffle_txt = text("Shuffle").color(if manager.shuffle_active { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY });
+    let shuffle_txt = text("Shuffle").color(if manager.shuffle_active { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY }).font(FONT_INTER_SANS_MEDIUM);
     let repeat_texts = ["Repeat (Off)", "Repeat (All)", "Repeat (One)"];
     let repeat_color = if manager.repeat_mode > 0 { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY };
-    let repeat_txt = text(repeat_texts[manager.repeat_mode as usize]).color(repeat_color);
+    let repeat_txt = text(repeat_texts[manager.repeat_mode as usize]).color(repeat_color).font(FONT_INTER_SANS_MEDIUM);
 
     let bottom_bar = row![
         text_input("Buscar...", &manager.search_query)
             .on_input(Message::SearchQueryChanged)
-            .width(120),
+            .width(160)
+            .font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(Length::Fill),
         button(shuffle_txt).on_press(Message::ToggleShuffle).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
         button(repeat_txt).on_press(Message::ToggleRepeat).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))

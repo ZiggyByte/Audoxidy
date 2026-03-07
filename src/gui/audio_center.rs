@@ -356,13 +356,13 @@ pub fn view<'a>(
 ) -> Element<'a, crate::gui::app::Message> {
     
     let tabs = row![
-        button(text("Configuración de Audio").size(16))
+        button(text("Configuración de Audio").size(16).font(FONT_INTER_SANS_MEDIUM))
             .style(if manager.selected_tab == 0 { button::primary } else { button::secondary })
             .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(0))),
-        button(text("Ecualizador").size(16))
+        button(text("Ecualizador").size(16).font(FONT_INTER_SANS_MEDIUM))
             .style(if manager.selected_tab == 1 { button::primary } else { button::secondary })
             .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(1))),
-        button(text("Efectos de Audio").size(16))
+        button(text("Efectos de Audio").size(16).font(FONT_INTER_SANS_MEDIUM))
             .style(if manager.selected_tab == 2 { button::primary } else { button::secondary })
             .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(2))),
     ].spacing(10);
@@ -391,7 +391,7 @@ pub fn view<'a>(
     )
     .width(Length::Fixed(900.0))
     .height(Length::Fixed(500.0))
-    .style(|_t: &Theme| container::Style::default().background(COLOR_BG).border(iced::border::color(COLOR_ACCENT).width(2.0)))
+    .style(|_t: &Theme| container::Style::default().background(COLOR_BG).border(iced::Border::default().rounded(10.0).width(2.0).color(COLOR_ACCENT)))
     .into()
 }
 
@@ -464,12 +464,12 @@ fn view_audio_config<'a>(
     let buffer_dropdown = pick_list(buffer_options, selected_buf_opt, |o: OptionWrapper<Option<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BufferSizeSelected(o.value))).width(Length::Fixed(150.0));
 
     let left_col = column![
-        row![container(text("Servidor de Audio:").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), host_dropdown].align_y(Alignment::Center).spacing(10),
-        row![container(text("Dispositivo de Salida:").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), device_dropdown].align_y(Alignment::Center).spacing(10),
-        row![container(text("Frecuencia de Muestreo:").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), rate_dropdown].align_y(Alignment::Center).spacing(10),
-        row![container(text("Profundidad de Bits:").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), bit_dropdown].align_y(Alignment::Center).spacing(10),
-        row![container(text("Canales de Salida:").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), ch_dropdown].align_y(Alignment::Center).spacing(10),
-        row![container(text("Quantum (Buffer):").color(COLOR_TEXT_PRIMARY).size(14)).width(Length::Fixed(180.0)), buffer_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Servidor de Audio:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), host_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Dispositivo de Salida:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), device_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Frecuencia de Muestreo:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), rate_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Profundidad de Bits:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), bit_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Canales de Salida:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), ch_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Quantum (Buffer):").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), buffer_dropdown].align_y(Alignment::Center).spacing(10),
     ].spacing(20);
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente
@@ -485,25 +485,25 @@ fn view_audio_config<'a>(
     };
 
     let r_col = column![
-        text("Estado del Audio").color(COLOR_TEXT_PRIMARY).size(18),
+        text("Estado del Audio").color(COLOR_TEXT_PRIMARY).size(18).font(FONT_INTER_SANS_MEDIUM),
         Space::new().height(Length::Fixed(10.0)),
-        row![text("Backend:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text("Compartido").color(COLOR_TEXT_PRIMARY)],
-        row![text("Dispositivo:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text("Sistema").color(COLOR_TEXT_PRIMARY)],
-        row![text("Frecuencia:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text(format!("{} Hz", sample_rate)).color(COLOR_TEXT_PRIMARY)],
-        row![text("Profundidad:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text(bit_depth_display).color(COLOR_TEXT_PRIMARY)],
-        row![text("Canales:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text(format!("{}", channels)).color(COLOR_TEXT_PRIMARY)],
-        row![text("Quantum:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)), text(if buffer_size > 0 { format!("{}", buffer_size) } else { "Auto".to_string() }).color(COLOR_TEXT_PRIMARY)],
+        row![text("Backend:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text("Compartido").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        row![text("Dispositivo:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text("Sistema").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        row![text("Frecuencia:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(format!("{} Hz", sample_rate)).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        row![text("Profundidad:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(bit_depth_display).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        row![text("Canales:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(format!("{}", channels)).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        row![text("Quantum:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(if buffer_size > 0 { format!("{}", buffer_size) } else { "Auto".to_string() }).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
     ].spacing(10);
 
     let bottom_actions = row![
-        button(text("Reiniciar servicio de Audio")).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::RestartService)),
-        button(text("Predeterminado")).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ResetToDefaults)),
+        button(text("Reiniciar servicio de Audio").font(FONT_INTER_SANS_MEDIUM)).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::RestartService)),
+        button(text("Predeterminado").font(FONT_INTER_SANS_MEDIUM)).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ResetToDefaults)),
         if manager.apply_enabled {
-            button(text("Aplicar"))
+            button(text("Aplicar").font(FONT_INTER_SANS_MEDIUM))
                 .style(button::primary)
                 .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ApplySettings))
         } else {
-            button(text("Aplicar"))
+            button(text("Aplicar").font(FONT_INTER_SANS_MEDIUM))
         }
     ].spacing(15);
 
@@ -527,26 +527,26 @@ fn view_equalizer<'a>(
     let toggle_eq = column![
         row![
             checkbox(manager.equalizer_enabled).on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqToggleSelected(b))),
-            text("Activar Ecualizador").size(14)
+            text("Activar Ecualizador").size(14).font(FONT_INTER_SANS_MEDIUM)
         ].spacing(5)
     ];
         
     let bands_mode = row![
-        text("Bandas:").size(14).color(COLOR_TEXT_PRIMARY),
-        iced::widget::radio("20", false, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14),
-        iced::widget::radio("31", true, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14),
+        text("Bandas:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        iced::widget::radio("20", false, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14).font(FONT_INTER_SANS_MEDIUM),
+        iced::widget::radio("31", true, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14).font(FONT_INTER_SANS_MEDIUM),
     ].spacing(10).align_y(Alignment::Center);
 
     let preset_selector = row![
-        text("Preset:").size(14).color(COLOR_TEXT_PRIMARY),
+        text("Preset:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         pick_list(
             manager.equalizer_presets.clone(),
             manager.selected_preset.clone(),
             |p| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(p))
-        ).text_size(12).padding(4)
+        ).text_size(12).padding(4).font(FONT_INTER_SANS_MEDIUM)
     ].spacing(10).align_y(Alignment::Center);
 
-    let default_btn = button(text("Default").size(12)).style(button::secondary)
+    let default_btn = button(text("Default").size(12).font(FONT_INTER_SANS_MEDIUM)).style(button::secondary)
         .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(manager.equalizer_presets[0].clone())));
         
     let top_row = row![
@@ -574,11 +574,11 @@ fn view_equalizer<'a>(
             .height(Length::Fixed(240.0));
             
         column![
-            text(label_top).size(10).color(COLOR_TEXT_PRIMARY),
+            text(label_top).size(10).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
             Space::new().height(Length::Fixed(10.0)),
             slider,
             Space::new().height(Length::Fixed(10.0)),
-            text(label_bot).size(10).color(COLOR_TEXT_SECONDARY),
+            text(label_bot).size(10).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
         ].align_x(Alignment::Center).into()
     }
 
@@ -615,8 +615,9 @@ fn view_equalizer<'a>(
     }
 
     let legend = text("* Restablecer a 0 dB haciendo clic derecho sobre el deslizador.")
-        .size(10)
-        .color(COLOR_TEXT_SECONDARY);
+        .size(11)
+        .color(COLOR_TEXT_SECONDARY)
+        .font(FONT_INTER_SANS_MEDIUM);
 
     column![
         top_row,
@@ -659,7 +660,7 @@ fn view_audio_effects<'a>(
         
         // Cabecera con Checkbox Custom (Mock por nativo por ahora)
         let top_row = row![
-            text(title).size(13).color(COLOR_TEXT_PRIMARY),
+            text(title).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fill),
             checkbox(enabled).on_toggle(on_toggle)
         ].align_y(Alignment::Center);
@@ -670,12 +671,12 @@ fn view_audio_effects<'a>(
             .width(Length::Fill);
         
         let bottom_row = row![
-            text(param_label).size(11).color(COLOR_TEXT_SECONDARY),
+            text(param_label).size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fixed(15.0)),
             param_slider,
             Space::new().width(Length::Fixed(10.0)),
-            text(format!("{:.1}", val)).size(11).color(COLOR_TEXT_PRIMARY).width(Length::Fixed(25.0)),
-            button(text("R").size(8)).padding(2).on_press(on_reset)
+            text(format!("{:.1}", val)).size(11).color(COLOR_TEXT_PRIMARY).width(Length::Fixed(25.0)).font(FONT_INTER_SANS_MEDIUM),
+            button(text("R").size(8).font(FONT_INTER_SANS_MEDIUM)).padding(2).on_press(on_reset)
         ].align_y(Alignment::Center);
 
         container(
@@ -743,7 +744,7 @@ fn view_audio_effects<'a>(
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Compressor, -10.0))),
             
         container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Canal Central").size(12).color(COLOR_TEXT_PRIMARY),
+        text("Volumen Canal Central").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().height(Length::Fixed(5.0)),
         view_effect("Canal Central", "Nivel (%)", audio_s.downmix_center, 0.0..=2.0, audio_s.downmix_center_enabled, 0.81,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixCenter, b)),
@@ -769,7 +770,7 @@ fn view_audio_effects<'a>(
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Limiter, -6.0))),
 
         container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Subwoofer (Mezcla > 5.1)").size(12).color(COLOR_TEXT_PRIMARY),
+        text("Volumen Subwoofer (Mezcla > 5.1)").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().height(Length::Fixed(5.0)),
         view_effect("Canal de Subwoofer", "Nivel (%)", audio_s.downmix_lfe, 0.0..=2.0, audio_s.downmix_lfe_enabled, 0.66,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixLfe, b)),
@@ -795,7 +796,7 @@ fn view_audio_effects<'a>(
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, 0.5))),
             
         container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Surround (SL/SR SBL/SBR)").size(12).color(COLOR_TEXT_PRIMARY),
+        text("Volumen Surround (SL/SR SBL/SBR)").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().height(Length::Fixed(5.0)),
         view_effect("Canales Surround", "Nivel (%)", audio_s.downmix_surround, 0.0..=2.0, audio_s.downmix_surround_enabled, 0.73,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixSurround, b)),

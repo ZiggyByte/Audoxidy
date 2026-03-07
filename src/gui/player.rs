@@ -29,6 +29,7 @@ pub struct PlayerUiState {
     pub tick_count: u64,
     pub current_art_len: usize,
     pub cached_art_handle: Option<iced::widget::image::Handle>,
+    pub mouse_pos: Option<iced::Point>,
 }
 
 impl Default for PlayerUiState {
@@ -41,6 +42,7 @@ impl Default for PlayerUiState {
             tick_count: 0,
             current_art_len: 0,
             cached_art_handle: None,
+            mouse_pos: None,
         }
     }
 }
@@ -86,24 +88,26 @@ pub fn view<'a>(
 
     // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
     // Botones Top sin fondo usando styling transparente
-    fn transparent_btn<'b>(icon: &str) -> iced::widget::Button<'b, Message> {
-        button(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32))
-            .padding(0)
-            .style(iced::widget::button::text)
+    fn transparent_btn<'b>(icon: &str, action: Message) -> Element<'b, Message> {
+        let content = svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(31).height(31);
+        mouse_area(content)
+            .on_press(action)
+            .interaction(iced::mouse::Interaction::Idle)
+            .into()
     }
 
     let top_row = row![
-        transparent_btn("menu.svg").on_press(Message::ToggleMenu),
+        transparent_btn("menu.svg", Message::ToggleMenu),
         Space::new().width(Length::Fill),
         // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
         Space::new().width(Length::Fill),
-        transparent_btn("minimize.svg").on_press(Message::PlayerWindowAction(WindowAction::Minimize)),
-        transparent_btn("maximize.svg").on_press(Message::PlayerWindowAction(WindowAction::Maximize)),
-        transparent_btn("close.svg").on_press(Message::PlayerWindowAction(WindowAction::Close)),
+        transparent_btn("minimize.svg", Message::PlayerWindowAction(WindowAction::Minimize)),
+        transparent_btn("maximize.svg", Message::PlayerWindowAction(WindowAction::Maximize)),
+        transparent_btn("close.svg", Message::PlayerWindowAction(WindowAction::Close)),
     ]
     .height(Length::Fixed(40.0))
     .align_y(Alignment::Center)
-    .padding([0, 10]); // padding horizontal
+    .padding([0, 8]); // padding horizontal
 
     let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
     
@@ -127,28 +131,33 @@ pub fn view<'a>(
         } else { chars[0..limit.min(chars.len())].iter().collect() }
     };
 
+    let title_el = container(
+        text(apply_marquee(&state.title, 39)).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+    ).padding([0, 2]).height(Length::Fixed(35.0)).center_y(Length::Fill).width(Length::Fill);
+
+    let title_widget: Element<'a, Message> = if state.title.len() > 39 {
+        iced::widget::tooltip(title_el, container(text(state.title.clone()).size(14).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
+    } else { title_el.into() };
+
+    let artist_el = container(
+        text(apply_marquee(&state.artist, 38)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+    ).padding([0, 2]).height(Length::Fixed(30.0)).center_y(Length::Fill).width(Length::Fill);
+
+    let artist_widget: Element<'a, Message> = if state.artist.len() > 35 {
+        iced::widget::tooltip(artist_el, container(text(state.artist.clone()).size(14).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
+    } else { artist_el.into() };
+
     let info_col = if is_playing_or_paused {
         column![
-            container(
-                text(apply_marquee(&state.title, 32))
-                    .size(18)
-                    .color(Color::WHITE)
-            )
-            .height(Length::Fixed(35.0))
-            .center_y(Length::Fill)
-            .width(Length::Fill),
+            title_widget,
             row![
+                artist_widget,
                 container(
-                    text(apply_marquee(&state.artist, 30))
-                        .size(16)
+                    text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
+                        .size(14)
                         .color(Color::WHITE)
-                )
-                .height(Length::Fixed(30.0))
-                .center_y(Length::Fill)
-                .width(Length::Fill),
-                text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
-                    .size(16)
-                    .color(Color::WHITE)
+                        .font(FONT_INTER_SANS_NORMAL)
+                ).padding([0, 2])
             ]
             .height(Length::Fixed(30.0))
             .align_y(Alignment::Center)
@@ -163,51 +172,60 @@ pub fn view<'a>(
         state.current_pos_sec as f32 / state.total_duration_sec as f32
     } else { 0.0 };
     
-    let progress_bar = container(
-        slider(0.0..=1.0, progress, move |v| Message::SeekTo(v * state.total_duration_sec as f32))
-            .step(0.001)
-            .style(move |theme: &Theme, status| {
-                let mut st = iced::widget::slider::default(theme, status);
-                st.handle.background = Color::TRANSPARENT.into();
-                st.handle.border_color = Color::TRANSPARENT;
-                if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
-                    *radius = 0.0;
-                }
-                st.rail.width = 30.0;
-                st.rail.backgrounds = (COLOR_ACCENT.into(), Color::from_rgba(1.0, 1.0, 1.0, 0.2).into());
-                st
-            })
+    let slider_el = slider(0.0..=1.0, progress, move |v| Message::SeekTo(v * state.total_duration_sec as f32))
+        .step(0.001)
+        .style(move |theme: &Theme, status| {
+            let mut st = iced::widget::slider::default(theme, status);
+            st.handle.background = Color::TRANSPARENT.into();
+            st.handle.border_color = Color::TRANSPARENT;
+            if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
+                *radius = 0.0;
+            }
+            st.rail.width = 10.0;
+            st.rail.backgrounds = (COLOR_ACCENT.into(), Color::from_rgba(1.0, 1.0, 1.0, 0.2).into());
+            st
+        });
+
+    let progress_bar = mouse_area(
+        container(slider_el).padding([0, 15]).height(Length::Fill).center_y(Length::Fill)
     )
-    .height(Length::Fixed(30.0))
-    .center_y(Length::Fill)
-    .padding([0, 0])
-    .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)));
+    .interaction(iced::mouse::Interaction::Idle);
+
+    let progress_container = container(progress_bar)
+        .height(Length::Fixed(25.0))
+        .center_y(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)));
 
     let capa4: Element<'a, Message> = column![
         top_row,
         Space::new().height(Length::Fixed(255.0)),
         info_col.padding([0, 10]),
-        progress_bar
+        progress_container
     ]
     .width(bounds)
     .height(bounds)
     .into();
 
-    // --- Capa 5: Controles de Audio ---
     let make_zone = |icon: &str, zone: HoverZone, action: Message, is_hovered: bool| {
+        let size = if icon == "pause-straight-fill.svg" { 40 } else { 48 };
         let content: Element<'a, Message> = if is_hovered {
-            container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32))
+            container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(size).height(size))
                 .width(Length::Fill).height(Length::Fill)
                 .center_x(Length::Fill).center_y(Length::Fill)
                 .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5)))
                 .into()
         } else {
-            container(Space::new()).width(Length::Fill).height(Length::Fill).into()
+            container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(size).height(size))
+                .width(Length::Fill).height(Length::Fill)
+                .center_x(Length::Fill).center_y(Length::Fill)
+                .into()
         };
         
-        let area: Element<'a, Message> = mouse_area(button(content).on_press(action).padding(0).style(iced::widget::button::text).width(Length::Fill).height(Length::Fill))
+        let area: Element<'a, Message> = mouse_area(content)
+            .on_press(action)
             .on_enter(Message::PlayerHoverZone(zone))
             .on_exit(Message::PlayerHoverZone(HoverZone::None))
+            .interaction(iced::mouse::Interaction::Idle)
             .into();
         area
     };
@@ -222,11 +240,11 @@ pub fn view<'a>(
             
             container(
                 column![
-                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(32).height(32),
-                    text(format!("{:.0}", vol)).size(16).color(Color::WHITE)
+                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(48).height(48),
+                    text(format!("{:.0}", vol)).size(20).color(Color::WHITE).font(FONT_INTER_SANS_MEDIUM)
                 ]
                 .align_x(Alignment::Center)
-                .spacing(5)
+                .spacing(0)
             )
             .width(Length::Fill).height(Length::Fill)
             .center_x(Length::Fill).center_y(Length::Fill)
@@ -261,43 +279,52 @@ pub fn view<'a>(
     // --- Menú Desplegable ---
     let dropdown: Element<'a, Message> = if ui_state.is_menu_open {
         let mk_menu_btn = |txt: &'a str, msg: Message| {
-            button(text(txt.to_string()).color(COLOR_TEXT_PRIMARY).size(12))
+            button(text(txt.to_string()).color(COLOR_TEXT_PRIMARY).size(13).font(FONT_INTER_SANS_MEDIUM))
                 .width(Length::Fill)
-                .padding([5, 15])
+                .padding([4, 0])
                 .on_press(msg)
                 .style(iced::widget::button::text)
         };
         
         let menu_box = container(
             column![
-                mk_menu_btn("Acerca", Message::ToggleMenu),
                 mk_menu_btn("Abrir Archivo", Message::ToggleMenu),
                 mk_menu_btn("Abrir Carpeta", Message::OpenFolderPicker),
                 mk_menu_btn("Biblioteca", Message::ToggleMenu),
                 mk_menu_btn("Lista de Reproduccion", Message::ToggleMenu),
                 mk_menu_btn("Lirycs", Message::ToggleMenu),
-                mk_menu_btn("Apagado Automatico", Message::ToggleMenu),
+                Space::new().height(Length::Fixed(2.0)),
                 container(Space::new().height(1)).width(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
+                Space::new().height(Length::Fixed(2.0)),
                 mk_menu_btn("Configuración de Audio", Message::ToggleAudioCenter),
                 mk_menu_btn("Ecualizador", Message::ToggleAudioCenter), 
                 mk_menu_btn("Efectos de Audio", Message::ToggleAudioCenter), 
+                Space::new().height(Length::Fixed(2.0)),
                 container(Space::new().height(1)).width(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
+                Space::new().height(Length::Fixed(2.0)),
+                mk_menu_btn("Apagado Automatico", Message::ToggleMenu),
                 mk_menu_btn("Personalizacion", Message::ToggleMenu),
                 mk_menu_btn("Preferencias", Message::ToggleMenu),
                 mk_menu_btn("Complementos", Message::ToggleMenu),
+                mk_menu_btn("Acerca", Message::ToggleMenu),
                 mk_menu_btn("Salir", Message::PlayerWindowAction(WindowAction::Close)),
             ]
         )
-        .width(Length::Fixed(150.0))
-        .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
+        .width(Length::Fixed(180.0))
+        .padding(iced::Padding { top: 4.0, right: 15.0, bottom: 4.0, left: 15.0 })
+        .style(|_t: &Theme| container::Style::default()
+            .background(COLOR_BG)
+            .border(iced::Border::default().rounded(8.0).width(2.0).color(COLOR_ACCENT))
+        );
 
         let underlay = mouse_area(Space::new().width(Length::Fill).height(Length::Fill))
+            .interaction(iced::mouse::Interaction::Idle)
             .on_press(Message::ToggleMenu);
 
         let menu_wrapper = container(menu_box)
             .width(bounds) // el wrapper ocupa todo
             .height(bounds)
-            .padding(iced::Padding { top: 40.0, right: 0.0, bottom: 0.0, left: 15.0 });
+            .padding(iced::Padding { top: 35.0, right: 0.0, bottom: 0.0, left: 15.0 });
 
         container(
             Stack::new().push(underlay).push(menu_wrapper)
@@ -307,15 +334,34 @@ pub fn view<'a>(
         Space::new().into()
     };
 
-    // Apilar capas en el Stack
-    container(
-        Stack::new()
+    let mut main_stack = Stack::new()
             .push(background_layer)
             .push(blackout_layer)
             .push(capa4)
             .push(capa5_positioned)
-            .push(dropdown)
-    )
+            .push(dropdown);
+
+    // Dynamic Tooltip Cursor exacto para barra de progreso
+    if let Some(pos) = ui_state.mouse_pos {
+        if pos.y >= 360.0 && pos.y <= 385.0 && pos.x >= 15.0 && pos.x <= 385.0 && state.total_duration_sec > 0.0 {
+            let frac = ((pos.x - 15.0) / 370.0).clamp(0.0, 1.0);
+            let h_sec = (frac * state.total_duration_sec as f32) as u32;
+            let tooltip_txt = format!("{:02}:{:02}", h_sec / 60, h_sec % 60);
+            
+            let tooltip_box = container(text(tooltip_txt).size(12).color(Color::WHITE))
+                .padding(4)
+                .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY)));
+            
+            let hover_tooltip = container(tooltip_box)
+                .width(Length::Fill).height(Length::Fill)
+                .padding(iced::Padding { top: pos.y - 30.0, right: 0.0, bottom: 0.0, left: pos.x - 15.0 });
+            
+            main_stack = main_stack.push(hover_tooltip);
+        }
+    }
+
+    // Apilar capas en el contenedor final
+    container(main_stack)
     .width(bounds)
     .height(bounds)
     .into()

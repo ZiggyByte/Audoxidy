@@ -30,6 +30,8 @@ pub struct PlayerUiState {
     pub current_art_len: usize,
     pub cached_art_handle: Option<iced::widget::image::Handle>,
     pub mouse_pos: Option<iced::Point>,
+    pub activity_tick: u64,
+    pub is_active: bool,
 }
 
 impl Default for PlayerUiState {
@@ -43,6 +45,8 @@ impl Default for PlayerUiState {
             current_art_len: 0,
             cached_art_handle: None,
             mouse_pos: None,
+            activity_tick: 0,
+            is_active: false,
         }
     }
 }
@@ -83,7 +87,7 @@ pub fn view<'a>(
     ))
     .width(bounds)
     .height(bounds)
-    .style(|_theme: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)))
+    .style(|_theme: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.30)))
     .into();
 
     // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
@@ -115,7 +119,7 @@ pub fn view<'a>(
         let chars: Vec<char> = text_str.chars().collect();
         if chars.len() <= limit { return text_str.to_string(); }
         let tick = ui_state.tick_count;
-        let offset = (tick / 2) as usize % (chars.len() + 10);
+        let offset = (tick / 3) as usize % (chars.len() + 10);
         if offset < chars.len() {
             let end = (offset + limit).min(chars.len());
             let mut s: String = chars[offset..end].iter().collect();
@@ -133,38 +137,41 @@ pub fn view<'a>(
 
     let title_el = container(
         text(apply_marquee(&state.title, 39)).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(35.0)).center_y(Length::Fill).width(Length::Fill);
 
-    let title_widget: Element<'a, Message> = if state.title.len() > 39 {
-        iced::widget::tooltip(title_el, container(text(state.title.clone()).size(14).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
+    let title_widget: Element<'a, Message> = if state.title.len() > 35 {
+        iced::widget::tooltip(title_el, container(text(state.title.clone()).size(13).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
     } else { title_el.into() };
 
     let artist_el = container(
-        text(apply_marquee(&state.artist, 38)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        text(apply_marquee(&state.artist, 40)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(30.0)).center_y(Length::Fill).width(Length::Fill);
 
     let artist_widget: Element<'a, Message> = if state.artist.len() > 35 {
-        iced::widget::tooltip(artist_el, container(text(state.artist.clone()).size(14).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
+        iced::widget::tooltip(artist_el, container(text(state.artist.clone()).size(13).color(Color::WHITE)).padding(6).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST).border(iced::Border::default().width(1.0).color(COLOR_TEXT_SECONDARY))), iced::widget::tooltip::Position::FollowCursor).into()
     } else { artist_el.into() };
 
     let info_col = if is_playing_or_paused {
         column![
-            title_widget,
-            row![
-                artist_widget,
-                container(
-                    text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
-                        .size(14)
-                        .color(Color::WHITE)
-                        .font(FONT_INTER_SANS_NORMAL)
-                ).padding([0, 2])
-            ]
-            .height(Length::Fixed(30.0))
-            .align_y(Alignment::Center)
+            Space::new().height(Length::Fixed(262.0)),
+            container(title_widget).height(Length::Fixed(40.0)).center_y(Length::Fill).padding([0, 10]),
+            container(
+                row![
+                    artist_widget,
+                    Space::new().width(Length::Fill),
+                    container(
+                        text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
+                            .size(14).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+                    ).padding([0, 2])
+                ].align_y(Alignment::Center)
+            ).height(Length::Fixed(36.0)).padding([0, 10])
         ]
         .width(Length::Fill)
+        .height(Length::Fixed(320.0))
     } else {
-        column![Space::new().height(Length::Fixed(65.0))]
+        column![Space::new().height(Length::Fixed(320.0))]
         .width(Length::Fill)
     };
 
@@ -181,56 +188,75 @@ pub fn view<'a>(
             if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
                 *radius = 0.0;
             }
-            st.rail.width = 10.0;
-            st.rail.backgrounds = (COLOR_ACCENT.into(), Color::from_rgba(1.0, 1.0, 1.0, 0.2).into());
+            st.rail.width = 5.0;
+            st.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
             st
         });
 
     let progress_bar = mouse_area(
-        container(slider_el).padding([0, 15]).height(Length::Fill).center_y(Length::Fill)
+        container(slider_el).padding([15, 13]).height(Length::Fill).center_y(Length::Fill)
     )
     .interaction(iced::mouse::Interaction::Idle);
 
     let progress_container = container(progress_bar)
-        .height(Length::Fixed(25.0))
+        .height(Length::Fixed(40.0))
         .center_y(Length::Fill)
-        .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.3)));
+        .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.25)));
 
     let capa4: Element<'a, Message> = column![
         top_row,
-        Space::new().height(Length::Fixed(255.0)),
-        info_col.padding([0, 10]),
+        info_col,
         progress_container
     ]
     .width(bounds)
     .height(bounds)
     .into();
 
-    let make_zone = |icon: &str, zone: HoverZone, action: Message, is_hovered: bool| {
+    let make_zone = |icon: &str, action: Message, is_hovered: bool| -> Element<'a, Message> {
         let size = if icon == "pause-straight-fill.svg" { 40 } else { 48 };
-        let content: Element<'a, Message> = if is_hovered {
+        
+        let visual_content = if is_hovered {
+            let pad = if icon == "pause-straight-fill.svg" { 7 } else { 3 };
             container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(size).height(size))
-                .width(Length::Fill).height(Length::Fill)
-                .center_x(Length::Fill).center_y(Length::Fill)
-                .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5)))
-                .into()
+                .padding(pad)
+                .style(|_t: &Theme| container::Style::default()
+                    .background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5))
+                    .border(iced::Border::default().rounded(30.0))
+                )
         } else {
-            container(svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(size).height(size))
-                .width(Length::Fill).height(Length::Fill)
-                .center_x(Length::Fill).center_y(Length::Fill)
-                .into()
+            container(Space::new().width(size).height(size))
         };
         
-        let area: Element<'a, Message> = mouse_area(content)
-            .on_press(action)
-            .on_enter(Message::PlayerHoverZone(zone))
-            .on_exit(Message::PlayerHoverZone(HoverZone::None))
-            .interaction(iced::mouse::Interaction::Idle)
-            .into();
-        area
+        let clickable_area = mouse_area(
+            container(visual_content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .center_x(Length::Fill)
+                .center_y(Length::Fill)
+        )
+        .on_press(action)
+        .interaction(iced::mouse::Interaction::Idle);
+
+        clickable_area.into()
     };
 
     let play_txt = if state.is_playing { "pause-straight-fill.svg" } else { "play-straight-fill.svg" };
+
+    let computed_zone = if let Some(pos) = ui_state.mouse_pos {
+        if ui_state.is_active && ui_state.showing_volume.is_none() && pos.x <= 400.0 && pos.y <= 400.0 && pos.y >= 40.0 && pos.y <= 360.0 && !ui_state.is_menu_open {
+            if pos.x < 133.3 { HoverZone::Previous }
+            else if pos.x < 266.6 { HoverZone::PlayPause }
+            else { HoverZone::Next }
+        } else { HoverZone::None }
+    } else { HoverZone::None };
+
+    let base_controls = row![
+        make_zone("skip-previous-straight-fill.svg", Message::PreviousTrack, computed_zone == HoverZone::Previous),
+        make_zone(play_txt, Message::PlayPause, computed_zone == HoverZone::PlayPause),
+        make_zone("skip-next-straight-fill.svg", Message::NextTrack, computed_zone == HoverZone::Next)
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill);
 
     let controls_content: Element<'a, Message> = match ui_state.showing_volume {
         Some(vol) => {
@@ -238,30 +264,27 @@ pub fn view<'a>(
                        else if vol < 50.0 { "volume-down-straight-fill.svg" }
                        else { "volume-up-straight-fill.svg" };
             
-            container(
-                column![
-                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(48).height(48),
-                    text(format!("{:.0}", vol)).size(20).color(Color::WHITE).font(FONT_INTER_SANS_MEDIUM)
-                ]
-                .align_x(Alignment::Center)
-                .spacing(0)
+            let vol_ui = container(
+                container(
+                    column![
+                        svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(48).height(48),
+                        text(format!("{:.0}", vol)).size(20).color(Color::WHITE).font(FONT_INTER_SANS_MEDIUM)
+                    ]
+                    .align_x(Alignment::Center)
+                    .spacing(0)
+                )
+                .padding(iced::Padding { top: 5.0, right: 10.0, bottom: 13.0, left: 10.0 })
+                .style(|_t: &Theme| container::Style::default()
+                    .background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5))
+                    .border(iced::Border::default().rounded(16.0))
+                )
             )
             .width(Length::Fill).height(Length::Fill)
-            .center_x(Length::Fill).center_y(Length::Fill)
-            // Cubrir toda el área con 40%
-            .style(|_t: &Theme| container::Style::default().background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.4)))
-            .into()
+            .center_x(Length::Fill).center_y(Length::Fill);
+
+            Stack::new().push(base_controls).push(vol_ui).into()
         },
-        None => {
-            row![
-                make_zone("skip-previous-straight-fill.svg", HoverZone::Previous, Message::PreviousTrack, ui_state.hover_zone == HoverZone::Previous),
-                make_zone(play_txt, HoverZone::PlayPause, Message::PlayPause, ui_state.hover_zone == HoverZone::PlayPause),
-                make_zone("skip-next-straight-fill.svg", HoverZone::Next, Message::NextTrack, ui_state.hover_zone == HoverZone::Next)
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
-        }
+        None => base_controls.into(),
     };
 
     let capa5: Element<'a, Message> = container(VolumeScrollArea::new(controls_content, Message::PlayerScroll))
@@ -288,7 +311,7 @@ pub fn view<'a>(
         
         let menu_box = container(
             column![
-                mk_menu_btn("Abrir Archivo", Message::ToggleMenu),
+                mk_menu_btn("Abrir Archivo", Message::ToggleMenu), // Cierran y delegan si lo implemento luego
                 mk_menu_btn("Abrir Carpeta", Message::OpenFolderPicker),
                 mk_menu_btn("Biblioteca", Message::ToggleMenu),
                 mk_menu_btn("Lista de Reproduccion", Message::ToggleMenu),
@@ -311,7 +334,7 @@ pub fn view<'a>(
             ]
         )
         .width(Length::Fixed(180.0))
-        .padding(iced::Padding { top: 4.0, right: 15.0, bottom: 4.0, left: 15.0 })
+        .padding(15)
         .style(|_t: &Theme| container::Style::default()
             .background(COLOR_BG)
             .border(iced::Border::default().rounded(8.0).width(2.0).color(COLOR_ACCENT))
@@ -343,8 +366,8 @@ pub fn view<'a>(
 
     // Dynamic Tooltip Cursor exacto para barra de progreso
     if let Some(pos) = ui_state.mouse_pos {
-        if pos.y >= 360.0 && pos.y <= 385.0 && pos.x >= 15.0 && pos.x <= 385.0 && state.total_duration_sec > 0.0 {
-            let frac = ((pos.x - 15.0) / 370.0).clamp(0.0, 1.0);
+        if ui_state.is_active && pos.y >=360.0 && pos.y <= 400.0 && pos.x >= 13.0 && pos.x <= 387.0 && state.total_duration_sec > 0.0 {
+            let frac = ((pos.x - 13.0) / 376.0).clamp(0.0, 1.0);
             let h_sec = (frac * state.total_duration_sec as f32) as u32;
             let tooltip_txt = format!("{:02}:{:02}", h_sec / 60, h_sec % 60);
             

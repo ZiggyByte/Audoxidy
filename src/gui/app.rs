@@ -54,6 +54,8 @@ pub enum Message {
     PlayerWindowAction(crate::gui::player::WindowAction),
     SetWindowId(iced::window::Id),
     PlayerMouseMoved(iced::Point),
+    PlayerActivityTimeout(u64),
+    GlobalClick,
 }
 
 pub struct AudoxidyApp {
@@ -94,6 +96,30 @@ impl AudoxidyApp {
             Task::none()
         )
     }
+    fn wake_up_controls(&mut self, is_mouse_move: bool) -> Task<Message> {
+        self.player_ui_state.is_active = true;
+        self.player_ui_state.activity_tick = self.player_ui_state.activity_tick.wrapping_add(1);
+        let current_act = self.player_ui_state.activity_tick;
+        
+        let mut tasks = vec![iced::Task::perform(
+            async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await },
+            move |_| Message::PlayerActivityTimeout(current_act)
+        )];
+        
+        if is_mouse_move {
+            if self.player_ui_state.showing_volume.is_some() {
+                let current_vol_tick = self.player_ui_state.volume_tick_id;
+                tasks.push(iced::Task::perform(
+                    async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await },
+                    move |_| Message::PlayerVolumeTimeout(current_vol_tick)
+                ));
+            }
+        } else {
+            self.player_ui_state.showing_volume = None;
+        }
+        
+        Task::batch(tasks)
+    }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let state = self.audio_manager.get_state();
@@ -122,15 +148,15 @@ impl AudoxidyApp {
             }
             Message::PlayPause => {
                 let _ = self.audio_manager.toggle_play_pause();
-                Task::none()
+                self.wake_up_controls(false)
             }
             Message::NextTrack => {
                 self.playlist_manager.play_next(&self.audio_manager);
-                Task::none()
+                self.wake_up_controls(false)
             }
             Message::PreviousTrack => {
                 self.playlist_manager.play_prev(&self.audio_manager);
-                Task::none()
+                self.wake_up_controls(false)
             }
             Message::Stop => {
                 self.audio_manager.stop();
@@ -142,7 +168,7 @@ impl AudoxidyApp {
             }
             Message::SeekTo(pos) => {
                 self.audio_manager.seek(pos as f64);
-                Task::none()
+                self.wake_up_controls(false)
             }
             Message::ToggleRepeat => {
                 self.playlist_manager.repeat_mode = (self.playlist_manager.repeat_mode + 1) % 3;
@@ -307,6 +333,12 @@ impl AudoxidyApp {
                 self.player_ui_state.is_menu_open = !self.player_ui_state.is_menu_open;
                 Task::none()
             }
+            Message::GlobalClick => {
+                if self.player_ui_state.is_menu_open {
+                    self.player_ui_state.is_menu_open = false;
+                }
+                Task::none()
+            }
             Message::PlayerWindowAction(action) => {
                 match action {
                     crate::gui::player::WindowAction::Minimize => {
@@ -330,6 +362,12 @@ impl AudoxidyApp {
             }
             Message::PlayerMouseMoved(pos) => {
                 self.player_ui_state.mouse_pos = Some(pos);
+                self.wake_up_controls(true)
+            }
+            Message::PlayerActivityTimeout(tick) => {
+                if self.player_ui_state.activity_tick == tick {
+                    self.player_ui_state.is_active = false;
+                }
                 Task::none()
             }
         }
@@ -359,8 +397,10 @@ impl AudoxidyApp {
             let ac_view = crate::gui::audio_center::view(&self.audio_center_manager, &self.audio_manager);
             
             // Falso modal: fondo negro semitransparente
-            let modal_bg = iced::widget::container(iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill))
-                .style(|_t: &iced::Theme| iced::widget::container::Style::default().background(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8)));
+            let modal_bg = iced::widget::mouse_area(
+                iced::widget::container(iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill))
+                .style(|_t: &iced::Theme| iced::widget::container::Style::default().background(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8)))
+            );
 
             // Contenedor centrado para el Control Center
             let centered_modal = iced::widget::container(ac_view)
@@ -380,7 +420,17 @@ impl AudoxidyApp {
             main_row.into()
         };
 
-        iced::widget::container(final_content)
+        let app_underlay = iced::widget::mouse_area(
+            iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill)
+        )
+        .on_press(Message::GlobalClick)
+        .interaction(iced::mouse::Interaction::Idle);
+
+        let final_stack = iced::widget::Stack::new()
+            .push(app_underlay)
+            .push(final_content);
+
+        iced::widget::container(final_stack)
             .width(iced::Length::Fill)
             .height(iced::Length::Fill)
             .center_x(iced::Fill)

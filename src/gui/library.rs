@@ -18,6 +18,8 @@ pub struct LibraryManager {
     pub view_mode: LibraryViewMode,
     pub search_query: String,
     pub expanded_album: Option<String>,
+    pub expanded_album_songs: Option<Vec<crate::db::database::SongRecord>>,
+    pub cached_albums: Option<Vec<(String, String, String, String, Option<String>)>>,
 }
 
 impl Default for LibraryManager {
@@ -26,6 +28,8 @@ impl Default for LibraryManager {
             view_mode: LibraryViewMode::Grid,
             search_query: String::new(),
             expanded_album: None,
+            expanded_album_songs: None,
+            cached_albums: None,
         }
     }
 }
@@ -38,13 +42,8 @@ pub fn view<'a>(
     // Contenido Superior (Lista o Cuadrícula)
     let content: Element<'a, Message> = match manager.view_mode {
         LibraryViewMode::Grid => {
-            // Recolectar álbumes en items con Strings owned para evitar el error E0597 de lifetimes.
-            let mut db_albums: Vec<(String, String, String, String, Option<String>)> = Vec::new();
-            if let Ok(db) = database.lock() {
-                if let Ok(albums) = db.get_all_albums() {
-                    db_albums = albums;
-                }
-            }
+            let empty_vec = Vec::new();
+            let db_albums = manager.cached_albums.as_ref().unwrap_or(&empty_vec);
 
             if db_albums.is_empty() {
                 container(text("No hay álbumes o escaneando la biblioteca...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
@@ -104,8 +103,15 @@ pub fn view<'a>(
                     if let Some(exp_album) = active_expansion {
                         let mut album_songs_col = column![].spacing(8).padding(15);
                         
-                        if let Ok(db) = database.lock() {
-                            if let Ok(songs) = db.get_songs_by_album(&exp_album) {
+                        let songs_cached = if manager.expanded_album_songs.is_some() {
+                            manager.expanded_album_songs.as_ref()
+                        } else {
+                            None
+                        };
+                        
+                        if let Some(songs) = songs_cached {
+                            let songs: &Vec<crate::db::database::SongRecord> = songs;
+                            if !songs.is_empty() {
                                 // Muestra botón para reproducir todo
                                 let play_album_btn = button(text("▶ Reproducir Todo").color(COLOR_BG).font(FONT_INTER_SANS_MEDIUM))
                                     .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_ACCENT))
@@ -124,6 +130,7 @@ pub fn view<'a>(
                                     let song_row = row![
                                         text(song.title.clone().unwrap_or_else(|| "Unknown Track".to_string())).color(COLOR_TEXT_PRIMARY).size(14).width(Length::Fill).font(FONT_INTER_SANS_MEDIUM),
                                         iced::widget::Space::new().width(Length::Fixed(15.0)),
+                                        // TODO: fix action for add playlist
                                         button(text("+").size(14)).on_press(Message::AddSongToPlaylist(s_clone))
                                     ].align_y(Alignment::Center);
                                     
@@ -132,6 +139,8 @@ pub fn view<'a>(
                             } else {
                                 album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM));
                             }
+                        } else {
+                            album_songs_col = album_songs_col.push(text("Cargando canciones...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM));
                         }
 
                         let exp_container = container(album_songs_col)

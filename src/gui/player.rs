@@ -30,8 +30,9 @@ pub struct PlayerUiState {
     pub current_art_len: usize,
     pub cached_art_handle: Option<iced::widget::image::Handle>,
     pub mouse_pos: Option<iced::Point>,
-    pub activity_tick: u64,
+    pub active_until_tick: u64,
     pub is_active: bool,
+    pub volume_clearing: bool,
 }
 
 impl Default for PlayerUiState {
@@ -45,8 +46,9 @@ impl Default for PlayerUiState {
             current_art_len: 0,
             cached_art_handle: None,
             mouse_pos: None,
-            activity_tick: 0,
+            active_until_tick: 0,
             is_active: false,
+            volume_clearing: false,
         }
     }
 }

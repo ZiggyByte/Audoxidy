@@ -74,6 +74,11 @@ pub struct AudoxidyApp {
 impl AudoxidyApp {
     pub fn new(audio_manager: Arc<AudioManager>) -> (Self, Task<Message>) {
         let db = Database::new().expect("Error crítico al crear/iniciar la base de datos.");
+        let mut library_manager = LibraryManager::default();
+        if let Ok(albums) = db.get_all_albums() {
+            library_manager.cached_albums = Some(albums);
+        }
+
         let database_arc = Arc::new(Mutex::new(db));
         let scanner_arc = Arc::new(Scanner::new(Arc::clone(&database_arc)));
 
@@ -88,7 +93,7 @@ impl AudoxidyApp {
                 media_controls,
                 playlist_manager: PlaylistManager::default(),
                 filters_manager: LibraryFiltersManager::default(),
-                library_manager: LibraryManager::default(),
+                library_manager,
                 audio_center_manager: AudioCenterManager::default(),
                 player_ui_state: crate::gui::player::PlayerUiState::default(),
                 window_id: None,
@@ -98,16 +103,13 @@ impl AudoxidyApp {
     }
     fn wake_up_controls(&mut self, is_mouse_move: bool) -> Task<Message> {
         self.player_ui_state.is_active = true;
-        self.player_ui_state.activity_tick = self.player_ui_state.activity_tick.wrapping_add(1);
-        let current_act = self.player_ui_state.activity_tick;
+        self.player_ui_state.active_until_tick = self.player_ui_state.tick_count.wrapping_add(10); // 10 ticks = 1000ms
         
-        let mut tasks = vec![iced::Task::perform(
-            async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await },
-            move |_| Message::PlayerActivityTimeout(current_act)
-        )];
+        let mut tasks = vec![];
         
         if is_mouse_move {
-            if self.player_ui_state.showing_volume.is_some() {
+            if self.player_ui_state.showing_volume.is_some() && !self.player_ui_state.volume_clearing {
+                self.player_ui_state.volume_clearing = true;
                 let current_vol_tick = self.player_ui_state.volume_tick_id;
                 tasks.push(iced::Task::perform(
                     async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await },
@@ -116,9 +118,14 @@ impl AudoxidyApp {
             }
         } else {
             self.player_ui_state.showing_volume = None;
+            self.player_ui_state.volume_clearing = false;
         }
         
-        Task::batch(tasks)
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
     }
 
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -128,6 +135,19 @@ impl AudoxidyApp {
         match message {
             Message::Tick => {
                 self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
+                
+                if self.player_ui_state.is_active && self.player_ui_state.tick_count > self.player_ui_state.active_until_tick {
+                    self.player_ui_state.is_active = false;
+                }
+                
+                // Actualizador perezoso de la base de datos de Biblioteca cada 5 segundos (50 ticks)
+                if self.player_ui_state.tick_count % 50 == 0 {
+                    if let Ok(db) = self.database.lock() {
+                        if let Ok(albums) = db.get_all_albums() {
+                            self.library_manager.cached_albums = Some(albums);
+                        }
+                    }
+                }
                 
                 // --- Cachear Portada del Álbum para evitar colapsar la VRAM de WGPU ---
                 if let Some(ref art) = state.album_art {
@@ -253,8 +273,14 @@ impl AudoxidyApp {
             Message::ToggleAlbumExpansion(album_id) => {
                 if self.library_manager.expanded_album.as_deref() == Some(album_id.as_str()) {
                     self.library_manager.expanded_album = None;
+                    self.library_manager.expanded_album_songs = None;
                 } else {
-                    self.library_manager.expanded_album = Some(album_id);
+                    self.library_manager.expanded_album = Some(album_id.clone());
+                    if let Ok(db) = self.database.lock() {
+                        if let Ok(songs) = db.get_songs_by_album(&album_id) {
+                            self.library_manager.expanded_album_songs = Some(songs);
+                        }
+                    }
                 }
                 Task::none()
             }
@@ -316,6 +342,7 @@ impl AudoxidyApp {
                 self.audio_manager.set_volume(new_vol_percent / 100.0);
                 self.player_ui_state.showing_volume = Some(new_vol_percent);
                 self.player_ui_state.volume_tick_id = self.player_ui_state.volume_tick_id.wrapping_add(1);
+                self.player_ui_state.volume_clearing = false;
                 let current_tick = self.player_ui_state.volume_tick_id;
                 
                 iced::Task::perform(
@@ -326,6 +353,7 @@ impl AudoxidyApp {
             Message::PlayerVolumeTimeout(tick) => {
                 if self.player_ui_state.volume_tick_id == tick {
                     self.player_ui_state.showing_volume = None;
+                    self.player_ui_state.volume_clearing = false;
                 }
                 Task::none()
             }
@@ -364,10 +392,7 @@ impl AudoxidyApp {
                 self.player_ui_state.mouse_pos = Some(pos);
                 self.wake_up_controls(true)
             }
-            Message::PlayerActivityTimeout(tick) => {
-                if self.player_ui_state.activity_tick == tick {
-                    self.player_ui_state.is_active = false;
-                }
+            Message::PlayerActivityTimeout(_tick) => {
                 Task::none()
             }
         }

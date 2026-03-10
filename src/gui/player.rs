@@ -215,7 +215,7 @@ pub fn view<'a>(
     .into();
 
     let make_zone = |icon: &str, action: Message, is_hovered: bool| -> Element<'a, Message> {
-        let size = if icon == "pause-straight-fill.svg" { 40 } else { 48 };
+        let size = if icon == "pause-straight-fill.svg" { 34 } else { 42 };
         
         let visual_content = if is_hovered {
             let pad = if icon == "pause-straight-fill.svg" { 7 } else { 3 };
@@ -223,7 +223,7 @@ pub fn view<'a>(
                 .padding(pad)
                 .style(|_t: &Theme| container::Style::default()
                     .background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5))
-                    .border(iced::Border::default().rounded(30.0))
+                    .border(iced::Border::default().rounded(50.0))
                 )
         } else {
             container(Space::new().width(size).height(size))
@@ -269,16 +269,16 @@ pub fn view<'a>(
             let vol_ui = container(
                 container(
                     column![
-                        svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(48).height(48),
+                        svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(44).height(44),
                         text(format!("{:.0}", vol)).size(20).color(Color::WHITE).font(FONT_INTER_SANS_MEDIUM)
                     ]
                     .align_x(Alignment::Center)
                     .spacing(0)
                 )
-                .padding(iced::Padding { top: 5.0, right: 10.0, bottom: 13.0, left: 10.0 })
+                .padding(iced::Padding { top: 8.0, right: 22.0, bottom: 13.0, left: 22.0 })
                 .style(|_t: &Theme| container::Style::default()
                     .background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5))
-                    .border(iced::Border::default().rounded(16.0))
+                    .border(iced::Border::default().rounded(50.0))
                 )
             )
             .width(Length::Fill).height(Length::Fill)

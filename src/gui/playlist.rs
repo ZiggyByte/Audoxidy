@@ -170,12 +170,13 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
         button(shuffle_txt).on_press(Message::ToggleShuffle).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
         button(repeat_txt).on_press(Message::ToggleRepeat).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
     ]
-    .padding(10)
+    .padding([0, 10])
     .spacing(10)
     .align_y(Alignment::Center);
 
     let bottom_container = container(bottom_bar)
         .width(Length::Fill)
+        .height(Length::Fixed(40.0))
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // Ensamblar todo

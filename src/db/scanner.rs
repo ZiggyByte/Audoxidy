@@ -60,6 +60,7 @@ impl Scanner {
                 let props = tagged_file.properties();
                 record.sample_rate = props.sample_rate().map(|sr| sr as i64);
                 record.channels = props.channels().map(|ch| ch as i64);
+                record.duration_secs = Some(props.duration().as_secs_f64());
                 
                 if let Some(t) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
                     record.track_number = t.track();

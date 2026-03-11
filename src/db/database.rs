@@ -34,6 +34,7 @@ impl Database {
                 SIZE INTEGER,
                 SAMPLE_RATE INTEGER,
                 CHANNELS INTEGER,
+                DURATION_SECS REAL,
                 
                 -- Identificadores Visuales
                 EMBEDDED_COVER BOOLEAN DEFAULT 0,
@@ -80,6 +81,9 @@ impl Database {
             )",
             [],
         )?;
+        // Intentar agregar DURATION_SECS si no existe (por si es una DB antigua local testing)
+        let _ = conn.execute("ALTER TABLE MUSIC_LIBRARY ADD COLUMN DURATION_SECS REAL", []);
+        
         Ok(())
     }
     
@@ -88,18 +92,18 @@ impl Database {
         self.conn.execute(
             "INSERT INTO MUSIC_LIBRARY (
                 FULL_FILE_PATH, FILE_NAME, ROOT_DIRECTORY_NAME, FULL_ROOT_DIRECTORY_PATH, 
-                FORMAT, SIZE, SAMPLE_RATE, CHANNELS, EMBEDDED_COVER, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT,
+                FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, EMBEDDED_COVER, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT,
                 TRACK_NUMBER, TOTAL_TRACKS, DISC_NUMBER, TOTAL_DISCS, TITLE, ARTIST, ALBUM, GENRE, RELEASE_YEAR, 
                 ALBUM_ARTIST, LYRICS, TRACK_GAIN, ALBUM_GAIN, COMMENTS, URL, COPYRIGHT, PUBLISHER, COMPOSER, LYRICIST,
                 DIRECTOR, ENCODED_BY, CATALOG, ISRC, KEY, BPM
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36
+                ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37
             )
             ON CONFLICT(FULL_FILE_PATH) DO UPDATE SET
                 FILE_NAME=excluded.FILE_NAME, ROOT_DIRECTORY_NAME=excluded.ROOT_DIRECTORY_NAME, 
                 FULL_ROOT_DIRECTORY_PATH=excluded.FULL_ROOT_DIRECTORY_PATH, FORMAT=excluded.FORMAT, 
-                SIZE=excluded.SIZE, SAMPLE_RATE=excluded.SAMPLE_RATE, CHANNELS=excluded.CHANNELS, 
+                SIZE=excluded.SIZE, SAMPLE_RATE=excluded.SAMPLE_RATE, CHANNELS=excluded.CHANNELS, DURATION_SECS=excluded.DURATION_SECS,
                 EMBEDDED_COVER=excluded.EMBEDDED_COVER, ORIGINAL_COVER_ROOT=excluded.ORIGINAL_COVER_ROOT, 
                 COMPRESSED_CACHED_COVER_ROOT=excluded.COMPRESSED_CACHED_COVER_ROOT, TRACK_NUMBER=excluded.TRACK_NUMBER, 
                 TOTAL_TRACKS=excluded.TOTAL_TRACKS, DISC_NUMBER=excluded.DISC_NUMBER, TOTAL_DISCS=excluded.TOTAL_DISCS, 
@@ -111,7 +115,7 @@ impl Database {
                 CATALOG=excluded.CATALOG, ISRC=excluded.ISRC, KEY=excluded.KEY, BPM=excluded.BPM",
             params![
                 &record.full_file_path, &record.file_name, &record.root_directory_name, &record.full_root_directory_path,
-                &record.format, &record.size, &record.sample_rate, &record.channels, &record.embedded_cover, 
+                &record.format, &record.size, &record.sample_rate, &record.channels, &record.duration_secs, &record.embedded_cover, 
                 &record.original_cover_root, &record.compressed_cached_cover_root, &record.track_number, 
                 &record.total_tracks, &record.disc_number, &record.total_discs, &record.title, &record.artist, 
                 &record.album, &record.genre, &record.release_year, &record.album_artist, &record.lyrics, 
@@ -141,7 +145,10 @@ impl Database {
     }
 
     pub fn get_songs_by_album(&self, album_name: &str) -> Result<Vec<SongRecord>> {
-        let mut stmt = self.conn.prepare("SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER FROM MUSIC_LIBRARY WHERE ALBUM = ?1 ORDER BY TRACK_NUMBER")?;
+        let mut stmt = self.conn.prepare("
+            SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE 
+            FROM MUSIC_LIBRARY WHERE ALBUM = ?1 ORDER BY TRACK_NUMBER
+        ")?;
         let rows = stmt.query_map([album_name], |row| {
             let mut record = SongRecord::default();
             record.full_file_path = row.get(0).unwrap_or_default();
@@ -150,6 +157,12 @@ impl Database {
             record.album = row.get(3).ok();
             record.release_year = row.get(4).ok();
             record.track_number = row.get(5).ok();
+            record.format = row.get(6).ok();
+            record.size = row.get(7).ok();
+            record.sample_rate = row.get(8).ok();
+            record.channels = row.get(9).ok();
+            record.duration_secs = row.get(10).ok();
+            record.genre = row.get(11).ok();
             Ok(record)
         })?;
         let mut songs = Vec::new();
@@ -157,6 +170,33 @@ impl Database {
             if let Ok(s) = r { songs.push(s); }
         }
         Ok(songs)
+    }
+    
+    pub fn get_library_stats(&self) -> Result<(usize, usize, f64, f64)> {
+        let mut stmt = self.conn.prepare("
+            SELECT 
+                COUNT(FULL_FILE_PATH) as total_songs,
+                COUNT(DISTINCT ALBUM) as total_albums,
+                SUM(COALESCE(DURATION_SECS, 0.0)) as total_duration,
+                SUM(COALESCE(SIZE, 0)) as total_size
+            FROM MUSIC_LIBRARY
+        ")?;
+        
+        // SQLite will return integers as i64 and reals as f64 generally in the sums
+        let mut total_songs = 0;
+        let mut total_albums = 0;
+        let mut total_duration = 0.0;
+        let mut total_size = 0.0;
+        
+        let mut rows = stmt.query([])?;
+        if let Some(row) = rows.next()? {
+            total_songs = row.get::<_, i64>(0).unwrap_or(0) as usize;
+            total_albums = row.get::<_, i64>(1).unwrap_or(0) as usize;
+            total_duration = row.get::<_, f64>(2).unwrap_or(0.0);
+            total_size = row.get::<_, f64>(3).unwrap_or(0.0);
+        }
+        
+        Ok((total_songs, total_albums, total_duration, total_size))
     }
 }
 
@@ -170,6 +210,7 @@ pub struct SongRecord {
     pub size: Option<i64>,
     pub sample_rate: Option<i64>,
     pub channels: Option<i64>,
+    pub duration_secs: Option<f64>,
     
     pub embedded_cover: bool,
     pub original_cover_root: Option<String>,

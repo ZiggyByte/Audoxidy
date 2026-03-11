@@ -31,8 +31,13 @@ pub enum Message {
     ScanLibrary(String),
     SearchQueryChanged(String),
     LibrarySearchQueryChanged(String),
+    LibrarySourceSelected(crate::gui::library::LibrarySource),
+    LibrarySortChanged(crate::gui::library::SortColumn),
     ToggleAlbumExpansion(String),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
+    ToggleLibraryViewDropdown,
+    ToggleLibraryAddDropdown,
+    PlayLibrarySelection,
     PlayLibraryAll,
     OpenFolderPicker,
 
@@ -56,6 +61,7 @@ pub enum Message {
     PlayerMouseMoved(iced::Point),
     PlayerActivityTimeout(u64),
     GlobalClick,
+    NoOp,
 }
 
 pub struct AudoxidyApp {
@@ -77,6 +83,12 @@ impl AudoxidyApp {
         let mut library_manager = LibraryManager::default();
         if let Ok(albums) = db.get_all_albums() {
             library_manager.cached_albums = Some(albums);
+        }
+        if let Ok((total_songs, total_albums, total_duration, total_size)) = db.get_library_stats() {
+            library_manager.total_songs = total_songs;
+            library_manager.total_albums = total_albums;
+            library_manager.total_duration_secs = total_duration;
+            library_manager.total_size_bytes = total_size;
         }
 
         let database_arc = Arc::new(Mutex::new(db));
@@ -270,6 +282,50 @@ impl AudoxidyApp {
                 self.library_manager.search_query = q;
                 Task::none()
             }
+            Message::LibrarySourceSelected(source) => {
+                self.library_manager.source = source;
+                // En el futuro, disparar recarga desde Spotify/Tidal
+                Task::none()
+            }
+            Message::LibrarySortChanged(col) => {
+                if self.library_manager.sort_column == Some(col) {
+                    if self.library_manager.sort_ascending == Some(true) {
+                        self.library_manager.sort_ascending = Some(false);
+                    } else {
+                        self.library_manager.sort_column = None;
+                        self.library_manager.sort_ascending = None;
+                    }
+                } else {
+                    self.library_manager.sort_column = Some(col);
+                    self.library_manager.sort_ascending = Some(true);
+                }
+                
+                if self.library_manager.sort_column.is_none() {
+                    // Restaurar orden original desde DB
+                    if let Ok(db) = self.database.lock() {
+                        if let Ok(albums) = db.get_all_albums() {
+                            self.library_manager.cached_albums = Some(albums);
+                        }
+                    }
+                } else {
+                    // Aplicar el sort en memoria
+                    if let Some(albums) = &mut self.library_manager.cached_albums {
+                        let col_ref = self.library_manager.sort_column.unwrap();
+                        let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
+                        albums.sort_by(|a, b| {
+                            let res = match col_ref {
+                                crate::gui::library::SortColumn::Album => a.0.cmp(&b.0),
+                                crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1),
+                                crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2),
+                                crate::gui::library::SortColumn::Year => a.3.cmp(&b.3),
+                                _ => std::cmp::Ordering::Equal,
+                            };
+                            if is_asc { res } else { res.reverse() }
+                        });
+                    }
+                }
+                Task::none()
+            }
             Message::ToggleAlbumExpansion(album_id) => {
                 if self.library_manager.expanded_album.as_deref() == Some(album_id.as_str()) {
                     self.library_manager.expanded_album = None;
@@ -286,6 +342,29 @@ impl AudoxidyApp {
             }
             Message::ChangeLibraryViewMode(mode) => {
                 self.library_manager.view_mode = mode;
+                self.library_manager.view_menu_open = false;
+                Task::none()
+            }
+            Message::ToggleLibraryViewDropdown => {
+                let next = match self.library_manager.view_mode {
+                    crate::gui::library::LibraryViewMode::Grid => crate::gui::library::LibraryViewMode::DetailedList,
+                    crate::gui::library::LibraryViewMode::DetailedList => crate::gui::library::LibraryViewMode::ThumbnailList,
+                    crate::gui::library::LibraryViewMode::ThumbnailList => crate::gui::library::LibraryViewMode::SimpleList,
+                    crate::gui::library::LibraryViewMode::SimpleList => crate::gui::library::LibraryViewMode::Grid,
+                };
+                self.library_manager.view_mode = next;
+                Task::none()
+            }
+            Message::ToggleLibraryAddDropdown => {
+                self.library_manager.add_menu_open = !self.library_manager.add_menu_open;
+                Task::none()
+            }
+            Message::PlayLibrarySelection => {
+                if let Some(songs) = &self.library_manager.expanded_album_songs {
+                    if !songs.is_empty() {
+                        return self.update(Message::PlayAlbum(songs.clone()));
+                    }
+                }
                 Task::none()
             }
             Message::PlayLibraryAll => Task::none(), // TODO
@@ -395,6 +474,7 @@ impl AudoxidyApp {
             Message::PlayerActivityTimeout(_tick) => {
                 Task::none()
             }
+            Message::NoOp => Task::none(),
         }
     }
 
@@ -455,12 +535,15 @@ impl AudoxidyApp {
             .push(app_underlay)
             .push(final_content);
 
-        iced::widget::container(final_stack)
-            .width(iced::Length::Fill)
-            .height(iced::Length::Fill)
-            .center_x(iced::Fill)
-            .center_y(iced::Fill)
-            .into()
+        let wrapped_app = helpers::CursorOff::new(
+            iced::widget::container(final_stack)
+                .width(iced::Length::Fill)
+                .height(iced::Length::Fill)
+                .center_x(iced::Fill)
+                .center_y(iced::Fill)
+        );
+
+        wrapped_app.into()
     }
 
     pub fn theme(&self) -> Theme {
@@ -478,5 +561,115 @@ impl AudoxidyApp {
             }
         });
         iced::Subscription::batch([tick, win_ids, mouse_evs])
+    }
+}
+
+pub mod helpers {
+    use iced::advanced::{Widget, layout, mouse, Clipboard, Shell, Layout};
+    use iced::advanced::widget::Tree;
+    use iced::{Element, Length, Rectangle, Size, Event};
+
+    pub struct CursorOff<'a, Message, Theme, Renderer> {
+        content: Element<'a, Message, Theme, Renderer>,
+    }
+
+    impl<'a, Message, Theme, Renderer> CursorOff<'a, Message, Theme, Renderer> {
+        pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+            Self { content: content.into() }
+        }
+    }
+
+    impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for CursorOff<'a, Message, Theme, Renderer>
+    where
+        Renderer: iced::advanced::Renderer,
+    {
+        fn size(&self) -> Size<Length> {
+            self.content.as_widget().size()
+        }
+
+        fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
+            self.content.as_widget_mut().layout(tree, renderer, limits)
+        }
+
+        fn draw(
+            &self,
+            tree: &Tree,
+            renderer: &mut Renderer,
+            theme: &Theme,
+            style: &iced::advanced::renderer::Style,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport)
+        }
+
+        fn tag(&self) -> iced::advanced::widget::tree::Tag {
+            self.content.as_widget().tag()
+        }
+
+        fn state(&self) -> iced::advanced::widget::tree::State {
+            self.content.as_widget().state()
+        }
+
+        fn children(&self) -> Vec<Tree> {
+            self.content.as_widget().children()
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            self.content.as_widget().diff(tree)
+        }
+
+        fn update(
+            &mut self,
+            state: &mut Tree,
+            event: &Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            renderer: &Renderer,
+            clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Message>,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget_mut().update(
+                state, event, layout, cursor, renderer, clipboard, shell, viewport,
+            )
+        }
+
+        fn mouse_interaction(
+            &self,
+            state: &Tree,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+            renderer: &Renderer,
+        ) -> mouse::Interaction {
+            let _ = self.content.as_widget().mouse_interaction(
+                state, layout, cursor, viewport, renderer,
+            );
+            mouse::Interaction::Idle
+        }
+
+        fn overlay<'b>(
+            &'b mut self,
+            state: &'b mut Tree,
+            layout: Layout<'b>,
+            renderer: &Renderer,
+            viewport: &Rectangle,
+            translation: iced::Vector,
+        ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+            self.content.as_widget_mut().overlay(state, layout, renderer, viewport, translation)
+        }
+    }
+
+    impl<'a, Message, Theme, Renderer> From<CursorOff<'a, Message, Theme, Renderer>> for Element<'a, Message, Theme, Renderer>
+    where
+        Message: 'a,
+        Theme: 'a,
+        Renderer: iced::advanced::Renderer + 'a,
+    {
+        fn from(widget: CursorOff<'a, Message, Theme, Renderer>) -> Self {
+            Element::new(widget)
+        }
     }
 }

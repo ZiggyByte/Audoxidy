@@ -1,6 +1,6 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space},
-    Alignment, Color, Element, Length, Theme,
+    widget::{button, column, container, scrollable, text, text_input},
+    Color, Element, Length, Theme,
 };
 use crate::gui::app::Message;
 
@@ -29,19 +29,29 @@ impl Default for LibraryFiltersManager {
 
 pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
     
-    // Top Bar (Filtros rapidos)
-    let header = row![
-        text("Filtros").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
-        // FIXME: Simplificacion del Combo Box nativo de egui usando por ahora un placeholder
-        button(text("Generos").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-    ]
-    .padding(10)
-    .align_y(Alignment::Center);
+    // Top Bar (Titulo AuDoxiDY)
+    let title_btn = button(
+        text("AuDoxiDY")
+            .size(16)
+            .font(FONT_STAGE_WANDER)
+    )
+    .on_press(Message::NoOp)
+    .padding(0)
+    .style(|_theme: &Theme, status| {
+        let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+        if status == iced::widget::button::Status::Hovered {
+            style.text_color = COLOR_ACCENT;
+        } else {
+            style.text_color = COLOR_TEXT_PRIMARY;
+        }
+        style
+    });
 
-    let header_container = container(header)
+    let header_container = container(title_btn)
         .width(Length::Fill)
+        .height(Length::Fixed(40.0))
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // Tree nodes (Listas de filtros expandibles)
@@ -57,7 +67,7 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
     );
     if manager.tree_open_genre {
         tree_col = tree_col.push(
-            container(text(" Progressive Rock").size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
+            container(text(" Progressive Rock").size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
                 .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
         );
     }
@@ -94,13 +104,15 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
 
     // Barra inferior de busqueda
     let search_bar = container(
-        text_input("Buscar en Filtros...", &manager.search_query)
+        text_input("Buscar...", &manager.search_query)
             .on_input(Message::FilterSearchChanged)
             .font(FONT_INTER_SANS_MEDIUM)
             .padding(5)
     )
     .width(Length::Fill)
-    .padding(5)
+    .height(Length::Fixed(40.0))
+    .center_y(Length::Fill)
+    .padding([0, 15])
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // Consolidar Layout (Vertical de 180px Ancho y 100% de Alto)
@@ -111,7 +123,7 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
             search_bar
         ]
     )
-    .width(Length::Fixed(150.0))
+    .width(Length::Fixed(160.0))
     .height(Length::Fill)
     .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
     .into()

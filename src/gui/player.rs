@@ -106,10 +106,6 @@ pub fn view<'a>(
         transparent_btn("menu.svg", Message::ToggleMenu),
         Space::new().width(Length::Fill),
         // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
-        Space::new().width(Length::Fill),
-        transparent_btn("minimize.svg", Message::PlayerWindowAction(WindowAction::Minimize)),
-        transparent_btn("maximize.svg", Message::PlayerWindowAction(WindowAction::Maximize)),
-        transparent_btn("close.svg", Message::PlayerWindowAction(WindowAction::Close)),
     ]
     .height(Length::Fixed(40.0))
     .align_y(Alignment::Center)
@@ -223,7 +219,7 @@ pub fn view<'a>(
                 .padding(pad)
                 .style(|_t: &Theme| container::Style::default()
                     .background(Color::from_rgba(COLOR_CONTRAST.r, COLOR_CONTRAST.g, COLOR_CONTRAST.b, 0.5))
-                    .border(iced::Border::default().rounded(50.0))
+                    .border(iced::Border::default().rounded(30.0))
                 )
         } else {
             container(Space::new().width(size).height(size))

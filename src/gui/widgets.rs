@@ -8,7 +8,7 @@ pub fn draw_logo(ui: &mut egui::Ui, font_size: f32) {
         let is_hovered = ui.interact(ui.max_rect(), ui.id(), egui::Sense::hover()).hovered();
 
         for (_i, c) in text.chars().enumerate() {
-            let color = if is_hovered && (c == 'A' || c == 'D' || c == 'Y') {
+            let color = if is_hovered && (c == 'A' || c == 'o' || c == 'Y') {
                 // TODO: Implement animation letter by letter
                 COLOR_ACCENT
             } else {

@@ -154,7 +154,15 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
         songs_col = songs_col.push(btn);
     }
     
-    let playlist_scroll = scrollable(songs_col).height(Length::Fill);
+    let playlist_scroll = scrollable(songs_col)
+        .height(Length::Fill)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(4)
+                .margin(0)
+                .scroller_width(4)
+        ))
+        .style(crate::gui::theme::custom_scrollbar_style);
 
     let shuffle_txt = text("Shuffle").color(if manager.shuffle_active { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY }).font(FONT_INTER_SANS_MEDIUM);
     let repeat_texts = ["Repeat (Off)", "Repeat (All)", "Repeat (One)"];

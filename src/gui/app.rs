@@ -284,7 +284,7 @@ impl AudoxidyApp {
             }
             Message::LibrarySourceSelected(source) => {
                 self.library_manager.source = source;
-                // En el futuro, disparar recarga desde Spotify/Tidal
+                // En el futuro, disparar recarga desde la fuente elegida
                 Task::none()
             }
             Message::LibrarySortChanged(col) => {

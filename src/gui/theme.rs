@@ -38,3 +38,47 @@ pub fn custom_theme() -> Theme {
         }
     )
 }
+
+pub fn custom_scrollbar_style(
+    _theme: &Theme,
+    status: iced::widget::scrollable::Status,
+) -> iced::widget::scrollable::Style {
+    let color = match status {
+        iced::widget::scrollable::Status::Hovered { is_vertical_scrollbar_hovered, is_horizontal_scrollbar_hovered, .. } => {
+            if is_vertical_scrollbar_hovered || is_horizontal_scrollbar_hovered {
+                Color::from(COLOR_TEXT_PRIMARY)
+            } else {
+                Color::from(COLOR_CONTRAST)
+            }
+        }
+        iced::widget::scrollable::Status::Dragged { .. } => Color::from(COLOR_TEXT_PRIMARY),
+        _ => Color::TRANSPARENT,
+    };
+    
+    iced::widget::scrollable::Style {
+        container: iced::widget::container::Style::default(),
+        vertical_rail: iced::widget::scrollable::Rail {
+            background: None,
+            border: iced::Border::default(),
+            scroller: iced::widget::scrollable::Scroller {
+                background: color.into(),
+                border: iced::Border { radius: 2.0.into(), ..Default::default() },
+            },
+        },
+        horizontal_rail: iced::widget::scrollable::Rail {
+            background: None,
+            border: iced::Border::default(),
+            scroller: iced::widget::scrollable::Scroller {
+                background: Color::TRANSPARENT.into(),
+                border: iced::Border::default(),
+            },
+        },
+        gap: None,
+        auto_scroll: iced::widget::scrollable::AutoScroll {
+            background: Color::TRANSPARENT.into(),
+            border: iced::Border::default(),
+            shadow: iced::Shadow::default(),
+            icon: Color::TRANSPARENT,
+        },
+    }
+}

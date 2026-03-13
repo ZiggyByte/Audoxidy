@@ -61,6 +61,25 @@ impl Scanner {
                 record.sample_rate = props.sample_rate().map(|sr| sr as i64);
                 record.channels = props.channels().map(|ch| ch as i64);
                 record.duration_secs = Some(props.duration().as_secs_f64());
+                record.bit_depth = props.bit_depth().map(|b| b as i64);
+                
+                // Contingencia: Si Lofty falla o el codec es abstracto, extraer de Symphonia.
+                if record.bit_depth.is_none() {
+                    if let Ok(file) = std::fs::File::open(path) {
+                        let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
+                        let mut hint = symphonia::core::probe::Hint::new();
+                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
+                            hint.with_extension(ext);
+                        }
+                        if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default()) {
+                            if let Some(track) = probed.format.default_track() {
+                                if let Some(bps) = track.codec_params.bits_per_sample {
+                                    record.bit_depth = Some(bps as i64);
+                                }
+                            }
+                        }
+                    }
+                }
                 
                 if let Some(t) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
                     record.track_number = t.track();

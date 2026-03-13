@@ -9,6 +9,7 @@ covers/
 tmp/
 temp/
 
+library.db
 arquitecture.md
 interface.md
 ecualizadores-aspectos-tecnicos.pdf

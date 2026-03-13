@@ -33,6 +33,8 @@ pub enum Message {
     LibrarySearchQueryChanged(String),
     LibrarySourceSelected(crate::gui::library::LibrarySource),
     LibrarySortChanged(crate::gui::library::SortColumn),
+    StartColumnResize(crate::gui::library::SortColumn),
+    ColumnHover(Option<crate::gui::library::SortColumn>),
     ToggleAlbumExpansion(String),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
@@ -59,6 +61,7 @@ pub enum Message {
     PlayerWindowAction(crate::gui::player::WindowAction),
     SetWindowId(iced::window::Id),
     PlayerMouseMoved(iced::Point),
+    GlobalMouseRelease,
     PlayerActivityTimeout(u64),
     GlobalClick,
     NoOp,
@@ -155,7 +158,20 @@ impl AudoxidyApp {
                 // Actualizador perezoso de la base de datos de Biblioteca cada 5 segundos (50 ticks)
                 if self.player_ui_state.tick_count % 50 == 0 {
                     if let Ok(db) = self.database.lock() {
-                        if let Ok(albums) = db.get_all_albums() {
+                        if let Ok(mut albums) = db.get_all_albums() {
+                            if let Some(col_ref) = self.library_manager.sort_column {
+                                let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
+                                albums.sort_by(|a, b| {
+                                    let res = match col_ref {
+                                        crate::gui::library::SortColumn::Album => a.0.cmp(&b.0),
+                                        crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1),
+                                        crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2),
+                                        crate::gui::library::SortColumn::Year => a.3.cmp(&b.3),
+                                        _ => std::cmp::Ordering::Equal,
+                                    };
+                                    if is_asc { res } else { res.reverse() }
+                                });
+                            }
                             self.library_manager.cached_albums = Some(albums);
                         }
                     }
@@ -306,24 +322,47 @@ impl AudoxidyApp {
                         if let Ok(albums) = db.get_all_albums() {
                             self.library_manager.cached_albums = Some(albums);
                         }
+                        if let Some(album_id) = &self.library_manager.expanded_album {
+                            if let Ok(songs) = db.get_songs_by_album(album_id) {
+                                self.library_manager.expanded_album_songs = Some(songs);
+                            }
+                        }
                     }
                 } else {
-                    // Aplicar el sort en memoria
+                    let col_ref = self.library_manager.sort_column.unwrap();
+                    let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
+                    
+                    // Aplicar el sort en memoria a albums
                     if let Some(albums) = &mut self.library_manager.cached_albums {
-                        let col_ref = self.library_manager.sort_column.unwrap();
-                        let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
                         albums.sort_by(|a, b| {
                             let res = match col_ref {
-                                crate::gui::library::SortColumn::Album => a.0.cmp(&b.0),
-                                crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1),
-                                crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2),
-                                crate::gui::library::SortColumn::Year => a.3.cmp(&b.3),
+                                crate::gui::library::SortColumn::Album => a.0.cmp(&b.0).then(a.1.cmp(&b.1)),
+                                crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1).then(a.0.cmp(&b.0)),
+                                crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2).then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0)),
+                                crate::gui::library::SortColumn::Year => a.3.cmp(&b.3).then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0)),
                                 _ => std::cmp::Ordering::Equal,
                             };
                             if is_asc { res } else { res.reverse() }
                         });
                     }
+                    
+                    if let Some(mut songs) = self.library_manager.expanded_album_songs.take() {
+                        self.library_manager.sort_songs(&mut songs);
+                        self.library_manager.expanded_album_songs = Some(songs);
+                    }
                 }
+                Task::none()
+            }
+            Message::StartColumnResize(col) => {
+                self.library_manager.resizing_column = Some(col);
+                self.library_manager.resizing_start_x = self.player_ui_state.mouse_pos.map(|p| p.x).unwrap_or(0.0);
+                if let Some(&w) = self.library_manager.column_widths.get(&col) {
+                    self.library_manager.resizing_start_w = w;
+                }
+                Task::none()
+            }
+            Message::ColumnHover(col) => {
+                self.library_manager.hovered_column = col;
                 Task::none()
             }
             Message::ToggleAlbumExpansion(album_id) => {
@@ -333,7 +372,10 @@ impl AudoxidyApp {
                 } else {
                     self.library_manager.expanded_album = Some(album_id.clone());
                     if let Ok(db) = self.database.lock() {
-                        if let Ok(songs) = db.get_songs_by_album(&album_id) {
+                        if let Ok(mut songs) = db.get_songs_by_album(&album_id) {
+                            if self.library_manager.sort_column.is_some() {
+                                self.library_manager.sort_songs(&mut songs);
+                            }
                             self.library_manager.expanded_album_songs = Some(songs);
                         }
                     }
@@ -468,8 +510,26 @@ impl AudoxidyApp {
                 }
             }
             Message::PlayerMouseMoved(pos) => {
+                let is_resizing = self.library_manager.resizing_column.is_some();
+                if is_resizing {
+                    let col = self.library_manager.resizing_column.unwrap();
+                    let start_x = self.library_manager.resizing_start_x;
+                    let start_w = self.library_manager.resizing_start_w;
+                    
+                    let diff = pos.x - start_x;
+                    let new_w = (start_w as f32 + diff).max(30.0) as u16;
+                    
+                    self.library_manager.column_widths.insert(col, new_w);
+                }
+                
                 self.player_ui_state.mouse_pos = Some(pos);
                 self.wake_up_controls(true)
+            }
+            Message::GlobalMouseRelease => {
+                if self.library_manager.resizing_column.is_some() {
+                    self.library_manager.resizing_column = None;
+                }
+                Task::none()
             }
             Message::PlayerActivityTimeout(_tick) => {
                 Task::none()
@@ -556,6 +616,8 @@ impl AudoxidyApp {
         let mouse_evs = iced::event::listen_with(|event, _status, _window_id| {
             if let iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) = event {
                 Some(Message::PlayerMouseMoved(position))
+            } else if let iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) = event {
+                Some(Message::GlobalMouseRelease)
             } else {
                 None
             }

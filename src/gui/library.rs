@@ -16,6 +16,14 @@ pub enum LibraryViewMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LibraryNavDir {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LibrarySource {
     Local,
     Spotify,
@@ -83,6 +91,11 @@ pub struct LibraryManager {
     pub resizing_start_x: f32,
     pub resizing_start_w: u16,
     pub hovered_column: Option<SortColumn>,
+    
+    // Selection & keyboard navigation
+    pub selected_album: Option<String>,
+    pub selected_song_idx: Option<usize>,
+    pub albums_per_row: usize,
 }
 
 impl Default for LibraryManager {
@@ -123,6 +136,9 @@ impl Default for LibraryManager {
             resizing_start_x: 0.0,
             resizing_start_w: 0,
             hovered_column: None,
+            selected_album: None,
+            selected_song_idx: None,
+            albums_per_row: 6,
         }
     }
 }
@@ -323,13 +339,13 @@ pub fn view<'a>(
         let is_hovered = manager.resizing_column == Some(sort) || manager.hovered_column == Some(sort);
         
         let separator_visual = container(Space::new())
-            .width(Length::Fixed(1.5))
-            .height(Length::Fixed(12.0))
+            .width(Length::Fixed(3.0))
+            .height(Length::Fixed(16.0))
             .style(move |_t: &Theme| {
-                let bg_color = if is_hovered { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
+                let bg_color = if is_hovered { COLOR_ACCENT } else { Color::from_rgba(COLOR_TEXT_SECONDARY.r, COLOR_TEXT_SECONDARY.g, COLOR_TEXT_SECONDARY.b, 0.3)};
                 container::Style::default()
                     .background(bg_color)
-                    .border(iced::Border { radius: 3.0.into(), ..Default::default() })
+                    .border(iced::Border { radius: 4.0.into(), ..Default::default() })
             });
 
         let separator_area = iced::widget::mouse_area(separator_visual)
@@ -387,7 +403,7 @@ pub fn view<'a>(
                 ))
         )
             .width(Length::Fill)
-            .height(Length::Fixed(20.0))
+            .height(Length::Fixed(28.0))
             .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
         container(Space::new().width(Length::Fill).height(2.0))
             .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
@@ -410,15 +426,15 @@ pub fn view<'a>(
                     let db_albums = manager.cached_albums.as_ref().unwrap();
                     let mut grid_col = column![].spacing(0);
                     
-                    // Cálculo de columnas: 188.0 de tarjeta + padding/spacing lateral -> aprox 225.0 extraídos de (158 + 30)
+                    // Cálculo de columnas
                     let card_w = 180.0;
                     let mut columns_count = (size.width / card_w).floor() as usize;
                     if columns_count < 2 { columns_count = 2; }
-                    if columns_count > 7 { columns_count = 7; } // Tope de 7 para respetar diseño base maximizado
+                    if columns_count > 7 { columns_count = 7; }
 
                     for row_chunk in db_albums.chunks(columns_count) {
                         let mut current_row = row![].spacing(5);
-                        let mut active_expansion = None;
+                        let mut active_expansion: Option<String> = None;
 
                         for (album, artist, genre, year, cover_path) in row_chunk {
                             let is_expanded = manager.expanded_album.as_deref() == Some(album.as_str());
@@ -474,17 +490,17 @@ pub fn view<'a>(
                             };
 
                             let info_col = column![
-                                text_w_tooltip(artist),
-                                text_w_tooltip(album),
-                                text(truncate(genre, 22)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                                text(year).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                            ].spacing(0).width(Length::Fill).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 });
+                                text(truncate(artist, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(truncate(album, 19)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(truncate(genre, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(year.as_str()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                            ].spacing(2).width(Length::Fill);
 
                             let chevron_svg = if is_expanded { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
                             let chevron_btn = button(
                                 iced::widget::svg(iced::widget::svg::Handle::from_path(format!("assets/icons/{}", chevron_svg)))
-                                    .width(28)
-                                    .height(28)
+                                    .width(30)
+                                    .height(30)
                                     .style(move |_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style { color: Some(COLOR_TEXT_PRIMARY) })
                             )
                                 .padding(0)
@@ -496,22 +512,31 @@ pub fn view<'a>(
                                 chevron_btn
                             ].align_y(Alignment::Center).width(Length::Fill);
 
+                            let is_selected = manager.selected_album.as_deref() == Some(album.as_str());
+                            
                             let item_col = column![
                                 album_art,
                                 card_bottom
                             ].spacing(5);
 
+                            // Clic en tarjeta -> solo selecciona (no expande)
                             let card_wrapper = iced::widget::mouse_area(item_col)
-                                .on_press(Message::ToggleAlbumExpansion(album.clone())) 
+                                .on_press(Message::SelectAlbum(album.clone()))
                                 .interaction(iced::mouse::Interaction::Pointer);
                             
                             let card_container = container(card_wrapper)
                                 .width(Length::Fixed(188.0))
                                 .padding(iced::Padding { top: 18.0, bottom: 15.0, left: 15.0, right: 15.0 })
-                                .style(move |_t: &Theme| if is_expanded { 
-                                    container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() }) 
-                                } else { 
-                                    container::Style::default() 
+                                .style(move |_t: &Theme| {
+                                    if is_expanded {
+                                        container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() })
+                                    } else if is_selected {
+                                        // Color más sutil para tarjeta seleccionada pero no expandida
+                                        let c = Color::from(COLOR_CONTRAST);
+                                        container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() })
+                                    } else {
+                                        container::Style::default()
+                                    }
                                 });
                                 
                             current_row = current_row.push(card_container);
@@ -521,18 +546,26 @@ pub fn view<'a>(
 
                         // --- Expansión Inline debajo de la fila ---
                         if let Some(_exp_album) = active_expansion {
-                            let mut album_songs_col = column![].spacing(5).padding([25, 0]);
+                            let mut album_songs_col = column![].spacing(0).padding([25, 0]);
                             
-                            if let Some(songs) = &manager.expanded_album_songs {
+                            if let Some(songs) = manager.expanded_album_songs.as_ref() {
                                 if !songs.is_empty() {
-                                    for song in songs {
+                                    for (song_i, song) in songs.iter().enumerate() {
                                         let s_clone = song.clone();
+                                        let is_song_selected = manager.selected_song_idx == Some(song_i);
                                         
                                         let format = song.format.clone().unwrap_or_else(|| "-".to_string());
                                         let rate = song.sample_rate.map_or("-".to_string(), |r| format!("{:.1} kHz", r as f64 / 1000.0));
                                         let chans = song.channels.map_or("-".to_string(), |c| c.to_string());
                                         let b_depth = song.bit_depth.map_or("-".to_string(), |b| format!("{} bits", b));
-                                        let sz = song.size.map_or("-".to_string(), |s| format!("{:.2} MB", s as f64 / 1048576.0));
+                                        let sz = song.size.map_or("-".to_string(), |s| {
+                                            let mb = s as f64 / 1048576.0;
+                                            if mb >= 1024.0 {
+                                                format!("{:.2} GB", mb / 1024.0)
+                                            } else {
+                                                format!("{:.2} MB", mb)
+                                            }
+                                        });
                                         
                                         let bitrate_str = if let (Some(s), Some(d)) = (song.size, song.duration_secs) {
                                             if d > 0.0 {
@@ -547,19 +580,23 @@ pub fn view<'a>(
                                         let dur_secs = song.duration_secs.unwrap_or(0.0) as u64;
                                         let dur_str = format!("{}:{:02}", dur_secs / 60, dur_secs % 60);
                                         
+                                        let txt_color = if is_song_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+                                        
                                         let get_col = |col: SortColumn, val: String| -> Element<'a, Message> {
                                             let w = *manager.column_widths.get(&col).unwrap_or(&100) as f32;
                                             let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
                                             let truncated = truncate(&val, max_chars);
                                             
-                                            container(text(truncated).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
+                                            container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
                                                 .width(Length::Fixed(w))
+                                                .height(Length::Fixed(15.0))
+                                                .center_y(Length::Fill)
                                                 .padding(iced::Padding { left: 5.0, right: 5.0, top: 0.0, bottom: 0.0 })
                                                 .clip(true)
                                                 .into()
                                         };
 
-                                        let song_row = row![
+                                        let song_row_inner = row![
                                             get_col(SortColumn::TrackNumber, song.track_number.unwrap_or(0).to_string()),
                                             get_col(SortColumn::Title, song.title.clone().unwrap_or_else(|| "Unknown".into())),
                                             get_col(SortColumn::Artist, song.artist.clone().unwrap_or_else(|| "Unknown".into())),
@@ -573,8 +610,24 @@ pub fn view<'a>(
                                             get_col(SortColumn::BitDepth, b_depth),
                                             get_col(SortColumn::Bitrate, bitrate_str),
                                             get_col(SortColumn::Size, sz),
-                                            button(text("▶").size(12)).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
-                                        ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(30.0));
+                                            button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
+                                        ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0));
+                                        
+                                        // Envolver en un contenedor que resalta si está seleccionada
+                                        let song_row = iced::widget::mouse_area(
+                                            container(song_row_inner)
+                                                .width(Length::Fill)
+                                                .height(Length::Fixed(32.0))
+                                                .align_y(Alignment::Center)
+                                                .style(move |_t: &Theme| {
+                                                    if is_song_selected {
+                                                        container::Style::default().background(Color::from(COLOR_CONTRAST))
+                                                    } else {
+                                                        container::Style::default()
+                                                    }
+                                                })
+                                        ).on_press(Message::SelectSong(Some(song_i)))
+                                         .interaction(iced::mouse::Interaction::Pointer);
                                         
                                         album_songs_col = album_songs_col.push(song_row);
                                     }

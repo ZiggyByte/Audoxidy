@@ -36,6 +36,9 @@ pub enum Message {
     StartColumnResize(crate::gui::library::SortColumn),
     ColumnHover(Option<crate::gui::library::SortColumn>),
     ToggleAlbumExpansion(String),
+    SelectAlbum(String),
+    SelectSong(Option<usize>),
+    LibraryKeyNav(crate::gui::library::LibraryNavDir),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     ToggleLibraryAddDropdown,
@@ -366,11 +369,14 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ToggleAlbumExpansion(album_id) => {
+                // Flecha: solo toggle la expansión; el clic en tarjeta solo la selecciona
                 if self.library_manager.expanded_album.as_deref() == Some(album_id.as_str()) {
                     self.library_manager.expanded_album = None;
                     self.library_manager.expanded_album_songs = None;
+                    self.library_manager.selected_song_idx = None;
                 } else {
                     self.library_manager.expanded_album = Some(album_id.clone());
+                    self.library_manager.selected_song_idx = None;
                     if let Ok(db) = self.database.lock() {
                         if let Ok(mut songs) = db.get_songs_by_album(&album_id) {
                             if self.library_manager.sort_column.is_some() {
@@ -379,6 +385,58 @@ impl AudoxidyApp {
                             self.library_manager.expanded_album_songs = Some(songs);
                         }
                     }
+                }
+                Task::none()
+            }
+            Message::SelectAlbum(album_id) => {
+                // Seleccionar álbum sin abrir lista de canciones
+                self.library_manager.selected_album = Some(album_id);
+                self.library_manager.selected_song_idx = None;
+                Task::none()
+            }
+            Message::SelectSong(idx) => {
+                self.library_manager.selected_song_idx = idx;
+                Task::none()
+            }
+            Message::LibraryKeyNav(dir) => {
+                use crate::gui::library::LibraryNavDir;
+                let albums = self.library_manager.cached_albums.as_deref().unwrap_or(&[]);
+                let total = albums.len();
+                if total == 0 { return Task::none(); }
+                
+                // Si hay lista desplegada y dirección vertical, navegar entre canciones
+                let is_expanded = self.library_manager.expanded_album.is_some();
+                if is_expanded && (dir == LibraryNavDir::Up || dir == LibraryNavDir::Down) {
+                    let song_count = self.library_manager.expanded_album_songs.as_ref().map(|s| s.len()).unwrap_or(0);
+                    if song_count > 0 {
+                        let current = self.library_manager.selected_song_idx.unwrap_or(usize::MAX);
+                        let new_idx = match dir {
+                            LibraryNavDir::Up => if current == 0 || current == usize::MAX { 0 } else { current - 1 },
+                            LibraryNavDir::Down => (current.saturating_add(1)).min(song_count - 1),
+                            _ => current,
+                        };
+                        self.library_manager.selected_song_idx = Some(new_idx);
+                        return Task::none();
+                    }
+                }
+                
+                // Navegación entre tarjetas de álbumes
+                let per_row = self.library_manager.albums_per_row.max(1);
+                let current_album = self.library_manager.selected_album.as_deref();
+                let current_idx = current_album.and_then(|sel| {
+                    albums.iter().position(|a| a.0 == sel)
+                }).unwrap_or(0);
+                
+                let new_idx = match dir {
+                    LibraryNavDir::Left => current_idx.saturating_sub(1),
+                    LibraryNavDir::Right => (current_idx + 1).min(total - 1),
+                    LibraryNavDir::Up => current_idx.saturating_sub(per_row),
+                    LibraryNavDir::Down => (current_idx + per_row).min(total - 1),
+                };
+                
+                if let Some(album) = albums.get(new_idx) {
+                    self.library_manager.selected_album = Some(album.0.clone());
+                    self.library_manager.selected_song_idx = None;
                 }
                 Task::none()
             }
@@ -402,9 +460,26 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::PlayLibrarySelection => {
-                if let Some(songs) = &self.library_manager.expanded_album_songs {
+                // Si hay una canción seleccionada, agregar solo esa canción
+                if let Some(song_idx) = self.library_manager.selected_song_idx {
+                    if let Some(songs) = &self.library_manager.expanded_album_songs {
+                        if let Some(song) = songs.get(song_idx) {
+                            return self.update(Message::AddSongToPlaylist(song.clone()));
+                        }
+                    }
+                } else if let Some(songs) = &self.library_manager.expanded_album_songs {
+                    // Si hay álbum expandido pero sin canción seleccionada, agregar el álbum completo
                     if !songs.is_empty() {
                         return self.update(Message::PlayAlbum(songs.clone()));
+                    }
+                } else if let Some(album_id) = self.library_manager.selected_album.clone() {
+                    // Si hay álbum seleccionado (pero no expandido), cargar y reproducir
+                    let maybe_songs = self.database.lock().ok()
+                        .and_then(|db| db.get_songs_by_album(&album_id).ok());
+                    if let Some(songs) = maybe_songs {
+                        if !songs.is_empty() {
+                            return self.update(Message::PlayAlbum(songs));
+                        }
                     }
                 }
                 Task::none()
@@ -618,6 +693,16 @@ impl AudoxidyApp {
                 Some(Message::PlayerMouseMoved(position))
             } else if let iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) = event {
                 Some(Message::GlobalMouseRelease)
+            } else if let iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. }) = event {
+                use iced::keyboard::Key;
+                use iced::keyboard::key::Named;
+                match key {
+                    Key::Named(Named::ArrowUp) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Up)),
+                    Key::Named(Named::ArrowDown) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Down)),
+                    Key::Named(Named::ArrowLeft) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Left)),
+                    Key::Named(Named::ArrowRight) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Right)),
+                    _ => None,
+                }
             } else {
                 None
             }

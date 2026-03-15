@@ -67,6 +67,7 @@ pub enum Message {
     GlobalMouseRelease,
     PlayerActivityTimeout(u64),
     GlobalClick,
+    WindowResized(u32, u32),
     NoOp,
 }
 
@@ -420,8 +421,9 @@ impl AudoxidyApp {
                     }
                 }
                 
-                // Navegación entre tarjetas de álbumes
-                let per_row = self.library_manager.albums_per_row.max(1);
+                // Leer el per_row real calculado por el closure responsive (via Cell)
+                let per_row = self.library_manager.albums_per_row.get().max(1);
+                
                 let current_album = self.library_manager.selected_album.as_deref();
                 let current_idx = current_album.and_then(|sel| {
                     albums.iter().position(|a| a.0 == sel)
@@ -438,11 +440,31 @@ impl AudoxidyApp {
                     self.library_manager.selected_album = Some(album.0.clone());
                     self.library_manager.selected_song_idx = None;
                 }
-                Task::none()
+                
+                // Auto-scroll: calcular offset relativo del row del álbum seleccionado
+                let row_idx = new_idx / per_row.max(1);
+                let total_rows = (total + per_row - 1) / per_row; // ceil division
+                let y_offset = if total_rows <= 1 {
+                    0.0_f32
+                } else {
+                    (row_idx as f32 / (total_rows - 1) as f32).clamp(0.0, 1.0)
+                };
+                let scroll_id = self.library_manager.library_scroll_id.clone();
+                // snap_to usa offset relativo (0.0=top, 1.0=bottom) que funciona sin conocer el alto total
+                iced::widget::operation::snap_to(
+                    scroll_id,
+                    iced::widget::operation::RelativeOffset { x: None, y: Some(y_offset) }
+                )
             }
             Message::ChangeLibraryViewMode(mode) => {
                 self.library_manager.view_mode = mode;
                 self.library_manager.view_menu_open = false;
+                Task::none()
+            }
+            Message::WindowResized(w, _h) => {
+                // La biblioteca ocupa todo el ancho menos el panel izquierdo (~520px) y filtros (~180px)
+                let sidebar_w = 700.0_f32;
+                self.library_manager.library_area_width = (w as f32 - sidebar_w).max(180.0);
                 Task::none()
             }
             Message::ToggleLibraryViewDropdown => {
@@ -703,6 +725,8 @@ impl AudoxidyApp {
                     Key::Named(Named::ArrowRight) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Right)),
                     _ => None,
                 }
+            } else if let iced::Event::Window(iced::window::Event::Resized(new_size)) = event {
+                Some(Message::WindowResized(new_size.width as u32, new_size.height as u32))
             } else {
                 None
             }

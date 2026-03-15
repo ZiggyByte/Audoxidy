@@ -95,7 +95,9 @@ pub struct LibraryManager {
     // Selection & keyboard navigation
     pub selected_album: Option<String>,
     pub selected_song_idx: Option<usize>,
-    pub albums_per_row: usize,
+    pub albums_per_row: std::cell::Cell<usize>,
+    pub library_area_width: f32,
+    pub library_scroll_id: iced::widget::Id,
 }
 
 impl Default for LibraryManager {
@@ -138,7 +140,9 @@ impl Default for LibraryManager {
             hovered_column: None,
             selected_album: None,
             selected_song_idx: None,
-            albums_per_row: 6,
+            albums_per_row: std::cell::Cell::new(6),
+            library_area_width: 900.0,
+            library_scroll_id: iced::widget::Id::new("library_grid"),
         }
     }
 }
@@ -292,7 +296,8 @@ pub fn view<'a>(
         source_tabs,
         Space::new().width(Length::Fill),
         row![
-            win_action_btn("minimize.svg", Message::PlayerWindowAction(crate::gui::player::WindowAction::Minimize), 30.0),
+            container(win_action_btn("minimize.svg", Message::PlayerWindowAction(crate::gui::player::WindowAction::Minimize), 30.0))
+                .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 8.0, left: 0.0 }),
             win_action_btn("maximize.svg", Message::PlayerWindowAction(crate::gui::player::WindowAction::Maximize), 30.0),
             win_action_btn("close.svg", Message::PlayerWindowAction(crate::gui::player::WindowAction::Close), 34.0),
         ].spacing(5).align_y(Alignment::Center)
@@ -431,6 +436,8 @@ pub fn view<'a>(
                     let mut columns_count = (size.width / card_w).floor() as usize;
                     if columns_count < 2 { columns_count = 2; }
                     if columns_count > 7 { columns_count = 7; }
+                    // Actualiza el valor real de columnas para que LibraryKeyNav lo use
+                    manager.albums_per_row.set(columns_count);
 
                     for row_chunk in db_albums.chunks(columns_count) {
                         let mut current_row = row![].spacing(5);
@@ -655,6 +662,7 @@ pub fn view<'a>(
                                 .margin(0)
                                 .scroller_width(4)
                         ))
+                        .id(manager.library_scroll_id.clone())
                         .style(crate::gui::theme::custom_scrollbar_style)
                         .into()
                 });

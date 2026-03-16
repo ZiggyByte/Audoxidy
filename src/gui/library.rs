@@ -1,11 +1,15 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space, image, tooltip},
+    widget::{button, column, container, row, scrollable, text, text_input, Space, image},
     Alignment, Color, Element, Length, Theme,
 };
 use std::sync::{Arc, Mutex};
 use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::theme::*;
+
+/// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
+pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
+    std::sync::LazyLock::new(|| iced::widget::Id::unique());
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LibraryViewMode {
@@ -97,7 +101,7 @@ pub struct LibraryManager {
     pub selected_song_idx: Option<usize>,
     pub albums_per_row: std::cell::Cell<usize>,
     pub library_area_width: f32,
-    pub library_scroll_id: iced::widget::Id,
+    pub last_viewport: Option<iced::widget::scrollable::Viewport>,
 }
 
 impl Default for LibraryManager {
@@ -142,7 +146,7 @@ impl Default for LibraryManager {
             selected_song_idx: None,
             albums_per_row: std::cell::Cell::new(6),
             library_area_width: 900.0,
-            library_scroll_id: iced::widget::Id::new("library_grid"),
+            last_viewport: None,
         }
     }
 }
@@ -479,23 +483,6 @@ pub fn view<'a>(
                                     .into()
                             };
                             
-                            let text_w_tooltip = |t: &'a str| -> Element<'a, Message> {
-                                tooltip(
-                                    text(truncate(t, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                                    t,
-                                    tooltip::Position::Top
-                                ).style(|_t| {
-                                    container::Style::default()
-                                        .color(Color::from(COLOR_TEXT_PRIMARY))
-                                        .background(Color::from(COLOR_CONTRAST))
-                                        .border(iced::Border {
-                                            color: Color::from(COLOR_TEXT_PRIMARY),
-                                            width: 1.0,
-                                            radius: 4.0.into()
-                                        })
-                                }).padding(6).into()
-                            };
-
                             let info_col = column![
                                 text(truncate(artist, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
                                 text(truncate(album, 19)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
@@ -526,7 +513,6 @@ pub fn view<'a>(
                                 card_bottom
                             ].spacing(5);
 
-                            // Clic en tarjeta -> solo selecciona (no expande)
                             let card_wrapper = iced::widget::mouse_area(item_col)
                                 .on_press(Message::SelectAlbum(album.clone()))
                                 .interaction(iced::mouse::Interaction::Pointer);
@@ -538,8 +524,6 @@ pub fn view<'a>(
                                     if is_expanded {
                                         container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() })
                                     } else if is_selected {
-                                        // Color más sutil para tarjeta seleccionada pero no expandida
-                                        let c = Color::from(COLOR_CONTRAST);
                                         container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() })
                                     } else {
                                         container::Style::default()
@@ -620,7 +604,6 @@ pub fn view<'a>(
                                             button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
                                         ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0));
                                         
-                                        // Envolver en un contenedor que resalta si está seleccionada
                                         let song_row = iced::widget::mouse_area(
                                             container(song_row_inner)
                                                 .width(Length::Fill)
@@ -653,21 +636,24 @@ pub fn view<'a>(
                         }
                     }
 
-                    scrollable(grid_col)
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .direction(iced::widget::scrollable::Direction::Vertical(
-                            iced::widget::scrollable::Scrollbar::new()
-                                .width(4)
-                                .margin(0)
-                                .scroller_width(4)
-                        ))
-                        .id(manager.library_scroll_id.clone())
-                        .style(crate::gui::theme::custom_scrollbar_style)
-                        .into()
+                    // El closure ahora solo devuelve el grid (SIN scrollable)
+                    grid_col.into()
                 });
                 
-                res_grid.into()
+                // El scrollable envuelve el responsive directamente - así snap_to puede encontrarlo
+                scrollable(res_grid)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .direction(iced::widget::scrollable::Direction::Vertical(
+                        iced::widget::scrollable::Scrollbar::new()
+                            .width(4)
+                            .margin(0)
+                            .scroller_width(4)
+                    ))
+                    .id(LIBRARY_SCROLL_ID.clone())
+                    .on_scroll(Message::LibraryScroll)
+                    .style(crate::gui::theme::custom_scrollbar_style)
+                    .into()
             }
         }
         LibraryViewMode::DetailedList => {

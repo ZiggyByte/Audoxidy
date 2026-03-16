@@ -39,6 +39,7 @@ pub enum Message {
     SelectAlbum(String),
     SelectSong(Option<usize>),
     LibraryKeyNav(crate::gui::library::LibraryNavDir),
+    LibraryScroll(iced::widget::scrollable::Viewport),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     ToggleLibraryAddDropdown,
@@ -441,20 +442,45 @@ impl AudoxidyApp {
                     self.library_manager.selected_song_idx = None;
                 }
                 
-                // Auto-scroll: calcular offset relativo del row del álbum seleccionado
+                // Smart Auto-scroll (Keep in View)
                 let row_idx = new_idx / per_row.max(1);
-                let total_rows = (total + per_row - 1) / per_row; // ceil division
-                let y_offset = if total_rows <= 1 {
-                    0.0_f32
+                let item_top = row_idx as f32 * 252.0;    // Alto de fila calculado
+                let item_bottom = item_top + 252.0;
+                
+                if let Some(viewport) = &self.library_manager.last_viewport {
+                    let view_min = viewport.absolute_offset().y;
+                    let view_max = view_min + viewport.bounds().height;
+                    let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+
+                    if item_top < view_min {
+                        // El ítem está por encima del viewport -> Scroll UP para mostrarlo arriba
+                        iced::widget::operation::scroll_to(
+                            scroll_id,
+                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: item_top }
+                        )
+                    } else if item_bottom > view_max {
+                        // El ítem está por debajo del viewport -> Scroll DOWN para mostrarlo abajo
+                        let target_y = item_bottom - viewport.bounds().height;
+                        iced::widget::operation::scroll_to(
+                            scroll_id,
+                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: target_y }
+                        )
+                    } else {
+                        // Ya es visible, no hacer nada
+                        Task::none()
+                    }
                 } else {
-                    (row_idx as f32 / (total_rows - 1) as f32).clamp(0.0, 1.0)
-                };
-                let scroll_id = self.library_manager.library_scroll_id.clone();
-                // snap_to usa offset relativo (0.0=top, 1.0=bottom) que funciona sin conocer el alto total
-                iced::widget::operation::snap_to(
-                    scroll_id,
-                    iced::widget::operation::RelativeOffset { x: None, y: Some(y_offset) }
-                )
+                    // Si no tenemos viewport aún, fallback al comportamiento anterior (scroll al top de la fila)
+                    let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                    iced::widget::operation::scroll_to(
+                        scroll_id,
+                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: item_top }
+                    )
+                }
+            }
+            Message::LibraryScroll(viewport) => {
+                self.library_manager.last_viewport = Some(viewport);
+                Task::none()
             }
             Message::ChangeLibraryViewMode(mode) => {
                 self.library_manager.view_mode = mode;
@@ -737,7 +763,7 @@ impl AudoxidyApp {
 
 pub mod helpers {
     use iced::advanced::{Widget, layout, mouse, Clipboard, Shell, Layout};
-    use iced::advanced::widget::Tree;
+    use iced::advanced::widget::{Tree, Operation};
     use iced::{Element, Length, Rectangle, Size, Event};
 
     pub struct CursorOff<'a, Message, Theme, Renderer> {
@@ -789,6 +815,16 @@ pub mod helpers {
 
         fn diff(&self, tree: &mut Tree) {
             self.content.as_widget().diff(tree)
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            renderer: &Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            self.content.as_widget_mut().operate(tree, layout, renderer, operation);
         }
 
         fn update(

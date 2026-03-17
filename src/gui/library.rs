@@ -74,6 +74,14 @@ impl SortColumn {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct LibraryStats {
+    pub songs: u64,
+    pub albums: u64,
+    pub duration_secs: f64,
+    pub size_bytes: f64,
+}
+
 pub struct LibraryManager {
     pub view_mode: LibraryViewMode,
     pub source: LibrarySource,
@@ -101,7 +109,10 @@ pub struct LibraryManager {
     pub selected_song_idx: Option<usize>,
     pub albums_per_row: std::cell::Cell<usize>,
     pub library_area_width: f32,
+    pub last_selected_album: Option<String>,
+    pub last_selected_song_idx: Option<usize>,
     pub last_viewport: Option<iced::widget::scrollable::Viewport>,
+    pub selection_stats: Option<LibraryStats>,
 }
 
 impl Default for LibraryManager {
@@ -144,9 +155,12 @@ impl Default for LibraryManager {
             hovered_column: None,
             selected_album: None,
             selected_song_idx: None,
-            albums_per_row: std::cell::Cell::new(6),
-            library_area_width: 900.0,
+            albums_per_row: std::cell::Cell::new(5),
+            library_area_width: 800.0,
+            last_selected_album: None,
+            last_selected_song_idx: None,
             last_viewport: None,
+            selection_stats: None,
         }
     }
 }
@@ -676,16 +690,32 @@ pub fn view<'a>(
             .width(Length::Fixed(200.0))
     ).padding([0, 0]).center_y(Length::Fill);
 
-    // Estadísticas
-    let total_hrs = (manager.total_duration_secs / 3600.0) as u32;
-    let total_mins = ((manager.total_duration_secs % 3600.0) / 60.0) as u32;
-    let total_gb = manager.total_size_bytes / 1024.0 / 1024.0 / 1024.0;
-    
-    let stats_text = if total_gb >= 1.0 {
-        format!("{} Canciones | {} Álbumes | {}:{:02} hrs | {:.2} GB", manager.total_songs, manager.total_albums, total_hrs, total_mins, total_gb)
+      // Estadísticas: DD:HH:MM:SS
+    let (s_count, a_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats {
+        (sel.songs, sel.albums, sel.duration_secs, sel.size_bytes)
     } else {
-        let total_mb = manager.total_size_bytes / 1024.0 / 1024.0;
-        format!("{} Canciones | {} Álbumes | {}:{:02} hrs | {:.2} MB", manager.total_songs, manager.total_albums, total_hrs, total_mins, total_mb)
+        (manager.total_songs as u64, manager.total_albums as u64, manager.total_duration_secs, manager.total_size_bytes)
+    };
+
+    let total_secs_u64 = d_secs as u64;
+    let ss = total_secs_u64 % 60;
+    let mm = (total_secs_u64 / 60) % 60;
+    let hh = (total_secs_u64 / 3600) % 24;
+    let dd = total_secs_u64 / 86400;
+    
+    let total_gb = s_bytes / 1024.0 / 1024.0 / 1024.0;
+    
+    let time_str = if dd > 0 {
+        format!("{:02}:{:02}:{:02}:{:02}", dd, hh, mm, ss)
+    } else {
+        format!("{:02}:{:02}:{:02}", hh, mm, ss)
+    };
+
+    let stats_text = if total_gb >= 1.0 {
+        format!("{} Canciones | {} Álbumes | {} | {:.2} GB", s_count, a_count, time_str, total_gb)
+    } else {
+        let total_mb = s_bytes / 1024.0 / 1024.0;
+        format!("{} Canciones | {} Álbumes | {} | {:.2} MB", s_count, a_count, time_str, total_mb)
     };
     
     // Icono vista actual
@@ -724,11 +754,19 @@ pub fn view<'a>(
 
 
     // Todo junto con padding a los lados donde corresponda
+    // Deselección: Envolvemos el contenido en un mouse_area que capture clics en vacío
+    let content_with_deselection = iced::widget::mouse_area(
+        container(content)
+            .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 5.0 })
+            .width(Length::Fill)
+            .height(Length::Fill)
+    ).on_press(Message::LibraryDeselect);
+
     container(
         column![
             top_container,
             sort_container,
-            container(content).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 5.0 }), // Padding global del área de contenido
+            content_with_deselection,
             bottom_container
         ]
     )

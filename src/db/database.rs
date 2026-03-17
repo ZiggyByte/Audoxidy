@@ -147,6 +147,18 @@ impl Database {
         Ok(albums)
     }
 
+    pub fn get_album_stats(&self, album_name: &str) -> Result<(u64, f64, f64)> {
+        let mut stmt = self.conn.prepare("SELECT COUNT(*), SUM(DURATION_SECS), SUM(SIZE) FROM MUSIC_LIBRARY WHERE ALBUM = ?1")?;
+        let stats = stmt.query_row(params![album_name], |row| {
+            Ok((
+                row.get::<_, i64>(0).unwrap_or(0) as u64,
+                row.get::<_, f64>(1).unwrap_or(0.0),
+                row.get::<_, f64>(2).unwrap_or(0.0),
+            ))
+        })?;
+        Ok(stats)
+    }
+
     pub fn get_songs_by_album(&self, album_name: &str) -> Result<Vec<SongRecord>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH 
@@ -174,6 +186,22 @@ impl Database {
             if let Ok(s) = r { songs.push(s); }
         }
         Ok(songs)
+    }
+
+    pub fn delete_song(&self, file_path: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM MUSIC_LIBRARY WHERE FULL_FILE_PATH = ?1",
+            params![file_path],
+        )?;
+        Ok(())
+    }
+
+    pub fn delete_album(&self, album_name: &str) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM MUSIC_LIBRARY WHERE ALBUM = ?1",
+            params![album_name],
+        )?;
+        Ok(())
     }
     
     pub fn get_library_stats(&self) -> Result<(usize, usize, f64, f64)> {

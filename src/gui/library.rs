@@ -42,6 +42,7 @@ pub enum SortColumn {
     TrackNumber,
     Title,
     Artist,
+    AlbumArtist,
     Album,
     Genre,
     Year,
@@ -60,6 +61,7 @@ impl SortColumn {
             SortColumn::TrackNumber => "#",
             SortColumn::Title => "Título",
             SortColumn::Artist => "Artista",
+            SortColumn::AlbumArtist => "Artista del Álbum",
             SortColumn::Album => "Álbum",
             SortColumn::Genre => "Género",
             SortColumn::Year => "Año",
@@ -78,6 +80,7 @@ impl SortColumn {
 pub struct LibraryStats {
     pub songs: u64,
     pub albums: u64,
+    pub artists: u64,
     pub duration_secs: f64,
     pub size_bytes: f64,
 }
@@ -90,11 +93,12 @@ pub struct LibraryManager {
     pub search_query: String,
     pub expanded_album: Option<String>,
     pub expanded_album_songs: Option<Vec<crate::db::database::SongRecord>>,
-    pub cached_albums: Option<Vec<(String, String, String, String, Option<String>)>>,
+    pub cached_albums: Option<Vec<(String, String, String, String, String, Option<String>)>>,
     pub view_menu_open: bool,
     pub add_menu_open: bool,
     pub total_songs: usize,
     pub total_albums: usize,
+    pub total_artists: usize,
     pub total_duration_secs: f64,
     pub total_size_bytes: f64,
     
@@ -121,6 +125,7 @@ impl Default for LibraryManager {
         column_widths.insert(SortColumn::TrackNumber, 30);
         column_widths.insert(SortColumn::Title, 285);
         column_widths.insert(SortColumn::Artist, 155);
+        column_widths.insert(SortColumn::AlbumArtist, 155);
         column_widths.insert(SortColumn::Album, 165);
         column_widths.insert(SortColumn::Genre, 135);
         column_widths.insert(SortColumn::Year, 50);
@@ -145,6 +150,7 @@ impl Default for LibraryManager {
             add_menu_open: false,
             total_songs: 0,
             total_albums: 0,
+            total_artists: 0,
             total_duration_secs: 0.0,
             total_size_bytes: 0.0,
             
@@ -172,16 +178,35 @@ impl LibraryManager {
             songs.sort_by(|a, b| {
                 let res = match col_ref {
                     SortColumn::TrackNumber => {
-                        a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        tn_a.cmp(&tn_b)
                     },
                     SortColumn::Title => {
-                        a.title.cmp(&b.title).then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        a.title.cmp(&b.title).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Artist => {
-                        a.artist.cmp(&b.artist).then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let art_a = a.artist.as_ref().unwrap_or(&String::from("Desconocido")).clone();
+                        let art_b = b.artist.as_ref().unwrap_or(&String::from("Desconocido")).clone();
+                        art_a.cmp(&art_b).then(a.release_year.cmp(&b.release_year)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
+                    },
+                    SortColumn::AlbumArtist => {
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let alb_art_a = a.album_artist.as_ref().unwrap_or(a.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        let alb_art_b = b.album_artist.as_ref().unwrap_or(b.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        alb_art_a.cmp(&alb_art_b).then(a.release_year.cmp(&b.release_year)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Album => {
-                        a.album.cmp(&b.album).then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let alb_art_a = a.album_artist.as_ref().unwrap_or(a.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        let alb_art_b = b.album_artist.as_ref().unwrap_or(b.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        a.album.cmp(&b.album).then(alb_art_a.cmp(&alb_art_b)).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Format => {
                         a.format.cmp(&b.format)
@@ -201,10 +226,18 @@ impl LibraryManager {
                         bit_a.partial_cmp(&bit_b).unwrap_or(std::cmp::Ordering::Equal)
                     },
                     SortColumn::Genre => {
-                        a.genre.cmp(&b.genre).then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let alb_art_a = a.album_artist.as_ref().unwrap_or(a.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        let alb_art_b = b.album_artist.as_ref().unwrap_or(b.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        a.genre.cmp(&b.genre).then(alb_art_a.cmp(&alb_art_b)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Year => {
-                        a.release_year.cmp(&b.release_year).then(a.track_number.unwrap_or(0).cmp(&b.track_number.unwrap_or(0)))
+                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
+                        let alb_art_a = a.album_artist.as_ref().unwrap_or(a.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        let alb_art_b = b.album_artist.as_ref().unwrap_or(b.artist.as_ref().unwrap_or(&String::from("Desconocido"))).clone();
+                        a.release_year.cmp(&b.release_year).then(alb_art_a.cmp(&alb_art_b)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Duration => {
                         let dur_a = a.duration_secs.unwrap_or(0.0);
@@ -406,6 +439,7 @@ pub fn view<'a>(
         create_sort_col(SortColumn::TrackNumber, manager.sort_column, manager.sort_ascending),
         create_sort_col(SortColumn::Title, manager.sort_column, manager.sort_ascending),
         create_sort_col(SortColumn::Artist, manager.sort_column, manager.sort_ascending),
+        create_sort_col(SortColumn::AlbumArtist, manager.sort_column, manager.sort_ascending),
         create_sort_col(SortColumn::Album, manager.sort_column, manager.sort_ascending),
         create_sort_col(SortColumn::Genre, manager.sort_column, manager.sort_ascending),
         create_sort_col(SortColumn::Year, manager.sort_column, manager.sort_ascending),
@@ -461,10 +495,10 @@ pub fn view<'a>(
                         let mut current_row = row![].spacing(5);
                         let mut active_expansion: Option<String> = None;
 
-                        for (album, artist, genre, year, cover_path) in row_chunk {
-                            let is_expanded = manager.expanded_album.as_deref() == Some(album.as_str());
+                        for (album_id, album, artist, genre, year, cover_path) in row_chunk {
+                            let is_expanded = manager.expanded_album.as_deref() == Some(album_id.as_str());
                             if is_expanded {
-                                active_expansion = Some(album.clone());
+                                active_expansion = Some(album_id.clone());
                             }
 
                             let album_art: Element<'a, Message> = if let Some(path) = cover_path {
@@ -512,7 +546,7 @@ pub fn view<'a>(
                                     .style(move |_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style { color: Some(COLOR_TEXT_PRIMARY) })
                             )
                                 .padding(0)
-                                .on_press(Message::ToggleAlbumExpansion(album.clone()))
+                                .on_press(Message::ToggleAlbumExpansion(album_id.clone()))
                                 .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT));
 
                             let card_bottom = row![
@@ -520,7 +554,7 @@ pub fn view<'a>(
                                 chevron_btn
                             ].align_y(Alignment::Center).width(Length::Fill);
 
-                            let is_selected = manager.selected_album.as_deref() == Some(album.as_str());
+                            let is_selected = manager.selected_album.as_deref() == Some(album_id.as_str());
                             
                             let item_col = column![
                                 album_art,
@@ -528,7 +562,7 @@ pub fn view<'a>(
                             ].spacing(5);
 
                             let card_wrapper = iced::widget::mouse_area(item_col)
-                                .on_press(Message::SelectAlbum(album.clone()))
+                                .on_press(Message::SelectAlbum(album_id.clone()))
                                 .interaction(iced::mouse::Interaction::Pointer);
                             
                             let card_container = container(card_wrapper)
@@ -602,12 +636,13 @@ pub fn view<'a>(
                                         };
 
                                         let song_row_inner = row![
-                                            get_col(SortColumn::TrackNumber, song.track_number.unwrap_or(0).to_string()),
-                                            get_col(SortColumn::Title, song.title.clone().unwrap_or_else(|| "Unknown".into())),
-                                            get_col(SortColumn::Artist, song.artist.clone().unwrap_or_else(|| "Unknown".into())),
-                                            get_col(SortColumn::Album, song.album.clone().unwrap_or_else(|| "Unknown".into())),
-                                            get_col(SortColumn::Genre, song.genre.clone().unwrap_or_else(|| "".into())),
-                                            get_col(SortColumn::Year, song.release_year.clone().unwrap_or_else(|| "".into())),
+                                            get_col(SortColumn::TrackNumber, song.track_number.clone().unwrap_or_else(|| "-".to_string())),
+                                            get_col(SortColumn::Title, song.title.clone().unwrap_or_else(|| "Desconocido".to_string())),
+                                            get_col(SortColumn::Artist, song.artist.clone().unwrap_or_else(|| "Desconocido".to_string())),
+                                            get_col(SortColumn::AlbumArtist, song.album_artist.clone().unwrap_or_else(|| "Desconocido".to_string())),
+                                            get_col(SortColumn::Album, song.album.clone().unwrap_or_else(|| "Desconocido".to_string())),
+                                            get_col(SortColumn::Genre, song.genre.clone().unwrap_or_else(|| "Desconocido".to_string())),
+                                            get_col(SortColumn::Year, song.release_year.clone().unwrap_or_else(|| "-".to_string())),
                                             get_col(SortColumn::Duration, dur_str),
                                             get_col(SortColumn::Format, format),
                                             get_col(SortColumn::SampleRate, rate),
@@ -691,10 +726,10 @@ pub fn view<'a>(
     ).padding([0, 0]).center_y(Length::Fill);
 
       // Estadísticas: DD:HH:MM:SS
-    let (s_count, a_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats {
-        (sel.songs, sel.albums, sel.duration_secs, sel.size_bytes)
+    let (s_count, a_count, art_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats {
+        (sel.songs, sel.albums, sel.artists, sel.duration_secs, sel.size_bytes)
     } else {
-        (manager.total_songs as u64, manager.total_albums as u64, manager.total_duration_secs, manager.total_size_bytes)
+        (manager.total_songs as u64, manager.total_albums as u64, manager.total_artists as u64, manager.total_duration_secs, manager.total_size_bytes)
     };
 
     let total_secs_u64 = d_secs as u64;
@@ -712,10 +747,10 @@ pub fn view<'a>(
     };
 
     let stats_text = if total_gb >= 1.0 {
-        format!("{} Canciones | {} Álbumes | {} | {:.2} GB", s_count, a_count, time_str, total_gb)
+        format!("{} Canciones | {} Álbumes | {} Artistas | {} | {:.2} GB", s_count, a_count, art_count, time_str, total_gb)
     } else {
         let total_mb = s_bytes / 1024.0 / 1024.0;
-        format!("{} Canciones | {} Álbumes | {} | {:.2} MB", s_count, a_count, time_str, total_mb)
+        format!("{} Canciones | {} Álbumes | {} Artistas | {} | {:.2} MB", s_count, a_count, art_count, time_str, total_mb)
     };
     
     // Icono vista actual

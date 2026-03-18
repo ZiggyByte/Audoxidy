@@ -94,9 +94,10 @@ impl AudoxidyApp {
         if let Ok(albums) = db.get_all_albums() {
             library_manager.cached_albums = Some(albums);
         }
-        if let Ok((total_songs, total_albums, total_duration, total_size)) = db.get_library_stats() {
+        if let Ok((total_songs, total_albums, total_duration, total_size, total_artists)) = db.get_library_stats() {
             library_manager.total_songs = total_songs;
             library_manager.total_albums = total_albums;
+            library_manager.total_artists = total_artists;
             library_manager.total_duration_secs = total_duration;
             library_manager.total_size_bytes = total_size;
         }
@@ -170,10 +171,11 @@ impl AudoxidyApp {
                                 let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
                                 albums.sort_by(|a, b| {
                                     let res = match col_ref {
-                                        crate::gui::library::SortColumn::Album => a.0.cmp(&b.0),
-                                        crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1),
-                                        crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2),
-                                        crate::gui::library::SortColumn::Year => a.3.cmp(&b.3),
+                                        crate::gui::library::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
+                                        crate::gui::library::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                        crate::gui::library::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
+                                        crate::gui::library::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                        crate::gui::library::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
                                         _ => std::cmp::Ordering::Equal,
                                     };
                                     if is_asc { res } else { res.reverse() }
@@ -182,9 +184,10 @@ impl AudoxidyApp {
                             self.library_manager.cached_albums = Some(albums);
                         }
                         
-                        if let Ok((songs, albums, duration, size)) = db.get_library_stats() {
+                        if let Ok((songs, albums, duration, size, total_artists)) = db.get_library_stats() {
                             self.library_manager.total_songs = songs;
                             self.library_manager.total_albums = albums;
+                            self.library_manager.total_artists = total_artists;
                             self.library_manager.total_duration_secs = duration;
                             self.library_manager.total_size_bytes = size;
                         }
@@ -352,10 +355,11 @@ impl AudoxidyApp {
                     if let Some(albums) = &mut self.library_manager.cached_albums {
                         albums.sort_by(|a, b| {
                             let res = match col_ref {
-                                crate::gui::library::SortColumn::Album => a.0.cmp(&b.0).then(a.1.cmp(&b.1)),
-                                crate::gui::library::SortColumn::Artist => a.1.cmp(&b.1).then(a.0.cmp(&b.0)),
-                                crate::gui::library::SortColumn::Genre => a.2.cmp(&b.2).then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0)),
-                                crate::gui::library::SortColumn::Year => a.3.cmp(&b.3).then(a.1.cmp(&b.1)).then(a.0.cmp(&b.0)),
+                                crate::gui::library::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
+                                crate::gui::library::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                crate::gui::library::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
+                                crate::gui::library::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                crate::gui::library::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
                                 _ => std::cmp::Ordering::Equal,
                             };
                             if is_asc { res } else { res.reverse() }
@@ -555,11 +559,11 @@ impl AudoxidyApp {
                                 self.library_manager.selected_song_idx = None;
                             }
                         }
-                    } else if let Some(album_name) = self.library_manager.selected_album.clone() {
+                    } else if let Some(album_sample_path) = self.library_manager.selected_album.clone() {
                         if let Some(albums) = &mut self.library_manager.cached_albums {
-                            albums.retain(|a| a.0 != album_name);
+                            albums.retain(|a| a.0 != album_sample_path);
                         }
-                        pending = Some(PendingDelete::Album(album_name));
+                        pending = Some(PendingDelete::Album(album_sample_path));
                         self.library_manager.selected_album = None;
                     }
                 }
@@ -569,12 +573,15 @@ impl AudoxidyApp {
                     if let Ok(db) = self.database.lock() {
                         match p {
                             PendingDelete::Song(_, path) => { let _ = db.delete_song(&path); },
-                            PendingDelete::Album(name) => { let _ = db.delete_album(&name); },
+                            PendingDelete::Album(sample_path) => {
+                                let _ = db.delete_album_group(&sample_path);
+                            },
                         }
                         // Actualización inmediata de estadísticas
-                        if let Ok((songs, albums, duration, size)) = db.get_library_stats() {
+                        if let Ok((songs, albums, duration, size, artists)) = db.get_library_stats() {
                             self.library_manager.total_songs = songs;
                             self.library_manager.total_albums = albums;
+                            self.library_manager.total_artists = artists;
                             self.library_manager.total_duration_secs = duration;
                             self.library_manager.total_size_bytes = size;
                         }
@@ -867,49 +874,50 @@ impl AudoxidyApp {
     }
 
     fn update_selection_stats(&mut self) {
-        if let Some(song_idx) = self.library_manager.selected_song_idx {
+        self.library_manager.selection_stats = if let Some(song_idx) = self.library_manager.selected_song_idx {
             if let Some(songs) = &self.library_manager.expanded_album_songs {
                 if let Some(song) = songs.get(song_idx) {
-                    self.library_manager.selection_stats = Some(crate::gui::library::LibraryStats {
+                    Some(crate::gui::library::LibraryStats {
                         songs: 1,
                         albums: 1,
+                        artists: 1,
                         duration_secs: song.duration_secs.unwrap_or(0.0),
                         size_bytes: song.size.unwrap_or(0) as f64,
-                    });
-                    return;
-                }
-            }
-        } else if let Some(album_name) = &self.library_manager.selected_album {
+                    })
+                } else { None }
+            } else { None }
+        } else if let Some(album_sample_path) = &self.library_manager.selected_album {
             // Si el álbum seleccionado es el que está expandido, usamos sus canciones ya cargadas para rapidez
-            if self.library_manager.expanded_album.as_deref() == Some(album_name) {
+            if self.library_manager.expanded_album.as_deref() == Some(album_sample_path) {
                 if let Some(songs) = &self.library_manager.expanded_album_songs {
                     let total_dur: f64 = songs.iter().map(|s| s.duration_secs.unwrap_or(0.0)).sum();
                     let total_size: f64 = songs.iter().map(|s| s.size.unwrap_or(0) as f64).sum();
-                    self.library_manager.selection_stats = Some(crate::gui::library::LibraryStats {
+                    
+                    Some(crate::gui::library::LibraryStats {
                         songs: songs.len() as u64,
                         albums: 1,
+                        artists: 1, // Una selección de álbum/canción siempre muestra 1 o el contable. En este contexto no extraemos total dinámico complejo.
                         duration_secs: total_dur,
                         size_bytes: total_size,
-                    });
-                    return;
-                }
+                    })
+                } else { None }
+            } else {
+                // Consultamos DB
+                if let Ok(db) = self.database.lock() {
+                    if let Ok((songs_count, dur, size)) = db.get_album_stats(album_sample_path) {
+                         Some(crate::gui::library::LibraryStats {
+                             songs: songs_count,
+                             albums: 1,
+                             artists: 1,
+                             duration_secs: dur,
+                             size_bytes: size,
+                         })
+                    } else { None }
+                } else { None }
             }
-            
-            // Si no está expandido o no tenemos las canciones, consultamos la DB (ligero)
-            if let Ok(db) = self.database.lock() {
-                if let Ok((songs_count, dur, size)) = db.get_album_stats(album_name) {
-                     self.library_manager.selection_stats = Some(crate::gui::library::LibraryStats {
-                         songs: songs_count,
-                         albums: 1,
-                         duration_secs: dur,
-                         size_bytes: size,
-                     });
-                     return;
-                }
-            }
-        }
-        
-        self.library_manager.selection_stats = None;
+        } else {
+            None
+        };
     }
 }
 

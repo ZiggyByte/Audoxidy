@@ -56,6 +56,23 @@ pub enum AudioStateToggle {
     DownmixSurround,
 }
 
+// Opciones para los pick_list (dropdowns)
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OptionWrapper<T> {
+    label: String,
+    value: T,
+}
+impl<T: PartialEq + Clone> OptionWrapper<T> {
+    fn new(label: impl Into<String>, value: T) -> Self {
+        Self { label: label.into(), value }
+    }
+}
+impl<T> std::fmt::Display for OptionWrapper<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
+}
+
 pub struct AudioCenterManager {
     pub open: bool,
     pub selected_tab: usize,
@@ -333,22 +350,6 @@ impl AudioCenterManager {
     }
 }
 
-// Opciones para los pick_list (dropdowns)
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct OptionWrapper<T> {
-    label: String,
-    value: T,
-}
-impl<T: PartialEq + Clone> OptionWrapper<T> {
-    fn new(label: impl Into<String>, value: T) -> Self {
-        Self { label: label.into(), value }
-    }
-}
-impl<T> std::fmt::Display for OptionWrapper<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.label)
-    }
-}
 
 pub fn view<'a>(
     manager: &'a AudioCenterManager,

@@ -9,6 +9,13 @@ use symphonia::core::meta::MetadataOptions;
 use symphonia::core::codecs::DecoderOptions;
 use ringbuf::{HeapRb, traits::{Split, Consumer, Producer, Observer}};
 use ringbuf::wrap::caching::Caching;
+use symphonia::core::audio::Signal as SymphoniaSignal;
+use crossbeam::channel::{Sender, Receiver, unbounded};
+use lofty::file::TaggedFileExt;
+use lofty::tag::Accessor;
+use rubato::{Resampler, Fft, FixedSync};
+use audioadapter_buffers::direct::SequentialSliceOfVecs;
+use crate::audio::dsp::DspChain;
 
 // Define aliases based on ringbuf 0.4 structure
 pub type HeapProducer<T> = Caching<Arc<HeapRb<T>>, true, false>;
@@ -26,15 +33,7 @@ pub(crate) struct ChannelMap {
     pub(crate) sbr: Option<usize>,
 }
 
-use symphonia::core::audio::Signal as SymphoniaSignal;
-use crossbeam::channel::{Sender, Receiver, unbounded};
-use lofty::file::TaggedFileExt;
-use lofty::tag::Accessor;
-use rubato::{Resampler, Fft, FixedSync};
-// use audioadapter::{Adapter, AdapterMut}; // Unused
-use audioadapter_buffers::direct::SequentialSliceOfVecs;
 
-use crate::audio::dsp::DspChain;
 
 #[derive(Debug)]
 #[allow(dead_code)]

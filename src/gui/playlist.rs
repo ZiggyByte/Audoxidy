@@ -7,6 +7,7 @@ use crate::gui::app::Message;
 
 // TODO: Consolidar colores globales en theme.rs
 use crate::gui::theme::*;
+use crate::utils::format_duration;
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct PlaylistItem {
@@ -110,13 +111,12 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     // Stats de lista actual
     let active_list = &manager.lists[manager.active_list_idx].1;
     let total_secs: f32 = active_list.iter().map(|s| s.duration_sec).sum();
-    let mins = (total_secs / 60.0).floor() as u32;
-    let secs = (total_secs % 60.0).floor() as u32;
+    let time_str = format_duration(total_secs as f64);
     
     let stats_header = row![
         text("Todas Las Canciones").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(Length::Fill),
-        text(format!("{} pistas • {}:{:02}", active_list.len(), mins, secs)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
+        text(format!("{} pistas • {}", active_list.len(), time_str)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
     ]
     .padding(10)
     .align_y(Alignment::Center);
@@ -133,8 +133,7 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
         let color = if is_playing { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
         
         // Formatear duración
-        let s_mins = (song.duration_sec / 60.0).floor() as u32;
-        let s_secs = (song.duration_sec % 60.0).floor() as u32;
+        let dur_str = format_duration(song.duration_sec as f64);
         
         let song_row = row![
             text(format!("{:02}", i + 1)).color(COLOR_TEXT_SECONDARY).width(30).size(14).font(FONT_INTER_SANS_MEDIUM),
@@ -142,7 +141,7 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
                 text(song.title.clone()).color(color).size(14).font(FONT_INTER_SANS_MEDIUM),
                 text(format!("{} • {} • {}", song.artist, song.album, song.year)).color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM)
             ].width(Length::Fill),
-            text(format!("{}:{:02}", s_mins, s_secs)).color(color).size(13).font(FONT_INTER_SANS_MEDIUM)
+            text(dur_str).color(color).size(13).font(FONT_INTER_SANS_MEDIUM)
         ].align_y(Alignment::Center);
 
         // Hacemos cada canción un botón transparente que emite el Message al hacer clic
@@ -162,7 +161,7 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
                 .margin(0)
                 .scroller_width(4)
         ))
-        .style(crate::gui::theme::custom_scrollbar_style);
+        .style(crate::gui::widgets::custom_scrollbar_style);
 
     let shuffle_txt = text("Shuffle").color(if manager.shuffle_active { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY }).font(FONT_INTER_SANS_MEDIUM);
     let repeat_texts = ["Repeat (Off)", "Repeat (All)", "Repeat (One)"];

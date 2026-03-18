@@ -8,7 +8,128 @@ use crate::gui::library::LibraryManager;
 use crate::gui::audio_center::{AudioCenterManager, AudioCenterMessage};
 use crate::integrations::media_controls::SystemMediaControls;
 
+pub mod helpers {
+    use iced::advanced::{Widget, layout, mouse, Clipboard, Shell, Layout};
+    use iced::advanced::widget::{Tree, Operation};
+    use iced::{Element, Length, Rectangle, Size, Event};
+
+    pub struct CursorOff<'a, Message, Theme, Renderer> {
+        content: Element<'a, Message, Theme, Renderer>,
+    }
+
+    impl<'a, Message, Theme, Renderer> CursorOff<'a, Message, Theme, Renderer> {
+        pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
+            Self { content: content.into() }
+        }
+    }
+
+    impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for CursorOff<'a, Message, Theme, Renderer>
+    where
+        Renderer: iced::advanced::Renderer,
+    {
+        fn size(&self) -> Size<Length> {
+            self.content.as_widget().size()
+        }
+
+        fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
+            self.content.as_widget_mut().layout(tree, renderer, limits)
+        }
+
+        fn draw(
+            &self,
+            tree: &Tree,
+            renderer: &mut Renderer,
+            theme: &Theme,
+            style: &iced::advanced::renderer::Style,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport)
+        }
+
+        fn tag(&self) -> iced::advanced::widget::tree::Tag {
+            self.content.as_widget().tag()
+        }
+
+        fn state(&self) -> iced::advanced::widget::tree::State {
+            self.content.as_widget().state()
+        }
+
+        fn children(&self) -> Vec<Tree> {
+            self.content.as_widget().children()
+        }
+
+        fn diff(&self, tree: &mut Tree) {
+            self.content.as_widget().diff(tree)
+        }
+
+        fn operate(
+            &mut self,
+            tree: &mut Tree,
+            layout: Layout<'_>,
+            renderer: &Renderer,
+            operation: &mut dyn Operation,
+        ) {
+            self.content.as_widget_mut().operate(tree, layout, renderer, operation);
+        }
+
+        fn update(
+            &mut self,
+            state: &mut Tree,
+            event: &Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            renderer: &Renderer,
+            clipboard: &mut dyn Clipboard,
+            shell: &mut Shell<'_, Message>,
+            viewport: &Rectangle,
+        ) {
+            self.content.as_widget_mut().update(
+                state, event, layout, cursor, renderer, clipboard, shell, viewport,
+            )
+        }
+
+        fn mouse_interaction(
+            &self,
+            state: &Tree,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            viewport: &Rectangle,
+            renderer: &Renderer,
+        ) -> mouse::Interaction {
+            let _ = self.content.as_widget().mouse_interaction(
+                state, layout, cursor, viewport, renderer,
+            );
+            mouse::Interaction::Idle
+        }
+
+        fn overlay<'b>(
+            &'b mut self,
+            state: &'b mut Tree,
+            layout: Layout<'b>,
+            renderer: &Renderer,
+            viewport: &Rectangle,
+            translation: iced::Vector,
+        ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+            self.content.as_widget_mut().overlay(state, layout, renderer, viewport, translation)
+        }
+    }
+
+    impl<'a, Message, Theme, Renderer> From<CursorOff<'a, Message, Theme, Renderer>> for Element<'a, Message, Theme, Renderer>
+    where
+        Message: 'a,
+        Theme: 'a,
+        Renderer: iced::advanced::Renderer + 'a,
+    {
+        fn from(widget: CursorOff<'a, Message, Theme, Renderer>) -> Self {
+            Element::new(widget)
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
+
 pub enum Message {
     // Engine & Playback
     Tick,
@@ -22,8 +143,8 @@ pub enum Message {
     ToggleShuffle,
 
     // Playlist
-    AddSongToPlaylist(crate::db::database::SongRecord),
-    PlayAlbum(Vec<crate::db::database::SongRecord>),
+    AddSongToPlaylist(crate::db::database::SongData),
+    PlayAlbum(Vec<crate::db::database::SongData>),
     PlaySongIndex(usize),
     ClearPlaylist,
 
@@ -32,9 +153,9 @@ pub enum Message {
     SearchQueryChanged(String),
     LibrarySearchQueryChanged(String),
     LibrarySourceSelected(crate::gui::library::LibrarySource),
-    LibrarySortChanged(crate::gui::library::SortColumn),
-    StartColumnResize(crate::gui::library::SortColumn),
-    ColumnHover(Option<crate::gui::library::SortColumn>),
+    LibrarySortChanged(crate::utils::SortColumn),
+    StartColumnResize(crate::utils::SortColumn),
+    ColumnHover(Option<crate::utils::SortColumn>),
     ToggleAlbumExpansion(String),
     SelectAlbum(String),
     SelectSong(Option<usize>),
@@ -171,11 +292,11 @@ impl AudoxidyApp {
                                 let is_asc = self.library_manager.sort_ascending.unwrap_or(true);
                                 albums.sort_by(|a, b| {
                                     let res = match col_ref {
-                                        crate::gui::library::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
-                                        crate::gui::library::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
-                                        crate::gui::library::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
-                                        crate::gui::library::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
-                                        crate::gui::library::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
+                                        crate::utils::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
+                                        crate::utils::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                        crate::utils::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
+                                        crate::utils::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                        crate::utils::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
                                         _ => std::cmp::Ordering::Equal,
                                     };
                                     if is_asc { res } else { res.reverse() }
@@ -355,11 +476,11 @@ impl AudoxidyApp {
                     if let Some(albums) = &mut self.library_manager.cached_albums {
                         albums.sort_by(|a, b| {
                             let res = match col_ref {
-                                crate::gui::library::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
-                                crate::gui::library::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
-                                crate::gui::library::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
-                                crate::gui::library::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
-                                crate::gui::library::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
+                                crate::utils::SortColumn::Album => a.1.cmp(&b.1).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)),
+                                crate::utils::SortColumn::Artist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                crate::utils::SortColumn::AlbumArtist => a.2.cmp(&b.2).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)), // Fallback grouped_artist uses AlbumArtist anyway
+                                crate::utils::SortColumn::Genre => a.3.cmp(&b.3).then(a.2.cmp(&b.2)).then(a.4.cmp(&b.4)).then(a.1.cmp(&b.1)),
+                                crate::utils::SortColumn::Year => a.4.cmp(&b.4).then(a.2.cmp(&b.2)).then(a.1.cmp(&b.1)),
                                 _ => std::cmp::Ordering::Equal,
                             };
                             if is_asc { res } else { res.reverse() }
@@ -921,122 +1042,3 @@ impl AudoxidyApp {
     }
 }
 
-pub mod helpers {
-    use iced::advanced::{Widget, layout, mouse, Clipboard, Shell, Layout};
-    use iced::advanced::widget::{Tree, Operation};
-    use iced::{Element, Length, Rectangle, Size, Event};
-
-    pub struct CursorOff<'a, Message, Theme, Renderer> {
-        content: Element<'a, Message, Theme, Renderer>,
-    }
-
-    impl<'a, Message, Theme, Renderer> CursorOff<'a, Message, Theme, Renderer> {
-        pub fn new(content: impl Into<Element<'a, Message, Theme, Renderer>>) -> Self {
-            Self { content: content.into() }
-        }
-    }
-
-    impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for CursorOff<'a, Message, Theme, Renderer>
-    where
-        Renderer: iced::advanced::Renderer,
-    {
-        fn size(&self) -> Size<Length> {
-            self.content.as_widget().size()
-        }
-
-        fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-            self.content.as_widget_mut().layout(tree, renderer, limits)
-        }
-
-        fn draw(
-            &self,
-            tree: &Tree,
-            renderer: &mut Renderer,
-            theme: &Theme,
-            style: &iced::advanced::renderer::Style,
-            layout: Layout<'_>,
-            cursor: mouse::Cursor,
-            viewport: &Rectangle,
-        ) {
-            self.content.as_widget().draw(tree, renderer, theme, style, layout, cursor, viewport)
-        }
-
-        fn tag(&self) -> iced::advanced::widget::tree::Tag {
-            self.content.as_widget().tag()
-        }
-
-        fn state(&self) -> iced::advanced::widget::tree::State {
-            self.content.as_widget().state()
-        }
-
-        fn children(&self) -> Vec<Tree> {
-            self.content.as_widget().children()
-        }
-
-        fn diff(&self, tree: &mut Tree) {
-            self.content.as_widget().diff(tree)
-        }
-
-        fn operate(
-            &mut self,
-            tree: &mut Tree,
-            layout: Layout<'_>,
-            renderer: &Renderer,
-            operation: &mut dyn Operation,
-        ) {
-            self.content.as_widget_mut().operate(tree, layout, renderer, operation);
-        }
-
-        fn update(
-            &mut self,
-            state: &mut Tree,
-            event: &Event,
-            layout: Layout<'_>,
-            cursor: mouse::Cursor,
-            renderer: &Renderer,
-            clipboard: &mut dyn Clipboard,
-            shell: &mut Shell<'_, Message>,
-            viewport: &Rectangle,
-        ) {
-            self.content.as_widget_mut().update(
-                state, event, layout, cursor, renderer, clipboard, shell, viewport,
-            )
-        }
-
-        fn mouse_interaction(
-            &self,
-            state: &Tree,
-            layout: Layout<'_>,
-            cursor: mouse::Cursor,
-            viewport: &Rectangle,
-            renderer: &Renderer,
-        ) -> mouse::Interaction {
-            let _ = self.content.as_widget().mouse_interaction(
-                state, layout, cursor, viewport, renderer,
-            );
-            mouse::Interaction::Idle
-        }
-
-        fn overlay<'b>(
-            &'b mut self,
-            state: &'b mut Tree,
-            layout: Layout<'b>,
-            renderer: &Renderer,
-            viewport: &Rectangle,
-            translation: iced::Vector,
-        ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-            self.content.as_widget_mut().overlay(state, layout, renderer, viewport, translation)
-        }
-    }
-
-    impl<'a, Message, Theme, Renderer> From<CursorOff<'a, Message, Theme, Renderer>> for Element<'a, Message, Theme, Renderer>
-    where
-        Message: 'a,
-        Theme: 'a,
-        Renderer: iced::advanced::Renderer + 'a,
-    {
-        fn from(widget: CursorOff<'a, Message, Theme, Renderer>) -> Self {
-            Element::new(widget)
-        }
-    }
-}

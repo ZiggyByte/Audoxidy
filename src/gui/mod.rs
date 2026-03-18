@@ -5,3 +5,4 @@ pub mod playlist;
 pub mod library_filters;
 pub mod library;
 pub mod audio_center;
+pub mod widgets;

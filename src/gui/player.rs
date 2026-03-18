@@ -5,6 +5,8 @@ use iced::{
 use crate::audio::AudioManager;
 use crate::gui::app::Message;
 use crate::gui::theme::*;
+use crate::gui::widgets::{VolumeScrollArea, action_icon_button, apply_marquee};
+use crate::utils::format_duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HoverZone {
@@ -93,17 +95,8 @@ pub fn view<'a>(
     .into();
 
     // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
-    // Botones Top sin fondo usando styling transparente
-    fn transparent_btn<'b>(icon: &str, action: Message) -> Element<'b, Message> {
-        let content = svg(svg::Handle::from_path(format!("assets/icons/{}", icon))).width(31).height(31);
-        mouse_area(content)
-            .on_press(action)
-            .interaction(iced::mouse::Interaction::Idle)
-            .into()
-    }
-
     let top_row = row![
-        transparent_btn("menu.svg", Message::ToggleMenu),
+        action_icon_button("menu.svg", 31, Message::ToggleMenu),
         Space::new().width(Length::Fill),
         // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
     ]
@@ -112,29 +105,9 @@ pub fn view<'a>(
     .padding([0, 8]); // padding horizontal
 
     let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
-    
-    let apply_marquee = |text_str: &str, limit: usize| -> String {
-        let chars: Vec<char> = text_str.chars().collect();
-        if chars.len() <= limit { return text_str.to_string(); }
-        let tick = ui_state.tick_count;
-        let offset = (tick / 3) as usize % (chars.len() + 10);
-        if offset < chars.len() {
-            let end = (offset + limit).min(chars.len());
-            let mut s: String = chars[offset..end].iter().collect();
-            if offset + limit > chars.len() {
-                s.push_str("   ");
-                let needed = (offset + limit) - chars.len();
-                if needed > 3 {
-                    let rem = needed - 3;
-                    s.push_str(&chars[0..rem.min(chars.len())].iter().collect::<String>());
-                }
-            }
-            s
-        } else { chars[0..limit.min(chars.len())].iter().collect() }
-    };
 
     let title_el = container(
-        text(apply_marquee(&state.title, 39)).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        text(apply_marquee(&state.title, 39, ui_state.tick_count)).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
         .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(35.0)).center_y(Length::Fill).width(Length::Fill);
 
@@ -143,7 +116,7 @@ pub fn view<'a>(
     } else { title_el.into() };
 
     let artist_el = container(
-        text(apply_marquee(&state.artist, 40)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        text(apply_marquee(&state.artist, 40, ui_state.tick_count)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
         .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(30.0)).center_y(Length::Fill).width(Length::Fill);
 
@@ -160,7 +133,7 @@ pub fn view<'a>(
                     artist_widget,
                     Space::new().width(Length::Fill),
                     container(
-                        text(format!("{}:{:02}", state.current_pos_sec as u32 / 60, state.current_pos_sec as u32 % 60))
+                        text(format_duration(state.current_pos_sec))
                             .size(14).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
                     ).padding([0, 2])
                 ].align_y(Alignment::Center)
@@ -366,8 +339,7 @@ pub fn view<'a>(
     if let Some(pos) = ui_state.mouse_pos {
         if ui_state.is_active && pos.y >=360.0 && pos.y <= 400.0 && pos.x >= 13.0 && pos.x <= 387.0 && state.total_duration_sec > 0.0 {
             let frac = ((pos.x - 13.0) / 376.0).clamp(0.0, 1.0);
-            let h_sec = (frac * state.total_duration_sec as f32) as u32;
-            let tooltip_txt = format!("{:02}:{:02}", h_sec / 60, h_sec % 60);
+            let tooltip_txt = format_duration(frac as f64 * state.total_duration_sec);
             
             let tooltip_box = container(text(tooltip_txt).size(12).color(Color::WHITE))
                 .padding(4)
@@ -386,90 +358,4 @@ pub fn view<'a>(
     .width(bounds)
     .height(bounds)
     .into()
-}
-
-// ==========================================
-// Custom Widget Area
-// ==========================================
-
-use iced::advanced::{widget::Tree, Widget, Layout, renderer, mouse, Clipboard, Shell};
-use iced::{Event, Rectangle, Size};
-
-pub struct VolumeScrollArea<'a, Message, Theme, Renderer> {
-    content: Element<'a, Message, Theme, Renderer>,
-    on_scroll: Box<dyn Fn(f32) -> Message + 'a>,
-}
-
-impl<'a, Message, Theme, Renderer> VolumeScrollArea<'a, Message, Theme, Renderer> {
-    pub fn new(
-        content: impl Into<Element<'a, Message, Theme, Renderer>>,
-        on_scroll: impl Fn(f32) -> Message + 'a,
-    ) -> Self {
-        Self {
-            content: content.into(),
-            on_scroll: Box::new(on_scroll),
-        }
-    }
-}
-
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer> for VolumeScrollArea<'a, Message, Theme, Renderer>
-where
-    Renderer: renderer::Renderer,
-{
-    fn size(&self) -> Size<Length> {
-        self.content.as_widget().size()
-    }
-
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &iced::advanced::layout::Limits) -> iced::advanced::layout::Node {
-        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn draw(&self, tree: &Tree, renderer: &mut Renderer, theme: &Theme, style: &renderer::Style, layout: Layout<'_>, cursor: mouse::Cursor, viewport: &Rectangle) {
-        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport)
-    }
-
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
-    }
-
-    fn diff(&self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_ref(&self.content))
-    }
-
-    fn operate(&mut self, tree: &mut Tree, layout: Layout<'_>, renderer: &Renderer, operation: &mut dyn iced::advanced::widget::Operation) {
-        self.content.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation)
-    }
-
-    fn update(&mut self, tree: &mut Tree, event: &Event, layout: Layout<'_>, cursor: mouse::Cursor, renderer: &Renderer, clipboard: &mut dyn Clipboard, shell: &mut Shell<'_, Message>, viewport: &Rectangle) {
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-            if cursor.is_over(layout.bounds()) {
-                let d = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y / 10.0,
-                };
-                shell.publish((self.on_scroll)(d));
-                return; // Evita propagar al contenido hijo si ya lo procesamos
-            }
-        }
-        self.content.as_widget_mut().update(&mut tree.children[0], event, layout, cursor, renderer, clipboard, shell, viewport)
-    }
-
-    fn mouse_interaction(&self, tree: &Tree, layout: Layout<'_>, cursor: mouse::Cursor, viewport: &Rectangle, renderer: &Renderer) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
-    }
-
-    fn overlay<'b>(&'b mut self, tree: &'b mut Tree, layout: Layout<'b>, renderer: &Renderer, viewport: &Rectangle, translation: iced::Vector) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
-        self.content.as_widget_mut().overlay(&mut tree.children[0], layout, renderer, viewport, translation)
-    }
-}
-
-impl<'a, Message, Theme, Renderer> From<VolumeScrollArea<'a, Message, Theme, Renderer>> for Element<'a, Message, Theme, Renderer>
-where
-    Message: 'a,
-    Theme: 'a,
-    Renderer: renderer::Renderer + 'a,
-{
-    fn from(area: VolumeScrollArea<'a, Message, Theme, Renderer>) -> Self {
-        Element::new(area)
-    }
 }

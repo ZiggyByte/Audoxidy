@@ -5,6 +5,55 @@ pub struct Database {
     conn: Connection,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct SongData {
+    pub full_file_path: String,
+    pub file_name: String,
+    pub root_directory_name: Option<String>,
+    pub full_root_directory_path: Option<String>,
+    pub format: Option<String>,
+    pub size: Option<i64>,
+    pub sample_rate: Option<i64>,
+    pub channels: Option<i64>,
+    pub duration_secs: Option<f64>,
+    pub bit_depth: Option<i64>,
+    
+    pub embedded_cover: bool,
+    pub original_cover_root: Option<String>,
+    pub compressed_cached_cover_root: Option<String>,
+    
+    pub track_number: Option<String>,
+    pub total_tracks: Option<String>,
+    pub disc_number: Option<String>,
+    pub total_discs: Option<String>,
+    
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub genre: Option<String>,
+    pub release_year: Option<String>,
+    pub album_artist: Option<String>,
+    pub album_artist_tag_format: Option<String>,
+    pub lyrics: Option<String>,
+    
+    pub track_gain: Option<f64>,
+    pub album_gain: Option<f64>,
+    pub comments: Option<String>,
+    pub url: Option<String>,
+    pub copyright: Option<String>,
+    pub publisher: Option<String>,
+    pub composer: Option<String>,
+    pub lyricist: Option<String>,
+    pub director: Option<String>,
+    pub encoded_by: Option<String>,
+    pub catalog: Option<String>,
+    pub isrc: Option<String>,
+    pub key: Option<String>,
+    pub bpm: Option<String>,
+    
+    pub import_order: i64,
+}
+
 impl Default for Database {
     fn default() -> Self {
         Self::new().expect("No se pudo iniciar la DB local SQLite")
@@ -96,7 +145,7 @@ impl Database {
     }
     
     // WIP: Funciones de Guardado/Carga para el escáner se implementarán en el siguiente bloque
-    pub fn insert_song(&mut self, record: &SongRecord) -> Result<()> {
+    pub fn insert_song(&mut self, record: &SongData) -> Result<()> {
         self.conn.execute(
             "INSERT INTO MUSIC_LIBRARY (
                 FULL_FILE_PATH, FILE_NAME, ROOT_DIRECTORY_NAME, FULL_ROOT_DIRECTORY_PATH, 
@@ -193,7 +242,7 @@ impl Database {
         Ok(stats)
     }
 
-    pub fn get_songs_by_album(&self, sample_file_path: &str) -> Result<Vec<SongRecord>> {
+    pub fn get_songs_by_album(&self, sample_file_path: &str) -> Result<Vec<SongData>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 
             FROM MUSIC_LIBRARY 
@@ -203,7 +252,7 @@ impl Database {
             ORDER BY FILE_NAME ASC, CAST(TRACK_NUMBER AS INTEGER) ASC
         ")?;
         let rows = stmt.query_map([sample_file_path], |row| {
-            let mut record = SongRecord::default();
+            let mut record = SongData::default();
             record.full_file_path = row.get(0).unwrap_or_default();
             record.title = row.get(1).ok();
             record.artist = row.get(2).ok();
@@ -286,51 +335,3 @@ impl Database {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-pub struct SongRecord {
-    pub full_file_path: String,
-    pub file_name: String,
-    pub root_directory_name: Option<String>,
-    pub full_root_directory_path: Option<String>,
-    pub format: Option<String>,
-    pub size: Option<i64>,
-    pub sample_rate: Option<i64>,
-    pub channels: Option<i64>,
-    pub duration_secs: Option<f64>,
-    pub bit_depth: Option<i64>,
-    
-    pub embedded_cover: bool,
-    pub original_cover_root: Option<String>,
-    pub compressed_cached_cover_root: Option<String>,
-    
-    pub track_number: Option<String>,
-    pub total_tracks: Option<String>,
-    pub disc_number: Option<String>,
-    pub total_discs: Option<String>,
-    
-    pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub genre: Option<String>,
-    pub release_year: Option<String>,
-    pub album_artist: Option<String>,
-    pub album_artist_tag_format: Option<String>,
-    pub lyrics: Option<String>,
-    
-    pub track_gain: Option<f64>,
-    pub album_gain: Option<f64>,
-    pub comments: Option<String>,
-    pub url: Option<String>,
-    pub copyright: Option<String>,
-    pub publisher: Option<String>,
-    pub composer: Option<String>,
-    pub lyricist: Option<String>,
-    pub director: Option<String>,
-    pub encoded_by: Option<String>,
-    pub catalog: Option<String>,
-    pub isrc: Option<String>,
-    pub key: Option<String>,
-    pub bpm: Option<String>,
-    
-    pub import_order: i64,
-}

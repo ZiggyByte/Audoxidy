@@ -52,7 +52,7 @@ impl Scanner {
     }
 
     fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, root: &str, import_order: i64) {
-        let mut record = crate::db::database::SongRecord::default();
+        let mut record = crate::db::database::SongData::default();
         record.import_order = import_order;
         record.full_file_path = path.to_string_lossy().to_string();
         record.file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
@@ -95,52 +95,38 @@ impl Scanner {
                 
                 if let Some(t) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
                     // Extraer siempre como String Literal sin conversiones
-                    record.track_number = t.get_string(&ItemKey::TrackNumber).map(|s| s.to_string())
+                    record.track_number = t.get_string(ItemKey::TrackNumber).map(|s| s.to_string())
                                            .or_else(|| t.track().map(|n| n.to_string()));
-                    record.total_tracks = t.get_string(&ItemKey::TrackTotal).map(|s| s.to_string())
+                    record.total_tracks = t.get_string(ItemKey::TrackTotal).map(|s| s.to_string())
                                            .or_else(|| t.track_total().map(|n| n.to_string()));
-                    record.disc_number = t.get_string(&ItemKey::DiscNumber).map(|s| s.to_string())
+                    record.disc_number = t.get_string(ItemKey::DiscNumber).map(|s| s.to_string())
                                           .or_else(|| t.disk().map(|n| n.to_string()));
-                    record.total_discs = t.get_string(&ItemKey::DiscTotal).map(|s| s.to_string())
+                    record.total_discs = t.get_string(ItemKey::DiscTotal).map(|s| s.to_string())
                                           .or_else(|| t.disk_total().map(|n| n.to_string()));
                     
                     record.title = t.title().as_deref().map(|s| s.to_string());
                     record.artist = t.artist().as_deref().map(|s| s.to_string());
                     record.album = t.album().as_deref().map(|s| s.to_string());
                     record.genre = t.genre().as_deref().map(|s| s.to_string());
-                    // release_year in lofty 0.22 comes as optional u32 if mapped directly, or we can use get_string
-                    record.release_year = t.get_string(&ItemKey::Year).map(|s| s.to_string()).or_else(|| t.year().map(|y: u32| y.to_string()));
+                    // release_year in lofty 0.23: Accessor::year is replaced by date. 
+                    record.release_year = t.get_string(ItemKey::Year).map(|s| s.to_string())
+                        .or_else(|| t.get_string(ItemKey::RecordingDate).map(|s| s.to_string()))
+                        .or_else(|| t.get_string(ItemKey::OriginalReleaseDate).map(|s| s.to_string()))
+                        .or_else(|| t.date().map(|d| d.to_string()));
                     
-                    record.album_artist = t.get_string(&ItemKey::AlbumArtist).map(|s| s.to_string());
+                    record.album_artist = t.get_string(ItemKey::AlbumArtist).map(|s| s.to_string());
                     if record.album_artist.is_some() {
+                        // En 0.23 lofty resuelve ALBUM ARTIST por nosotros de manera estándar
                         record.album_artist_tag_format = Some("ALBUMARTIST".to_string());
-                    } else {
-                        // Respaldo para atributos "Unknown" como "ALBUM ARTIST" en comentarios Vorbis (archivos FLAC)
-                        for item in t.items() {
-                            let key_string = match item.key() {
-                                lofty::tag::ItemKey::Unknown(s) => s.clone(),
-                                _ => continue, // Ya pasamos por los estándares, buscamos explícitos desconocidos
-                            };
-                            let upper = key_string.to_uppercase();
-                            if upper == "ALBUM ARTIST" || upper == "ALBUM_ARTIST" || upper == "ALBUMARTIST" {
-                                if let lofty::tag::ItemValue::Text(val) = item.value() {
-                                    record.album_artist = Some(val.to_string());
-                                    record.album_artist_tag_format = Some(key_string);
-                                    break;
-                                } else if let lofty::tag::ItemValue::Locator(val) = item.value() {
-                                    record.album_artist = Some(val.to_string());
-                                    record.album_artist_tag_format = Some(key_string);
-                                    break;
-                                }
-                            }
-                        }
                     }
-                    record.lyrics = t.get_string(&ItemKey::Lyrics).map(|s| s.to_string());
-                    record.comments = t.get_string(&ItemKey::Comment).map(|s| s.to_string());
-                    record.composer = t.get_string(&ItemKey::Composer).map(|s| s.to_string());
-                    record.publisher = t.get_string(&ItemKey::Publisher).map(|s| s.to_string());
-                    record.isrc = t.get_string(&ItemKey::Isrc).map(|s| s.to_string());
-                    record.bpm = t.get_string(&ItemKey::Bpm).map(|s| s.to_string());
+                    
+                    // Lyrics is no longer supported directly, changed to UnsyncLyrics
+                    record.lyrics = t.get_string(ItemKey::UnsyncLyrics).map(|s| s.to_string());
+                    record.comments = t.get_string(ItemKey::Comment).map(|s| s.to_string());
+                    record.composer = t.get_string(ItemKey::Composer).map(|s| s.to_string());
+                    record.publisher = t.get_string(ItemKey::Publisher).map(|s| s.to_string());
+                    record.isrc = t.get_string(ItemKey::Isrc).map(|s| s.to_string());
+                    record.bpm = t.get_string(ItemKey::Bpm).map(|s| s.to_string());
                     
                     if !t.pictures().is_empty() {
                         record.embedded_cover = true;

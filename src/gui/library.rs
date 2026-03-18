@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::theme::*;
+use crate::utils::{format_duration, format_size, format_metadata, truncate_text, SortColumn};
 
 /// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
 pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
@@ -37,45 +38,6 @@ pub enum LibrarySource {
     Tidal,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SortColumn {
-    TrackNumber,
-    Title,
-    Artist,
-    AlbumArtist,
-    Album,
-    Genre,
-    Year,
-    Duration,
-    Format,
-    SampleRate,
-    Channels,
-    BitDepth,
-    Bitrate,
-    Size,
-}
-
-impl SortColumn {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            SortColumn::TrackNumber => "#",
-            SortColumn::Title => "Título",
-            SortColumn::Artist => "Artista",
-            SortColumn::AlbumArtist => "Artista del Álbum",
-            SortColumn::Album => "Álbum",
-            SortColumn::Genre => "Género",
-            SortColumn::Year => "Año",
-            SortColumn::Duration => "Duración",
-            SortColumn::Format => "Formato",
-            SortColumn::SampleRate => "Muestreo",
-            SortColumn::Channels => "Canales",
-            SortColumn::BitDepth => "Profundidad",
-            SortColumn::Bitrate => "Bits",
-            SortColumn::Size => "Tamaño",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct LibraryStats {
     pub songs: u64,
@@ -92,7 +54,7 @@ pub struct LibraryManager {
     pub sort_ascending: Option<bool>,
     pub search_query: String,
     pub expanded_album: Option<String>,
-    pub expanded_album_songs: Option<Vec<crate::db::database::SongRecord>>,
+    pub expanded_album_songs: Option<Vec<crate::db::database::SongData>>,
     pub cached_albums: Option<Vec<(String, String, String, String, String, Option<String>)>>,
     pub view_menu_open: bool,
     pub add_menu_open: bool,
@@ -172,7 +134,7 @@ impl Default for LibraryManager {
 }
 
 impl LibraryManager {
-    pub fn sort_songs(&self, songs: &mut [crate::db::database::SongRecord]) {
+    pub fn sort_songs(&self, songs: &mut [crate::db::database::SongData]) {
         if let Some(col_ref) = self.sort_column {
             let is_asc = self.sort_ascending.unwrap_or(true);
             songs.sort_by(|a, b| {
@@ -258,16 +220,6 @@ pub fn view<'a>(
     manager: &'a LibraryManager,
     _database: &'a Arc<Mutex<Database>>,
 ) -> Element<'a, Message> {
-    
-    // Función de acortado re-utilizable en varias vistas
-    fn truncate(s: &str, limit: usize) -> String {
-        let len = s.chars().count();
-        if len > limit {
-            format!("{}...", s.chars().take(limit.saturating_sub(3)).collect::<String>())
-        } else {
-            s.to_string()
-        }
-    }
     
     // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
     let icon_btn_size = |icon: &str, action: Message, size: f32| -> Element<'a, Message> {
@@ -363,108 +315,22 @@ pub fn view<'a>(
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // --- BARRA DE ORDENAMIENTO (30px) ---
-    let create_sort_col = |sort: SortColumn, current: Option<SortColumn>, asc: Option<bool>| -> Element<'a, Message> {
-        let is_active = current == Some(sort);
-        let width = *manager.column_widths.get(&sort).unwrap_or(&100) as f32;
-        
-        let available_w = width - 25.0; // Espacio reservado para icono/separador
-        let max_chars = (available_w / 7.0).max(1.0) as usize;
-        let t_str = truncate(sort.as_str(), max_chars);
-        
-        let t = text(t_str)
-            .size(12)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .color(COLOR_TEXT_SECONDARY);
-
-        let icon_el = if is_active {
-             let handle = match asc {
-                 Some(true) => Some(iced::widget::svg::Handle::from_path("assets/icons/arrow-up-chevron.svg")),
-                 Some(false) => Some(iced::widget::svg::Handle::from_path("assets/icons/arrow-down-chevron.svg")),
-                 _ => None,
-             };
-             
-             if let Some(h) = handle {
-                 Some(iced::widget::svg(h)
-                     .width(20)
-                     .height(20)
-                     .style(move |_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) }))
-             } else {
-                 None
-             }
-        } else { None };
-        let is_hovered = manager.resizing_column == Some(sort) || manager.hovered_column == Some(sort);
-        
-        let separator_visual = container(Space::new())
-            .width(Length::Fixed(3.0))
-            .height(Length::Fixed(16.0))
-            .style(move |_t: &Theme| {
-                let bg_color = if is_hovered { COLOR_ACCENT } else { Color::from_rgba(COLOR_TEXT_SECONDARY.r, COLOR_TEXT_SECONDARY.g, COLOR_TEXT_SECONDARY.b, 0.3)};
-                container::Style::default()
-                    .background(bg_color)
-                    .border(iced::Border { radius: 4.0.into(), ..Default::default() })
-            });
-
-        let separator_area = iced::widget::mouse_area(separator_visual)
-            .on_enter(Message::ColumnHover(Some(sort)))
-            .on_exit(Message::ColumnHover(None))
-            .on_press(Message::StartColumnResize(sort))
-            .interaction(iced::mouse::Interaction::ResizingHorizontally);
-
-        let sort_btn_content = if let Some(ic) = icon_el {
-            row![t, Space::new().width(Length::Fill), ic].align_y(Alignment::Center)
-        } else {
-            row![t, Space::new().width(Length::Fill)].align_y(Alignment::Center)
-        };
-
-        let sort_btn = button(sort_btn_content)
-            .width(Length::Fill)
-            .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::LibrarySortChanged(sort));
-
-        let content = row![
-            sort_btn,
-            Space::new().width(3.0),
-            separator_area,
-            Space::new().width(3.0)
-        ].align_y(Alignment::Center).width(Length::Fixed(width));
-            
-        container(content)
-            .width(Length::Fixed(width))
-            .clip(true)
-            .into()
-    };
-
-    let sort_bar_content = row![
-        create_sort_col(SortColumn::TrackNumber, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Title, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Artist, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::AlbumArtist, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Album, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Genre, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Year, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Duration, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Format, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::SampleRate, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Channels, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::BitDepth, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Bitrate, manager.sort_column, manager.sort_ascending),
-        create_sort_col(SortColumn::Size, manager.sort_column, manager.sort_ascending),
-    ].align_y(Alignment::Center).height(Length::Fill).padding(iced::Padding { top: 0.0, right: 5.0, bottom: 0.0, left: 35.0 });
-
-    let sort_container = column![
-        container(
-            scrollable(sort_bar_content)
-                .direction(iced::widget::scrollable::Direction::Horizontal(
-                    iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0)
-                ))
-        )
-            .width(Length::Fill)
-            .height(Length::Fixed(28.0))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
-        container(Space::new().width(Length::Fill).height(2.0))
-            .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
-    ];
+    let sort_container = crate::gui::widgets::build_sort_bar(
+        &[
+            SortColumn::TrackNumber, SortColumn::Title, SortColumn::Artist, SortColumn::AlbumArtist,
+            SortColumn::Album, SortColumn::Genre, SortColumn::Year, SortColumn::Duration,
+            SortColumn::Format, SortColumn::SampleRate, SortColumn::Channels, SortColumn::BitDepth,
+            SortColumn::Bitrate, SortColumn::Size
+        ],
+        manager.sort_column,
+        manager.sort_ascending,
+        &manager.column_widths,
+        manager.resizing_column,
+        manager.hovered_column,
+        |col| Message::ColumnHover(col),
+        |col| Message::StartColumnResize(col),
+        |col| Message::LibrarySortChanged(col),
+    );
 
     // --- CONTENIDO GRID / LISTA ---
     let content: Element<'a, Message> = match manager.view_mode {
@@ -532,9 +398,9 @@ pub fn view<'a>(
                             };
                             
                             let info_col = column![
-                                text(truncate(artist, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
-                                text(truncate(album, 19)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
-                                text(truncate(genre, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(truncate_text(artist, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(truncate_text(album, 19)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                text(truncate_text(genre, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
                                 text(year.as_str()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
                             ].spacing(2).width(Length::Fill);
 
@@ -593,38 +459,15 @@ pub fn view<'a>(
                                         let s_clone = song.clone();
                                         let is_song_selected = manager.selected_song_idx == Some(song_i);
                                         
-                                        let format = song.format.clone().unwrap_or_else(|| "-".to_string());
-                                        let rate = song.sample_rate.map_or("-".to_string(), |r| format!("{:.1} kHz", r as f64 / 1000.0));
-                                        let chans = song.channels.map_or("-".to_string(), |c| c.to_string());
-                                        let b_depth = song.bit_depth.map_or("-".to_string(), |b| format!("{} bits", b));
-                                        let sz = song.size.map_or("-".to_string(), |s| {
-                                            let mb = s as f64 / 1048576.0;
-                                            if mb >= 1024.0 {
-                                                format!("{:.2} GB", mb / 1024.0)
-                                            } else {
-                                                format!("{:.2} MB", mb)
-                                            }
-                                        });
-                                        
-                                        let bitrate_str = if let (Some(s), Some(d)) = (song.size, song.duration_secs) {
-                                            if d > 0.0 {
-                                                format!("{} kbps", ((s as f64 * 8.0) / (d * 1000.0)) as u32)
-                                            } else {
-                                                "-".to_string()
-                                            }
-                                        } else {
-                                            "-".to_string()
-                                        };
-                                        
-                                        let dur_secs = song.duration_secs.unwrap_or(0.0) as u64;
-                                        let dur_str = format!("{}:{:02}", dur_secs / 60, dur_secs % 60);
-                                        
                                         let txt_color = if is_song_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
                                         
-                                        let get_col = |col: SortColumn, val: String| -> Element<'a, Message> {
+                                        let get_col = |col: SortColumn| -> Element<'a, Message> {
                                             let w = *manager.column_widths.get(&col).unwrap_or(&100) as f32;
                                             let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
-                                            let truncated = truncate(&val, max_chars);
+                                            
+                                            // Metadato Puro abstraído de DB
+                                            let val = format_metadata(song, &col);
+                                            let truncated = truncate_text(&val, max_chars);
                                             
                                             container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
                                                 .width(Length::Fixed(w))
@@ -636,20 +479,20 @@ pub fn view<'a>(
                                         };
 
                                         let song_row_inner = row![
-                                            get_col(SortColumn::TrackNumber, song.track_number.clone().unwrap_or_else(|| "-".to_string())),
-                                            get_col(SortColumn::Title, song.title.clone().unwrap_or_else(|| "Desconocido".to_string())),
-                                            get_col(SortColumn::Artist, song.artist.clone().unwrap_or_else(|| "Desconocido".to_string())),
-                                            get_col(SortColumn::AlbumArtist, song.album_artist.clone().unwrap_or_else(|| "Desconocido".to_string())),
-                                            get_col(SortColumn::Album, song.album.clone().unwrap_or_else(|| "Desconocido".to_string())),
-                                            get_col(SortColumn::Genre, song.genre.clone().unwrap_or_else(|| "Desconocido".to_string())),
-                                            get_col(SortColumn::Year, song.release_year.clone().unwrap_or_else(|| "-".to_string())),
-                                            get_col(SortColumn::Duration, dur_str),
-                                            get_col(SortColumn::Format, format),
-                                            get_col(SortColumn::SampleRate, rate),
-                                            get_col(SortColumn::Channels, chans),
-                                            get_col(SortColumn::BitDepth, b_depth),
-                                            get_col(SortColumn::Bitrate, bitrate_str),
-                                            get_col(SortColumn::Size, sz),
+                                            get_col(SortColumn::TrackNumber),
+                                            get_col(SortColumn::Title),
+                                            get_col(SortColumn::Artist),
+                                            get_col(SortColumn::AlbumArtist),
+                                            get_col(SortColumn::Album),
+                                            get_col(SortColumn::Genre),
+                                            get_col(SortColumn::Year),
+                                            get_col(SortColumn::Duration),
+                                            get_col(SortColumn::Format),
+                                            get_col(SortColumn::SampleRate),
+                                            get_col(SortColumn::Channels),
+                                            get_col(SortColumn::BitDepth),
+                                            get_col(SortColumn::Bitrate),
+                                            get_col(SortColumn::Size),
                                             button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
                                         ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0));
                                         
@@ -701,7 +544,7 @@ pub fn view<'a>(
                     ))
                     .id(LIBRARY_SCROLL_ID.clone())
                     .on_scroll(Message::LibraryScroll)
-                    .style(crate::gui::theme::custom_scrollbar_style)
+                    .style(crate::gui::widgets::custom_scrollbar_style)
                     .into()
             }
         }
@@ -732,26 +575,10 @@ pub fn view<'a>(
         (manager.total_songs as u64, manager.total_albums as u64, manager.total_artists as u64, manager.total_duration_secs, manager.total_size_bytes)
     };
 
-    let total_secs_u64 = d_secs as u64;
-    let ss = total_secs_u64 % 60;
-    let mm = (total_secs_u64 / 60) % 60;
-    let hh = (total_secs_u64 / 3600) % 24;
-    let dd = total_secs_u64 / 86400;
-    
-    let total_gb = s_bytes / 1024.0 / 1024.0 / 1024.0;
-    
-    let time_str = if dd > 0 {
-        format!("{:02}:{:02}:{:02}:{:02}", dd, hh, mm, ss)
-    } else {
-        format!("{:02}:{:02}:{:02}", hh, mm, ss)
-    };
+    let time_str = format_duration(d_secs);
+    let size_str = format_size(s_bytes as i64);
 
-    let stats_text = if total_gb >= 1.0 {
-        format!("{} Canciones | {} Álbumes | {} Artistas | {} | {:.2} GB", s_count, a_count, art_count, time_str, total_gb)
-    } else {
-        let total_mb = s_bytes / 1024.0 / 1024.0;
-        format!("{} Canciones | {} Álbumes | {} Artistas | {} | {:.2} MB", s_count, a_count, art_count, time_str, total_mb)
-    };
+    let stats_text = format!("{} Canciones | {} Álbumes | {} Artistas | {} | {}", s_count, a_count, art_count, time_str, size_str);
     
     // Icono vista actual
     let view_icon_str = match manager.view_mode {

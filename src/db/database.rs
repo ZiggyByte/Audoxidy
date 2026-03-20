@@ -277,6 +277,38 @@ impl Database {
         Ok(songs)
     }
 
+    pub fn get_all_songs(&self) -> Result<Vec<SongData>> {
+        let mut stmt = self.conn.prepare("
+            SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 
+            FROM MUSIC_LIBRARY 
+            ORDER BY COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido') ASC, RELEASE_YEAR ASC, ALBUM ASC, CAST(TRACK_NUMBER AS INTEGER) ASC
+        ")?;
+        let rows = stmt.query_map([], |row| {
+            let mut record = SongData::default();
+            record.full_file_path = row.get(0).unwrap_or_default();
+            record.title = row.get(1).ok();
+            record.artist = row.get(2).ok();
+            record.album = row.get(3).ok();
+            record.release_year = row.get(4).ok();
+            record.track_number = row.get::<_, String>(5).ok();
+            record.format = row.get(6).ok();
+            record.size = row.get(7).ok();
+            record.sample_rate = row.get(8).ok();
+            record.channels = row.get(9).ok();
+            record.duration_secs = row.get(10).ok();
+            record.genre = row.get(11).ok();
+            record.bit_depth = row.get(12).ok();
+            record.album_artist = row.get(13).ok();
+            record.album_artist_tag_format = row.get(14).ok();
+            Ok(record)
+        })?;
+        let mut songs = Vec::new();
+        for r in rows {
+            if let Ok(s) = r { songs.push(s); }
+        }
+        Ok(songs)
+    }
+
     pub fn delete_song(&self, file_path: &str) -> Result<()> {
         self.conn.execute(
             "DELETE FROM MUSIC_LIBRARY WHERE FULL_FILE_PATH = ?1",

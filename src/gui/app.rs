@@ -157,8 +157,10 @@ pub enum Message {
     StartColumnResize(crate::utils::SortColumn),
     ColumnHover(Option<crate::utils::SortColumn>),
     ToggleAlbumExpansion(String),
+    ToggleArtistExpansion(String),
     SelectAlbum(String),
     SelectSong(Option<usize>),
+    SelectArtistHeader(String),
     LibraryKeyNav(crate::gui::library::LibraryNavDir, iced::keyboard::Modifiers),
     LibraryScroll(iced::widget::scrollable::Viewport),
     LibraryDeselect,
@@ -168,6 +170,7 @@ pub enum Message {
     ToggleLibraryAddDropdown,
     PlayLibrarySelection,
     PlayLibraryAll,
+    LibraryAllSongsLoaded(Vec<crate::db::database::SongData>),
     OpenFolderPicker,
 
     // Filters
@@ -206,6 +209,7 @@ pub struct AudoxidyApp {
     audio_center_manager: AudioCenterManager,
     player_ui_state: crate::gui::player::PlayerUiState,
     window_id: Option<iced::window::Id>,
+    last_artist_header_click: Option<(String, std::time::Instant)>,
 }
 
 impl AudoxidyApp {
@@ -241,6 +245,7 @@ impl AudoxidyApp {
                 audio_center_manager: AudioCenterManager::default(),
                 player_ui_state: crate::gui::player::PlayerUiState::default(),
                 window_id: None,
+                last_artist_header_click: None,
             },
             Task::none()
         )
@@ -303,6 +308,18 @@ impl AudoxidyApp {
                                 });
                             }
                             self.library_manager.cached_albums = Some(albums);
+                        }
+
+                        if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::SimpleList {
+                            if self.library_manager.cached_all_songs.is_none() {
+                                if let Ok(mut songs) = db.get_all_songs() {
+                                    if self.library_manager.sort_column.is_some() {
+                                        self.library_manager.sort_songs(&mut songs);
+                                    }
+                                    self.library_manager.cached_all_songs = Some(songs);
+                                    self.library_manager.apply_filter();
+                                }
+                            }
                         }
                         
                         if let Ok((songs, albums, duration, size, total_artists)) = db.get_library_stats() {
@@ -434,8 +451,9 @@ impl AudoxidyApp {
                 self.playlist_manager.search_query = q;
                 Task::none()
             }
-            Message::LibrarySearchQueryChanged(q) => {
+                Message::LibrarySearchQueryChanged(q) => {
                 self.library_manager.search_query = q;
+                self.library_manager.apply_filter();
                 Task::none()
             }
             Message::LibrarySourceSelected(source) => {
@@ -491,6 +509,12 @@ impl AudoxidyApp {
                         self.library_manager.sort_songs(&mut songs);
                         self.library_manager.expanded_album_songs = Some(songs);
                     }
+
+                    if let Some(mut songs) = self.library_manager.cached_all_songs.take() {
+                        self.library_manager.sort_songs(&mut songs);
+                        self.library_manager.cached_all_songs = Some(songs);
+                        self.library_manager.apply_filter();
+                    }
                 }
                 Task::none()
             }
@@ -528,15 +552,67 @@ impl AudoxidyApp {
                 self.update_selection_stats();
                 Task::none()
             }
+            Message::ToggleArtistExpansion(name) => {
+                let is_collapsing = !self.library_manager.collapsed_artists.contains(&name);
+                
+                if is_collapsing {
+                    self.library_manager.collapsed_artists.insert(name.clone());
+                    
+                    // Forzar foco ÚNICAMENTE en la cabecera del artista que colapsa
+                    self.library_manager.selected_header = Some(name.clone());
+                    self.library_manager.selected_song_idx = None;
+                    self.library_manager.selected_album = None;
+                    
+                    // Aseguramos que el estado de 'last_artist_header_click' se limpie para evitar dobles clics accidentales inmediatos
+                    self.last_artist_header_click = None;
+                } else {
+                    self.library_manager.collapsed_artists.remove(&name);
+                    
+                    // Al expandir, mantenemos el comportamiento de ir a la canción recordada o a la primera
+                    self.library_manager.selected_header = None;
+                    if let Some(last_song_idx) = self.library_manager.artist_last_selection.get(&name) {
+                        self.library_manager.selected_song_idx = Some(*last_song_idx);
+                    } else {
+                        // Ir a la primera canción del grupo
+                        let mut start_idx = 0;
+                        for g in &self.library_manager.artist_groups {
+                            if g.name == name {
+                                if !g.songs.is_empty() {
+                                    self.library_manager.selected_song_idx = Some(start_idx);
+                                }
+                                break;
+                            }
+                            start_idx += g.songs.len();
+                        }
+                    }
+                }
+                self.update_selection_stats();
+                self.get_library_scroll_task(is_collapsing)
+            }
+            Message::LibraryAllSongsLoaded(songs) => {
+                self.library_manager.cached_all_songs = Some(songs);
+                self.library_manager.apply_filter();
+                Task::none()
+            }
             Message::SelectAlbum(album_id) => {
                 // Seleccionar álbum sin abrir lista de canciones
                 self.library_manager.selected_album = Some(album_id);
                 self.library_manager.selected_song_idx = None;
+                self.library_manager.selected_header = None; // Limpiar cabecera
                 self.update_selection_stats();
                 Task::none()
             }
             Message::SelectSong(idx) => {
+                if let Some(i) = idx {
+                    if let Some(songs) = &self.library_manager.filtered_songs {
+                        if let Some(song) = songs.get(i) {
+                            let artist = song.artist.clone().or(song.album_artist.clone()).unwrap_or_else(|| "Artista Desconocido".to_string());
+                            self.library_manager.artist_last_selection.insert(artist, i);
+                        }
+                    }
+                }
                 self.library_manager.selected_song_idx = idx;
+                self.library_manager.selected_header = None;
                 // Si seleccionamos una canción, nos aseguramos de que el álbum seleccionado sea el que está expandido
                 if idx.is_some() {
                     if let Some(expanded) = self.library_manager.expanded_album.clone() {
@@ -544,10 +620,51 @@ impl AudoxidyApp {
                     }
                 }
                 self.update_selection_stats();
-                Task::none()
+                self.get_library_scroll_task(false)
+            }
+            Message::SelectArtistHeader(name) => {
+                let now = std::time::Instant::now();
+                let is_double_click = if let Some((last_name, last_time)) = &self.last_artist_header_click {
+                    last_name == &name && now.duration_since(*last_time) < std::time::Duration::from_millis(500)
+                } else {
+                    false
+                };
+
+                if is_double_click {
+                    self.last_artist_header_click = None;
+                    return self.update(Message::ToggleArtistExpansion(name));
+                } else {
+                    self.last_artist_header_click = Some((name.clone(), now));
+                    self.library_manager.selected_header = Some(name);
+                    self.library_manager.selected_song_idx = None;
+                    self.library_manager.selected_album = None;
+                    self.update_selection_stats();
+                    self.get_library_scroll_task(false)
+                }
             }
             Message::LibraryKeyNav(dir, modifiers) => {
                 use crate::gui::library::LibraryNavDir;
+                // Modo Lista Simple: Navegación Vertical Directa
+                // Movemos esto al inicio para que no dependa de la cuenta de álbumes
+                if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::SimpleList {
+                    // Flecha Izquierda/Derecha -> Colapsar/Expandir
+                    if dir == LibraryNavDir::Left || dir == LibraryNavDir::Right {
+                        if let Some(artist) = self.library_manager.get_artist_to_toggle(dir) {
+                            return self.update(Message::ToggleArtistExpansion(artist));
+                        }
+                        return Task::none();
+                    }
+
+                    // Navegación Vertical Unificada
+                    let (new_header, new_song_idx) = self.library_manager.handle_key_nav(dir);
+                    self.library_manager.selected_header = new_header;
+                    self.library_manager.selected_song_idx = new_song_idx;
+                    
+                    self.library_manager.update_selection_memory();
+                    self.update_selection_stats();
+                    return self.library_manager.get_scroll_task(false);
+                }
+
                 let albums = self.library_manager.cached_albums.as_deref().unwrap_or(&[]);
                 let total = albums.len();
                 if total == 0 { return Task::none(); }
@@ -601,6 +718,7 @@ impl AudoxidyApp {
                     }
                 }
 
+
                 // Navegación entre álbumes
                 let per_row = self.library_manager.albums_per_row.get().max(1);
                 let current_idx = selected_name.and_then(|sel| {
@@ -612,6 +730,7 @@ impl AudoxidyApp {
                     LibraryNavDir::Right => (current_idx + 1).min(total - 1),
                     LibraryNavDir::Up => current_idx.saturating_sub(per_row),
                     LibraryNavDir::Down => (current_idx + per_row).min(total - 1),
+                    LibraryNavDir::None => current_idx,
                 };
                 
                 if let Some(album) = albums.get(new_idx) {
@@ -632,18 +751,20 @@ impl AudoxidyApp {
                 self.update_selection_stats();
 
                 if let Some(viewport) = &self.library_manager.last_viewport {
-                    let view_min = viewport.absolute_offset().y;
-                    let view_max = view_min + viewport.bounds().height;
                     let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                    let margin = 0.0; // Restaurado a 0.0 según petición del usuario
+                    if viewport.bounds().height > 0.1 { // Evitar división por cero o scroll en un viewport inválido
+                        let view_min = viewport.absolute_offset().y;
+                        let view_max = view_min + viewport.bounds().height;
 
-                    if item_top < view_min {
-                        iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: item_top })
-                    } else if item_bottom > view_max {
-                        let target_y = item_bottom - viewport.bounds().height;
-                        iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: target_y })
-                    } else {
-                        Task::none()
+                        if item_top < view_min + margin {
+                            return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (item_top - margin).max(0.0) });
+                        } else if item_bottom > view_max - margin {
+                            let offset = (item_bottom - viewport.bounds().height + margin).max(0.0);
+                            return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
+                        }
                     }
+                    Task::none()
                 } else {
                     let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
                     iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: item_top })
@@ -672,7 +793,16 @@ impl AudoxidyApp {
                 
                 // Paso 1: Eliminar del CACHÉ LOCAL inmediatamente para evitar parpadeo visual
                 {
-                    if let Some(song_idx) = self.library_manager.selected_song_idx {
+                    if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::SimpleList {
+                        if let (Some(song_idx), Some(songs)) = (self.library_manager.selected_song_idx, &mut self.library_manager.cached_all_songs) {
+                            if song_idx < songs.len() {
+                                let song = songs.remove(song_idx);
+                                pending = Some(PendingDelete::Song("SimpleList".to_string(), song.full_file_path));
+                                self.library_manager.selected_song_idx = None;
+                                self.library_manager.apply_filter();
+                            }
+                        }
+                    } else if let Some(song_idx) = self.library_manager.selected_song_idx {
                         if let (Some(songs), Some(album_name)) = (&mut self.library_manager.expanded_album_songs, &self.library_manager.expanded_album) {
                             if song_idx < songs.len() {
                                 let song = songs.remove(song_idx);
@@ -718,6 +848,21 @@ impl AudoxidyApp {
             Message::ChangeLibraryViewMode(mode) => {
                 self.library_manager.view_mode = mode;
                 self.library_manager.view_menu_open = false;
+                
+                if mode == crate::gui::library::LibraryViewMode::SimpleList {
+                    if self.library_manager.cached_all_songs.is_none() {
+                        let db_arc = Arc::clone(&self.database);
+                        return Task::perform(async move {
+                            if let Ok(db) = db_arc.lock() {
+                                db.get_all_songs().unwrap_or_default()
+                            } else {
+                                Vec::new()
+                            }
+                        }, Message::LibraryAllSongsLoaded);
+                    } else {
+                        self.library_manager.apply_filter();
+                    }
+                }
                 Task::none()
             }
             Message::WindowResized(w, _h) => {
@@ -741,8 +886,16 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::PlayLibrarySelection => {
-                // Si hay una canción seleccionada, agregar solo esa canción
-                if let Some(song_idx) = self.library_manager.selected_song_idx {
+                // Caso 1: Modo Lista Simple (Usa lista FILTRADA para coincidir con la UI)
+                if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::SimpleList {
+                    if let (Some(song_idx), Some(songs)) = (self.library_manager.selected_song_idx, &self.library_manager.filtered_songs) {
+                        if let Some(song) = songs.get(song_idx) {
+                            return self.update(Message::AddSongToPlaylist(song.clone()));
+                        }
+                    }
+                }
+                // Caso 2: Modo Grid (con canción seleccionada)
+                else if let Some(song_idx) = self.library_manager.selected_song_idx {
                     if let Some(songs) = &self.library_manager.expanded_album_songs {
                         if let Some(song) = songs.get(song_idx) {
                             return self.update(Message::AddSongToPlaylist(song.clone()));
@@ -994,6 +1147,10 @@ impl AudoxidyApp {
         iced::Subscription::batch([tick, win_ids, mouse_evs])
     }
 
+    fn get_library_scroll_task(&self, force_top: bool) -> Task<Message> {
+        self.library_manager.get_scroll_task(force_top)
+    }
+
     fn update_selection_stats(&mut self) {
         self.library_manager.selection_stats = if let Some(song_idx) = self.library_manager.selected_song_idx {
             if let Some(songs) = &self.library_manager.expanded_album_songs {
@@ -1036,6 +1193,16 @@ impl AudoxidyApp {
                     } else { None }
                 } else { None }
             }
+        } else if let Some(artist_name) = &self.library_manager.selected_header {
+            if let Some(group) = self.library_manager.artist_groups.iter().find(|g| &g.name == artist_name) {
+                 Some(crate::gui::library::LibraryStats {
+                     songs: group.songs.len() as u64,
+                     albums: group.albums.len() as u64,
+                     artists: 1,
+                     duration_secs: group.duration_secs,
+                     size_bytes: group.songs.iter().map(|s| s.size.unwrap_or(0) as f64).sum(),
+                 })
+            } else { None }
         } else {
             None
         };

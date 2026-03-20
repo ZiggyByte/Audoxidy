@@ -3,10 +3,10 @@ use iced::{
     Alignment, Color, Element, Length, Theme,
 };
 use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
-use iced::{Event, Rectangle, Size, Vector};
+use iced::{Event, Rectangle, Size, Vector, Padding};
 
 use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST, COLOR_TEXT_SECONDARY, COLOR_ACCENT, COLOR_BG, FONT_INTER_SANS_MEDIUM};
-use crate::utils::{truncate_text, SortColumn};
+use crate::utils::{truncate_text, SortColumn, format_duration, format_metadata};
 use std::collections::HashMap;
 
 // ==========================================
@@ -340,4 +340,118 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         container(Space::new().width(Length::Fill).height(2.0))
             .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
     ].into()
+}
+
+// ==========================================
+// 3. Componentes Específicos de Biblioteca
+// ==========================================
+
+/// Botón circular pequeño para cheurones (flechas) de expansión.
+pub fn chevron_btn<'a, Message: Clone + 'a>(
+    icon_filename: &str,
+    action: Message,
+    btn_size: f32,
+    icon_size: f32,
+) -> Element<'a, Message> {
+    button(
+        container(
+            svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
+                .width(icon_size)
+                .height(icon_size)
+                .style(move |_t: &Theme, _s: svg::Status| svg::Style { color: Some(COLOR_TEXT_SECONDARY) })
+        )
+        .width(btn_size)
+        .height(btn_size)
+        .center_x(btn_size)
+        .center_y(btn_size)
+    )
+    .on_press(action)
+    .padding(0)
+    .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+    .into()
+}
+
+/// Renderiza la cabecera de un grupo de artistas (Gris oscuro, 32px).
+pub fn artist_header_widget<'a, Message: Clone + 'a>(
+    name: String,
+    is_collapsed: bool,
+    is_selected: bool,
+    albums_count: usize,
+    songs_count: usize,
+    duration_secs: f64,
+    on_select: Message,
+    on_toggle: Message,
+) -> Element<'a, Message> {
+    let chevron = if is_collapsed { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
+    let time_str = format_duration(duration_secs);
+    
+    let artist_name_row = row![
+        text(name).size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY),
+    ].align_y(Alignment::Center);
+
+    let artist_name_row = if is_selected {
+        artist_name_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY))
+    } else {
+        artist_name_row
+    };
+
+    let header_content = row![
+        artist_name_row,
+        Space::new().width(Length::Fill),
+        text(format!("{} Canciones | {} Álbumes | {}",  songs_count, albums_count, time_str))
+            .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+        Space::new().width(15),
+        chevron_btn(chevron, on_toggle, 32.0, 28.0),
+    ].align_y(Alignment::Center).padding([0, 15]);
+
+    container(
+        mouse_area(header_content)
+            .on_press(on_select)
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(32.0))
+    .center_y(Length::Fill)
+    .style(|_t| container::Style::default().background(COLOR_CONTRAST))
+    .into()
+}
+
+/// Renderiza una fila de canción en modo lista (32px).
+pub fn library_song_row_widget<'a, Message: Clone + 'a>(
+    song: &crate::db::database::SongData,
+    _song_idx: usize,
+    is_selected: bool,
+    column_widths: &HashMap<SortColumn, u16>,
+    on_select: Message,
+    on_add_playlist: Message,
+) -> Element<'a, Message> {
+    let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+    
+    let get_col = |col: SortColumn| -> Element<'a, Message> {
+        let w = *column_widths.get(&col).unwrap_or(&100) as f32;
+        let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
+        let val = format_metadata(song, &col); // Reutiliza lógica de utils/mod.rs
+        let truncated = truncate_text(&val, max_chars);
+
+        container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
+            .width(Length::Fixed(w)).height(Length::Fixed(15.0)).center_y(Length::Fill)
+            .padding(Padding { left: 5.0, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+    };
+
+    let song_row_inner = row![
+        get_col(SortColumn::TrackNumber), get_col(SortColumn::Title), get_col(SortColumn::Artist),
+        get_col(SortColumn::AlbumArtist), get_col(SortColumn::Album), get_col(SortColumn::Genre),
+        get_col(SortColumn::Year), get_col(SortColumn::Duration), get_col(SortColumn::Format),
+        get_col(SortColumn::SampleRate), get_col(SortColumn::Channels), get_col(SortColumn::BitDepth),
+        get_col(SortColumn::Bitrate), get_col(SortColumn::Size),
+        button(text("►").size(11).color(Color::from(txt_color))).on_press(on_add_playlist)
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT)),
+    ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0));
+
+    mouse_area(
+        container(song_row_inner).width(Length::Fill).height(Length::Fixed(32.0)).align_y(Alignment::Center)
+            .style(move |_t: &Theme| {
+                if is_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } 
+                else { container::Style::default() }
+            })
+    ).on_press(on_select).interaction(iced::mouse::Interaction::Pointer).into()
 }

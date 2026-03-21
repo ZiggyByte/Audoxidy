@@ -752,7 +752,7 @@ impl AudoxidyApp {
 
                 if let Some(viewport) = &self.library_manager.last_viewport {
                     let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
-                    let margin = 0.0; // Restaurado a 0.0 según petición del usuario
+                    let margin = 0.0;
                     if viewport.bounds().height > 0.1 { // Evitar división por cero o scroll en un viewport inválido
                         let view_min = viewport.absolute_offset().y;
                         let view_max = view_min + viewport.bounds().height;

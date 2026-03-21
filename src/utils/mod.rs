@@ -17,6 +17,7 @@ pub enum SortColumn {
     BitDepth,
     Bitrate,
     Size,
+    AlbumCard,
 }
 
 impl SortColumn {
@@ -36,6 +37,7 @@ impl SortColumn {
             SortColumn::BitDepth => "Profundidad",
             SortColumn::Bitrate => "Bits",
             SortColumn::Size => "Tamaño",
+            SortColumn::AlbumCard => "Tarjeta de álbum",
         }
     }
 }
@@ -70,6 +72,7 @@ pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
             }
         }
         SortColumn::Size => song.size.map_or("-".to_string(), |s| format_size(s as i64)),
+        SortColumn::AlbumCard => "".to_string(),
     }
 }
 

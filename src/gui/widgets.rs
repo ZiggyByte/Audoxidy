@@ -307,11 +307,18 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             row![t, Space::new().width(Length::Fill)].align_y(Alignment::Center)
         };
 
-        let sort_btn = button(sort_btn_content)
-            .width(Length::Fill)
-            .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(on_sort(sort));
+        let sort_btn = if sort == SortColumn::AlbumCard {
+            button(sort_btn_content)
+                .width(Length::Fill)
+                .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
+                .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+        } else {
+            button(sort_btn_content)
+                .width(Length::Fill)
+                .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
+                .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+                .on_press(on_sort(sort))
+        };
 
         let content = row![
             sort_btn,
@@ -454,4 +461,518 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
                 else { container::Style::default() }
             })
     ).on_press(on_select).interaction(iced::mouse::Interaction::Pointer).into()
+}
+
+/// Permite construir una lista universalizada que agrupa canciones por artistas,
+/// gestiona el scroll, la virtualización, y las cabeceras pegajosas de forma global,
+/// delegando la representación visual de la "fila" a un renderizador externo.
+pub fn universal_song_list<'a, F>(
+    manager: &'a crate::gui::library::LibraryManager,
+    row_builder: F,
+    row_height: f32, // Altura estimada para virtualización
+) -> Element<'a, crate::gui::app::Message>
+where
+    F: Fn(&crate::db::database::SongData, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+{
+    let groups = &manager.artist_groups;
+    if groups.is_empty() {
+        return container(text("La biblioteca está vacía o cargando...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
+            .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
+    }
+
+    let header_h = 32.0;
+
+    // 1. Calcular alturas acumuladas para virtualización
+    let view_min_raw = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
+    let viewport_h = manager.last_viewport.as_ref().map(|v| v.bounds().height).unwrap_or(800.0);
+
+    let mut total_content_h = 0.0;
+    let mut artist_tops = Vec::new();
+
+    for group in groups {
+        let is_collapsed = manager.collapsed_artists.contains(&group.name);
+        let group_h = header_h + if is_collapsed { 0.0 } else { group.songs.len() as f32 * row_height };
+        
+        artist_tops.push((total_content_h, group, is_collapsed));
+        total_content_h += group_h;
+    }
+
+    // Clampear view_min
+    let max_scroll = (total_content_h - viewport_h).max(0.0);
+    let view_min = view_min_raw.min(max_scroll);
+    let view_max = view_min + viewport_h;
+    
+    // Margen de seguridad para scroll suave
+    let render_min = view_min - 200.0;
+    let render_max = view_max + 200.0;
+
+    let mut top_space = 0.0;
+    let mut bottom_space = 0.0;
+    
+    // Almacenamos si es Header o Fila
+    enum VirtualRow<'a> {
+        Header(&'a crate::gui::library::ArtistGroup, bool), // (group, is_collapsed)
+        Row(&'a crate::db::database::SongData, usize), // (song, global_idx)
+    }
+
+    let mut visible_elements = Vec::new();
+    let mut global_song_idx = 0;
+    let mut sticky_artist_info = None;
+
+    for (h_start, group, is_collapsed) in artist_tops {
+        let group_songs = group.songs.len();
+        let group_h = header_h + if is_collapsed { 0.0 } else { group_songs as f32 * row_height };
+        let h_end = h_start + group_h;
+
+        // Sticky Header: umbral +31px
+        if h_start <= view_min + 31.0 {
+            sticky_artist_info = Some((group, is_collapsed));
+        }
+
+        // Virtualización
+        if h_end < render_min {
+            top_space += group_h;
+            global_song_idx += group_songs;
+        } else if h_start > render_max {
+            bottom_space += group_h;
+            global_song_idx += group_songs;
+        } else {
+            // El header es visible?
+            let header_end = h_start + header_h;
+            if header_end >= render_min && h_start <= render_max {
+                visible_elements.push(VirtualRow::Header(group, is_collapsed));
+            }
+            
+            // Canciones visibles?
+            if !is_collapsed {
+                let mut song_y = h_start + header_h;
+                for song in &group.songs {
+                    let s_end = song_y + row_height;
+                    // OJO: solo incluimos una instancia de la fila si toca la pantalla
+                    if s_end >= render_min && song_y <= render_max {
+                        visible_elements.push(VirtualRow::Row(song, global_song_idx));
+                    } else if s_end < render_min {
+                        top_space += row_height;
+                    } else {
+                        bottom_space += row_height;
+                    }
+                    song_y += row_height;
+                    global_song_idx += 1;
+                }
+            } else {
+                global_song_idx += group_songs;
+            }
+        }
+    }
+
+    let mut list_col = column![].spacing(0);
+    if top_space > 0.0 {
+        list_col = list_col.push(Space::new().height(Length::Fixed(top_space)));
+    }
+
+    for element in visible_elements {
+        match element {
+            VirtualRow::Header(group, is_collapsed) => {
+                let is_header_selected = manager.selected_header.as_ref() == Some(&group.name);
+                
+                let header = artist_header_widget(
+                    group.name.clone(),
+                    is_collapsed,
+                    is_header_selected,
+                    group.albums.len(),
+                    group.songs.len(),
+                    group.duration_secs,
+                    crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
+                    crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
+                );
+                
+                list_col = list_col.push(header);
+            }
+            VirtualRow::Row(song, song_i) => {
+                let is_song_selected = manager.selected_song_idx == Some(song_i);
+                
+                // Usamos el constructor inyectado
+                let song_row = row_builder(song, song_i, is_song_selected);
+
+                list_col = list_col.push(song_row);
+            }
+        }
+    }
+
+    if bottom_space > 0.0 {
+        list_col = list_col.push(Space::new().height(Length::Fixed(bottom_space)));
+    }
+
+    let main_scroll = scrollable(container(list_col).width(Length::Fill).padding([0, 15]))
+        .width(Length::Fill).height(Length::Fill)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new().width(4).margin(0).scroller_width(4)
+        ))
+        .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())
+        .on_scroll(crate::gui::app::Message::LibraryScroll)
+        .style(crate::gui::widgets::custom_scrollbar_style);
+
+    let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
+        let is_header_selected = manager.selected_header.as_ref() == Some(&st_group.name);
+        
+        let sticky_overlay = container(
+            artist_header_widget(
+                st_group.name.clone(),
+                is_collapsed,
+                is_header_selected,
+                st_group.albums.len(),
+                st_group.songs.len(),
+                st_group.duration_secs,
+                crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
+                crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
+            )
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(32.0))
+        .padding([0, 15])
+        .align_y(iced::alignment::Vertical::Top);
+
+        iced::widget::stack![
+            main_scroll,
+            sticky_overlay
+        ].into()
+    } else {
+        main_scroll.into()
+    };
+
+    content
+}
+
+/// Vista Detallada: Combina agrupación por Artista, y dentro por Álbum.
+/// Muestra a la izquierda la tarjeta del Álbum y a la derecha el Header de Álbum + la lista de canciones.
+pub fn detailed_song_list<'a, F>(
+    manager: &'a crate::gui::library::LibraryManager,
+    row_builder: F,
+    row_height: f32, // 32.0
+) -> Element<'a, crate::gui::app::Message>
+where
+    F: Fn(&crate::db::database::SongData, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+{
+    let groups = &manager.artist_groups;
+    if groups.is_empty() {
+        return container(text("La biblioteca está vacía o cargando...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
+            .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
+    }
+
+    let header_h = 32.0; // Artist header
+    let album_header_h = 32.0;
+
+    // Calcular ancho de columna "Tarjeta" y "Canciones"
+    let card_col_w = *manager.column_widths.get(&SortColumn::AlbumCard).unwrap_or(&208) as f32;
+    // La tarjeta es algo más pequeña que el ancho total de la columna (p.ej. card_col_w - 20)
+    let card_w = card_col_w - 20.0;
+
+    let view_min_raw = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
+    let viewport_h = manager.last_viewport.as_ref().map(|v| v.bounds().height).unwrap_or(800.0);
+
+    let mut total_content_h = 0.0;
+    
+    // Estructura para agrupar canciones por álbum mantieniendo el orden de las canciones
+    struct AlbumGroup<'a> {
+        album_name: String,
+        songs: Vec<(&'a crate::db::database::SongData, usize)>, // (song, global_idx)
+        duration_secs: f64,
+    }
+
+    struct VirtualArtist<'a> {
+        group: &'a crate::gui::library::ArtistGroup,
+        is_collapsed: bool,
+        top_y: f32,
+        height: f32,
+        albums: Vec<AlbumGroup<'a>>,
+    }
+
+    let mut v_artists = Vec::new();
+    let mut global_song_idx = 0;
+
+    for group in groups {
+        let is_artist_collapsed = manager.collapsed_artists.contains(&group.name);
+        
+        let mut albums_map: Vec<AlbumGroup> = Vec::new();
+        // Agrupar preserving order
+        for song in &group.songs {
+            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+            
+            if let Some(pos) = albums_map.iter().position(|a| a.album_name == alb_name) {
+                albums_map[pos].duration_secs += song.duration_secs.unwrap_or(0.0);
+                albums_map[pos].songs.push((song, global_song_idx));
+            } else {
+                albums_map.push(AlbumGroup {
+                    album_name: alb_name,
+                    songs: vec![(song, global_song_idx)],
+                    duration_secs: song.duration_secs.unwrap_or(0.0),
+                });
+            }
+            global_song_idx += 1;
+        }
+
+        let mut artist_h = header_h;
+        if !is_artist_collapsed {
+            for alb in &albums_map {
+                let is_album_expanded = manager.expanded_album.as_deref() == Some(alb.album_name.as_str());
+                // Altura de la tarjeta: aprox 188x188 img + padding + textos. Fija a 240px.
+                let card_h = 240.0_f32; 
+                let right_h = if is_album_expanded {
+                    album_header_h + alb.songs.len() as f32 * row_height
+                } else {
+                    album_header_h
+                };
+                let block_h = card_h.max(right_h) + 10.0; // padding inferior
+                artist_h += block_h;
+            }
+        }
+
+        v_artists.push(VirtualArtist {
+            group,
+            is_collapsed: is_artist_collapsed,
+            top_y: total_content_h,
+            height: artist_h,
+            albums: albums_map,
+        });
+        
+        total_content_h += artist_h;
+    }
+
+    let max_scroll = (total_content_h - viewport_h).max(0.0);
+    let view_min = view_min_raw.min(max_scroll);
+    let view_max = view_min + viewport_h;
+    
+    let render_min = view_min - 300.0;
+    let render_max = view_max + 300.0;
+
+    let mut top_space = 0.0;
+    let mut bottom_space = 0.0;
+
+    enum VirtualRow<'a> {
+        ArtistHeader(&'a crate::gui::library::ArtistGroup, bool),
+        AlbumBlock(AlbumGroup<'a>, bool, String, String, String), // (group, is_expanded, artist, genre, year)
+    }
+
+    let mut visible_elements = Vec::new();
+    let mut sticky_artist_info = None;
+
+    for va in v_artists {
+        let a_end = va.top_y + va.height;
+
+        // Sticky Header: umbral +31px
+        if va.top_y <= view_min + 31.0 {
+            sticky_artist_info = Some((va.group, va.is_collapsed));
+        }
+
+        if a_end < render_min {
+            top_space += va.height;
+        } else if va.top_y > render_max {
+            bottom_space += va.height;
+        } else {
+            // Header
+            let ah_end = va.top_y + header_h;
+            if ah_end >= render_min && va.top_y <= render_max {
+                visible_elements.push(VirtualRow::ArtistHeader(va.group, va.is_collapsed));
+            } else if ah_end < render_min {
+                top_space += header_h;
+            } else {
+                bottom_space += header_h;
+            }
+
+            if !va.is_collapsed {
+                let mut current_y = va.top_y + header_h;
+                for alb in va.albums {
+                    let is_album_expanded = manager.expanded_album.as_deref() == Some(alb.album_name.as_str());
+                    let card_h = 240.0_f32; 
+                    let right_h = if is_album_expanded {
+                        album_header_h + alb.songs.len() as f32 * row_height
+                    } else {
+                        album_header_h
+                    };
+                    let block_h = card_h.max(right_h) + 10.0;
+                    let block_end = current_y + block_h;
+
+                    if block_end >= render_min && current_y <= render_max {
+                        let artist_name = alb.songs.first().and_then(|(s,_)| s.artist.clone()).unwrap_or_default();
+                        let genre = alb.songs.first().and_then(|(s,_)| s.genre.clone()).unwrap_or_default();
+                        let year = alb.songs.first().and_then(|(s,_)| s.release_year.clone()).unwrap_or_default();
+                        visible_elements.push(VirtualRow::AlbumBlock(alb, is_album_expanded, artist_name, genre, year));
+                    } else if block_end < render_min {
+                        top_space += block_h;
+                    } else {
+                        bottom_space += block_h;
+                    }
+                    current_y += block_h;
+                }
+            }
+        }
+    }
+
+    let mut list_col = column![].spacing(0);
+    if top_space > 0.0 {
+        list_col = list_col.push(Space::new().height(Length::Fixed(top_space)));
+    }
+
+    for element in visible_elements {
+        match element {
+            VirtualRow::ArtistHeader(group, is_collapsed) => {
+                let is_header_selected = manager.selected_header.as_ref() == Some(&group.name);
+                let header = artist_header_widget(
+                    group.name.clone(),
+                    is_collapsed,
+                    is_header_selected,
+                    group.albums.len(),
+                    group.songs.len(),
+                    group.duration_secs,
+                    crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
+                    crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
+                );
+                list_col = list_col.push(header);
+            }
+            VirtualRow::AlbumBlock(alb, is_expanded, artist_name, genre, year) => {
+                // Tarjeta Izquierda (Album Card)
+                let album_id = alb.album_name.clone();
+                // Buscamos el cover en cached_albums
+                let cover_path = manager.cached_albums.as_ref()
+                    .and_then(|albums| albums.iter().find(|a| a.0 == album_id).and_then(|a| a.5.clone()));
+
+                let card_wrapper: Element<'a, crate::gui::app::Message> = if let Some(path) = cover_path {
+                    container(
+                        iced::widget::image(iced::widget::image::Handle::from_path(path))
+                            .width(Length::Fixed(card_w - 30.0))
+                            .height(Length::Fixed(card_w - 30.0))
+                            .content_fit(iced::ContentFit::Cover)
+                            .border_radius(8.0)
+                    ).width(Length::Fixed(card_w - 30.0))
+                     .height(Length::Fixed(card_w - 30.0))
+                     .style(|_t| container::Style::default().border(iced::Border { radius: 8.0.into(), ..Default::default() }))
+                     .clip(true)
+                     .into()
+                } else {
+                    let icon = iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/album.svg"))
+                        .width(Length::Fixed(64.0)).height(Length::Fixed(64.0))
+                        .style(|_t: &Theme, _s| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) });
+                    let title_text = text("AuDoxiDY").font(crate::gui::theme::FONT_STAGE_WANDER).size(11).color(COLOR_TEXT_SECONDARY);
+                    container(column![icon, title_text].align_x(Alignment::Center).spacing(5))
+                        .width(Length::Fixed(card_w - 30.0)).height(Length::Fixed(card_w - 30.0)).center_x(Length::Fill).center_y(Length::Fill)
+                        .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_BG)).border(iced::Border { radius: 8.0.into(), ..Default::default() }))
+                        .clip(true)
+                        .into()
+                };
+
+                let info_col = column![
+                    text(truncate_text(&artist_name, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                    text(truncate_text(&alb.album_name, 19)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                    text(truncate_text(&genre, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                    text(year.clone()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                ].spacing(2).width(Length::Fill);
+
+                let is_selected = manager.selected_album.as_deref() == Some(alb.album_name.as_str());
+
+                let card_col = column![card_wrapper, info_col].spacing(5).width(Length::Fixed(card_w - 30.0));
+                
+                let card_container = mouse_area(
+                    container(card_col)
+                        .width(Length::Fixed(card_w))
+                        .padding(iced::Padding { top: 15.0, bottom: 15.0, left: 15.0, right: 15.0 })
+                        .style(move |_t: &Theme| {
+                            if is_selected {
+                                container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: 10.0.into(), ..Default::default() })
+                            } else {
+                                container::Style::default()
+                            }
+                        })
+                )
+                .on_press(crate::gui::app::Message::SelectAlbum(album_id.clone()))
+                .interaction(iced::mouse::Interaction::Pointer);
+
+                // Lado Derecho (Album Header + Canciones)
+                let right_h = if is_expanded {
+                    album_header_h + alb.songs.len() as f32 * row_height
+                } else {
+                    album_header_h
+                };
+                let block_h = 240.0_f32.max(right_h);
+
+                let chevron = if !is_expanded { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
+                let time_str = format_duration(alb.duration_secs);
+                let alb_header_content = row![
+                    text(alb.album_name.clone()).size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_SECONDARY),
+                    Space::new().width(Length::Fill),
+                    text(format!("{} Canciones | {}", alb.songs.len(), time_str))
+                        .size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+                    Space::new().width(15),
+                    chevron_btn(chevron, crate::gui::app::Message::ToggleAlbumExpansion(album_id.clone()), 32.0, 28.0),
+                ].align_y(Alignment::Center).padding([0, 15]);
+
+                let alb_header = container(mouse_area(alb_header_content).on_press(crate::gui::app::Message::SelectAlbum(album_id.clone())))
+                    .width(Length::Fill)
+                    .height(Length::Fixed(album_header_h))
+                    .center_y(Length::Fill)
+                    .style(|_t| container::Style::default().background(Color::from_rgba8(30, 30, 30, 0.5)));
+
+                let mut right_col = column![alb_header].spacing(0).width(Length::Fill);
+
+                if is_expanded {
+                    for (song, song_i) in alb.songs {
+                        let is_song_selected = manager.selected_song_idx == Some(song_i);
+                        let song_row = row_builder(song, song_i, is_song_selected);
+                        right_col = right_col.push(song_row);
+                    }
+                }
+
+                let content_row = row![
+                    container(card_container).height(Length::Fixed(block_h)).center_y(Length::Fill),
+                    container(right_col).height(Length::Fixed(block_h)).align_y(iced::alignment::Vertical::Top)
+                ].spacing(0).width(Length::Fill).height(Length::Fixed(block_h));
+
+                list_col = list_col.push(
+                    column![content_row, Space::new().height(Length::Fixed(10.0))]
+                );
+            }
+        }
+    }
+
+    if bottom_space > 0.0 {
+        list_col = list_col.push(Space::new().height(Length::Fixed(bottom_space)));
+    }
+
+    let main_scroll = scrollable(container(list_col).width(Length::Fill).padding([0, 15]))
+        .width(Length::Fill).height(Length::Fill)
+        .direction(iced::widget::scrollable::Direction::Vertical(
+            iced::widget::scrollable::Scrollbar::new().width(4).margin(0).scroller_width(4)
+        ))
+        .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())
+        .on_scroll(crate::gui::app::Message::LibraryScroll)
+        .style(crate::gui::widgets::custom_scrollbar_style);
+
+    let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
+        let is_header_selected = manager.selected_header.as_ref() == Some(&st_group.name);
+        
+        let sticky_overlay = container(
+            artist_header_widget(
+                st_group.name.clone(),
+                is_collapsed,
+                is_header_selected,
+                st_group.albums.len(),
+                st_group.songs.len(),
+                st_group.duration_secs,
+                crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
+                crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
+            )
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(32.0))
+        .padding([0, 15])
+        .align_y(iced::alignment::Vertical::Top);
+
+        iced::widget::stack![
+            main_scroll,
+            sticky_overlay
+        ].into()
+    } else {
+        main_scroll.into()
+    };
+
+    content
 }

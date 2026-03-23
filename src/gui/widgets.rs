@@ -728,7 +728,7 @@ where
         if !is_artist_collapsed {
             for alb in &albums_map {
                 let is_album_expanded = !manager.collapsed_albums.contains(alb.album_name.as_str());
-                let card_h: f32 = card_w + 30.0; // 1:1 format + space for text
+                let card_h: f32 = if is_album_expanded { 323.0 } else { 0.0 };
                 let right_h = if is_album_expanded {
                     album_header_h + alb.songs.len() as f32 * row_height
                 } else {
@@ -795,13 +795,13 @@ where
                 let mut current_y = va.top_y + header_h;
                 for alb in va.albums {
                     let is_album_expanded = !manager.collapsed_albums.contains(alb.album_name.as_str());
-                    let card_h: f32 = if is_album_expanded { card_w + 50.0 } else { 0.0 }; 
+                    let card_h: f32 = if is_album_expanded { 323.0 } else { 0.0 }; 
                     let right_h = if is_album_expanded {
                         album_header_h + alb.songs.len() as f32 * row_height
                     } else {
                         album_header_h
                     };
-                    let block_h = card_h.max(right_h);
+                    let block_h = card_h.max(right_h) + 10.0; // padding inferior - must match pre-accumulator
                     let block_end = current_y + block_h;
 
                     if block_end >= render_min && current_y <= render_max {
@@ -881,13 +881,14 @@ where
                 ].spacing(2).width(Length::Fill);
                 let is_album_explicitly_selected = manager.selected_album.as_deref() == Some(alb.album_name.as_str()) && manager.selected_song_idx.is_none();
                 let is_song_selected_in_album = manager.selected_song_idx.map(|idx| alb.songs.iter().any(|(_, i)| *i == idx)).unwrap_or(false);
-                let is_album_card_highlighted = manager.selected_album.as_deref() == Some(alb.album_name.as_str()) || is_song_selected_in_album;
+                let is_album_card_highlighted = is_album_explicitly_selected || is_song_selected_in_album;
 
                 let card_col = column![card_wrapper, info_col].spacing(5).width(Length::Fixed(card_w - 30.0));
                 
                 let card_container = mouse_area(
                     container(card_col)
                         .width(Length::Fixed(card_w))
+                        .height(Length::Fixed(323.0))
                         .padding(iced::Padding { top: 15.0, bottom: 15.0, left: 15.0, right: 15.0 })
                         .style(move |_t: &Theme| {
                             if is_album_card_highlighted {

@@ -103,6 +103,8 @@ pub struct LibraryManager {
     pub last_viewport: Option<iced::widget::scrollable::Viewport>,
     pub selection_stats: Option<LibraryStats>,
     pub artist_last_selection: std::collections::HashMap<String, usize>, // artist -> global_song_idx
+    /// Stores the exact (y, h) of the last navigated item to avoid name-based lookup jumping
+    pub selected_item_hint: Option<(f32, f32)>,
 }
 
 impl Default for LibraryManager {
@@ -161,6 +163,7 @@ impl Default for LibraryManager {
             last_viewport: None,
             selection_stats: None,
             artist_last_selection: std::collections::HashMap::new(),
+            selected_item_hint: None,
         }
     }
 }
@@ -257,6 +260,17 @@ impl LibraryManager {
         self.view_mode == LibraryViewMode::ThumbnailList
     }
 
+    pub fn get_song_by_global_idx(&self, target_idx: usize) -> Option<crate::db::database::SongData> {
+        let mut current_idx = 0;
+        for group in &self.artist_groups {
+            if current_idx + group.songs.len() > target_idx {
+                return group.songs.get(target_idx - current_idx).cloned();
+            }
+            current_idx += group.songs.len();
+        }
+        None
+    }
+
     pub fn get_visible_items(&self) -> Vec<(LibraryListItem, f32, f32)> {
         let mut items = Vec::new();
         let mut current_y = 0.0;
@@ -304,7 +318,7 @@ impl LibraryManager {
                         } else {
                             album_header_h
                         };
-                        let block_h = card_h.max(right_h);
+                        let block_h = card_h.max(right_h) + if self.view_mode == LibraryViewMode::DetailedList { 10.0 } else { 0.0 };
 
                         items.push((LibraryListItem::Album(alb_name.clone()), current_y, album_header_h));
                         
@@ -331,7 +345,8 @@ impl LibraryManager {
         items
     }
 
-    pub fn handle_key_nav(&self, dir: LibraryNavDir) -> Option<LibraryListItem> {
+    /// Returns the new navigation item and its exact Y position from the items list.
+    pub fn handle_key_nav(&self, dir: LibraryNavDir) -> Option<(LibraryListItem, f32, f32)> {
         if !self.is_list_mode() {
             return None;
         }
@@ -349,8 +364,18 @@ impl LibraryManager {
                     }
                 }
                 LibraryListItem::Album(name) => {
+                    // Use hint to distinguish multiple occurrences of the same album name
                     if Some(name) == self.selected_album.as_ref() && self.selected_song_idx.is_none() {
-                        current_idx = i; found = true; break;
+                        // Verify position matches hint if available
+                        if let Some((hint_y, _)) = self.selected_item_hint {
+                            let (_, item_y, _) = &items[i];
+                            if (item_y - hint_y).abs() < 1.0 {
+                                current_idx = i; found = true; break;
+                            }
+                            // Keep searching for the right occurrence
+                        } else {
+                            current_idx = i; found = true; break;
+                        }
                     }
                 }
                 LibraryListItem::Artist(name) => {
@@ -369,8 +394,8 @@ impl LibraryManager {
             }
         }
 
-        let (item, _, _) = &items[current_idx];
-        Some(item.clone())
+        let (item, y, h) = &items[current_idx];
+        Some((item.clone(), *y, *h))
     }
 
     /// Calcula la tarea de scroll para asegurar que el elemento seleccionado sea visible.
@@ -380,39 +405,105 @@ impl LibraryManager {
             return Task::none();
         }
 
-        let items = self.get_visible_items();
         let scroll_id = LIBRARY_SCROLL_ID.clone();
+        let margin_top = if self.view_mode == LibraryViewMode::DetailedList { 32.0_f32 } else { 64.0_f32 };
 
-        for (item, y, h) in items {
+        // FAST PATH: use the exact hint coordinates stored during keyboard navigation.
+        // This avoids any name-based search that would jump to the first occurrence
+        // of an album name when the same album has multiple artist groups.
+        if let Some((hint_y, hint_h)) = self.selected_item_hint {
+            let is_header = self.selected_header.is_some() && self.selected_song_idx.is_none() && self.selected_album.is_none();
+            let effective_margin_top = if is_header { 0.0 } else { margin_top };
+            // SimpleList: 0px bottom margin so selector reaches the last visible row.
+            // DetailedList: one row height (hint_h) so it doesn't clip behind the sort bar.
+            let margin_bottom: f32 = if self.view_mode == LibraryViewMode::SimpleList { 0.0 } else { hint_h };
+
+            if force_top {
+                return iced::widget::operation::scroll_to(
+                    scroll_id,
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: (hint_y - effective_margin_top).max(0.0) },
+                );
+            }
+
+            if let Some(viewport) = &self.last_viewport {
+                let view_min = viewport.absolute_offset().y;
+                let view_max = view_min + viewport.bounds().height;
+                let bottom = hint_y + hint_h;
+
+                if hint_y < view_min + effective_margin_top {
+                    return iced::widget::operation::scroll_to(
+                        scroll_id,
+                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: (hint_y - effective_margin_top).max(0.0) },
+                    );
+                } else if bottom > view_max - margin_bottom {
+                    let offset = (bottom - viewport.bounds().height + margin_bottom).max(0.0);
+                    return iced::widget::operation::scroll_to(
+                        scroll_id,
+                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+                    );
+                }
+            } else {
+                let offset = (hint_y - effective_margin_top).max(0.0);
+                return iced::widget::operation::scroll_to(
+                    scroll_id,
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+                );
+            }
+            return Task::none();
+        }
+
+        // FALLBACK: name-based search (used when clicking with mouse, not keyboarding)
+        // Priority: Song > Album > Artist
+        let items = self.get_visible_items();
+        for (item, y, h) in &items {
             let matches = match item {
-                LibraryListItem::Song(idx) => Some(idx) == self.selected_song_idx,
-                LibraryListItem::Album(ref name) => Some(name) == self.selected_album.as_ref() && self.selected_song_idx.is_none(),
-                LibraryListItem::Artist(ref name) => Some(name) == self.selected_header.as_ref() && self.selected_song_idx.is_none() && self.selected_album.is_none(),
+                LibraryListItem::Song(idx) => Some(*idx) == self.selected_song_idx,
+                LibraryListItem::Album(name) => {
+                    self.selected_song_idx.is_none()
+                        && Some(name) == self.selected_album.as_ref()
+                }
+                LibraryListItem::Artist(name) => {
+                    self.selected_song_idx.is_none()
+                        && self.selected_album.is_none()
+                        && Some(name) == self.selected_header.as_ref()
+                }
             };
             let is_header = matches!(item, LibraryListItem::Artist(_));
-            
+
             if matches {
+                let effective_margin_top = if is_header { 0.0 } else { margin_top };
+                // Same logic: SimpleList gets 0px bottom margin, DetailedList gets one row.
+                let margin_bottom: f32 = if self.view_mode == LibraryViewMode::SimpleList { 0.0 } else { *h };
+
                 if let Some(viewport) = &self.last_viewport {
                     let view_min = viewport.absolute_offset().y;
                     let view_max = view_min + viewport.bounds().height;
                     let bottom = y + h;
-                    
-                    let margin_top = if is_header { 0.0 } else { 64.0 };
-                    let margin_bottom = 0.0;
-                    
-                    if force_top {
-                        return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (y - margin_top).max(0.0) });
-                    }
 
-                    if y < view_min + margin_top {
-                        return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (y - margin_top).max(0.0) });
+                    if force_top {
+                        return iced::widget::operation::scroll_to(
+                            scroll_id,
+                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: (*y - effective_margin_top).max(0.0) },
+                        );
+                    }
+                    if *y < view_min + effective_margin_top {
+                        return iced::widget::operation::scroll_to(
+                            scroll_id,
+                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: (*y - effective_margin_top).max(0.0) },
+                        );
                     } else if bottom > view_max - margin_bottom {
                         let offset = (bottom - viewport.bounds().height + margin_bottom).max(0.0);
-                        return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
+                        return iced::widget::operation::scroll_to(
+                            scroll_id,
+                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+                        );
                     }
                 } else {
-                    let offset = if is_header { y } else { (y - 64.0).max(0.0) };
-                    return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
+                    let offset = if is_header { *y } else { (*y - effective_margin_top).max(0.0) };
+                    return iced::widget::operation::scroll_to(
+                        scroll_id,
+                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
+                    );
                 }
                 break;
             }

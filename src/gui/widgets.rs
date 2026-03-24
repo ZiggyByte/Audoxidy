@@ -295,7 +295,7 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
         let on_h = on_hover(Some(sort));
         let on_h_exit = on_hover(None);
-        let separator_area: Element<Message> = if sort == SortColumn::AlbumCard {
+        let separator_area: Element<Message> = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
             Space::new().width(4.0).into()
         } else {
             mouse_area(separator_visual)
@@ -312,7 +312,7 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             row![t, Space::new().width(Length::Fill)].align_y(Alignment::Center)
         };
 
-        let sort_btn = if sort == SortColumn::AlbumCard {
+        let sort_btn = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
             button(sort_btn_content)
                 .width(Length::Fill)
                 .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
@@ -391,6 +391,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     albums_count: usize,
     songs_count: usize,
     duration_secs: f64,
+    row_h: f32,       // Altura de la fila: 32px para SimpleList/DetailedList, 42px para ThumbnailList
     on_select: Message,
     on_toggle: Message,
 ) -> Element<'a, Message> {
@@ -413,7 +414,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
         text(format!("{} Canciones | {} Álbumes | {}",  songs_count, albums_count, time_str))
             .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(15),
-        chevron_btn(chevron, on_toggle, 32.0, 28.0),
+        chevron_btn(chevron, on_toggle, row_h, row_h - 4.0),
     ].align_y(Alignment::Center).padding([0, 15]);
 
     container(
@@ -421,7 +422,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
             .on_press(on_select)
     )
     .width(Length::Fill)
-    .height(Length::Fixed(32.0))
+    .height(Length::Fixed(row_h))
     .center_y(Length::Fill)
     .style(|_t| container::Style::default().background(COLOR_CONTRAST))
     .into()
@@ -474,6 +475,112 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
     ).on_press(on_select).interaction(iced::mouse::Interaction::Pointer).into()
 }
 
+/// Renderiza una fila de canción en modo ThumbnailList (42px) con thumbnail 32x32 redondeado al inicio.
+pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
+    song: &crate::db::database::SongData,
+    _song_idx: usize,
+    is_selected: bool,
+    columns: &[SortColumn],
+    column_widths: &HashMap<SortColumn, u16>,
+    on_select: Message,
+    on_add_playlist: Message,
+) -> Element<'a, Message> {
+    let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+
+    // --- Thumbnail del álbum — ancho FIJO 42px, no se ve afectado por column_widths ---
+    // Usar original_cover_root o compressed_cached_cover_root (el que esté disponible)
+    let cover_path = song.original_cover_root.as_ref()
+        .or(song.compressed_cached_cover_root.as_ref());
+
+    let thumb_img: Element<'a, Message> = if let Some(path) = cover_path {
+        container(
+            iced::widget::image::Image::new(iced::widget::image::Handle::from_path(path.clone()))
+                .width(Length::Fixed(32.0))
+                .height(Length::Fixed(32.0))
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(4.0)
+        )
+        .width(Length::Fixed(32.0))
+        .height(Length::Fixed(32.0))
+        .style(|_t: &Theme| {
+            container::Style::default()
+                .border(iced::Border { radius: 4.0.into(), ..Default::default() })
+        })
+        .clip(true)
+        .into()
+    } else {
+        // Placeholder: mismo estilo que las tarjetas del Grid sin portada (COLOR_BG + bordes redondeados)
+        container(
+            iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/album.svg"))
+                .width(Length::Fixed(20.0))
+                .height(Length::Fixed(20.0))
+                .style(|_t: &Theme, _s| iced::widget::svg::Style {
+                    color: Some(Color::from(COLOR_TEXT_SECONDARY)),
+                })
+        )
+        .width(Length::Fixed(32.0))
+        .height(Length::Fixed(32.0))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(|_t: &Theme| {
+            container::Style::default()
+                .background(Color::from(COLOR_BG))
+                .border(iced::Border { radius: 4.0.into(), ..Default::default() })
+        })
+        .into()
+    };
+
+    // Columna del thumbnail: siempre 42px fija + 10px padding a cada lado
+    let thumb_col: Element<'a, Message> = container(thumb_img)
+        .width(Length::Fixed(42.0))
+        .height(Length::Fixed(42.0))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .padding(Padding { left: 0.0, right: 10.0, top: 0.0, bottom: 0.0 })
+        .into();
+
+    // --- Columnas de texto (misma lógica de SimpleList, excluye AlbumCard y AlbumThumbnail) ---
+    let get_col = |col: SortColumn| -> Element<'a, Message> {
+        let w = *column_widths.get(&col).unwrap_or(&100) as f32;
+        let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
+        let val = format_metadata(song, &col);
+        let truncated = truncate_text(&val, max_chars);
+
+        container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
+            .width(Length::Fixed(w)).height(Length::Fixed(15.0)).center_y(Length::Fill)
+            .padding(Padding { left: 5.0, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+    };
+
+    let mut elements: Vec<Element<'a, Message>> = vec![thumb_col];
+    for col in columns {
+        if *col != SortColumn::AlbumCard && *col != SortColumn::AlbumThumbnail {
+            elements.push(get_col(*col));
+        }
+    }
+    elements.push(
+        button(text("►").size(11).color(Color::from(txt_color))).on_press(on_add_playlist)
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .into()
+    );
+
+    // Fila interna: 10px izq. para alinear metadatos con sort bar, 10px der.
+    let song_row_inner = iced::widget::Row::with_children(elements)
+        .align_y(Alignment::Center)
+        .padding(Padding { left: 15.0, right: 10.0, top: 0.0, bottom: 0.0 })
+        .height(Length::Fixed(42.0));
+
+    mouse_area(
+        container(song_row_inner)
+            .width(Length::Fill)
+            .height(Length::Fixed(42.0))
+            .align_y(iced::alignment::Vertical::Center)
+            .style(move |_t: &Theme| {
+                if is_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } 
+                else { container::Style::default() }
+            })
+    ).on_press(on_select).interaction(iced::mouse::Interaction::Pointer).into()
+}
+
 /// Permite construir una lista universalizada que agrupa canciones por artistas,
 /// gestiona el scroll, la virtualización, y las cabeceras pegajosas de forma global,
 /// delegando la representación visual de la "fila" a un renderizador externo.
@@ -491,7 +598,8 @@ where
             .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
     }
 
-    let header_h = 32.0;
+    // Header height must match get_visible_items and artist_header_widget heights
+    let header_h: f32 = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
 
     // 1. Calcular alturas acumuladas para virtualización
     let view_min_raw = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
@@ -593,6 +701,7 @@ where
                     group.albums.len(),
                     group.songs.len(),
                     group.duration_secs,
+                    header_h, // Dynamic: 42px for ThumbnailList, 32px for others
                     crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
                 );
@@ -634,12 +743,13 @@ where
                 st_group.albums.len(),
                 st_group.songs.len(),
                 st_group.duration_secs,
+                header_h, // Dynamic: 42px for ThumbnailList, 32px for others
                 crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
             )
         )
         .width(Length::Fill)
-        .height(Length::Fixed(32.0))
+        .height(Length::Fixed(header_h))
         .padding([0, 15])
         .align_y(iced::alignment::Vertical::Top);
 
@@ -838,6 +948,7 @@ where
                     group.albums.len(),
                     group.songs.len(),
                     group.duration_secs,
+                    32.0, // DetailedList always uses 32px headers
                     crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
                 );
@@ -990,6 +1101,7 @@ where
                 st_group.albums.len(),
                 st_group.songs.len(),
                 st_group.duration_secs,
+                32.0, // DetailedList always uses 32px headers
                 crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
             )

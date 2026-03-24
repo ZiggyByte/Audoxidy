@@ -125,6 +125,7 @@ impl Default for LibraryManager {
         column_widths.insert(SortColumn::Bitrate, 90);
         column_widths.insert(SortColumn::Size, 85);
         column_widths.insert(SortColumn::AlbumCard, 250); // Tarjeta ancha fija
+        column_widths.insert(SortColumn::AlbumThumbnail, 40); // Thumbnail cuadrado fijo
         
         Self {
             view_mode: LibraryViewMode::Grid,
@@ -245,6 +246,7 @@ impl LibraryManager {
                         a.bit_depth.unwrap_or(0).cmp(&b.bit_depth.unwrap_or(0))
                     },
                     SortColumn::AlbumCard => std::cmp::Ordering::Equal,
+                    SortColumn::AlbumThumbnail => std::cmp::Ordering::Equal,
                 };
                 if is_asc { res } else { res.reverse() }
             });
@@ -274,8 +276,16 @@ impl LibraryManager {
     pub fn get_visible_items(&self) -> Vec<(LibraryListItem, f32, f32)> {
         let mut items = Vec::new();
         let mut current_y = 0.0;
-        let header_h = 32.0;
-        let row_height = 32.0;
+        // Header height must match the widget's artist_header_widget render height
+        let header_h: f32 = match self.view_mode {
+            LibraryViewMode::ThumbnailList => 42.0,
+            _ => 32.0,
+        };
+        // Each view mode uses its own row height — must match the widget render height
+        let row_height: f32 = match self.view_mode {
+            LibraryViewMode::ThumbnailList => 42.0,
+            _ => 32.0,
+        };
         let mut global_song_idx = 0;
 
         for group in &self.artist_groups {
@@ -284,7 +294,8 @@ impl LibraryManager {
 
             let is_collapsed = self.collapsed_artists.contains(&group.name);
             
-            if self.view_mode == LibraryViewMode::SimpleList {
+            // SimpleList and ThumbnailList: flat song rows per artist group (no album blocks)
+            if self.view_mode == LibraryViewMode::SimpleList || self.view_mode == LibraryViewMode::ThumbnailList {
                 if !is_collapsed {
                     for _ in 0..group.songs.len() {
                         items.push((LibraryListItem::Song(global_song_idx), current_y, row_height));
@@ -406,7 +417,11 @@ impl LibraryManager {
         }
 
         let scroll_id = LIBRARY_SCROLL_ID.clone();
-        let margin_top = if self.view_mode == LibraryViewMode::DetailedList { 32.0_f32 } else { 64.0_f32 };
+        let margin_top = match self.view_mode {
+            LibraryViewMode::DetailedList => 32.0_f32,
+            LibraryViewMode::ThumbnailList => 84.0_f32, // 2 rows of 42px so header doesn't hide selector
+            _ => 64.0_f32, // SimpleList: 2 rows of 32px
+        };
 
         // FAST PATH: use the exact hint coordinates stored during keyboard navigation.
         // This avoids any name-based search that would jump to the first occurrence
@@ -716,6 +731,15 @@ pub fn view<'a>(
             SortColumn::Channels, SortColumn::BitDepth, SortColumn::Bitrate,
             SortColumn::Size
         ]
+    } else if manager.view_mode == LibraryViewMode::ThumbnailList {
+        // Same as SimpleList but with AlbumThumbnail as the first (fixed) column
+        vec![
+            SortColumn::AlbumThumbnail,
+            SortColumn::TrackNumber, SortColumn::Title, SortColumn::Artist, SortColumn::AlbumArtist,
+            SortColumn::Album, SortColumn::Genre, SortColumn::Year, SortColumn::Duration,
+            SortColumn::Format, SortColumn::SampleRate, SortColumn::Channels, SortColumn::BitDepth,
+            SortColumn::Bitrate, SortColumn::Size
+        ]
     } else {
         vec![
             SortColumn::TrackNumber, SortColumn::Title, SortColumn::Artist, SortColumn::AlbumArtist,
@@ -990,8 +1014,22 @@ pub fn view<'a>(
             )
         },
         LibraryViewMode::ThumbnailList => {
-            container(text("Modo Thumbnail List en desarrollo...").color(COLOR_TEXT_SECONDARY))
-                .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into()
+            let cols = columns.clone();
+            crate::gui::widgets::universal_song_list(
+                manager,
+                move |song, song_idx, is_selected| {
+                    crate::gui::widgets::thumbnail_song_row_widget(
+                        song,
+                        song_idx,
+                        is_selected,
+                        &cols,
+                        &manager.column_widths,
+                        Message::SelectSong(Some(song_idx)),
+                        Message::AddSongToPlaylist(song.clone()),
+                    )
+                },
+                42.0, // ThumbnailList uses 42px rows — MUST match get_visible_items row_height
+            )
         }
     };
 

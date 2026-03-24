@@ -18,6 +18,7 @@ pub enum SortColumn {
     Bitrate,
     Size,
     AlbumCard,
+    AlbumThumbnail, // Fixed 40px column for 30x30 album art in ThumbnailList view
 }
 
 impl SortColumn {
@@ -38,6 +39,7 @@ impl SortColumn {
             SortColumn::Bitrate => "Bits",
             SortColumn::Size => "Tamaño",
             SortColumn::AlbumCard => "Tarjeta de álbum",
+            SortColumn::AlbumThumbnail => "",
         }
     }
 }
@@ -73,6 +75,7 @@ pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
         }
         SortColumn::Size => song.size.map_or("-".to_string(), |s| format_size(s as i64)),
         SortColumn::AlbumCard => "".to_string(),
+        SortColumn::AlbumThumbnail => "".to_string(),
     }
 }
 

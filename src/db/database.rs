@@ -279,7 +279,7 @@ impl Database {
 
     pub fn get_all_songs(&self) -> Result<Vec<SongData>> {
         let mut stmt = self.conn.prepare("
-            SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 
+            SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT
             FROM MUSIC_LIBRARY 
             ORDER BY COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido') ASC, RELEASE_YEAR ASC, ALBUM ASC, CAST(TRACK_NUMBER AS INTEGER) ASC
         ")?;
@@ -300,6 +300,8 @@ impl Database {
             record.bit_depth = row.get(12).ok();
             record.album_artist = row.get(13).ok();
             record.album_artist_tag_format = row.get(14).ok();
+            record.original_cover_root = row.get(15).ok().flatten();
+            record.compressed_cached_cover_root = row.get(16).ok().flatten();
             Ok(record)
         })?;
         let mut songs = Vec::new();

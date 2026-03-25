@@ -1,5 +1,7 @@
 target/
 covers/
+cache/
+cache/covers
 **/*.rs.bk
 .DS_Store
 # *.lock (Cargo.lock should be tracked for apps)

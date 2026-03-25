@@ -1,4 +1,5 @@
 // Utilidades comunes y funciones matemáticas de formateo
+pub mod covers;
 use crate::db::database::SongData;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

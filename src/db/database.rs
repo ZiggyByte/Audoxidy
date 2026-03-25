@@ -203,7 +203,7 @@ impl Database {
                 COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido') AS grouped_artist, 
                 GENRE, 
                 RELEASE_YEAR, 
-                ORIGINAL_COVER_ROOT
+                COALESCE(COMPRESSED_CACHED_COVER_ROOT, ORIGINAL_COVER_ROOT) AS COVER
             FROM MUSIC_LIBRARY 
             GROUP BY COALESCE(ALBUM, 'Desconocido'), COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido'), RELEASE_YEAR, FULL_ROOT_DIRECTORY_PATH
             ORDER BY IMPORT_ORDER ASC, grouped_artist ASC, RELEASE_YEAR ASC, COALESCE(ALBUM, 'Desconocido') ASC

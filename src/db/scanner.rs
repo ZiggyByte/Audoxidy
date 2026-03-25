@@ -144,17 +144,35 @@ impl Scanner {
                             let safe_album_name = record.album.as_deref()
                                 .unwrap_or("unknown")
                                 .replace(&['/', '\\', ':', '*', '?', '"', '<', '>', '|'][..], "_");
+                            
+                            let pic_data = pic.data().to_vec();
+                            let safe_album_name_clone = safe_album_name.clone();
+                            
                             let filename = format!("{}.{}", safe_album_name, ext);
                             let cover_path = cover_dir.join(&filename);
                             
                             if !cover_path.exists() {
-                                let _ = std::fs::write(&cover_path, pic.data());
+                                let _ = std::fs::write(&cover_path, &pic_data);
                             }
-                            // Guardar ruta relativa/completa de la db
+                            // Guardar ruta relativa/completa de la original en la db
                             let absolute_cover = std::fs::canonicalize(&cover_path)
                                 .map(|p| p.to_string_lossy().to_string())
                                 .unwrap_or_else(|_| cover_path.to_string_lossy().to_string());
                             record.original_cover_root = Some(absolute_cover);
+
+                            // 2. Ejecutar la creación de la caché en el Pool de Hilos dedicado (512x512, avif, 65%)
+                            let expected_cached_path = std::path::PathBuf::from(format!("cache/covers/{}.avif", safe_album_name_clone));
+                            let abs_cache = std::env::current_dir().unwrap_or_default().join(&expected_cached_path).to_string_lossy().to_string();
+                            record.compressed_cached_cover_root = Some(abs_cache);
+
+                            // Despachar tarea asíncrona sin bloquear el escaneo principal de metadatos
+                            crate::utils::covers::get_cover_pool().spawn(move || {
+                                if let Err(e) = crate::utils::covers::process_and_save_cover(&pic_data, &safe_album_name_clone) {
+                                    // Se podría usar tracing::warn si está importado, de lo contrario lo ignoramos pasivamente
+                                    #[cfg(debug_assertions)]
+                                    eprintln!("Error al generar la caché de imagen {}: {}", safe_album_name_clone, e);
+                                }
+                            });
                         }
                     }
                 }

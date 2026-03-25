@@ -488,9 +488,9 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
 
     // --- Thumbnail del álbum — ancho FIJO 42px, no se ve afectado por column_widths ---
-    // Usar original_cover_root o compressed_cached_cover_root (el que esté disponible)
-    let cover_path = song.original_cover_root.as_ref()
-        .or(song.compressed_cached_cover_root.as_ref());
+    // Usar compressed_cached_cover_root preferentemente antes que original_cover_root
+    let cover_path = song.compressed_cached_cover_root.as_ref()
+        .or(song.original_cover_root.as_ref());
 
     let thumb_img: Element<'a, Message> = if let Some(path) = cover_path {
         container(

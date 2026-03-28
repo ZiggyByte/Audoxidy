@@ -7,21 +7,35 @@ use walkdir::WalkDir;
 
 use crate::db::database::Database;
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 pub struct Scanner {
     _db: Arc<Mutex<Database>>,
+    is_scanning: AtomicBool,
 }
 
 impl Scanner {
-    #[allow(dead_code)]
     pub fn new(db: Arc<Mutex<Database>>) -> Self {
-        Self { _db: db }
+        Self { 
+            _db: db,
+            is_scanning: AtomicBool::new(false),
+        }
+    }
+
+    pub fn is_scanning(&self) -> bool {
+        self.is_scanning.load(Ordering::SeqCst)
     }
     
     // Escaneo asíncrono
-    pub fn scan_folder_async(&self, folder_path: String) {
+    pub fn scan_folder_async(self: Arc<Self>, folder_path: String) {
         let db_arc = Arc::clone(&self._db);
+        let scanner_arc = Arc::clone(&self);
+        
+        self.is_scanning.store(true, Ordering::SeqCst);
+        
         std::thread::spawn(move || {
             Self::scan_folder(&db_arc, &folder_path);
+            scanner_arc.is_scanning.store(false, Ordering::SeqCst);
         });
     }
 
@@ -37,21 +51,43 @@ impl Scanner {
         };
         
         let mut current_order = start_order;
+        let mut enqueued_covers = std::collections::HashSet::new();
         
-        for entry in WalkDir::new(root).sort_by_file_name().into_iter().filter_map(|e| e.ok()) {
+        // Iniciar transacción masiva
+        if let Ok(db) = db_m.lock() {
+            let _ = db.begin_transaction();
+        }
+
+        for (count, entry) in WalkDir::new(root).sort_by_file_name().into_iter().filter_map(|e| e.ok()).enumerate() {
             let path = entry.path();
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if supported_extensions.contains(&ext.to_lowercase().as_str()) {
-                        Self::process_file(db_m, path, root, current_order);
+                        Self::process_file(db_m, path, root, current_order, &mut enqueued_covers);
                         current_order += 1;
+                        
+                        // Commit por lotes cada 500 archivos para estabilidad y rendimiento
+                        if count % 500 == 0 {
+                            if let Ok(db) = db_m.lock() {
+                                let _ = db.commit_transaction();
+                                let _ = db.begin_transaction();
+                            }
+                        }
                     }
                 }
             }
         }
+        
+        // Finalizar transacción
+        if let Ok(db) = db_m.lock() {
+            let _ = db.commit_transaction();
+        }
+
+        // Al finalizar el bucle de escaneo de archivos, sugerimos liberar memoria de carátulas
+        crate::utils::covers::clear_all_cover_cache();
     }
 
-    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, root: &str, import_order: i64) {
+    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>) {
         let mut record = crate::db::database::SongData::default();
         record.import_order = import_order;
         record.full_file_path = path.to_string_lossy().to_string();
@@ -131,48 +167,37 @@ impl Scanner {
                     if !t.pictures().is_empty() {
                         record.embedded_cover = true;
                         if let Some(pic) = t.pictures().first() {
-                            let ext = match pic.mime_type() {
-                                Some(m) if format!("{:?}", m).to_lowercase().contains("png") => "png",
-                                Some(m) if format!("{:?}", m).to_lowercase().contains("gif") => "gif",
-                                _ => "jpg",
-                            };
-                            let cover_dir = std::path::PathBuf::from("covers");
-                            if !cover_dir.exists() {
-                                let _ = std::fs::create_dir_all(&cover_dir); // Directorio principal temporal
-                            }
+                            let artist_name = record.album_artist.as_deref().or(record.artist.as_deref()).unwrap_or("Desconocido");
+                            let album_name = record.album.as_deref().unwrap_or("Desconocido");
                             
-                            let safe_album_name = record.album.as_deref()
-                                .unwrap_or("unknown")
-                                .replace(&['/', '\\', ':', '*', '?', '"', '<', '>', '|'][..], "_");
-                            
-                            let pic_data = pic.data().to_vec();
-                            let safe_album_name_clone = safe_album_name.clone();
-                            
-                            let filename = format!("{}.{}", safe_album_name, ext);
-                            let cover_path = cover_dir.join(&filename);
-                            
-                            if !cover_path.exists() {
-                                let _ = std::fs::write(&cover_path, &pic_data);
-                            }
-                            // Guardar ruta relativa/completa de la original en la db
-                            let absolute_cover = std::fs::canonicalize(&cover_path)
-                                .map(|p| p.to_string_lossy().to_string())
-                                .unwrap_or_else(|_| cover_path.to_string_lossy().to_string());
-                            record.original_cover_root = Some(absolute_cover);
+                            // 1. Generar ID único de álbum (Hash Artista + Álbum)
+                             let album_hash = crate::utils::covers::generate_album_id(artist_name, album_name);
+                             let final_id = album_hash.clone(); // Usamos siempre el hash del álbum para consistencia masiva
+                             
+                             // 2. Ejecutar la creación de la caché en el Pool de Hilos dedicado (512x512, avif, 80%)
+                             let expected_cached_path = std::path::PathBuf::from(format!("cache/covers/{}.avif", final_id));
+                             let abs_cache = std::env::current_dir().unwrap_or_default().join(&expected_cached_path).to_string_lossy().to_string();
+                             record.compressed_cached_cover_root = Some(abs_cache.clone());
 
-                            // 2. Ejecutar la creación de la caché en el Pool de Hilos dedicado (512x512, avif, 65%)
-                            let expected_cached_path = std::path::PathBuf::from(format!("cache/covers/{}.avif", safe_album_name_clone));
-                            let abs_cache = std::env::current_dir().unwrap_or_default().join(&expected_cached_path).to_string_lossy().to_string();
-                            record.compressed_cached_cover_root = Some(abs_cache);
+                             // Despachar tarea asíncrona mediante el Gateway Throttled solo si NO existe ya y NO ha sido encolado en esta sesión
+                             if !expected_cached_path.exists() && !enqueued_covers.contains(&final_id) {
+                                 let pic_data = pic.data().to_vec();
+                                 crate::utils::covers::enqueue_cover_job(pic_data, final_id.clone());
+                                 enqueued_covers.insert(final_id);
+                             }
 
-                            // Despachar tarea asíncrona sin bloquear el escaneo principal de metadatos
-                            crate::utils::covers::get_cover_pool().spawn(move || {
-                                if let Err(e) = crate::utils::covers::process_and_save_cover(&pic_data, &safe_album_name_clone) {
-                                    // Se podría usar tracing::warn si está importado, de lo contrario lo ignoramos pasivamente
-                                    #[cfg(debug_assertions)]
-                                    eprintln!("Error al generar la caché de imagen {}: {}", safe_album_name_clone, e);
-                                }
-                            });
+                            // 3. Registrar en la tabla de ALBUMS para acceso instantáneo
+                            if let Ok(db) = db_m.lock() {
+                                let _ = db.upsert_album(
+                                    &album_hash,
+                                    album_name,
+                                    artist_name,
+                                    record.genre.as_deref().unwrap_or(""),
+                                    record.release_year.as_deref().unwrap_or(""),
+                                    Some(&abs_cache),
+                                    record.duration_secs.unwrap_or(0.0)
+                                );
+                            }
                         }
                     }
                 }

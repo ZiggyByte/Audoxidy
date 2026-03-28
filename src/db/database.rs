@@ -71,11 +71,15 @@ impl Database {
     }
 
     fn create_schema(conn: &Connection) -> Result<()> {
+        // Habilitar modo WAL para concurrencia y rapidez
+        conn.pragma_update(None, "journal_mode", "WAL")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        conn.pragma_update(None, "cache_size", -64000)?; // 64MB de caché
+        conn.pragma_update(None, "mmap_size", 268435456)?; // 256MB de memory mapping
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS MUSIC_LIBRARY (
                 FULL_FILE_PATH TEXT PRIMARY KEY,
-                
-                -- Identificadores Físicos y Formato
                 FILE_NAME TEXT NOT NULL,
                 ROOT_DIRECTORY_NAME TEXT,
                 FULL_ROOT_DIRECTORY_PATH TEXT,
@@ -85,19 +89,13 @@ impl Database {
                 CHANNELS INTEGER,
                 DURATION_SECS REAL,
                 BIT_DEPTH INTEGER,
-                
-                -- Identificadores Visuales
                 EMBEDDED_COVER BOOLEAN DEFAULT 0,
                 ORIGINAL_COVER_ROOT TEXT,
                 COMPRESSED_CACHED_COVER_ROOT TEXT,
-                
-                -- Contadores de Tracks
                 TRACK_NUMBER TEXT,
                 TOTAL_TRACKS TEXT,
                 DISC_NUMBER TEXT,
                 TOTAL_DISCS TEXT,
-                
-                -- Tags Universales Básicos
                 TITLE TEXT,
                 ARTIST TEXT,
                 ALBUM TEXT,
@@ -106,8 +104,6 @@ impl Database {
                 ALBUM_ARTIST TEXT,
                 ALBUM_ARTIST_TAG_FORMAT TEXT,
                 LYRICS TEXT,
-                
-                -- Tags Avanzados/Audiófilo
                 TRACK_GAIN REAL,
                 ALBUM_GAIN REAL,
                 COMMENTS TEXT,
@@ -122,65 +118,122 @@ impl Database {
                 ISRC TEXT,
                 KEY TEXT,
                 BPM TEXT,
-                
-                -- Metadatos Analíticos
+                ALBUM_ID_HASH TEXT,
                 PLAY_COUNT INTEGER DEFAULT 0,
                 LAST_PLAYED_DATE TEXT,
                 LAST_PLAYED_TIME TEXT,
                 AUTO_RATING INTEGER DEFAULT 0,
-                PERSONAL_RATING INTEGER DEFAULT 0
+                PERSONAL_RATING INTEGER DEFAULT 0,
+                IMPORT_ORDER INTEGER DEFAULT 0
             )",
             [],
         )?;
-        
-        let _ = conn.execute("ALTER TABLE MUSIC_LIBRARY ADD COLUMN DURATION_SECS REAL", []);
-        let _ = conn.execute("ALTER TABLE MUSIC_LIBRARY ADD COLUMN BIT_DEPTH INTEGER", []);
-        let _ = conn.execute("ALTER TABLE MUSIC_LIBRARY ADD COLUMN IMPORT_ORDER INTEGER DEFAULT 0", []);
-        let _ = conn.execute("ALTER TABLE MUSIC_LIBRARY ADD COLUMN ALBUM_ARTIST_TAG_FORMAT TEXT", []);
-        
-        // Intentar migrar los numéricos a texto en DB antigua si es necesario (se ignora el error)
-        let _ = conn.execute("PRAGMA writable_schema = 1; UPDATE sqlite_master SET sql = replace(sql, 'TRACK_NUMBER INTEGER', 'TRACK_NUMBER TEXT') WHERE type = 'table' AND name = 'MUSIC_LIBRARY'; PRAGMA writable_schema = 0;", []);
-        
+
+        // Tablas de optimización por Artista y Álbum
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ARTISTS (
+                NAME TEXT PRIMARY KEY,
+                TOTAL_SONGS INTEGER DEFAULT 0,
+                TOTAL_ALBUMS INTEGER DEFAULT 0
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ALBUMS (
+                ARTIST_ALBUM_HASH TEXT PRIMARY KEY,
+                TITLE TEXT,
+                ARTIST TEXT,
+                GENRE TEXT,
+                YEAR TEXT,
+                COVER_PATH TEXT,
+                TOTAL_SONGS INTEGER DEFAULT 0,
+                DURATION REAL DEFAULT 0.0
+            )",
+            [],
+        )?;
+
+        // Índices estratégicos para búsqueda y ordenación instantánea
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_artist ON MUSIC_LIBRARY (ARTIST)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_album ON MUSIC_LIBRARY (ALBUM)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_album_hash ON MUSIC_LIBRARY (ALBUM_ID_HASH)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_import ON MUSIC_LIBRARY (IMPORT_ORDER)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_artist_album ON MUSIC_LIBRARY (ALBUM_ID_HASH)", [])?;
+
         Ok(())
     }
     
     // WIP: Funciones de Guardado/Carga para el escáner se implementarán en el siguiente bloque
     pub fn insert_song(&mut self, record: &SongData) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO MUSIC_LIBRARY (
-                FULL_FILE_PATH, FILE_NAME, ROOT_DIRECTORY_NAME, FULL_ROOT_DIRECTORY_PATH, 
-                FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, BIT_DEPTH, EMBEDDED_COVER, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT,
-                TRACK_NUMBER, TOTAL_TRACKS, DISC_NUMBER, TOTAL_DISCS, TITLE, ARTIST, ALBUM, GENRE, RELEASE_YEAR, 
-                ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT, LYRICS, TRACK_GAIN, ALBUM_GAIN, COMMENTS, URL, COPYRIGHT, PUBLISHER, COMPOSER, LYRICIST,
-                DIRECTOR, ENCODED_BY, CATALOG, ISRC, KEY, BPM, IMPORT_ORDER
+              "INSERT OR REPLACE INTO MUSIC_LIBRARY (
+                FULL_FILE_PATH, FILE_NAME, ROOT_DIRECTORY_NAME, FULL_ROOT_DIRECTORY_PATH,
+                FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, BIT_DEPTH,
+                EMBEDDED_COVER, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT,
+                TRACK_NUMBER, TOTAL_TRACKS, DISC_NUMBER, TOTAL_DISCS,
+                TITLE, ARTIST, ALBUM, GENRE, RELEASE_YEAR, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT,
+                LYRICS, TRACK_GAIN, ALBUM_GAIN, COMMENTS, URL, COPYRIGHT, PUBLISHER,
+                COMPOSER, LYRICIST, DIRECTOR, ENCODED_BY, CATALOG, ISRC, KEY, BPM, ALBUM_ID_HASH, IMPORT_ORDER
             ) VALUES (
-                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20,
-                ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40
-            )
-            ON CONFLICT(FULL_FILE_PATH) DO UPDATE SET
-                FILE_NAME=excluded.FILE_NAME, ROOT_DIRECTORY_NAME=excluded.ROOT_DIRECTORY_NAME, 
-                FULL_ROOT_DIRECTORY_PATH=excluded.FULL_ROOT_DIRECTORY_PATH, FORMAT=excluded.FORMAT, 
-                SIZE=excluded.SIZE, SAMPLE_RATE=excluded.SAMPLE_RATE, CHANNELS=excluded.CHANNELS, 
-                DURATION_SECS=excluded.DURATION_SECS, BIT_DEPTH=excluded.BIT_DEPTH,
-                EMBEDDED_COVER=excluded.EMBEDDED_COVER, ORIGINAL_COVER_ROOT=excluded.ORIGINAL_COVER_ROOT, 
-                COMPRESSED_CACHED_COVER_ROOT=excluded.COMPRESSED_CACHED_COVER_ROOT, TRACK_NUMBER=excluded.TRACK_NUMBER, 
-                TOTAL_TRACKS=excluded.TOTAL_TRACKS, DISC_NUMBER=excluded.DISC_NUMBER, TOTAL_DISCS=excluded.TOTAL_DISCS, 
-                TITLE=excluded.TITLE, ARTIST=excluded.ARTIST, ALBUM=excluded.ALBUM, GENRE=excluded.GENRE, 
-                RELEASE_YEAR=excluded.RELEASE_YEAR, ALBUM_ARTIST=excluded.ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT=excluded.ALBUM_ARTIST_TAG_FORMAT, LYRICS=excluded.LYRICS, 
-                TRACK_GAIN=excluded.TRACK_GAIN, ALBUM_GAIN=excluded.ALBUM_GAIN, COMMENTS=excluded.COMMENTS, 
-                URL=excluded.URL, COPYRIGHT=excluded.COPYRIGHT, PUBLISHER=excluded.PUBLISHER, COMPOSER=excluded.COMPOSER, 
-                LYRICIST=excluded.LYRICIST, DIRECTOR=excluded.DIRECTOR, ENCODED_BY=excluded.ENCODED_BY, 
-                CATALOG=excluded.CATALOG, ISRC=excluded.ISRC, KEY=excluded.KEY, BPM=excluded.BPM, IMPORT_ORDER=excluded.IMPORT_ORDER",
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 
+                ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, 
+                ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, 
+                ?31, ?32, ?33, ?34, ?35, ?36, ?37, ?38, ?39, ?40, ?41
+            )",
             params![
-                &record.full_file_path, &record.file_name, &record.root_directory_name, &record.full_root_directory_path,
-                &record.format, &record.size, &record.sample_rate, &record.channels, &record.duration_secs, &record.bit_depth, &record.embedded_cover, 
-                &record.original_cover_root, &record.compressed_cached_cover_root, &record.track_number, 
-                &record.total_tracks, &record.disc_number, &record.total_discs, &record.title, &record.artist, 
-                &record.album, &record.genre, &record.release_year, &record.album_artist, &record.album_artist_tag_format, &record.lyrics, 
-                &record.track_gain, &record.album_gain, &record.comments, &record.url, &record.copyright, 
-                &record.publisher, &record.composer, &record.lyricist, &record.director, &record.encoded_by, 
-                &record.catalog, &record.isrc, &record.key, &record.bpm, &record.import_order
+                record.full_file_path, record.file_name, record.root_directory_name, record.full_root_directory_path,
+                record.format, record.size, record.sample_rate, record.channels, record.duration_secs, record.bit_depth,
+                record.embedded_cover, record.original_cover_root, record.compressed_cached_cover_root,
+                record.track_number, record.total_tracks, record.disc_number, record.total_discs,
+                record.title, record.artist, record.album, record.genre, record.release_year, record.album_artist, record.album_artist_tag_format,
+                record.lyrics, record.track_gain, record.album_gain, record.comments, record.url, record.copyright, record.publisher,
+                record.composer, record.lyricist, record.director, record.encoded_by, record.catalog, record.isrc, record.key, record.bpm, 
+                crate::utils::covers::generate_album_id(
+                    record.album_artist.as_deref().or(record.artist.as_deref()).unwrap_or("Desconocido"),
+                    record.album.as_deref().unwrap_or("Desconocido")
+                ),
+                record.import_order
             ],
+         )?;
+
+        // Actualizar tabla de índices de artistas
+        let artist_name = record.album_artist.as_ref().or(record.artist.as_ref()).map(|s| s.as_str()).unwrap_or("Desconocido");
+        self.upsert_artist(artist_name)?;
+
+        Ok(())
+    }
+
+    pub fn upsert_artist(&mut self, name: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO ARTISTS (NAME, TOTAL_SONGS, TOTAL_ALBUMS) 
+             VALUES (?1, 1, 0)
+             ON CONFLICT(NAME) DO UPDATE SET 
+                TOTAL_SONGS = TOTAL_SONGS + 1",
+            [name],
+        )?;
+        Ok(())
+    }
+
+    pub fn commit_transaction(&self) -> Result<()> {
+        self.conn.execute("COMMIT", [])?;
+        Ok(())
+    }
+
+    pub fn begin_transaction(&self) -> Result<()> {
+        self.conn.execute("BEGIN TRANSACTION", [])?;
+        Ok(())
+    }
+
+    pub fn upsert_album(&self, hash: &str, title: &str, artist: &str, genre: &str, year: &str, cover: Option<&str>, duration: f64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO ALBUMS (ARTIST_ALBUM_HASH, TITLE, ARTIST, GENRE, YEAR, COVER_PATH, TOTAL_SONGS, DURATION)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, 1, ?7)
+             ON CONFLICT(ARTIST_ALBUM_HASH) DO UPDATE SET 
+                TOTAL_SONGS = TOTAL_SONGS + 1,
+                DURATION = DURATION + excluded.DURATION,
+                GENRE = CASE WHEN GENRE = '' OR GENRE IS NULL THEN excluded.GENRE ELSE GENRE END,
+                COVER_PATH = COALESCE(COVER_PATH, excluded.COVER_PATH)",
+            params![hash, title, artist, genre, year, cover, duration],
         )?;
         Ok(())
     }
@@ -195,31 +248,60 @@ impl Database {
     }
 
     /// Retorna: (ClaveAlbum_Path_Unico, Titulo_Album, Artista_Agrupado, Género, Año, Ruta_Portada)
+    /// Optimizado usando la tabla de índices ALBUMS para carga instantánea
     pub fn get_all_albums(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
             SELECT 
-                FULL_FILE_PATH,
-                COALESCE(ALBUM, 'Desconocido'), 
-                COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido') AS grouped_artist, 
+                ARTIST_ALBUM_HASH, 
+                TITLE, 
+                ARTIST, 
                 GENRE, 
-                RELEASE_YEAR, 
-                COALESCE(COMPRESSED_CACHED_COVER_ROOT, ORIGINAL_COVER_ROOT) AS COVER
-            FROM MUSIC_LIBRARY 
-            GROUP BY COALESCE(ALBUM, 'Desconocido'), COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido'), RELEASE_YEAR, FULL_ROOT_DIRECTORY_PATH
-            ORDER BY IMPORT_ORDER ASC, grouped_artist ASC, RELEASE_YEAR ASC, COALESCE(ALBUM, 'Desconocido') ASC
+                YEAR, 
+                COVER_PATH 
+            FROM ALBUMS 
+            ORDER BY ARTIST ASC, TITLE ASC
         ")?;
         let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0).unwrap_or_default();
-            let album: String = row.get(1).unwrap_or_default();
-            let artist: String = row.get(2).unwrap_or_default();
-            let genre: Option<String> = row.get(3).unwrap_or(None);
-            let year: Option<String> = row.get(4).unwrap_or(None);
-            let cover: Option<String> = row.get(5).unwrap_or(None);
-            Ok((id, album, artist, genre.unwrap_or_default(), year.unwrap_or_default(), cover))
+            Ok((
+                row.get(0).unwrap_or_default(),
+                row.get(1).unwrap_or_default(),
+                row.get(2).unwrap_or_default(),
+                row.get(3).unwrap_or_default(),
+                row.get(4).unwrap_or_default(),
+                row.get(5).ok()
+            ))
         })?;
         let mut albums = Vec::new();
         for r in rows {
             if let Ok(a) = r { albums.push(a); }
+        }
+        
+        // Fallback si la tabla ALBUMS está vacía (por compatibilidad o primera carga)
+        if albums.is_empty() {
+             let mut stmt = self.conn.prepare("
+                SELECT 
+                    FULL_FILE_PATH,
+                    COALESCE(ALBUM, 'Desconocido'), 
+                    COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido') AS grouped_artist, 
+                    GENRE, 
+                    RELEASE_YEAR, 
+                    COALESCE(COMPRESSED_CACHED_COVER_ROOT, ORIGINAL_COVER_ROOT) AS COVER
+                FROM MUSIC_LIBRARY 
+                GROUP BY COALESCE(ALBUM, 'Desconocido'), COALESCE(ALBUM_ARTIST, ARTIST, 'Desconocido'), RELEASE_YEAR, FULL_ROOT_DIRECTORY_PATH
+                ORDER BY IMPORT_ORDER ASC, grouped_artist ASC, RELEASE_YEAR ASC, COALESCE(ALBUM, 'Desconocido') ASC
+            ")?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0).unwrap_or_default();
+                let album: String = row.get(1).unwrap_or_default();
+                let artist: String = row.get(2).unwrap_or_default();
+                let genre: Option<String> = row.get(3).unwrap_or(None);
+                let year: Option<String> = row.get(4).unwrap_or(None);
+                let cover: Option<String> = row.get(5).unwrap_or(None);
+                Ok((id, album, artist, genre.unwrap_or_default(), year.unwrap_or_default(), cover))
+            })?;
+            for r in rows {
+                if let Ok(a) = r { albums.push(a); }
+            }
         }
         Ok(albums)
     }
@@ -242,16 +324,14 @@ impl Database {
         Ok(stats)
     }
 
-    pub fn get_songs_by_album(&self, sample_file_path: &str) -> Result<Vec<SongData>> {
+    pub fn get_songs_by_album(&self, album_id_hash: &str) -> Result<Vec<SongData>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 
             FROM MUSIC_LIBRARY 
-            WHERE COALESCE(ALBUM, '') = (SELECT COALESCE(ALBUM, '') FROM MUSIC_LIBRARY WHERE FULL_FILE_PATH = ?1 LIMIT 1)
-            AND COALESCE(ALBUM_ARTIST, ARTIST, '') = (SELECT COALESCE(ALBUM_ARTIST, ARTIST, '') FROM MUSIC_LIBRARY WHERE FULL_FILE_PATH = ?1 LIMIT 1)
-            AND FULL_ROOT_DIRECTORY_PATH = (SELECT FULL_ROOT_DIRECTORY_PATH FROM MUSIC_LIBRARY WHERE FULL_FILE_PATH = ?1 LIMIT 1)
-            ORDER BY FILE_NAME ASC, CAST(TRACK_NUMBER AS INTEGER) ASC
+            WHERE ALBUM_ID_HASH = ?1
+            ORDER BY CAST(TRACK_NUMBER AS INTEGER) ASC, TITLE ASC
         ")?;
-        let rows = stmt.query_map([sample_file_path], |row| {
+        let rows = stmt.query_map([album_id_hash], |row| {
             let mut record = SongData::default();
             record.full_file_path = row.get(0).unwrap_or_default();
             record.title = row.get(1).ok();

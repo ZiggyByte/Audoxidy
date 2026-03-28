@@ -211,6 +211,8 @@ pub struct AudoxidyApp {
     window_id: Option<iced::window::Id>,
     last_artist_header_click: Option<(String, std::time::Instant)>,
     last_album_header_click: Option<(String, std::time::Instant)>,
+    pub low_resource_mode: bool,
+    db_needs_update: bool,
 }
 
 impl AudoxidyApp {
@@ -234,6 +236,17 @@ impl AudoxidyApp {
         let media_controls = SystemMediaControls::new(audio_manager.clone())
             .expect("Error al inicializar controles multimedia del sistema");
 
+        // Detección de Hardware para modo de bajos recursos (RAM < 8GB o Cores < 4)
+        let mut sys = sysinfo::System::new_all();
+        sys.refresh_all();
+        let total_ram_gb = sys.total_memory() / 1024 / 1024 / 1024;
+        let cpu_cores = sys.cpus().len();
+        let low_resource_mode = total_ram_gb < 8 || cpu_cores < 4;
+
+        if low_resource_mode {
+            println!("Audoxidy Performance: Low resource mode ENABLED (RAM: {}GB, Cores: {})", total_ram_gb, cpu_cores);
+        }
+
         (
             Self {
                 audio_manager,
@@ -248,8 +261,10 @@ impl AudoxidyApp {
                 window_id: None,
                 last_artist_header_click: None,
                 last_album_header_click: None,
+                low_resource_mode,
+                db_needs_update: true, // Forzar primera actualización
             },
-            Task::none()
+            Task::none(),
         )
     }
     fn wake_up_controls(&mut self, is_mouse_move: bool) -> Task<Message> {
@@ -287,12 +302,19 @@ impl AudoxidyApp {
             Message::Tick => {
                 self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
                 
+                // 1. Limpieza de RAM (TTL agresivo) cada 5 segundos (50 ticks)
+                if self.player_ui_state.tick_count % 50 == 0 {
+                    crate::utils::covers::clear_expired_covers();
+                }
+                
                 if self.player_ui_state.is_active && self.player_ui_state.tick_count > self.player_ui_state.active_until_tick {
                     self.player_ui_state.is_active = false;
                 }
                 
                 // Actualizador de la base de datos de Biblioteca cada 2 segundos (20 ticks)
-                if self.player_ui_state.tick_count % 20 == 0 {
+                // THROTTLING: Solo realizamos consultas pesadas si el escáner está activo o si hubo cambios manuales
+                let is_scanning = self.scanner.is_scanning();
+                if self.player_ui_state.tick_count % 20 == 0 && (is_scanning || self.db_needs_update) {
                     if let Ok(db) = self.database.lock() {
                         if let Ok(mut albums) = db.get_all_albums() {
                             if let Some(col_ref) = self.library_manager.sort_column {
@@ -332,22 +354,35 @@ impl AudoxidyApp {
                             self.library_manager.total_size_bytes = size;
                         }
                     }
-                }
-                
-                // --- Cachear Portada del Álbum para evitar colapsar la VRAM de WGPU ---
-                if let Some(ref art) = state.album_art {
-                    if art.len() != self.player_ui_state.current_art_len {
-                        self.player_ui_state.current_art_len = art.len();
-                        self.player_ui_state.cached_art_handle = Some(iced::widget::image::Handle::from_bytes(art.clone()));
+                    
+                    // Si el escáner terminó, ya hicimos la última actualización arriba
+                    if !is_scanning {
+                        self.db_needs_update = false;
                     }
-                } else if self.player_ui_state.current_art_len != 0 {
-                    self.player_ui_state.current_art_len = 0;
-                    self.player_ui_state.cached_art_handle = None;
                 }
                 
+                // --- Sincronización Inteligente de Carátulas (Optimización de RAM/CPU) ---
+                self.sync_player_art();
+
+                // 2. Precarga inteligente (30 segundos antes de finalizar)
+                let duration = state.total_duration_sec;
+                let position = state.current_pos_sec;
+                
+                if duration > 0.0 {
+                    let remaining = duration - position;
+                    if remaining <= 30.0 && remaining > 29.5 { // Disparar una sola vez en este rango
+                        if let Some(next_song) = self.playlist_manager.get_next_song() {
+                            // Cargar metadatos y carátula de la siguiente canción
+                            let _ = crate::utils::covers::load_image_for_iced(&next_song.path);
+                        }
+                    }
+                }
+
                 if state.eof_reached {
                     self.audio_manager.clear_eof();
+                    crate::utils::covers::clear_raw_cache(); // Liberar RAM de la canción anterior
                     self.playlist_manager.play_next(&self.audio_manager);
+                    self.sync_player_art();
                 }
                 Task::none()
             }
@@ -356,11 +391,15 @@ impl AudoxidyApp {
                 self.wake_up_controls(false)
             }
             Message::NextTrack => {
+                crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_next(&self.audio_manager);
+                self.sync_player_art();
                 self.wake_up_controls(false)
             }
             Message::PreviousTrack => {
+                crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_prev(&self.audio_manager);
+                self.sync_player_art();
                 self.wake_up_controls(false)
             }
             Message::Stop => {
@@ -395,6 +434,7 @@ impl AudoxidyApp {
                     duration_sec: 0.0,
                     year: song.release_year.clone().unwrap_or_else(|| "".to_string()),
                     path: song.full_file_path.clone(),
+                    cover_cache_path: song.compressed_cached_cover_root.clone(),
                 };
 
                 self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.push(playlist_item);
@@ -415,6 +455,7 @@ impl AudoxidyApp {
                         duration_sec: 0.0, // Default duration, will be updated by active player if needed
                         year: s.release_year.clone().unwrap_or_else(|| "".to_string()),
                         path: s.full_file_path.clone(),
+                        cover_cache_path: s.compressed_cached_cover_root.clone(),
                     }
                 }).collect();
 
@@ -426,7 +467,8 @@ impl AudoxidyApp {
             }
             Message::PlaySongIndex(idx) => {
                 self.playlist_manager.playing_song_idx = Some(idx);
-                if let Some(song) = self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx) {
+                if let Some(song) = self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx).cloned() {
+                    self.sync_player_art();
                     if let Err(e) = self.audio_manager.load_file(&song.path) {
                         tracing::error!("Error reproduciendo archivo: {}", e);
                     } else {
@@ -444,10 +486,10 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
-                self.scanner.scan_folder_async(folder);
+                self.scanner.clone().scan_folder_async(folder);
+                self.db_needs_update = true;
                 // Forzamos un refresco inicial para ver los primeros resultados pronto
-                self.player_ui_state.tick_count = 0;
-                self.update(Message::Tick)
+                return self.update(Message::Tick);
             }
             Message::SearchQueryChanged(q) => {
                 self.playlist_manager.search_query = q;
@@ -855,6 +897,8 @@ impl AudoxidyApp {
             }
             Message::LibraryScroll(viewport) => {
                 self.library_manager.last_viewport = Some(viewport);
+                // Limpieza proactiva del caché durante el scroll para evitar picos de RAM
+                crate::utils::covers::clear_expired_covers();
                 Task::none()
             }
             Message::LibraryDeselect => {
@@ -930,6 +974,9 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ChangeLibraryViewMode(mode) => {
+                // Limpieza agresiva de RAM al cambiar de vista para cumplir con las restricciones de Audoxidy
+                crate::utils::covers::clear_all_cover_cache();
+                
                 self.library_manager.view_mode = mode;
                 self.library_manager.view_menu_open = false;
                 
@@ -1020,11 +1067,11 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::OpenFolderPicker => {
-                // TODO: Iced no soporta rfd síncrono muy bien durante update. Se requerirá un thread spawn.
-                // Para simplificar, usaremos the rfd en un custom Task.
+                // Iced no soporta rfd síncrono muy bien durante el update (bloquea el UI loop).
+                // Sin embargo, para este caso simple, pick_folder() es lo más directo.
                 if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                     let path_str = folder.to_string_lossy().to_string();
-                    self.scanner.scan_folder_async(path_str);
+                    return self.update(Message::ScanLibrary(path_str));
                 }
                 Task::none()
             }
@@ -1140,6 +1187,44 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::NoOp => Task::none(),
+        }
+    }
+
+    fn sync_player_art(&mut self) {
+        let audio_state = self.audio_manager.get_state();
+        
+        // 1. Verificar si la pista ha cambiado realmente para evitar procesar arte en cada tick
+        if self.player_ui_state.current_art_id == audio_state.path && !audio_state.path.is_empty() {
+             return; 
+        }
+
+        // 2. Intentar obtener AVIF de la playlist
+        let mut avif_path = None;
+        if let Some(idx) = self.playlist_manager.playing_song_idx {
+            if let Some(song) = self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx) {
+                if song.path == audio_state.path {
+                    avif_path = song.cover_cache_path.clone();
+                }
+            }
+        }
+
+        if let Some(path) = avif_path {
+            if let Some(handle) = crate::utils::covers::load_image_for_iced(&path) {
+                self.player_ui_state.cached_art_handle = Some(handle);
+                self.player_ui_state.current_art_id = audio_state.path.clone();
+                return;
+            }
+        }
+
+        // 3. Fallback RAW (AudioManager): Solo si no hay caché o falló la carga
+        if let Some(ref art) = audio_state.album_art {
+             // Clonamos y creamos el Handle UNA SOLA VEZ al iniciar el track
+             self.player_ui_state.cached_art_handle = Some(iced::widget::image::Handle::from_bytes(art.clone()));
+             self.player_ui_state.current_art_id = audio_state.path.clone();
+        } else {
+             // Sin arte
+             self.player_ui_state.cached_art_handle = None;
+             self.player_ui_state.current_art_id = audio_state.path.clone();
         }
     }
 
@@ -1264,7 +1349,15 @@ impl AudoxidyApp {
             let mut mem_stat = None;
             if let Some(songs) = &self.library_manager.filtered_songs {
                 let alb_songs: Vec<_> = songs.iter()
-                    .filter(|s| s.album.as_ref() == Some(album_sample_path))
+                    .filter(|s| {
+                        // Generar el ID al vuelo para comparar con el hash de la vista Grid
+                        let id = crate::utils::covers::generate_album_id(
+                            s.album_artist.as_deref().or(s.artist.as_deref()).unwrap_or("Desconocido"),
+                            s.album.as_deref().unwrap_or("Desconocido")
+                        );
+                        
+                        s.album.as_ref() == Some(album_sample_path) || id == *album_sample_path
+                    })
                     .collect();
                 if !alb_songs.is_empty() {
                     mem_stat = Some(crate::gui::library::LibraryStats {

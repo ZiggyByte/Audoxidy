@@ -17,6 +17,7 @@ pub struct PlaylistItem {
     pub duration_sec: f32,
     pub year: String,
     pub path: String,
+    pub cover_cache_path: Option<String>,
 }
 
 pub struct PlaylistManager {
@@ -93,6 +94,26 @@ impl PlaylistManager {
 
         self.playing_song_idx = Some(next_idx);
         if let Err(e) = audio_manager.load_file(&list[next_idx].path) { tracing::error!("Error: {}", e); } else { audio_manager.play(); }
+    }
+
+    /// Obtiene la siguiente canción en la lista sin modificar el estado actual (para precarga)
+    pub fn get_next_song(&self) -> Option<&PlaylistItem> {
+        if self.lists.is_empty() || self.lists[self.active_list_idx].1.is_empty() { return None; }
+        let list = &self.lists[self.active_list_idx].1;
+        let len = list.len();
+        
+        let next_idx = if self.shuffle_active {
+            // Nota: Aquí no podemos predecir el siguiente aleatorio si el estado cambia,
+            // pero podemos dar una aproximación o el siguiente lineal.
+            return None; 
+        } else if let Some(idx) = self.playing_song_idx {
+            let n = idx + 1;
+            if n < len { n } else if self.repeat_mode == 1 { 0 } else { return None; }
+        } else {
+            0
+        };
+        
+        list.get(next_idx)
     }
 }
 

@@ -116,6 +116,7 @@ pub struct AudioState {
     pub title: String,
     pub artist: String,
     pub album_art: Option<Vec<u8>>,
+    pub path: String,
     pub eof_reached: bool,
 
     pub device_sample_rate: u32,
@@ -146,6 +147,7 @@ impl Default for AudioState {
             title: "Sin título".to_string(),
             artist: "Artista desconocido".to_string(),
             album_art: None,
+            path: String::new(),
             eof_reached: false,
 
             device_sample_rate: 44100, // Default Match
@@ -1014,5 +1016,6 @@ impl AudioEngine {
         s.title = title;
         s.artist = artist;
         s.album_art = album_art;
+        s.path = path.to_string();
     }
 }

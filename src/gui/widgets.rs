@@ -161,8 +161,125 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
 
     mouse_area(content)
         .on_press(action)
-        .interaction(iced::mouse::Interaction::Idle)
+        .interaction(iced::mouse::Interaction::Pointer)
         .into()
+}
+
+/// Estilos de Placeholder para el widget de carátulas
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum PlaceholderStyle {
+    /// Versión grande (Grid, Lista Detallada): Icono 96px + Texto "AuDoxiDY"
+    Large,
+    /// Versión pequeña (Thumbnail List): Solo icono
+    Small,
+    /// Versión específica del reproductor (Solo texto)
+    Player,
+}
+
+/// Widget global para mostrar carátulas de álbumes de forma eficiente y consistente.
+/// Soporta: Caché AVIF (Prioridad 1) -> Datos binarios crudos (Prioridad 2) -> Placeholder Automático.
+pub fn album_art_widget<'a, Message: 'a>(
+    avif_path: Option<&String>,
+    raw_data: Option<&Vec<u8>>,
+    preloaded_handle: Option<iced::widget::image::Handle>,
+    style: PlaceholderStyle,
+    bounds: Length,
+    radius: f32,
+) -> Element<'a, Message> {
+    // 1. Usar handle precargado si existe (Prioridad 0 - Máximo rendimiento)
+    let mut handle_opt = preloaded_handle;
+
+    // 2. Intentar cargar desde la caché de archivos AVIF (Prioridad 1)
+    if handle_opt.is_none() {
+        handle_opt = avif_path.and_then(|p| crate::utils::covers::load_image_for_iced(p));
+    }
+    
+    // 3. Fallback: Cargar desde bytes crudos (Prioridad 2)
+    if handle_opt.is_none() {
+        if let Some(data) = raw_data {
+            handle_opt = crate::utils::covers::load_raw_image_for_iced(data);
+        }
+    }
+
+    if let Some(handle) = handle_opt {
+        container(
+            iced::widget::image(handle)
+                .width(bounds)
+                .height(bounds)
+                .content_fit(iced::ContentFit::Cover)
+        )
+        .width(bounds)
+        .height(bounds)
+        .style(move |_t: &Theme| {
+            container::Style::default()
+                .border(iced::Border { radius: radius.into(), ..Default::default() })
+        })
+        .clip(true)
+        .into()
+    } else {
+        // 4. Fallback: Placeholder Automático basado en el estilo solicitado
+        match style {
+            PlaceholderStyle::Large => {
+                container(
+                    column![
+                        svg(svg::Handle::from_path("assets/icons/album.svg"))
+                            .width(Length::Fixed(96.0))
+                            .height(Length::Fixed(96.0))
+                            .style(|_t: &Theme, _s| svg::Style { color: Some(Color::from(COLOR_TEXT_SECONDARY)) }),
+                        text("AuDoxiDY")
+                            .font(crate::gui::theme::FONT_STAGE_WANDER)
+                            .size(11)
+                            .color(COLOR_TEXT_SECONDARY)
+                    ]
+                    .align_x(Alignment::Center)
+                    .spacing(5)
+                )
+                .width(bounds)
+                .height(bounds)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .style(move |_t: &Theme| {
+                    container::Style::default()
+                        .background(COLOR_BG)
+                        .border(iced::Border { radius: radius.into(), ..Default::default() })
+                })
+                .into()
+            }
+            PlaceholderStyle::Small => {
+                container(
+                    svg(svg::Handle::from_path("assets/icons/album.svg"))
+                        .width(Length::Fixed(20.0))
+                        .height(Length::Fixed(20.0))
+                        .style(|_t: &Theme, _s| svg::Style { color: Some(Color::from(COLOR_TEXT_SECONDARY)) })
+                )
+                .width(bounds)
+                .height(bounds)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .style(move |_t: &Theme| {
+                    container::Style::default()
+                        .background(COLOR_BG)
+                        .border(iced::Border { radius: radius.into(), ..Default::default() })
+                })
+                .into()
+            }
+            PlaceholderStyle::Player => {
+                container(
+                    text("AuDoxiDY")
+                        .font(crate::gui::theme::FONT_STAGE_WANDER)
+                        .size(40)
+                        .color(COLOR_TEXT_PRIMARY)
+                )
+                .width(bounds)
+                .height(bounds)
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+                .padding(20)
+                .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+                .into()
+            }
+        }
+    }
 }
 
 pub fn custom_scrollbar_style(
@@ -487,48 +604,14 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
 
-    // --- Thumbnail del álbum — ancho FIJO 42px, no se ve afectado por column_widths ---
-    // Usar compressed_cached_cover_root preferentemente antes que original_cover_root
-    let cover_path = song.compressed_cached_cover_root.as_ref()
-        .or(song.original_cover_root.as_ref());
-
-    let thumb_img: Element<'a, Message> = if let Some(path) = cover_path {
-        container(
-            iced::widget::image::Image::new(iced::widget::image::Handle::from_path(path.clone()))
-                .width(Length::Fixed(32.0))
-                .height(Length::Fixed(32.0))
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(4.0)
-        )
-        .width(Length::Fixed(32.0))
-        .height(Length::Fixed(32.0))
-        .style(|_t: &Theme| {
-            container::Style::default()
-                .border(iced::Border { radius: 4.0.into(), ..Default::default() })
-        })
-        .clip(true)
-        .into()
-    } else {
-        // Placeholder: mismo estilo que las tarjetas del Grid sin portada (COLOR_BG + bordes redondeados)
-        container(
-            iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/album.svg"))
-                .width(Length::Fixed(20.0))
-                .height(Length::Fixed(20.0))
-                .style(|_t: &Theme, _s| iced::widget::svg::Style {
-                    color: Some(Color::from(COLOR_TEXT_SECONDARY)),
-                })
-        )
-        .width(Length::Fixed(32.0))
-        .height(Length::Fixed(32.0))
-        .align_x(iced::alignment::Horizontal::Center)
-        .align_y(iced::alignment::Vertical::Center)
-        .style(|_t: &Theme| {
-            container::Style::default()
-                .background(Color::from(COLOR_BG))
-                .border(iced::Border { radius: 4.0.into(), ..Default::default() })
-        })
-        .into()
-    };
+    let thumb_img = album_art_widget(
+        song.compressed_cached_cover_root.as_ref(),
+        None,
+        None,
+        PlaceholderStyle::Small,
+        Length::Fixed(32.0),
+        4.0,
+    );
 
     // Columna del thumbnail: siempre 42px fija + 10px padding a cada lado
     let thumb_col: Element<'a, Message> = container(thumb_img)
@@ -960,29 +1043,14 @@ where
                 let cover_path = manager.cached_albums.as_ref()
                     .and_then(|albums| albums.iter().find(|a| a.1 == album_id).and_then(|a| a.5.clone()));
 
-                let card_wrapper: Element<'a, crate::gui::app::Message> = if let Some(path) = cover_path {
-                    container(
-                        iced::widget::image(iced::widget::image::Handle::from_path(path))
-                            .width(Length::Fixed(card_w - 30.0))
-                            .height(Length::Fixed(card_w - 30.0))
-                            .content_fit(iced::ContentFit::Cover)
-                            .border_radius(8.0)
-                    ).width(Length::Fixed(card_w - 30.0))
-                     .height(Length::Fixed(card_w - 30.0))
-                     .style(|_t| container::Style::default().border(iced::Border { radius: 8.0.into(), ..Default::default() }))
-                     .clip(true)
-                     .into()
-                } else {
-                    let icon = iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/album.svg"))
-                        .width(Length::Fixed(64.0)).height(Length::Fixed(64.0))
-                        .style(|_t: &Theme, _s| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) });
-                    let title_text = text("AuDoxiDY").font(crate::gui::theme::FONT_STAGE_WANDER).size(11).color(COLOR_TEXT_SECONDARY);
-                    container(column![icon, title_text].align_x(Alignment::Center).spacing(5))
-                        .width(Length::Fixed(card_w - 30.0)).height(Length::Fixed(card_w - 30.0)).center_x(Length::Fill).center_y(Length::Fill)
-                        .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_BG)).border(iced::Border { radius: 8.0.into(), ..Default::default() }))
-                        .clip(true)
-                        .into()
-                };
+                let card_wrapper = album_art_widget(
+                    cover_path.as_ref(), // AVIF Path
+                    None,                // RAW Data
+                    None,                // Preloaded Handle
+                    PlaceholderStyle::Large,
+                    Length::Fixed(card_w - 30.0),
+                    8.0,
+                );
 
                 let info_col = column![
                     text(truncate_text(&artist_name, 24)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),

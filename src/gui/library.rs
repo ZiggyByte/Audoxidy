@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space, image},
+    widget::{button, column, container, row, scrollable, text, text_input, Space},
     Alignment, Color, Element, Length, Theme, Task,
 };
 use std::sync::{Arc, Mutex};
@@ -786,9 +786,21 @@ pub fn view<'a>(
                     // Actualiza el valor real de columnas para que LibraryKeyNav lo use
                     manager.albums_per_row.set(columns_count);
 
+                    let mut row_idx = 0;
                     for row_chunk in db_albums.chunks(columns_count) {
                         let mut current_row = row![].spacing(5);
                         let mut active_expansion: Option<String> = None;
+
+                        // Determinar visibilidad de la fila para Lazy Loading
+                        let is_row_visible = if let Some(vp) = &manager.last_viewport {
+                            let row_y = row_idx as f32 * 258.0;
+                            let view_top = vp.absolute_offset().y;
+                            let view_bottom = view_top + vp.bounds().height;
+                            // Cargar con margen de seguridad reducido (media pantalla arriba y abajo)
+                            row_y >= view_top - 300.0 && row_y <= view_bottom + 300.0
+                        } else {
+                            row_idx < 3 // Cargar solo las primeras 3 filas si no hay viewport
+                        };
 
                         for (album_id, album, artist, genre, year, cover_path) in row_chunk {
                             let is_expanded = manager.expanded_album.as_deref() == Some(album_id.as_str());
@@ -796,35 +808,17 @@ pub fn view<'a>(
                                 active_expansion = Some(album_id.clone());
                             }
 
-                            let album_art: Element<'a, Message> = if let Some(path) = cover_path {
-                                container(
-                                    image(iced::widget::image::Handle::from_path(path.clone()))
-                                        .width(Length::Fixed(158.0))
-                                        .height(Length::Fixed(158.0))
-                                        .content_fit(iced::ContentFit::Cover)
-                                        .border_radius(8.0)
-                                )
-                                .width(Length::Fixed(158.0))
-                                .height(Length::Fixed(158.0))
-                                .style(|_t| container::Style::default().border(iced::Border { radius: 8.0.into(), ..Default::default() }))
-                                .clip(true)
-                                .into()
-                            } else {
-                                let icon = iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/album.svg"))
-                                    .width(Length::Fixed(96.0))
-                                    .height(Length::Fixed(96.0))
-                                    .style(|_t: &Theme, _s| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) });
-                                let title_text = text("AuDoxiDY").font(crate::gui::theme::FONT_STAGE_WANDER).size(11).color(COLOR_TEXT_SECONDARY);
-                                
-                                container(column![icon, title_text].align_x(Alignment::Center).spacing(5))
-                                    .width(Length::Fixed(158.0))
-                                    .height(Length::Fixed(158.0))
-                                    .center_x(Length::Fill)
-                                    .center_y(Length::Fill)
-                                    .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_BG)).border(iced::Border { radius: 8.0.into(), ..Default::default() }))
-                                    .clip(true)
-                                    .into()
-                            };
+                            // LAZY LOADING: Solo pasar la ruta si la fila es visible
+                            let effective_cover = if is_row_visible { cover_path.as_ref() } else { None };
+
+                            let album_art = crate::gui::widgets::album_art_widget(
+                                effective_cover,     // AVIF Path (Solo si es visible)
+                                None,                // RAW Data
+                                None,                // Preloaded Handle
+                                crate::gui::widgets::PlaceholderStyle::Large,
+                                Length::Fixed(158.0),
+                                8.0,
+                            );
                             
                             let info_col = column![
                                 text(truncate_text(artist, 20)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
@@ -955,6 +949,7 @@ pub fn view<'a>(
                                 .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
                             grid_col = grid_col.push(exp_container);
                         }
+                        row_idx += 1;
                     }
 
                     // El closure ahora solo devuelve el grid (SIN scrollable)

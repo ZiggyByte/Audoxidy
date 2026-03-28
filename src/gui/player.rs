@@ -29,7 +29,7 @@ pub struct PlayerUiState {
     pub is_menu_open: bool,
     pub volume_tick_id: u64,
     pub tick_count: u64,
-    pub current_art_len: usize,
+    pub current_art_id: String,
     pub cached_art_handle: Option<iced::widget::image::Handle>,
     pub mouse_pos: Option<iced::Point>,
     pub active_until_tick: u64,
@@ -45,7 +45,7 @@ impl Default for PlayerUiState {
             is_menu_open: false,
             volume_tick_id: 0,
             tick_count: 0,
-            current_art_len: 0,
+            current_art_id: String::new(),
             cached_art_handle: None,
             mouse_pos: None,
             active_until_tick: 0,
@@ -62,28 +62,14 @@ pub fn view<'a>(
     let state = audio_manager.get_state();
     let bounds = Length::Fixed(400.0);
 
-    // --- Capa 1 y 2: Fondo y Cover Art / Logo ---
-    let background_layer: Element<'a, Message> = if let Some(handle) = ui_state.cached_art_handle.clone() {
-        let img = iced::widget::image(handle)
-            .width(bounds)
-            .height(bounds)
-            .content_fit(iced::ContentFit::Cover);
-        container(img).width(bounds).height(bounds).into()
-    } else {
-        container(
-            text("AuDoxiDY")
-                .font(FONT_STAGE_WANDER)
-                .size(40)
-                .color(COLOR_TEXT_PRIMARY)
-        )
-        .width(bounds)
-        .height(bounds)
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .padding(20)
-        .style(|_theme: &Theme| container::Style::default().background(COLOR_BG))
-        .into()
-    };
+    let background_layer = crate::gui::widgets::album_art_widget(
+        None, // No pasamos el path aquí ya que el player gestiona su propio handle precargado
+        None, // No pasamos los bytes aquí ya que el player gestiona su propio handle precargado
+        ui_state.cached_art_handle.clone(),
+        crate::gui::widgets::PlaceholderStyle::Player,
+        bounds,
+        0.0, // El reproductor principal es cuadrado (sin redondeo)
+    );
 
     // --- Capa 3: Oscurecimiento ---
     let blackout_layer: Element<'a, Message> = container(opaque(

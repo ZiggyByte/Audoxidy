@@ -780,9 +780,10 @@ pub fn view<'a>(
                     
                     // Cálculo de columnas
                     let card_w = 180.0;
+                    let max_cols = if crate::utils::is_low_resource() { 4 } else { 7 };
                     let mut columns_count = (size.width / card_w).floor() as usize;
                     if columns_count < 2 { columns_count = 2; }
-                    if columns_count > 7 { columns_count = 7; }
+                    if columns_count > max_cols { columns_count = max_cols; }
                     // Actualiza el valor real de columnas para que LibraryKeyNav lo use
                     manager.albums_per_row.set(columns_count);
 
@@ -792,14 +793,14 @@ pub fn view<'a>(
                         let mut active_expansion: Option<String> = None;
 
                         // Determinar visibilidad de la fila para Lazy Loading
+                        let lazy_margin = if crate::utils::is_low_resource() { 150.0 } else { 300.0 };
                         let is_row_visible = if let Some(vp) = &manager.last_viewport {
                             let row_y = row_idx as f32 * 258.0;
                             let view_top = vp.absolute_offset().y;
                             let view_bottom = view_top + vp.bounds().height;
-                            // Cargar con margen de seguridad reducido (media pantalla arriba y abajo)
-                            row_y >= view_top - 300.0 && row_y <= view_bottom + 300.0
+                            row_y >= view_top - lazy_margin && row_y <= view_bottom + lazy_margin
                         } else {
-                            row_idx < 3 // Cargar solo las primeras 3 filas si no hay viewport
+                            row_idx < 3
                         };
 
                         for (album_id, album, artist, genre, year, cover_path) in row_chunk {

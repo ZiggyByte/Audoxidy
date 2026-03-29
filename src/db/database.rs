@@ -324,6 +324,24 @@ impl Database {
         Ok(stats)
     }
 
+    /// Obtiene estadísticas de un álbum usando su hash (ALBUM_ID_HASH) directamente.
+    /// Usado por la vista Grid donde selected_album contiene el hash, no un file_path.
+    pub fn get_album_stats_by_hash(&self, album_hash: &str) -> Result<(u64, f64, f64)> {
+        let mut stmt = self.conn.prepare("
+            SELECT COUNT(*), COALESCE(SUM(DURATION_SECS), 0.0), COALESCE(SUM(SIZE), 0.0) 
+            FROM MUSIC_LIBRARY 
+            WHERE ALBUM_ID_HASH = ?1
+        ")?;
+        let stats = stmt.query_row(params![album_hash], |row| {
+            Ok((
+                row.get::<_, i64>(0).unwrap_or(0) as u64,
+                row.get::<_, f64>(1).unwrap_or(0.0),
+                row.get::<_, f64>(2).unwrap_or(0.0),
+            ))
+        })?;
+        Ok(stats)
+    }
+
     pub fn get_songs_by_album(&self, album_id_hash: &str) -> Result<Vec<SongData>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 

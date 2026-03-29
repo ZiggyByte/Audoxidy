@@ -189,9 +189,9 @@ pub fn album_art_widget<'a, Message: 'a>(
     // 1. Usar handle precargado si existe (Prioridad 0 - Máximo rendimiento)
     let mut handle_opt = preloaded_handle;
 
-    // 2. Intentar cargar desde la caché de archivos AVIF (Prioridad 1)
+    // 2. Intentar cargar desde archivo AVIF en disco (Prioridad 1) — sin caché RAM
     if handle_opt.is_none() {
-        handle_opt = avif_path.and_then(|p| crate::utils::covers::load_image_for_iced(p));
+        handle_opt = avif_path.and_then(|p| crate::utils::covers::load_cover_handle(p));
     }
     
     // 3. Fallback: Cargar desde bytes crudos (Prioridad 2)

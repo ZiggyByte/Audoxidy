@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use lofty::probe::Probe;
 use lofty::prelude::{TaggedFileExt, AudioFile, ItemKey};
 use lofty::tag::Accessor;
@@ -7,39 +7,27 @@ use walkdir::WalkDir;
 
 use crate::db::database::Database;
 
-use std::sync::atomic::{AtomicBool, Ordering};
-
 pub struct Scanner {
     _db: Arc<Mutex<Database>>,
-    is_scanning: AtomicBool,
+    pub db_dirty: Arc<AtomicBool>,
 }
 
 impl Scanner {
+    #[allow(dead_code)]
     pub fn new(db: Arc<Mutex<Database>>) -> Self {
-        Self { 
-            _db: db,
-            is_scanning: AtomicBool::new(false),
-        }
-    }
-
-    pub fn is_scanning(&self) -> bool {
-        self.is_scanning.load(Ordering::SeqCst)
+        Self { _db: db, db_dirty: Arc::new(AtomicBool::new(false)) }
     }
     
     // Escaneo asíncrono
-    pub fn scan_folder_async(self: Arc<Self>, folder_path: String) {
+    pub fn scan_folder_async(&self, folder_path: String) {
         let db_arc = Arc::clone(&self._db);
-        let scanner_arc = Arc::clone(&self);
-        
-        self.is_scanning.store(true, Ordering::SeqCst);
-        
+        let dirty_flag = Arc::clone(&self.db_dirty);
         std::thread::spawn(move || {
-            Self::scan_folder(&db_arc, &folder_path);
-            scanner_arc.is_scanning.store(false, Ordering::SeqCst);
+            Self::scan_folder(&db_arc, &folder_path, &dirty_flag);
         });
     }
 
-    fn scan_folder(db_m: &Arc<Mutex<Database>>, root: &str) {
+    fn scan_folder(db_m: &Arc<Mutex<Database>>, root: &str, dirty_flag: &Arc<AtomicBool>) {
         let supported_extensions = ["mp3", "flac", "wav", "ogg", "m4a"];
         
         let start_order = {
@@ -72,6 +60,8 @@ impl Scanner {
                                 let _ = db.commit_transaction();
                                 let _ = db.begin_transaction();
                             }
+                            // Señalizar a la UI que la BD tiene nuevos datos
+                            dirty_flag.store(true, Ordering::Relaxed);
                         }
                     }
                 }
@@ -83,8 +73,9 @@ impl Scanner {
             let _ = db.commit_transaction();
         }
 
-        // Al finalizar el bucle de escaneo de archivos, sugerimos liberar memoria de carátulas
+        // Al finalizar el escaneo, limpiar caché negativa y señalizar a la UI
         crate::utils::covers::clear_all_cover_cache();
+        dirty_flag.store(true, Ordering::Relaxed);
     }
 
     fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>) {
@@ -152,7 +143,7 @@ impl Scanner {
                     
                     record.album_artist = t.get_string(ItemKey::AlbumArtist).map(|s| s.to_string());
                     if record.album_artist.is_some() {
-                        // En 0.23 lofty resuelve ALBUM ARTIST por nosotros de manera estándar
+                        // En 0.23 lofty resuelve ALBUM ARTIST de manera estándar
                         record.album_artist_tag_format = Some("ALBUMARTIST".to_string());
                     }
                     

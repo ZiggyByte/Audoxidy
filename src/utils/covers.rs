@@ -1,20 +1,13 @@
 use std::path::PathBuf;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::OnceLock;
 use parking_lot::Mutex;
 use sha2::{Sha256, Digest};
-use std::time::{Instant, Duration};
-use image::{load_from_memory, ExtendedColorType, ImageEncoder};
+use image::{ExtendedColorType, ImageEncoder};
 use image::codecs::avif::AvifEncoder;
 use fast_image_resize::images::Image;
 use fast_image_resize::{Resizer, ResizeOptions, FilterType, ResizeAlg};
 use rayon::ThreadPoolBuilder;
-
-/// Estructura para gestionar el TTL de una carátula en RAM
-pub struct CachedHandle {
-    pub handle: iced::widget::image::Handle,
-    pub last_access: Instant,
-}
 
 /// Instancia estática del Thread Pool limitado para tareas de fondo
 pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
@@ -22,25 +15,22 @@ pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 /// Canal limitado para controlar la presión de memoria durante el escaneado
 static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = OnceLock::new();
 
-/// Caché estática gráfica en memoria para listados de Iced (Con TTL de 1 minuto)
-pub static IMAGE_HANDLE_CACHE: OnceLock<Mutex<HashMap<String, CachedHandle>>> = OnceLock::new();
-/// Caché para imágenes temporales desde bytes (como las del reproductor)
-pub static RAW_HANDLE_CACHE: OnceLock<Mutex<HashMap<u64, iced::widget::image::Handle>>> = OnceLock::new();
-/// Almacena rutas de archivos que fallaron al decodificar
+/// Almacena rutas de archivos que fallaron o no existen (evita reintentos)
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-const MEMORY_TTL: Duration = Duration::from_secs(30); // Reducido a 30s para mayor agresividad
-const MAX_CACHE_SIZE: usize = 50; // Límite de carátulas simultáneas en RAM (Grid usa ~50)
 
 pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     COVER_POOL.get_or_init(|| {
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        let target = (cores * 2) / 3;
-        let pool_size = if target == 0 { 1 } else { target };
+        // Low-resource: máx 2 hilos. Normal: mitad de los procesadores
+        let pool_size = if crate::utils::is_low_resource() {
+            (cores / 2).clamp(1, 2)
+        } else {
+            (cores / 2).max(1)
+        };
 
         ThreadPoolBuilder::new()
             .num_threads(pool_size)
-            .stack_size(8 * 1024 * 1024) // 8MB por hilo para máxima estabilidad con AVIF/ravif
+            .stack_size(8 * 1024 * 1024) // 8MB por hilo — estabilidad con AVIF/ravif
             .thread_name(|idx| format!("cover-cache-worker-{}", idx))
             .build()
             .unwrap()
@@ -76,38 +66,8 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
     let _ = tx.send((data, hash));
 }
 
-/// Libera manualmente toda la memoria RAM ocupada por los Handles que han superado el TTL.
-pub fn clear_expired_covers() {
-    if let Some(cache_mtx) = IMAGE_HANDLE_CACHE.get() {
-        let mut cache = cache_mtx.lock();
-        let now = Instant::now();
-        
-        // 1. Eliminar por tiempo
-        cache.retain(|_, v| now.duration_since(v.last_access) < MEMORY_TTL);
-        
-        // 2. Si aún supera el límite, eliminar los más antiguos (LRU simplificado)
-        if cache.len() > MAX_CACHE_SIZE {
-            let mut items: Vec<_> = cache.iter().map(|(k, v)| (k.clone(), v.last_access)).collect();
-            items.sort_by_key(|&(_, last)| last);
-            let to_remove = items.len() - MAX_CACHE_SIZE;
-            for i in 0..to_remove {
-                cache.remove(&items[i].0);
-            }
-        }
-    }
-}
-
-/// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
-pub fn clear_raw_cache() {
-    if let Some(cache_mtx) = RAW_HANDLE_CACHE.get() {
-        cache_mtx.lock().clear();
-    }
-}
-
+/// Limpia la caché negativa (archivos que fallaron). Útil tras re-escaneo.
 pub fn clear_all_cover_cache() {
-    if let Some(cache_mtx) = IMAGE_HANDLE_CACHE.get() {
-        cache_mtx.lock().clear();
-    }
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
         neg_cache_mtx.lock().clear();
     }
@@ -183,14 +143,10 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     Ok(dst_path)
 }
 
-/// Lee de forma síncrona desde el disco cualquier imagen (avif, png, jpeg) decodificándola
-/// con el crate interno de `image` y lo transforma en pixéles crudos (RGBA8) compatibles
-/// con el buffer que `iced` necesita. Ahora utiliza memoria local Hash para evitar recargas en Iced Layouts!
-/// Esta es la solución puente definitiva para mostrar AVIF nativo.
-/// Lee de forma síncrona desde el disco cualquier imagen (avif, png, jpeg) decodificándola
-/// Implementa una política de RAM estricta: Actualiza last_access para el TTL.
-pub fn load_image_for_iced(path: &str) -> Option<iced::widget::image::Handle> {
-    let cache_mtx = IMAGE_HANDLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+/// Carga una carátula desde disco usando Handle::from_path() de Iced.
+/// Iced gestiona internamente la decodificación y la memoria.
+/// Arquitectura: Disco AVIF → Iced (sin caché RAM intermedia).
+pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     let neg_cache_mtx = NEGATIVE_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
 
     // 1. Verificar si el archivo ya falló anteriormente
@@ -198,84 +154,26 @@ pub fn load_image_for_iced(path: &str) -> Option<iced::widget::image::Handle> {
         return None;
     }
 
-    // 2. Verificar caché positiva y actualizar acceso
-    let mut cache = cache_mtx.lock();
-    if let Some(cached) = cache.get_mut(path) {
-        cached.last_access = Instant::now();
-        return Some(cached.handle.clone());
+    // 2. Verificar que el archivo existe en disco
+    let file_path = std::path::Path::new(path);
+    if !file_path.exists() {
+        neg_cache_mtx.lock().insert(path.to_string());
+        return None;
     }
 
-    // Carga desde disco
-    if let Ok(bytes) = std::fs::read(path) {
-        match load_from_memory(&bytes) {
-            Ok(img) => {
-                let rgba = img.into_rgba8();
-                let (width, height) = rgba.dimensions();
-                let handle = iced::widget::image::Handle::from_rgba(
-                    width,
-                    height,
-                    rgba.into_raw(),
-                );
-                cache.insert(path.to_string(), CachedHandle {
-                    handle: handle.clone(),
-                    last_access: Instant::now(),
-                });
-                return Some(handle);
-            }
-            Err(_) => {
-                neg_cache_mtx.lock().insert(path.to_string());
-            }
-        }
-    }
-    None
+    // 3. Delegar la carga completa a Iced — cero RAM en nuestro lado
+    Some(iced::widget::image::Handle::from_path(path))
 }
 
-/// Función de conveniencia para cargar imágenes sin caché (carga directa disco -> RAM temporal)
-pub fn load_direct_from_disk(path: &str) -> Option<iced::widget::image::Handle> {
-    if let Ok(bytes) = std::fs::read(path) {
-        if let Ok(img) = image::load_from_memory(&bytes) {
-            let rgba = img.into_rgba8();
-            let (width, height) = rgba.dimensions();
-            return Some(iced::widget::image::Handle::from_rgba(width, height, rgba.into_raw()));
-        }
-    }
-    None
-}
-
-/// Carga una imagen desde bytes crudos (fallback) utilizando una caché basada en hash
-/// para evitar que la interfaz se bloquee al clonar búferes pesados en el ciclo de dibujo.
+/// Carga una imagen desde bytes crudos (fallback del reproductor).
+/// Solo se usa cuando no hay carátula en caché de disco (datos embebidos del archivo de audio).
 pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handle> {
     if data.is_empty() { return None; }
-    
-    let cache_mtx = RAW_HANDLE_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    
-    // Generar un hash rápido del contenido para usarlo como ID
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    data.hash(&mut hasher);
-    let id = hasher.finish();
+    // Delegar a Iced directamente con los bytes crudos
+    Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
+}
 
-    let mut cache = cache_mtx.lock();
-    if let Some(handle) = cache.get(&id) {
-        return Some(handle.clone());
-    }
-
-    if cache.len() >= 50 { // Caché cruda más pequeña para ahorrar RAM
-        cache.clear();
-    }
-
-    match load_from_memory(data) {
-        Ok(img) => {
-            let rgba = img.into_rgba8();
-            let (width, height) = rgba.dimensions();
-            let handle = iced::widget::image::Handle::from_rgba(
-                width,
-                height,
-                rgba.into_raw(),
-            );
-            cache.insert(id, handle.clone());
-            Some(handle)
-        }
-        Err(_) => None
-    }
+/// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
+pub fn clear_raw_cache() {
+    // Ya no hay caché RAM propia — Iced gestiona internamente
 }

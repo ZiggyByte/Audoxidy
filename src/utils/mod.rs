@@ -2,6 +2,14 @@
 pub mod covers;
 use crate::db::database::SongData;
 
+/// Flag global de modo de bajos recursos (RAM < 8GB o Cores < 4)
+/// Se configura una sola vez al iniciar la aplicación.
+pub static LOW_RESOURCE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn is_low_resource() -> bool {
+    LOW_RESOURCE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortColumn {
     TrackNumber,

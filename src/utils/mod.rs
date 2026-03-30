@@ -2,6 +2,13 @@
 pub mod covers;
 use crate::db::database::SongData;
 
+pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
+    song.title.as_ref().map(|t| t.to_lowercase().contains(query_lowercase)).unwrap_or(false)
+    || song.artist.as_ref().map(|a| a.to_lowercase().contains(query_lowercase)).unwrap_or(false)
+    || song.album_artist.as_ref().map(|aa| aa.to_lowercase().contains(query_lowercase)).unwrap_or(false)
+    || song.album.as_ref().map(|al| al.to_lowercase().contains(query_lowercase)).unwrap_or(false)
+}
+
 /// Flag global de modo de bajos recursos (RAM < 8GB o Cores < 4)
 /// Se configura una sola vez al iniciar la aplicación.
 pub static LOW_RESOURCE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);

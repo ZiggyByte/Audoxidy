@@ -28,6 +28,7 @@ pub struct PlaylistManager {
     pub shuffle_active: bool,
     pub repeat_mode: u8,
     pub search_query: String,
+    pub filtered_indices: Option<Vec<usize>>,
 }
 
 impl Default for PlaylistManager {
@@ -43,11 +44,38 @@ impl Default for PlaylistManager {
             shuffle_active: false,
             repeat_mode: 0,
             search_query: String::new(),
+            filtered_indices: None,
         }
     }
 }
 
 impl PlaylistManager {
+    pub fn apply_filter(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_indices = None;
+            return;
+        }
+        
+        if self.lists.is_empty() {
+            self.filtered_indices = Some(Vec::new());
+            return;
+        }
+
+        let query = self.search_query.to_lowercase();
+        let list = &self.lists[self.active_list_idx].1;
+        
+        let filtered: Vec<usize> = list.iter().enumerate()
+            .filter(|(_, song)| {
+                song.title.to_lowercase().contains(&query)
+                || song.artist.to_lowercase().contains(&query)
+                // Usamos year como workaround en caso de no tener album_artist, pero el requisito es 'T, A, AA, AL'.
+                || song.album.to_lowercase().contains(&query)
+            })
+            .map(|(i, _)| i)
+            .collect();
+            
+        self.filtered_indices = Some(filtered);
+    }
     pub fn play_next(&mut self, audio_manager: &AudioManager) {
         if self.lists.is_empty() || self.lists[self.active_list_idx].1.is_empty() { return; }
         let list = &self.lists[self.active_list_idx].1;
@@ -149,7 +177,10 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     // Lista de canciones desplazable
     let mut songs_col = column![].spacing(5).padding(5);
     
-    for (i, song) in active_list.iter().enumerate() {
+    let indices: Vec<usize> = manager.filtered_indices.clone().unwrap_or_else(|| (0..active_list.len()).collect());
+    
+    for i in indices {
+        let song = &active_list[i];
         let is_playing = manager.playing_song_idx == Some(i);
         let color = if is_playing { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
         

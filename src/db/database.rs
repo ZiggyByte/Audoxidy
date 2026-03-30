@@ -1,4 +1,5 @@
 use rusqlite::{params, Connection, Result};
+use std::sync::Arc;
 
 pub struct Database {
     #[allow(dead_code)]
@@ -342,7 +343,7 @@ impl Database {
         Ok(stats)
     }
 
-    pub fn get_songs_by_album(&self, album_id_hash: &str) -> Result<Vec<SongData>> {
+    pub fn get_songs_by_album(&self, album_id_hash: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT 
             FROM MUSIC_LIBRARY 
@@ -370,12 +371,12 @@ impl Database {
         })?;
         let mut songs = Vec::new();
         for r in rows {
-            if let Ok(s) = r { songs.push(s); }
+            if let Ok(s) = r { songs.push(Arc::new(s)); }
         }
         Ok(songs)
     }
 
-    pub fn get_all_songs(&self) -> Result<Vec<SongData>> {
+    pub fn get_all_songs(&self) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
             SELECT FULL_FILE_PATH, TITLE, ARTIST, ALBUM, RELEASE_YEAR, TRACK_NUMBER, FORMAT, SIZE, SAMPLE_RATE, CHANNELS, DURATION_SECS, GENRE, BIT_DEPTH, ALBUM_ARTIST, ALBUM_ARTIST_TAG_FORMAT, ORIGINAL_COVER_ROOT, COMPRESSED_CACHED_COVER_ROOT
             FROM MUSIC_LIBRARY 
@@ -404,7 +405,7 @@ impl Database {
         })?;
         let mut songs = Vec::new();
         for r in rows {
-            if let Ok(s) = r { songs.push(s); }
+            if let Ok(s) = r { songs.push(Arc::new(s)); }
         }
         Ok(songs)
     }

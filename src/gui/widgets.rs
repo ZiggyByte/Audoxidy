@@ -207,6 +207,7 @@ pub fn album_art_widget<'a, Message: 'a>(
                 .width(bounds)
                 .height(bounds)
                 .content_fit(iced::ContentFit::Cover)
+                .border_radius(radius)
         )
         .width(bounds)
         .height(bounds)
@@ -673,7 +674,7 @@ pub fn universal_song_list<'a, F>(
     row_height: f32, // Altura estimada para virtualización
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&crate::db::database::SongData, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
@@ -714,7 +715,7 @@ where
     // Almacenamos si es Header o Fila
     enum VirtualRow<'a> {
         Header(&'a crate::gui::library::ArtistGroup, bool), // (group, is_collapsed)
-        Row(&'a crate::db::database::SongData, usize), // (song, global_idx)
+        Row(&'a std::sync::Arc<crate::db::database::SongData>, usize), // (song, global_idx)
     }
 
     let mut visible_elements = Vec::new();
@@ -855,7 +856,7 @@ pub fn detailed_song_list<'a, F>(
     row_height: f32, // 32.0
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&crate::db::database::SongData, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
@@ -877,7 +878,7 @@ where
     // Estructura para agrupar canciones por álbum mantieniendo el orden de las canciones
     struct AlbumGroup<'a> {
         album_name: String,
-        songs: Vec<(&'a crate::db::database::SongData, usize)>, // (song, global_idx)
+        songs: Vec<(&'a std::sync::Arc<crate::db::database::SongData>, usize)>, // (song, global_idx)
         duration_secs: f64,
     }
 

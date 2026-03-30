@@ -143,8 +143,8 @@ pub enum Message {
     ToggleShuffle,
 
     // Playlist
-    AddSongToPlaylist(crate::db::database::SongData),
-    PlayAlbum(Vec<crate::db::database::SongData>),
+    AddSongToPlaylist(std::sync::Arc<crate::db::database::SongData>),
+    PlayAlbum(Vec<std::sync::Arc<crate::db::database::SongData>>),
     PlaySongIndex(usize),
     ClearPlaylist,
 
@@ -170,7 +170,7 @@ pub enum Message {
     ToggleLibraryAddDropdown,
     PlayLibrarySelection,
     PlayLibraryAll,
-    LibraryAllSongsLoaded(Vec<crate::db::database::SongData>),
+    LibraryAllSongsLoaded(Vec<std::sync::Arc<crate::db::database::SongData>>),
     OpenFolderPicker,
 
     // Filters
@@ -503,6 +503,7 @@ impl AudoxidyApp {
             }
             Message::SearchQueryChanged(q) => {
                 self.playlist_manager.search_query = q;
+                self.playlist_manager.apply_filter();
                 Task::none()
             }
                 Message::LibrarySearchQueryChanged(q) => {
@@ -726,6 +727,21 @@ impl AudoxidyApp {
                 if self.library_manager.is_list_mode() {
                     // Flecha Izquierda/Derecha -> Colapsar/Expandir
                     if dir == LibraryNavDir::Left || dir == LibraryNavDir::Right {
+                        // Priority 0: En DetailedList, si estamos en una canción y pulsamos izquierda, contraer su álbum.
+                        if dir == LibraryNavDir::Left && self.library_manager.view_mode == crate::gui::library::LibraryViewMode::DetailedList {
+                            if let Some(song_idx) = self.library_manager.selected_song_idx {
+                                if let Some(songs) = &self.library_manager.filtered_songs {
+                                    if let Some(song) = songs.get(song_idx) {
+                                        if let Some(album_name) = &song.album {
+                                            if !self.library_manager.collapsed_albums.contains(album_name) {
+                                                return self.update(Message::ToggleAlbumExpansion(album_name.clone()));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Priority 1: If an Album is selected, toggle it
                         if let Some(album_id) = self.library_manager.selected_album.clone() {
                             let is_col = self.library_manager.collapsed_albums.contains(&album_id);
@@ -782,10 +798,21 @@ impl AudoxidyApp {
                     }
                 }
 
-                // Alt + Abajo -> Expandir/Colapsar álbum seleccionado
+                // Alt + Abajo -> Expandir álbum seleccionado
                 if dir == LibraryNavDir::Down && modifiers.alt() {
                     if let Some(sel) = self.library_manager.selected_album.clone() {
-                        return self.update(Message::ToggleAlbumExpansion(sel));
+                        if self.library_manager.expanded_album.as_deref() != Some(sel.as_str()) {
+                            return self.update(Message::ToggleAlbumExpansion(sel));
+                        }
+                    }
+                }
+
+                // Alt + Arriba -> Colapsar álbum seleccionado
+                if dir == LibraryNavDir::Up && modifiers.alt() {
+                    if let Some(sel) = self.library_manager.selected_album.clone() {
+                        if self.library_manager.expanded_album.as_deref() == Some(sel.as_str()) {
+                            return self.update(Message::ToggleAlbumExpansion(sel));
+                        }
                     }
                 }
 
@@ -1052,7 +1079,7 @@ impl AudoxidyApp {
                 } else if let Some(album_name) = &self.library_manager.selected_album {
                     // Buscar álbum en self.library_manager.filtered_songs
                     if let Some(songs) = &self.library_manager.filtered_songs {
-                        let alb_songs: Vec<crate::db::database::SongData> = songs.iter()
+                        let alb_songs: Vec<_> = songs.iter()
                             .filter(|s| s.album.as_ref() == Some(album_name))
                             .cloned()
                             .collect();
@@ -1073,7 +1100,7 @@ impl AudoxidyApp {
                 } else if let Some(artist_name) = &self.library_manager.selected_header {
                     // Buscar artista en self.library_manager.artist_groups
                     if let Some(group) = self.library_manager.artist_groups.iter().find(|g| &g.name == artist_name) {
-                        let art_songs: Vec<crate::db::database::SongData> = group.songs.clone();
+                        let art_songs = group.songs.clone();
                         if !art_songs.is_empty() {
                             return self.update(Message::PlayAlbum(art_songs));
                         }
@@ -1285,7 +1312,7 @@ impl AudoxidyApp {
         
         let player_view = crate::gui::player::view(&self.audio_manager, &self.player_ui_state);
         let playlist_view = crate::gui::playlist::view(&self.playlist_manager, &self.audio_manager);
-        let filters_view = crate::gui::library_filters::view(&self.filters_manager);
+        let filters_view = crate::gui::library_filters::view(&self.filters_manager, &self.library_manager);
         let library_view = crate::gui::library::view(&self.library_manager, &self.database);
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda
@@ -1354,7 +1381,13 @@ impl AudoxidyApp {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         // Tick adaptivo: 1000ms durante reproducción (1 FPS), 4000ms en reposo, 3000ms low-resource
         let tick_interval = if self.audio_manager.get_state().is_playing {
-            std::time::Duration::from_millis(1000)
+            let state = self.audio_manager.get_state();
+            let remaining = state.total_duration_sec - state.current_pos_sec;
+            if remaining > 0.0 && remaining < 0.5 {
+                std::time::Duration::from_millis(50)
+            } else {
+                std::time::Duration::from_millis(1000)
+            }
         } else if self.low_resource_mode {
             std::time::Duration::from_millis(3000)
         } else {

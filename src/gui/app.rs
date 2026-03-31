@@ -506,9 +506,10 @@ impl AudoxidyApp {
                 self.playlist_manager.apply_filter();
                 Task::none()
             }
-                Message::LibrarySearchQueryChanged(q) => {
+            Message::LibrarySearchQueryChanged(q) => {
                 self.library_manager.search_query = q;
                 self.library_manager.apply_filter();
+                self.library_manager.last_viewport = None;
                 Task::none()
             }
             Message::LibrarySourceSelected(source) => {

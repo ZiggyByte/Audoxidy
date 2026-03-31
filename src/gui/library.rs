@@ -783,7 +783,13 @@ pub fn view<'a>(
                     .center_y(Length::Fill)
                     .into()
             } else {
+                // Cálculo de un micro_pad invisible (0.01px) que alterna con la paridad del texto.
+                // Esto fuerza a Iced a recalcular los límites de `responsive` en cada pulsación.
+                let micro_pad: f32 = if manager.search_query.len() % 2 == 0 { 0.0 } else { 0.01 };
+                let query_val = manager.search_query.clone();
+
                 let res_grid = iced::widget::responsive(move |size| {
+                    let _q = &query_val; // Forzar dependencia del closure con la búsqueda
                     let db_albums = db_albums_opt.unwrap();
                     let mut grid_col = column![].spacing(0);
                     
@@ -981,7 +987,11 @@ pub fn view<'a>(
                     GRID_ID_B.clone()
                 };
 
-                scrollable(res_grid)
+                // Pixel Foil (1px): Alternamos 1 píxel de padding inferior para forzar a Responsive
+                // a re-ejecutar su closure de renderizado sin afectar visualmente al usuario.
+                let pixel_foil = (manager.search_query.len() % 2) as f32;
+
+                scrollable(container(res_grid).padding(iced::Padding { top: 0.0, right: 0.0, bottom: pixel_foil, left: 0.0 }))
                     .width(Length::Fill)
                     .height(Length::Fill)
                     .direction(iced::widget::scrollable::Direction::Vertical(

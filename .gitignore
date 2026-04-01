@@ -11,6 +11,11 @@ cache/covers
 tmp/
 temp/
 
+audoxidy.db-shm
+audoxidy.db-wal
+audoxidy.db
+library.db-shm
+library.db-wal
 library.db
 arquitecture.md
 interface.md

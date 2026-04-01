@@ -337,15 +337,13 @@ impl AudoxidyApp {
                             self.library_manager.cached_albums = Some(albums);
                         }
                         
-                        // Canciones: solo si vista de lista activa (son pesadas)
-                        if self.library_manager.is_list_mode() {
-                            if let Ok(mut songs) = db.get_all_songs() {
-                                if self.library_manager.sort_column.is_some() {
-                                    self.library_manager.sort_songs(&mut songs);
-                                }
-                                self.library_manager.cached_all_songs = Some(songs);
-                                self.library_manager.apply_filter();
+                        // Canciones: cargar siempre para habilitar búsqueda global (títulos, artistas, etc.)
+                        if let Ok(mut songs) = db.get_all_songs() {
+                            if self.library_manager.sort_column.is_some() {
+                                self.library_manager.sort_songs(&mut songs);
                             }
+                            self.library_manager.cached_all_songs = Some(songs);
+                            self.library_manager.apply_filter();
                         }
                         
                         // Estadísticas siempre (son ligeras)
@@ -1017,12 +1015,7 @@ impl AudoxidyApp {
                 self.library_manager.view_menu_open = false;
                 
                 if mode == crate::gui::library::LibraryViewMode::Grid {
-                    // Al cambiar a Grid: liberar datos pesados de las vistas de lista (ahorro de RAM)
-                    self.library_manager.cached_all_songs = None;
-                    self.library_manager.filtered_songs = None;
-                    self.library_manager.artist_groups.clear();
-                    
-                    // Asegurar que cached_albums esté cargado
+                    // Al cambiar a Grid: asegurar que cached_albums esté cargado
                     if self.library_manager.cached_albums.is_none() {
                         if let Ok(db) = self.database.lock() {
                             if let Ok(albums) = db.get_all_albums() {
@@ -1031,7 +1024,7 @@ impl AudoxidyApp {
                         }
                     }
                 } else {
-                    // Al cambiar a cualquier vista de lista: cargar canciones síncronamente
+                    // Al cambiar a cualquier vista de lista: asegurar que las canciones estén cargadas
                     if self.library_manager.cached_all_songs.is_none() {
                         if let Ok(db) = self.database.lock() {
                             if let Ok(mut songs) = db.get_all_songs() {
@@ -1043,12 +1036,12 @@ impl AudoxidyApp {
                         }
                     }
                     self.library_manager.apply_filter();
-                    
-                    // Liberar solo datos del Grid que no necesitamos en lista
-                    self.library_manager.expanded_album = None;
-                    self.library_manager.expanded_album_songs = None;
-                    // NOTA: cached_albums se mantiene (es ligero) para evitar recarga al volver al Grid
                 }
+                    
+                // Liberar solo datos del Grid que no necesitamos en lista
+                self.library_manager.expanded_album = None;
+                self.library_manager.expanded_album_songs = None;
+                // NOTA: cached_albums se mantiene (es ligero) para evitar recarga al volver al Grid
                 
                 Task::none()
             }
@@ -1395,6 +1388,16 @@ impl AudoxidyApp {
             std::time::Duration::from_millis(4000)
         };
         let tick = iced::time::every(tick_interval).map(|_| Message::Tick);
+        
+        // --- Search Heartbeat (Search-Pulse) ---
+        // Emitimos un Tick extra cada 100ms solo si se está buscando algo.
+        // Esto fuerza a Iced a reconstruir la vista Grid que suele estancarse en Iced 0.14.
+        let search_tick = if !self.library_manager.search_query.is_empty() {
+            iced::time::every(std::time::Duration::from_millis(100)).map(|_| Message::Tick)
+        } else {
+            iced::Subscription::none()
+        };
+
         let win_ids = iced::window::open_events().map(Message::SetWindowId);
         let mouse_evs = iced::event::listen_with(|event, _status, _window_id| {
             if let iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) = event {
@@ -1418,7 +1421,7 @@ impl AudoxidyApp {
                 None
             }
         });
-        iced::Subscription::batch([tick, win_ids, mouse_evs])
+        iced::Subscription::batch([tick, search_tick, win_ids, mouse_evs])
     }
 
     fn get_library_scroll_task(&self, force_top: bool) -> Task<Message> {

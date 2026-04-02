@@ -292,10 +292,10 @@ pub fn custom_scrollbar_style(
             if is_vertical_scrollbar_hovered || is_horizontal_scrollbar_hovered {
                 Color::from(COLOR_TEXT_PRIMARY)
             } else {
-                Color::from(COLOR_CONTRAST)
+                Color::from(COLOR_TEXT_SECONDARY)
             }
         }
-        iced::widget::scrollable::Status::Dragged { .. } => Color::from(COLOR_TEXT_PRIMARY),
+        iced::widget::scrollable::Status::Dragged { .. } => Color::from(COLOR_ACCENT),
         _ => Color::TRANSPARENT,
     };
     
@@ -810,7 +810,10 @@ where
     let main_scroll = scrollable(container(list_col).width(Length::Fill).padding([0, 15]))
         .width(Length::Fill).height(Length::Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(
-            iced::widget::scrollable::Scrollbar::new().width(4).margin(0).scroller_width(4)
+            iced::widget::scrollable::Scrollbar::new()
+                .width(4)
+                .margin(0)
+                .scroller_width(4)
         ))
         .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())
         .on_scroll(crate::gui::app::Message::LibraryScroll)

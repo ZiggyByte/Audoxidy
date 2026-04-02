@@ -154,14 +154,8 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
         return None;
     }
 
-    // 2. Verificar que el archivo existe en disco
-    let file_path = std::path::Path::new(path);
-    if !file_path.exists() {
-        neg_cache_mtx.lock().insert(path.to_string());
-        return None;
-    }
-
-    // 3. Delegar la carga completa a Iced — cero RAM en nuestro lado
+    // 2. Delegar la carga completa a Iced — cero RAM en nuestro lado
+    // NOTA: No hacemos exists() síncrono aquí porque bloquea el hilo de la GUI en bucles de renderizado (Grid)
     Some(iced::widget::image::Handle::from_path(path))
 }
 

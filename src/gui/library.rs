@@ -329,7 +329,7 @@ impl LibraryManager {
                         let is_album_expanded = !self.collapsed_albums.contains(&alb_name);
                         
                         let album_header_h = 32.0;
-                        let card_h: f32 = if self.view_mode == LibraryViewMode::DetailedList { 323.0 } else { 0.0 };
+                        let card_h: f32 = if self.view_mode == LibraryViewMode::DetailedList && is_album_expanded { 323.0 } else { 0.0 };
                         let right_h = if is_album_expanded {
                             album_header_h + count as f32 * row_height
                         } else {
@@ -364,9 +364,7 @@ impl LibraryManager {
 
     /// Returns the new navigation item and its exact Y position from the items list.
     pub fn handle_key_nav(&self, dir: LibraryNavDir) -> Option<(LibraryListItem, f32, f32)> {
-        if !self.is_list_mode() {
-            return None;
-        }
+        // Permitir navegación linear en todos los modos, app.rs manejará la lógica 2D del Grid si es necesario
 
         let items = self.get_visible_items();
         if items.is_empty() { return None; }
@@ -386,7 +384,8 @@ impl LibraryManager {
                         // Verify position matches hint if available
                         if let Some((hint_y, _)) = self.selected_item_hint {
                             let (_, item_y, _) = &items[i];
-                            if (item_y - hint_y).abs() < 1.0 {
+                            // Permitir un margen de error pequeño (2.0px) tras cambios de estructura
+                            if (item_y - hint_y).abs() < 2.0 {
                                 current_idx = i; found = true; break;
                             }
                             // Keep searching for the right occurrence
@@ -425,8 +424,9 @@ impl LibraryManager {
         let scroll_id = LIBRARY_SCROLL_ID.clone();
         let margin_top = match self.view_mode {
             LibraryViewMode::DetailedList => 32.0_f32,
-            LibraryViewMode::ThumbnailList => 84.0_f32, // 2 rows of 42px so header doesn't hide selector
-            _ => 64.0_f32, // SimpleList: 2 rows of 32px
+            LibraryViewMode::ThumbnailList => 84.0_f32,
+            LibraryViewMode::Grid => 0.0, // Grid usa navegación propia pero permitimos el cálculo
+            _ => 64.0_f32,
         };
 
         // FAST PATH: use the exact hint coordinates stored during keyboard navigation.
@@ -634,8 +634,18 @@ impl LibraryManager {
                 group.songs.push(song.clone());
             }
             
-            self.artist_groups = groups_map.into_values().collect();
-            self.filtered_songs = Some(filtered);
+            let groups: Vec<ArtistGroup> = groups_map.into_values().collect();
+            
+            // Sincronizar filtered_songs con el orden de los grupos (A-Z por artista)
+            let mut flattened_filtered = Vec::with_capacity(filtered.len());
+            for group in &groups {
+                for song in &group.songs {
+                    flattened_filtered.push(song.clone());
+                }
+            }
+            
+            self.artist_groups = groups;
+            self.filtered_songs = Some(flattened_filtered);
         } else {
             // Si no hay canciones, limpiamos estas listas (necesitan SongData para renderizarse)
             self.filtered_songs = None;
@@ -965,16 +975,20 @@ pub fn view<'a>(
                     grid_col.into()
                 });
                 
-                let scroll_id = if manager.search_query.is_empty() { LIBRARY_SCROLL_ID.clone() } else { GRID_ID_A.clone() };
+                // IMPORTANTE: NO usamos IDs dinámicos (A/B) basados en search_nonce a menos que sea estrictamente necesario.
+                // Mantener el scroll_id constante permite que Iced mantenga el caché de carátulas y estado del scroll.
+                let scroll_id = LIBRARY_SCROLL_ID.clone();
                 let scrollable_grid = scrollable(res_grid)
                     .width(Length::Fill).height(Length::Fill).id(scroll_id).on_scroll(Message::LibraryScroll)
                     .style(crate::gui::widgets::custom_scrollbar_style)
                     .direction(iced::widget::scrollable::Direction::Vertical(
-                        iced::widget::scrollable::Scrollbar::new().width(8.0).margin(2.0).scroller_width(8.0)
+                        iced::widget::scrollable::Scrollbar::new()
+                            .width(4.0)
+                            .margin(0.0)
+                            .scroller_width(4.0)
                     ));
 
-                let grid_root_id = if manager.search_nonce % 2 == 0 { GRID_ID_A.clone() } else { GRID_ID_B.clone() };
-                container(scrollable_grid).width(Length::Fill).height(Length::Fill).id(grid_root_id).into()
+                container(scrollable_grid).width(Length::Fill).height(Length::Fill).into()
             }
         },
         LibraryViewMode::SimpleList => {
@@ -1032,7 +1046,11 @@ pub fn view<'a>(
         (manager.total_songs as u64, manager.total_albums as u64, manager.total_artists as u64, manager.total_duration_secs, manager.total_size_bytes)
     };
 
-    let stats_text = format!("{} Canciones | {} Álbumes | {} Artistas | {} | {}", s_count, a_count, art_count, format_duration(d_secs), format_size(s_bytes as i64));
+    let stats_text = if manager.view_mode == LibraryViewMode::Grid {
+        format!("{} Canciones | {} Álbumes | {} | {}", s_count, a_count, format_duration(d_secs), format_size(s_bytes as i64))
+    } else {
+        format!("{} Canciones | {} Álbumes | {} Artistas | {} | {}", s_count, a_count, art_count, format_duration(d_secs), format_size(s_bytes as i64))
+    };
     
     let view_icon_str = match manager.view_mode {
         LibraryViewMode::Grid => "view-grid-outlined.svg",

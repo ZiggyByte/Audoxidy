@@ -1,133 +1,175 @@
 use iced::{
-    widget::{button, column, container, scrollable, text, text_input},
-    Color, Element, Length, Theme,
+    widget::{button, column, container, row, scrollable, text, text_input, Space, svg},
+    Alignment, Color, Element, Length, Theme,
 };
 use crate::gui::app::Message;
-
-// TODO: Consolidar globales en theme.rs
 use crate::gui::theme::*;
+use crate::gui::widgets::custom_scrollbar_style;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilterType {
+    Folder,
+    Artist,
+    Album,
+    Genre,
+    Year,
+}
+
+impl FilterType {
+    pub fn as_str(&self) -> &str {
+        match self {
+            FilterType::Folder => "Carpeta",
+            FilterType::Artist => "Artista",
+            FilterType::Album => "Álbum",
+            FilterType::Genre => "Género",
+            FilterType::Year => "Año",
+        }
+    }
+    
+    pub fn all() -> Vec<FilterType> {
+        vec![
+            FilterType::Folder,
+            FilterType::Artist,
+            FilterType::Album,
+            FilterType::Genre,
+            FilterType::Year,
+        ]
+    }
+}
 
 pub struct LibraryFiltersManager {
+    pub selected_type: FilterType,
+    pub selected_subfilter: Option<String>, // "A", "B", "#", "·"
+    pub expanded_nodes: std::collections::HashSet<String>,
+    pub menu_open: bool,
     pub search_query: String,
-    
-    // Estado Abierto/Cerrado del Arbol
-    pub tree_open_genre: bool,
-    pub tree_open_artist: bool,
-    pub tree_open_album: bool,
 }
 
 impl Default for LibraryFiltersManager {
     fn default() -> Self {
         Self {
+            selected_type: FilterType::Genre, // Filtro por defecto
+            selected_subfilter: None,
+            expanded_nodes: std::collections::HashSet::new(),
+            menu_open: false,
             search_query: String::new(),
-            tree_open_genre: false,
-            tree_open_artist: false,
-            tree_open_album: false,
         }
     }
 }
 
 pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::gui::library::LibraryManager) -> Element<'a, Message> {
-    
-    // Top Bar (Titulo AuDoxiDY)
-    let title_btn = button(
+    // 1. Barra Superior (40px fija)
+    let header = container(
         text("AuDoxiDY")
             .size(16)
             .font(FONT_STAGE_WANDER)
+            .color(COLOR_TEXT_PRIMARY)
     )
-    .on_press(Message::NoOp)
-    .padding(0)
-    .style(|_theme: &Theme, status| {
-        let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-        if status == iced::widget::button::Status::Hovered {
-            style.text_color = COLOR_ACCENT;
-        } else {
-            style.text_color = COLOR_TEXT_PRIMARY;
-        }
-        style
-    });
+    .width(Length::Fill)
+    .height(Length::Fixed(40.0))
+    .center_x(Length::Fill)
+    .center_y(Length::Fill)
+    .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
-    let header_container = container(title_btn)
+    // 2. Menú de Filtros Generales
+    let items: Vec<iced_aw::widget::menu::Item<'a, Message, Theme, iced::Renderer>> = FilterType::all()
+        .into_iter()
+        .map(|ft| {
+            let label = ft.as_str().to_string();
+            iced_aw::widget::menu::Item::new(
+                button(
+                    text(label)
+                        .size(14)
+                        .font(FONT_INTER_SANS_MEDIUM)
+                        .color(COLOR_TEXT_PRIMARY)
+                )
+                .width(Length::Fill)
+                .padding([5, 10])
+                .style(|_t: &Theme, status| {
+                    let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                    if status == iced::widget::button::Status::Hovered {
+                        style.background = Some(COLOR_ACCENT.into());
+                        style.text_color = Color::WHITE;
+                    }
+                    style
+                })
+                .on_press(Message::ChangeGeneralFilter(ft))
+            )
+        })
+        .collect();
+
+    let menu_bar = iced_aw::widget::menu::MenuBar::new(vec![
+        iced_aw::widget::menu::Item::with_menu(
+            button(
+                row![
+                    text(manager.selected_type.as_str())
+                        .size(16)
+                        .font(FONT_INTER_SANS_MEDIUM)
+                        .color(COLOR_TEXT_PRIMARY),
+                    Space::new().width(Length::Fill),
+                    svg(svg::Handle::from_path("assets/icons/arrow-down-chevron.svg"))
+                        .width(22)
+                        .height(22)
+                        .style(|_t: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_PRIMARY) })
+                ]
+                .align_y(iced::Alignment::Center)
+            )
+            .width(Length::Fill)
+            .padding([5, 0])
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .on_press(Message::ToggleFilterMenu),
+            iced_aw::widget::menu::Menu::new(items)
+        )
+    ]);
+
+    let filter_selector = container(menu_bar)
         .width(Length::Fill)
-        .height(Length::Fixed(40.0))
-        .center_x(Length::Fill)
-        .center_y(Length::Fill)
-        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+        .padding(iced::Padding { top: 10.0, right: 15.0, bottom: 0.0, left: 15.0 });
 
-    // Tree nodes (Listas de filtros expandibles)
-    let mut tree_col = column![].spacing(5).padding(10);
+    // 3. Subfiltros (Abecedario dinámico)
+    let alphabet_row = render_alphabet(manager, library_manager);
     
-    // Custom inline helper macro-like pattern (desenrollado por move semantics de Iced Builder)
-    let icon_genre = if manager.tree_open_genre { "v " } else { "> " };
-    tree_col = tree_col.push(
-        button(text(format!("{}Generos", icon_genre)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fill)
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::ToggleGenreFilter)
-    );
-    if manager.tree_open_genre {
-        tree_col = tree_col.push(
-            container(text(" Progressive Rock").size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-                .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
-        );
-    }
+    let subfilters = column![
+        alphabet_row,
+        button(
+            text("mostrar todo")
+                .size(11)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .color(COLOR_TEXT_SECONDARY)
+        )
+        .on_press(Message::SelectSubfilter(None))
+        .padding([5, 10])
+        .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+    ]
+    .spacing(10)
+    .padding([10, 15])
+    .align_x(iced::Alignment::Center);
 
-    let q_lower = manager.search_query.to_lowercase();
-    
-    // Artistas
-    let icon_artist = if manager.tree_open_artist { "v " } else { "> " };
-    tree_col = tree_col.push(
-        button(text(format!("{}Artistas", icon_artist)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fill)
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::ToggleArtistFilter)
-    );
-    if manager.tree_open_artist {
-        let mut artist_count = 0;
-        for group in &library_manager.artist_groups {
-            if manager.search_query.is_empty() || group.name.to_lowercase().contains(&q_lower) {
-                tree_col = tree_col.push(
-                    container(text(format!("  • {}", group.name)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
-                        .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
-                );
-                artist_count += 1;
-                if artist_count >= 50 { break; } // Limitar DOM virtual
-            }
-        }
-    }
+    // 4. Árbol de Resultados (Cuerpo central)
+    let tree_content = render_tree(manager, library_manager);
+    let scrollable_tree = scrollable(tree_content)
+        .height(Length::Fill)
+        .style(custom_scrollbar_style);
 
-    // Álbumes
-    let icon_album = if manager.tree_open_album { "v " } else { "> " };
-    tree_col = tree_col.push(
-        button(text(format!("{}Albumes", icon_album)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fill)
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::ToggleAlbumFilter)
-    );
-    if manager.tree_open_album {
-        if let Some(albums) = &library_manager.cached_albums {
-            let mut album_count = 0;
-            for alb in albums {
-                if manager.search_query.is_empty() || alb.1.to_lowercase().contains(&q_lower) || alb.2.to_lowercase().contains(&q_lower) {
-                    tree_col = tree_col.push(
-                        container(text(format!("  • {}", alb.1)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
-                            .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 15.0 })
-                    );
-                    album_count += 1;
-                    if album_count >= 50 { break; }
-                }
-            }
-        }
-    }
-
-    let filters_scroll = scrollable(tree_col).height(Length::Fill);
-
-    // Barra inferior de busqueda
+    // 5. Barra Inferior de Búsqueda (40px fija)
     let search_bar = container(
-        text_input("Buscar...", &manager.search_query)
+        text_input("Búsqueda rápida", &manager.search_query)
             .on_input(Message::FilterSearchChanged)
+            .size(13)
             .font(FONT_INTER_SANS_MEDIUM)
             .padding(5)
+            .style(|_t: &Theme, _s| text_input::Style {
+                background: COLOR_BG.into(),
+                border: iced::Border {
+                    color: COLOR_TEXT_SECONDARY,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                placeholder: COLOR_TEXT_SECONDARY,
+                value: COLOR_TEXT_PRIMARY,
+                selection: COLOR_ACCENT,
+                icon: COLOR_TEXT_SECONDARY,
+            })
     )
     .width(Length::Fill)
     .height(Length::Fixed(40.0))
@@ -135,16 +177,209 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
     .padding([0, 15])
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
-    // Consolidar Layout (Vertical de 180px Ancho y 100% de Alto)
+    // Layout Final
     container(
         column![
-            header_container,
-            filters_scroll,
+            header,
+            filter_selector,
+            subfilters,
+            scrollable_tree,
             search_bar
         ]
     )
-    .width(Length::Fixed(160.0))
+    .width(Length::Fixed(200.0))
     .height(Length::Fill)
     .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
     .into()
+}
+
+fn render_alphabet<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::gui::library::LibraryManager) -> Element<'a, Message> {
+    let mut chars = std::collections::BTreeSet::new();
+    
+    // Obtener caracteres con resultados basados en el filtro general seleccionado
+    if let Some(songs) = &library_manager.cached_all_songs {
+        for song in songs {
+            let val = match manager.selected_type {
+                FilterType::Artist => song.artist.as_deref().or(song.album_artist.as_deref()),
+                FilterType::Album => song.album.as_deref(),
+                FilterType::Genre => song.genre.as_deref(),
+                FilterType::Year => song.release_year.as_deref(),
+                FilterType::Folder => song.root_directory_name.as_deref(),
+            };
+            
+            if let Some(s) = val {
+                if let Some(first_char) = s.chars().next() {
+                    let first_char_upper = first_char.to_uppercase().next().unwrap();
+                    if first_char_upper.is_alphabetic() {
+                        chars.insert(first_char_upper.to_string());
+                    } else if first_char_upper.is_numeric() {
+                        chars.insert("#".to_string());
+                    } else {
+                        chars.insert("·".to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    let mut wrap = iced_aw::widget::Wrap::new()
+        .spacing(5.0)
+        .line_spacing(5.0)
+        .align_items(Alignment::Center);
+    
+    // Símbolos primero
+    let symbols = vec!["#", "·"];
+    for sym in symbols {
+        if chars.contains(sym) {
+            let is_selected = manager.selected_subfilter.as_deref() == Some(sym);
+            wrap = wrap.push(create_alphabet_btn(sym.to_string(), is_selected));
+        }
+    }
+
+    // Abecedario
+    for c in 'A'..='Z' {
+        let s = c.to_string();
+        if chars.contains(&s) {
+            let is_selected = manager.selected_subfilter.as_deref() == Some(&s);
+            wrap = wrap.push(create_alphabet_btn(s, is_selected));
+        }
+    }
+
+    container(wrap).into()
+}
+
+fn create_alphabet_btn<'a>(label: String, is_selected: bool) -> Element<'a, Message> {
+    button(
+        text(label.clone())
+            .size(11)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .color(if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY })
+    )
+    .padding([0, 3])
+    .style(move |_, status| {
+        let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+        if is_selected {
+            style.background = Some(COLOR_ACCENT.into());
+            style.border.radius = 10.0.into();
+        } else if status == iced::widget::button::Status::Hovered {
+            style.text_color = COLOR_TEXT_PRIMARY;
+        }
+        style
+    })
+    .on_press(Message::SelectSubfilter(Some(label)))
+    .into()
+}
+
+fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::gui::library::LibraryManager) -> Element<'a, Message> {
+    let mut tree_col = column![].spacing(0);
+    
+    // Obtener datos agrupados basados en el filtro
+    if let Some(songs) = &library_manager.cached_all_songs {
+        let mut groups: std::collections::BTreeMap<String, Vec<&std::sync::Arc<crate::db::database::SongData>>> = std::collections::BTreeMap::new();
+        
+        for song in songs {
+            let key = match manager.selected_type {
+                FilterType::Artist => song.artist.clone().or(song.album_artist.clone()),
+                FilterType::Album => song.album.clone(),
+                FilterType::Genre => song.genre.clone(),
+                FilterType::Year => song.release_year.clone(),
+                FilterType::Folder => song.root_directory_name.clone(),
+            }.unwrap_or_else(|| "Desconocido".to_string());
+            
+            // Filtro por subfiltro (letra/signo)
+            if let Some(sub) = &manager.selected_subfilter {
+                if let Some(first) = key.chars().next() {
+                    let first_upper = first.to_uppercase().next().unwrap();
+                    if sub == "#" && !first_upper.is_numeric() { continue; }
+                    if sub == "·" && (first_upper.is_alphabetic() || first_upper.is_numeric()) { continue; }
+                    if sub.len() == 1 && sub.chars().next().unwrap().is_alphabetic() && first_upper.to_string() != *sub { continue; }
+                } else { continue; }
+            }
+
+            // Filtro por búsqueda rápida
+            if !manager.search_query.is_empty() && !key.to_lowercase().contains(&manager.search_query.to_lowercase()) {
+                continue;
+            }
+
+            groups.entry(key).or_default().push(song);
+        }
+
+        for (name, group_songs) in groups {
+            let is_expanded = manager.expanded_nodes.contains(&name);
+            let icon = if is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" };
+            
+            let row_btn = button(
+                row![
+                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
+                        .width(18)
+                        .height(18)
+                        .style(|_t_theme: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_SECONDARY) }),
+                    Space::new().width(5),
+                    svg(svg::Handle::from_path("assets/icons/artist.svg")) // Icono de usuario/artista
+                        .width(16)
+                        .height(16)
+                        .style(|_t: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_PRIMARY) }),
+                    Space::new().width(8),
+                    text(name.clone())
+                        .size(13)
+                        .font(FONT_INTER_SANS_MEDIUM)
+                        .color(COLOR_TEXT_SECONDARY)
+                ]
+                .align_y(iced::Alignment::Start)
+            )
+            .width(Length::Fill)
+            .padding([7, 10])
+            .style(|_t: &Theme, status| {
+                let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                if status == iced::widget::button::Status::Hovered {
+                    style.background = Some(COLOR_CONTRAST.into());
+                }
+                style
+            })
+            .on_press(Message::SelectTreeNode(name.clone()));
+
+            tree_col = tree_col.push(row_btn);
+            
+            if is_expanded {
+                // Renderizar sub-nodos (Álbumes si es Artista, etc.)
+                let mut sub_groups = std::collections::BTreeSet::new();
+                for s in group_songs {
+                    let sub_key = match manager.selected_type {
+                        FilterType::Artist => s.album.clone(),
+                        FilterType::Album => s.artist.clone(),
+                        FilterType::Genre => s.artist.clone(),
+                        FilterType::Year => s.artist.clone(),
+                        FilterType::Folder => s.root_directory_name.clone(),
+                    }.unwrap_or_else(|| "Desconocido".to_string());
+                    sub_groups.insert(sub_key);
+                }
+
+                for sub_name in sub_groups {
+                    tree_col = tree_col.push(
+                        button(
+                             row![
+                                Space::new().width(25),
+                                text(sub_name.clone())
+                                    .size(12)
+                                    .font(FONT_INTER_SANS_MEDIUM)
+                                    .color(COLOR_TEXT_SECONDARY)
+                            ]
+                        )
+                        .width(Length::Fill)
+                        .padding([5, 10])
+                        .style(|_t: &Theme, status| {
+                            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                            if status == iced::widget::button::Status::Hovered {
+                                style.background = Some(COLOR_CONTRAST.into());
+                            }
+                            style
+                        })
+                        .on_press(Message::SelectTreeNode(format!("{}|{}", name, sub_name)))
+                    );
+                }
+            }
+        }
+    }
+
+    tree_col.into()
 }

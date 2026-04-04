@@ -174,9 +174,10 @@ pub enum Message {
     OpenFolderPicker,
 
     // Filters
-    ToggleGenreFilter,
-    ToggleArtistFilter,
-    ToggleAlbumFilter,
+    ToggleFilterMenu,
+    ChangeGeneralFilter(crate::gui::library_filters::FilterType),
+    SelectSubfilter(Option<String>),
+    SelectTreeNode(String),
     FilterSearchChanged(String),
 
     // Audio Center
@@ -1140,16 +1141,85 @@ impl AudoxidyApp {
                 }
                 Task::none()
             }
-            Message::ToggleGenreFilter => {
-                self.filters_manager.tree_open_genre = !self.filters_manager.tree_open_genre;
+            Message::ToggleFilterMenu => {
+                self.filters_manager.menu_open = !self.filters_manager.menu_open;
                 Task::none()
             }
-            Message::ToggleArtistFilter => {
-                self.filters_manager.tree_open_artist = !self.filters_manager.tree_open_artist;
+            Message::ChangeGeneralFilter(ft) => {
+                self.filters_manager.selected_type = ft;
+                self.filters_manager.selected_subfilter = None;
+                self.filters_manager.expanded_nodes.clear();
+                self.filters_manager.menu_open = false;
+                
+                // Reset internal library filters when changing general filter type
+                self.library_manager.filter_artist = None;
+                self.library_manager.filter_album = None;
+                self.library_manager.filter_genre = None;
+                self.library_manager.filter_year = None;
+                self.library_manager.filter_folder = None;
+                self.library_manager.apply_filter();
                 Task::none()
             }
-            Message::ToggleAlbumFilter => {
-                self.filters_manager.tree_open_album = !self.filters_manager.tree_open_album;
+            Message::SelectSubfilter(sub) => {
+                if sub == self.filters_manager.selected_subfilter {
+                     self.filters_manager.selected_subfilter = None;
+                } else {
+                     self.filters_manager.selected_subfilter = sub;
+                }
+                Task::none()
+            }
+            Message::SelectTreeNode(name) => {
+                // Si es un nodo de segundo nivel (contiene |), no colapsar/expandir, solo filtrar
+                if !name.contains('|') {
+                    if self.filters_manager.expanded_nodes.contains(&name) {
+                        self.filters_manager.expanded_nodes.remove(&name);
+                    } else {
+                        self.filters_manager.expanded_nodes.insert(name.clone());
+                    }
+                }
+
+                // Apply filter to library
+                self.library_manager.filter_artist = None;
+                self.library_manager.filter_album = None;
+                self.library_manager.filter_genre = None;
+                self.library_manager.filter_year = None;
+                self.library_manager.filter_folder = None;
+
+                let parts: Vec<&str> = name.split('|').collect();
+                let main_val = parts[0];
+                let sub_val = parts.get(1).cloned();
+
+                match self.filters_manager.selected_type {
+                    crate::gui::library_filters::FilterType::Artist => {
+                        self.library_manager.filter_artist = Some(main_val.to_string());
+                        if let Some(alb) = sub_val {
+                            self.library_manager.filter_album = Some(alb.to_string());
+                        }
+                    }
+                    crate::gui::library_filters::FilterType::Album => {
+                        self.library_manager.filter_album = Some(main_val.to_string());
+                        if let Some(art) = sub_val {
+                            self.library_manager.filter_artist = Some(art.to_string());
+                        }
+                    }
+                    crate::gui::library_filters::FilterType::Genre => {
+                        self.library_manager.filter_genre = Some(main_val.to_string());
+                        if let Some(art) = sub_val {
+                            self.library_manager.filter_artist = Some(art.to_string());
+                        }
+                    }
+                    crate::gui::library_filters::FilterType::Year => {
+                        self.library_manager.filter_year = Some(main_val.to_string());
+                        if let Some(art) = sub_val {
+                            self.library_manager.filter_artist = Some(art.to_string());
+                        }
+                    }
+                    crate::gui::library_filters::FilterType::Folder => {
+                        self.library_manager.filter_folder = Some(main_val.to_string());
+                    }
+                }
+                
+                self.library_manager.apply_filter();
                 Task::none()
             }
             Message::FilterSearchChanged(q) => {

@@ -109,6 +109,13 @@ pub struct LibraryManager {
     pub artist_last_selection: std::collections::HashMap<String, usize>, // artist -> global_song_idx
     /// Stores the exact (y, h) of the last navigated item to avoid name-based lookup jumping
     pub selected_item_hint: Option<(f32, f32)>,
+
+    // Nuevos campos de filtrado desde LibraryFilters
+    pub filter_artist: Option<String>,
+    pub filter_album: Option<String>,
+    pub filter_genre: Option<String>,
+    pub filter_year: Option<String>,
+    pub filter_folder: Option<String>,
 }
 
 impl Default for LibraryManager {
@@ -171,6 +178,11 @@ impl Default for LibraryManager {
             selection_stats: None,
             artist_last_selection: std::collections::HashMap::new(),
             selected_item_hint: None,
+            filter_artist: None,
+            filter_album: None,
+            filter_genre: None,
+            filter_year: None,
+            filter_folder: None,
         }
     }
 }
@@ -610,7 +622,30 @@ impl LibraryManager {
         // 2. Filtrado de Canciones y Grupos (Solo si hay canciones cargadas)
         if let Some(songs) = &self.cached_all_songs {
             let filtered: Vec<_> = songs.iter()
-                .filter(|s| is_empty || crate::utils::song_matches_search(s, &query_lower))
+                .filter(|s| {
+                    // Filtro de búsqueda rápida
+                    let matches_search = is_empty || crate::utils::song_matches_search(s, &query_lower);
+                    if !matches_search { return false; }
+
+                    // Filtros específicos desde el árbol
+                    if let Some(f_art) = &self.filter_artist {
+                        if s.artist.as_deref() != Some(f_art) && s.album_artist.as_deref() != Some(f_art) { return false; }
+                    }
+                    if let Some(f_alb) = &self.filter_album {
+                        if s.album.as_deref() != Some(f_alb) { return false; }
+                    }
+                    if let Some(f_gen) = &self.filter_genre {
+                        if s.genre.as_deref() != Some(f_gen) { return false; }
+                    }
+                    if let Some(f_year) = &self.filter_year {
+                        if s.release_year.as_deref() != Some(f_year) { return false; }
+                    }
+                    if let Some(f_fold) = &self.filter_folder {
+                        if s.root_directory_name.as_deref() != Some(f_fold) { return false; }
+                    }
+
+                    true
+                })
                 .cloned()
                 .collect();
             

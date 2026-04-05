@@ -178,6 +178,7 @@ pub enum Message {
     ChangeGeneralFilter(crate::gui::library_filters::FilterType),
     SelectSubfilter(Option<String>),
     SelectTreeNode(String),
+    ToggleTreeNode(String),
     FilterSearchChanged(String),
 
     // Audio Center
@@ -1166,18 +1167,28 @@ impl AudoxidyApp {
                 } else {
                      self.filters_manager.selected_subfilter = sub;
                 }
+                
+                // Si se selecciona None (Mostrar todo), resetear filtros de la biblioteca
+                if self.filters_manager.selected_subfilter.is_none() {
+                    self.library_manager.filter_artist = None;
+                    self.library_manager.filter_album = None;
+                    self.library_manager.filter_genre = None;
+                    self.library_manager.filter_year = None;
+                    self.library_manager.filter_folder = None;
+                    self.library_manager.apply_filter();
+                }
+                Task::none()
+            }
+            Message::ToggleTreeNode(name) => {
+                if self.filters_manager.expanded_nodes.contains(&name) {
+                    self.filters_manager.expanded_nodes.remove(&name);
+                } else {
+                    self.filters_manager.expanded_nodes.insert(name.clone());
+                }
                 Task::none()
             }
             Message::SelectTreeNode(name) => {
-                // Si es un nodo de segundo nivel (contiene |), no colapsar/expandir, solo filtrar
-                if !name.contains('|') {
-                    if self.filters_manager.expanded_nodes.contains(&name) {
-                        self.filters_manager.expanded_nodes.remove(&name);
-                    } else {
-                        self.filters_manager.expanded_nodes.insert(name.clone());
-                    }
-                }
-
+                self.filters_manager.selected_tree_item = Some(name.clone());
                 // Apply filter to library
                 self.library_manager.filter_artist = None;
                 self.library_manager.filter_album = None;

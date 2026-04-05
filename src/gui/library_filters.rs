@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space, svg},
+    widget::{button, column, container, row, scrollable, text, text_input, Space, svg, pick_list},
     Alignment, Color, Element, Length, Theme,
 };
 use crate::gui::app::Message;
@@ -25,7 +25,7 @@ impl FilterType {
             FilterType::Year => "Año",
         }
     }
-    
+
     pub fn all() -> Vec<FilterType> {
         vec![
             FilterType::Folder,
@@ -37,10 +37,17 @@ impl FilterType {
     }
 }
 
+impl std::fmt::Display for FilterType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
 pub struct LibraryFiltersManager {
     pub selected_type: FilterType,
     pub selected_subfilter: Option<String>, // "A", "B", "#", "·"
     pub expanded_nodes: std::collections::HashSet<String>,
+    pub selected_tree_item: Option<String>,
     pub menu_open: bool,
     pub search_query: String,
 }
@@ -51,6 +58,7 @@ impl Default for LibraryFiltersManager {
             selected_type: FilterType::Genre, // Filtro por defecto
             selected_subfilter: None,
             expanded_nodes: std::collections::HashSet::new(),
+            selected_tree_item: None,
             menu_open: false,
             search_query: String::new(),
         }
@@ -72,59 +80,40 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // 2. Menú de Filtros Generales
-    let items: Vec<iced_aw::widget::menu::Item<'a, Message, Theme, iced::Renderer>> = FilterType::all()
-        .into_iter()
-        .map(|ft| {
-            let label = ft.as_str().to_string();
-            iced_aw::widget::menu::Item::new(
-                button(
-                    text(label)
-                        .size(14)
-                        .font(FONT_INTER_SANS_MEDIUM)
-                        .color(COLOR_TEXT_PRIMARY)
-                )
-                .width(Length::Fill)
-                .padding([5, 10])
-                .style(|_t: &Theme, status| {
-                    let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-                    if status == iced::widget::button::Status::Hovered {
-                        style.background = Some(COLOR_ACCENT.into());
-                        style.text_color = Color::WHITE;
-                    }
-                    style
-                })
-                .on_press(Message::ChangeGeneralFilter(ft))
-            )
-        })
-        .collect();
-
-    let menu_bar = iced_aw::widget::menu::MenuBar::new(vec![
-        iced_aw::widget::menu::Item::with_menu(
-            button(
-                row![
-                    text(manager.selected_type.as_str())
-                        .size(16)
-                        .font(FONT_INTER_SANS_MEDIUM)
-                        .color(COLOR_TEXT_PRIMARY),
-                    Space::new().width(Length::Fill),
-                    svg(svg::Handle::from_path("assets/icons/arrow-down-chevron.svg"))
-                        .width(22)
-                        .height(22)
-                        .style(|_t: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_PRIMARY) })
-                ]
-                .align_y(iced::Alignment::Center)
-            )
-            .width(Length::Fill)
-            .padding([5, 0])
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::ToggleFilterMenu),
-            iced_aw::widget::menu::Menu::new(items)
+    let filter_selector = container(
+        pick_list(
+            FilterType::all(),
+            Some(manager.selected_type),
+            Message::ChangeGeneralFilter,
         )
-    ]);
-
-    let filter_selector = container(menu_bar)
         .width(Length::Fill)
-        .padding(iced::Padding { top: 10.0, right: 15.0, bottom: 0.0, left: 15.0 });
+        .padding(7)
+        .font(FONT_INTER_SANS_MEDIUM)
+        .text_size(13)
+        .style(move |_t: &Theme, status| {
+            let is_opened = matches!(status, pick_list::Status::Opened { .. });
+            let icon_path = if is_opened { "assets/icons/arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
+            
+            pick_list::Style {
+                background: COLOR_CONTRAST.into(),
+                border: iced::Border {
+                    color: COLOR_ACCENT,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                text_color: COLOR_TEXT_SECONDARY,
+                placeholder_color: COLOR_TEXT_SECONDARY,
+                handle_color: COLOR_TEXT_PRIMARY,
+                // Nota: handle es un campo en pick_list::Style para iced 0.14
+                /* handle: pick_list::Handle::Svg {
+                    handle: svg::Handle::from_path(icon_path),
+                    width: 24.0,
+                }, */
+            }
+        })
+    )
+    .width(Length::Fill)
+    .padding(iced::Padding { top: 5.0, right: 15.0, bottom: 5.0, left: 15.0 });
 
     // 3. Subfiltros (Abecedario dinámico)
     let alphabet_row = render_alphabet(manager, library_manager);
@@ -139,10 +128,17 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
         )
         .on_press(Message::SelectSubfilter(None))
         .padding([5, 10])
-        .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+        .style(|_t: &Theme, status| {
+            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+            if status == iced::widget::button::Status::Hovered {
+                style.background = Some(COLOR_CONTRAST.into());
+                style.border.radius = 4.0.into();
+            }
+            style
+        })
     ]
-    .spacing(10)
-    .padding([10, 15])
+    .spacing(5)
+    .padding([5, 15])
     .align_x(iced::Alignment::Center);
 
     // 4. Árbol de Resultados (Cuerpo central)
@@ -181,11 +177,19 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
     container(
         column![
             header,
-            filter_selector,
-            subfilters,
-            scrollable_tree,
+            column![
+                filter_selector,
+                subfilters,
+                scrollable_tree,
+            ]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .spacing(0),
             search_bar
         ]
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .spacing(0)
     )
     .width(Length::Fixed(200.0))
     .height(Length::Fill)
@@ -223,8 +227,8 @@ fn render_alphabet<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a 
     }
 
     let mut wrap = iced_aw::widget::Wrap::new()
-        .spacing(5.0)
-        .line_spacing(5.0)
+        .spacing(0.0)
+        .line_spacing(0.0)
         .align_items(Alignment::Center);
     
     // Símbolos primero
@@ -249,24 +253,36 @@ fn render_alphabet<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a 
 }
 
 fn create_alphabet_btn<'a>(label: String, is_selected: bool) -> Element<'a, Message> {
-    button(
-        text(label.clone())
-            .size(11)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .color(if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY })
+    container(
+        button(
+            container(
+                text(label.clone())
+                    .size(11)
+                    .font(FONT_INTER_SANS_MEDIUM)
+                    .color(if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY })
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+        )
+        .width(Length::Fixed(17.0))
+        .height(Length::Fixed(17.0))
+        .padding(0)
+        .on_press(Message::SelectSubfilter(Some(label)))
+        .style(move |_, status| {
+            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+            if is_selected {
+                style.background = Some(COLOR_ACCENT.into());
+                style.border.radius = 9.0.into();
+            } else if status == iced::widget::button::Status::Hovered {
+                style.text_color = COLOR_TEXT_PRIMARY;
+            }
+            style
+        })
     )
-    .padding([0, 3])
-    .style(move |_, status| {
-        let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-        if is_selected {
-            style.background = Some(COLOR_ACCENT.into());
-            style.border.radius = 10.0.into();
-        } else if status == iced::widget::button::Status::Hovered {
-            style.text_color = COLOR_TEXT_PRIMARY;
-        }
-        style
-    })
-    .on_press(Message::SelectSubfilter(Some(label)))
+    .width(Length::Fixed(17.0))
+    .height(Length::Fixed(17.0))
     .into()
 }
 
@@ -306,39 +322,63 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
 
         for (name, group_songs) in groups {
             let is_expanded = manager.expanded_nodes.contains(&name);
+            let is_selected = manager.selected_tree_item.as_deref() == Some(name.as_str());
+            let has_children = !group_songs.is_empty();
             let icon = if is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" };
             
-            let row_btn = button(
-                row![
-                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                        .width(18)
-                        .height(18)
-                        .style(|_t_theme: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_SECONDARY) }),
-                    Space::new().width(5),
-                    svg(svg::Handle::from_path("assets/icons/artist.svg")) // Icono de usuario/artista
-                        .width(16)
-                        .height(16)
-                        .style(|_t: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_PRIMARY) }),
-                    Space::new().width(8),
-                    text(name.clone())
-                        .size(13)
-                        .font(FONT_INTER_SANS_MEDIUM)
-                        .color(COLOR_TEXT_SECONDARY)
-                ]
-                .align_y(iced::Alignment::Start)
-            )
-            .width(Length::Fill)
-            .padding([7, 10])
-            .style(|_t: &Theme, status| {
-                let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-                if status == iced::widget::button::Status::Hovered {
-                    style.background = Some(COLOR_CONTRAST.into());
-                }
-                style
-            })
-            .on_press(Message::SelectTreeNode(name.clone()));
+            let row_content = row![
+                // Botón de expansión (solo el icono)
+                if has_children {
+                    iced::Element::from(
+                        button(
+                            container(
+                                svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
+                                    .width(22)
+                                    .height(22)
+                                    .style(|_t_theme: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_SECONDARY) })
+                            )
+                            .width(Length::Fixed(32.0))
+                            .height(Length::Fixed(32.0))
+                            .center_x(Length::Fill)
+                            .center_y(Length::Fill)
+                        )
+                        .padding(0)
+                        .style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT))
+                        .on_press(Message::ToggleTreeNode(name.clone()))
+                    )
+                } else {
+                    iced::Element::from(Space::new().width(Length::Fixed(32.0)))
+                },
+                Space::new().width(Length::Fixed(10.0)),
+                // Botón de selección (el texto)
+                button(
+                    container(
+                        text(name.clone())
+                            .size(13)
+                            .font(FONT_INTER_SANS_MEDIUM)
+                            .color(COLOR_TEXT_SECONDARY)
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fixed(32.0))
+                    .center_y(Length::Fill)
+                    .clip(true)
+                )
+                .width(Length::Fill)
+                .padding([0, 0])
+                .style(move |_t: &Theme, status| {
+                    let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                    if is_selected || status == iced::widget::button::Status::Hovered {
+                        style.background = Some(COLOR_CONTRAST.into());
+                    }
+                    style
+                })
+                .on_press(Message::SelectTreeNode(name.clone()))
+            ]
+            .align_y(iced::Alignment::Center)
+            .height(Length::Fixed(32.0))
+            .padding([0, 15]);
 
-            tree_col = tree_col.push(row_btn);
+            tree_col = tree_col.push(row_content);
             
             if is_expanded {
                 // Renderizar sub-nodos (Álbumes si es Artista, etc.)
@@ -355,26 +395,38 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                 }
 
                 for sub_name in sub_groups {
+                    let full_name = format!("{}|{}", name, sub_name);
+                    let is_sub_selected = manager.selected_tree_item.as_deref() == Some(full_name.as_str());
                     tree_col = tree_col.push(
-                        button(
-                             row![
-                                Space::new().width(25),
-                                text(sub_name.clone())
-                                    .size(12)
-                                    .font(FONT_INTER_SANS_MEDIUM)
-                                    .color(COLOR_TEXT_SECONDARY)
-                            ]
-                        )
-                        .width(Length::Fill)
-                        .padding([5, 10])
-                        .style(|_t: &Theme, status| {
-                            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-                            if status == iced::widget::button::Status::Hovered {
-                                style.background = Some(COLOR_CONTRAST.into());
-                            }
-                            style
-                        })
-                        .on_press(Message::SelectTreeNode(format!("{}|{}", name, sub_name)))
+                        row![
+                            Space::new().width(Length::Fixed(32.0)), // Espacio del icono (32px)
+                            Space::new().width(Length::Fixed(18.0)), // Espacio extra de sangría (18px)
+                            button(
+                                container(
+                                    text(sub_name.clone())
+                                        .size(12)
+                                        .font(FONT_INTER_SANS_MEDIUM)
+                                        .color(COLOR_TEXT_SECONDARY)
+                                )
+                                .width(Length::Fill)
+                                .height(Length::Fixed(32.0))
+                                .center_y(Length::Fill)
+                                .clip(true)
+                            )
+                            .width(Length::Fill)
+                            .padding([0, 0])
+                            .style(move |_t: &Theme, status| {
+                                let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                                if is_sub_selected || status == iced::widget::button::Status::Hovered {
+                                    style.background = Some(COLOR_CONTRAST.into());
+                                }
+                                style
+                            })
+                            .on_press(Message::SelectTreeNode(full_name))
+                        ]
+                        .align_y(iced::Alignment::Center)
+                        .height(Length::Fixed(32.0))
+                        .padding([0, 15])
                     );
                 }
             }
@@ -382,4 +434,5 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
     }
 
     tree_col.into()
+    
 }

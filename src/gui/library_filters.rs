@@ -47,7 +47,6 @@ pub struct LibraryFiltersManager {
     pub selected_type: FilterType,
     pub selected_subfilter: Option<String>, // "A", "B", "#", "·"
     pub expanded_nodes: std::collections::HashSet<String>,
-    pub selected_tree_item: Option<String>,
     pub menu_open: bool,
     pub search_query: String,
 }
@@ -58,7 +57,6 @@ impl Default for LibraryFiltersManager {
             selected_type: FilterType::Genre, // Filtro por defecto
             selected_subfilter: None,
             expanded_nodes: std::collections::HashSet::new(),
-            selected_tree_item: None,
             menu_open: false,
             search_query: String::new(),
         }
@@ -90,26 +88,16 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
         .padding(7)
         .font(FONT_INTER_SANS_MEDIUM)
         .text_size(13)
-        .style(move |_t: &Theme, status| {
-            let is_opened = matches!(status, pick_list::Status::Opened { .. });
-            let icon_path = if is_opened { "assets/icons/arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
-            
-            pick_list::Style {
-                background: COLOR_CONTRAST.into(),
-                border: iced::Border {
-                    color: COLOR_ACCENT,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                text_color: COLOR_TEXT_SECONDARY,
-                placeholder_color: COLOR_TEXT_SECONDARY,
-                handle_color: COLOR_TEXT_PRIMARY,
-                // Nota: handle es un campo en pick_list::Style para iced 0.14
-                /* handle: pick_list::Handle::Svg {
-                    handle: svg::Handle::from_path(icon_path),
-                    width: 24.0,
-                }, */
-            }
+        .style(|_t: &Theme, _s| pick_list::Style {
+            background: COLOR_CONTRAST.into(),
+            border: iced::Border {
+                color: COLOR_ACCENT,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            text_color: COLOR_TEXT_PRIMARY,
+            placeholder_color: COLOR_TEXT_SECONDARY,
+            handle_color: COLOR_TEXT_PRIMARY,
         })
     )
     .width(Length::Fill)
@@ -128,14 +116,7 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
         )
         .on_press(Message::SelectSubfilter(None))
         .padding([5, 10])
-        .style(|_t: &Theme, status| {
-            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-            if status == iced::widget::button::Status::Hovered {
-                style.background = Some(COLOR_CONTRAST.into());
-                style.border.radius = 4.0.into();
-            }
-            style
-        })
+        .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
     ]
     .spacing(5)
     .padding([5, 15])
@@ -181,15 +162,9 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
                 filter_selector,
                 subfilters,
                 scrollable_tree,
-            ]
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .spacing(0),
+            ].height(Length::Fill).spacing(0),
             search_bar
-        ]
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .spacing(0)
+        ].spacing(0)
     )
     .width(Length::Fixed(200.0))
     .height(Length::Fill)
@@ -208,7 +183,7 @@ fn render_alphabet<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a 
                 FilterType::Album => song.album.as_deref(),
                 FilterType::Genre => song.genre.as_deref(),
                 FilterType::Year => song.release_year.as_deref(),
-                FilterType::Folder => song.root_directory_name.as_deref(),
+                FilterType::Folder => None, // TODO: Implementar búsqueda por carpeta relacional
             };
             
             if let Some(s) = val {
@@ -299,7 +274,7 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                 FilterType::Album => song.album.clone(),
                 FilterType::Genre => song.genre.clone(),
                 FilterType::Year => song.release_year.clone(),
-                FilterType::Folder => song.root_directory_name.clone(),
+                FilterType::Folder => None,
             }.unwrap_or_else(|| "Desconocido".to_string());
             
             // Filtro por subfiltro (letra/signo)
@@ -322,7 +297,6 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
 
         for (name, group_songs) in groups {
             let is_expanded = manager.expanded_nodes.contains(&name);
-            let is_selected = manager.selected_tree_item.as_deref() == Some(name.as_str());
             let has_children = !group_songs.is_empty();
             let icon = if is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" };
             
@@ -349,7 +323,6 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                 } else {
                     iced::Element::from(Space::new().width(Length::Fixed(32.0)))
                 },
-                Space::new().width(Length::Fixed(10.0)),
                 // Botón de selección (el texto)
                 button(
                     container(
@@ -364,10 +337,10 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                     .clip(true)
                 )
                 .width(Length::Fill)
-                .padding([0, 0])
-                .style(move |_t: &Theme, status| {
+                .padding([0, 5])
+                .style(|_t: &Theme, status| {
                     let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-                    if is_selected || status == iced::widget::button::Status::Hovered {
+                    if status == iced::widget::button::Status::Hovered {
                         style.background = Some(COLOR_CONTRAST.into());
                     }
                     style
@@ -375,8 +348,7 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                 .on_press(Message::SelectTreeNode(name.clone()))
             ]
             .align_y(iced::Alignment::Center)
-            .height(Length::Fixed(32.0))
-            .padding([0, 15]);
+            .height(Length::Fixed(32.0));
 
             tree_col = tree_col.push(row_content);
             
@@ -389,18 +361,16 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                         FilterType::Album => s.artist.clone(),
                         FilterType::Genre => s.artist.clone(),
                         FilterType::Year => s.artist.clone(),
-                        FilterType::Folder => s.root_directory_name.clone(),
+                        FilterType::Folder => None,
                     }.unwrap_or_else(|| "Desconocido".to_string());
                     sub_groups.insert(sub_key);
                 }
 
                 for sub_name in sub_groups {
                     let full_name = format!("{}|{}", name, sub_name);
-                    let is_sub_selected = manager.selected_tree_item.as_deref() == Some(full_name.as_str());
                     tree_col = tree_col.push(
                         row![
-                            Space::new().width(Length::Fixed(32.0)), // Espacio del icono (32px)
-                            Space::new().width(Length::Fixed(18.0)), // Espacio extra de sangría (18px)
+                            Space::new().width(Length::Fixed(32.0)),
                             button(
                                 container(
                                     text(sub_name.clone())
@@ -414,10 +384,10 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                                 .clip(true)
                             )
                             .width(Length::Fill)
-                            .padding([0, 0])
-                            .style(move |_t: &Theme, status| {
+                            .padding([0, 10])
+                            .style(|_t: &Theme, status| {
                                 let mut style = button::Style::default().with_background(Color::TRANSPARENT);
-                                if is_sub_selected || status == iced::widget::button::Status::Hovered {
+                                if status == iced::widget::button::Status::Hovered {
                                     style.background = Some(COLOR_CONTRAST.into());
                                 }
                                 style
@@ -426,7 +396,6 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                         ]
                         .align_y(iced::Alignment::Center)
                         .height(Length::Fixed(32.0))
-                        .padding([0, 15])
                     );
                 }
             }

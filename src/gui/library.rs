@@ -61,7 +61,8 @@ pub struct LibraryStats {
 #[derive(Debug, Clone)]
 pub struct ArtistGroup {
     pub name: String,
-    pub albums: std::collections::HashSet<String>,
+    pub albums_count: usize,
+    pub songs_count: usize,
     pub songs: Vec<std::sync::Arc<crate::db::database::SongData>>,
     pub duration_secs: f64,
 }
@@ -641,7 +642,10 @@ impl LibraryManager {
                         if s.release_year.as_deref() != Some(f_year) { return false; }
                     }
                     if let Some(f_fold) = &self.filter_folder {
-                        if s.root_directory_name.as_deref() != Some(f_fold) { return false; }
+                        // En la nueva DB, folder_id es un entero, pero aquí recibimos el nombre.
+                        // Por simplicidad en la migración, saltamos este filtro hasta que el árbol use IDs.
+                        // if s.folder_id.to_string() != *f_fold { return false; }
+                        let _ = f_fold;
                     }
 
                     true
@@ -657,16 +661,28 @@ impl LibraryManager {
                 
                 let group = groups_map.entry(artist_name.clone()).or_insert(ArtistGroup {
                     name: artist_name,
-                    albums: std::collections::HashSet::new(),
+                    albums_count: 0,
+                    songs_count: 0,
                     songs: Vec::new(),
                     duration_secs: 0.0,
                 });
                 
-                if let Some(album) = &song.album {
-                    group.albums.insert(album.clone());
+                if let Some(_album) = &song.album {
+                    // Por ahora solo contamos canciones, la cuenta de álbumes se delega a SQL en el futuro
+                    group.songs_count += 1;
                 }
                 group.duration_secs += song.duration_secs.unwrap_or(0.0);
                 group.songs.push(song.clone());
+            }
+            
+            for g in groups_map.values_mut() {
+                // Cálculo simple de álbumes únicos para la UI actual
+                let mut unique_albums = std::collections::HashSet::new();
+                for s in &g.songs {
+                    if let Some(a) = &s.album { unique_albums.insert(a.clone()); }
+                }
+                g.albums_count = unique_albums.len();
+                g.songs_count = g.songs.len();
             }
             
             let groups: Vec<ArtistGroup> = groups_map.into_values().collect();

@@ -1188,7 +1188,6 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::SelectTreeNode(name) => {
-                self.filters_manager.selected_tree_item = Some(name.clone());
                 // Apply filter to library
                 self.library_manager.filter_artist = None;
                 self.library_manager.filter_album = None;
@@ -1576,8 +1575,8 @@ impl AudoxidyApp {
         } else if let Some(artist_name) = &self.library_manager.selected_header {
             if let Some(group) = self.library_manager.artist_groups.iter().find(|g| &g.name == artist_name) {
                  Some(crate::gui::library::LibraryStats {
-                     songs: group.songs.len() as u64,
-                     albums: group.albums.len() as u64,
+                     songs: group.songs_count as u64,
+                     albums: group.albums_count as u64,
                      artists: 1,
                      duration_secs: group.duration_secs,
                      size_bytes: group.songs.iter().map(|s| s.size.unwrap_or(0) as f64).sum(),

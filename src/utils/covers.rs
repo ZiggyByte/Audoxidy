@@ -73,21 +73,11 @@ pub fn clear_all_cover_cache() {
     }
 }
 
-/// Genera un ID único para un álbum basado exclusivamente en el Hash SHA256 de Artista + Álbum
-pub fn generate_album_id(artist: &str, album: &str) -> String {
-    let mut hasher = Sha256::new();
-    // Normalizamos a minúsculas para evitar duplicados por capitalización
-    hasher.update(format!("{}|{}", artist.to_lowercase(), album.to_lowercase()).as_bytes());
-    let result = hasher.finalize();
-    hex::encode(&result[..16]) // 32 caracteres hexadecimales para colisiones nulas
-}
-
 /// Genera un ID único para una imagen específica de canción (u8 data)
-pub fn generate_song_art_id(data: &[u8]) -> String {
+pub fn generate_pic_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    let result = hasher.finalize();
-    format!("{}_song", hex::encode(&result[..8]))
+    hex::encode(hasher.finalize())
 }
 
 /// Extrae de un buffer raw de imagen, recorta/escala a 512x512 y guarda como .avif 80% de calidad.

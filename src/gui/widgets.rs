@@ -782,10 +782,10 @@ where
                     group.name.clone(),
                     is_collapsed,
                     is_header_selected,
-                    group.albums.len(),
-                    group.songs.len(),
+                    group.albums_count,
+                    group.songs_count,
                     group.duration_secs,
-                    header_h, // Dynamic: 42px for ThumbnailList, 32px for others
+                    header_h,
                     crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
                 );
@@ -827,10 +827,10 @@ where
                 st_group.name.clone(),
                 is_collapsed,
                 is_header_selected,
-                st_group.albums.len(),
-                st_group.songs.len(),
+                st_group.albums_count,
+                st_group.songs_count,
                 st_group.duration_secs,
-                header_h, // Dynamic: 42px for ThumbnailList, 32px for others
+                header_h,
                 crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
             )
@@ -1032,8 +1032,8 @@ where
                     group.name.clone(),
                     is_collapsed,
                     is_header_explicitly_selected,
-                    group.albums.len(),
-                    group.songs.len(),
+                    group.albums_count,
+                    group.songs_count,
                     group.duration_secs,
                     32.0, // DetailedList always uses 32px headers
                     crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
@@ -1170,8 +1170,8 @@ where
                 st_group.name.clone(),
                 is_collapsed,
                 is_header_explicitly_selected,
-                st_group.albums.len(),
-                st_group.songs.len(),
+                st_group.albums_count,
+                st_group.songs_count,
                 st_group.duration_secs,
                 32.0, // DetailedList always uses 32px headers
                 crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),

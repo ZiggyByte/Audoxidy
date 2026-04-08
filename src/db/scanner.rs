@@ -2,10 +2,9 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use lofty::probe::Probe;
 use lofty::prelude::{TaggedFileExt, AudioFile, ItemKey};
-use lofty::tag::Accessor;
 use walkdir::WalkDir;
 
-use crate::db::database::Database;
+use crate::db::database::{Database, SongData, SongMetadataExtended};
 
 pub struct Scanner {
     _db: Arc<Mutex<Database>>,
@@ -13,12 +12,10 @@ pub struct Scanner {
 }
 
 impl Scanner {
-    #[allow(dead_code)]
     pub fn new(db: Arc<Mutex<Database>>) -> Self {
         Self { _db: db, db_dirty: Arc::new(AtomicBool::new(false)) }
     }
     
-    // Escaneo asíncrono
     pub fn scan_folder_async(&self, folder_path: String) {
         let db_arc = Arc::clone(&self._db);
         let dirty_flag = Arc::clone(&self.db_dirty);
@@ -28,7 +25,9 @@ impl Scanner {
     }
 
     fn scan_folder(db_m: &Arc<Mutex<Database>>, root: &str, dirty_flag: &Arc<AtomicBool>) {
-        let supported_extensions = ["mp3", "flac", "wav", "ogg", "m4a"];
+        let supported_extensions = [
+            "mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv"
+        ];
         
         let start_order = {
             if let Ok(db) = db_m.lock() {
@@ -41,7 +40,6 @@ impl Scanner {
         let mut current_order = start_order;
         let mut enqueued_covers = std::collections::HashSet::new();
         
-        // Iniciar transacción masiva
         if let Ok(db) = db_m.lock() {
             let _ = db.begin_transaction();
         }
@@ -54,13 +52,11 @@ impl Scanner {
                         Self::process_file(db_m, path, root, current_order, &mut enqueued_covers);
                         current_order += 1;
                         
-                        // Commit por lotes cada 500 archivos para estabilidad y rendimiento
                         if count % 500 == 0 {
                             if let Ok(db) = db_m.lock() {
                                 let _ = db.commit_transaction();
                                 let _ = db.begin_transaction();
                             }
-                            // Señalizar a la UI que la BD tiene nuevos datos
                             dirty_flag.store(true, Ordering::Relaxed);
                         }
                     }
@@ -68,135 +64,145 @@ impl Scanner {
             }
         }
         
-        // Finalizar transacción
         if let Ok(db) = db_m.lock() {
             let _ = db.commit_transaction();
         }
 
-        // Al finalizar el escaneo, limpiar caché negativa y señalizar a la UI
         crate::utils::covers::clear_all_cover_cache();
         dirty_flag.store(true, Ordering::Relaxed);
     }
 
-    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>) {
-        let mut record = crate::db::database::SongData::default();
-        record.import_order = import_order;
-        record.full_file_path = path.to_string_lossy().to_string();
-        record.file_name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        record.root_directory_name = Some(root.to_string());
-        record.full_root_directory_path = path.parent().map(|p| p.to_string_lossy().to_string());
+    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, _root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>) {
+        let mut song = SongData::default();
+        let mut extended = SongMetadataExtended::default();
+        
+        song.import_order = import_order;
+        song.full_file_path = path.to_string_lossy().to_string();
         
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            record.format = Some(ext.to_uppercase()); // Guardar exacto sin convertir a mayúsculas
+            song.format = Some(ext.to_uppercase());
         }
         
         if let Ok(metadata) = std::fs::metadata(path) {
-            record.size = Some(metadata.len() as i64);
+            song.size = Some(metadata.len() as i64);
         }
 
+        let mut pic_bytes = None;
+        let mut raw_tag_items = Vec::new(); // (tag_type, item_key, raw_value)
+        
+        // Mapa para la fusión (prioridad). Almacenamos el valor de mayor prioridad para cada clave técnica.
+        // Prioridad: Id3v2 > VorbisComments > Mp4ilst > Ape > RiffInfo > Id3v1
+        let mut fused_map = std::collections::HashMap::new();
+
         if let Ok(probe) = Probe::open(path) {
-            if let Ok(tagged_file) = probe.read() {
+            if let Ok(tagged_file) = probe.guess_file_type().unwrap_or(Probe::open(path).unwrap()).read() {
                 let props = tagged_file.properties();
-                record.sample_rate = props.sample_rate().map(|sr| sr as i64);
-                record.channels = props.channels().map(|ch| ch as i64);
-                record.duration_secs = Some(props.duration().as_secs_f64());
-                record.bit_depth = props.bit_depth().map(|b| b as i64);
+                song.sample_rate = props.sample_rate().map(|sr| sr as i64);
+                song.channels = props.channels().map(|ch| ch as i64);
+                song.duration_secs = Some(props.duration().as_secs_f64());
+                song.bit_depth = props.bit_depth().map(|b| b as i64);
                 
-                // Contingencia: Si Lofty falla o el codec es abstracto, extraer de Symphonia.
-                if record.bit_depth.is_none() {
-                    if let Ok(file) = std::fs::File::open(path) {
-                        let mss = symphonia::core::io::MediaSourceStream::new(Box::new(file), Default::default());
-                        let mut hint = symphonia::core::probe::Hint::new();
-                        if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                            hint.with_extension(ext);
-                        }
-                        if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &Default::default(), &Default::default()) {
-                            if let Some(track) = probed.format.default_track() {
-                                if let Some(bps) = track.codec_params.bits_per_sample {
-                                    record.bit_depth = Some(bps as i64);
-                                }
+                // 1. Recolectar TODAS las etiquetas presentes
+                for tag in tagged_file.tags() {
+                    let tag_type = tag.tag_type();
+                    let tag_type_str = format!("{:?}", tag_type);
+                    
+                    // Nivel de prioridad dependiente del formato (Menor es más prioritario)
+                    let file_type = tagged_file.file_type();
+                    let priority = match (file_type, tag_type) {
+                        // FLAC: VorbisComments tiene la prioridad absoluta (ID3v2 es solo lectura)
+                        (lofty::file::FileType::Flac, lofty::tag::TagType::VorbisComments) => 1,
+                        
+                        // APE/MPC: APE tiene la prioridad absoluta (ID3v2/v1 son secundarios o solo lectura)
+                        (lofty::file::FileType::Ape | lofty::file::FileType::Mpc, lofty::tag::TagType::Ape) => 1,
+                        
+                        // WAV/AIFF: ID3v2 tiene prioridad sobre RIFF INFO/Text Chunks
+                        (lofty::file::FileType::Wav | lofty::file::FileType::Aiff, lofty::tag::TagType::Id3v2) => 1,
+                        (lofty::file::FileType::Wav, lofty::tag::TagType::RiffInfo) => 2,
+
+                        // Prioridades globales (Mantenidas para MP3, AAC, etc.)
+                        (_, lofty::tag::TagType::Id3v2) => 1,
+                        (_, lofty::tag::TagType::VorbisComments) => 2,
+                        (_, lofty::tag::TagType::Mp4Ilst) => 3,
+                        (_, lofty::tag::TagType::Ape) => 4,
+                        (_, lofty::tag::TagType::RiffInfo) => 5,
+                        (_, lofty::tag::TagType::Id3v1) => 6,
+                        _ => 10,
+                    };
+
+                    for item in tag.items() {
+                        let key = item.key();
+                        if let lofty::tag::ItemValue::Text(val) = item.value() {
+                            // Guardar para SONG_TAG_ITEMS (Crudo total)
+                            raw_tag_items.push((tag_type_str.clone(), format!("{:?}", key), val.clone()));
+                            
+                            // Lógica de Fusión: Solo actualizamos si no existe o si el nuevo tag tiene más prioridad
+                            let entry = fused_map.entry(key.clone()).or_insert((priority, val.clone()));
+                            if priority < entry.0 {
+                                *entry = (priority, val.clone());
                             }
+                        }
+                    }
+
+                    // Intentar extraer carátula del tag más prioritario que la tenga
+                    if pic_bytes.is_none() {
+                        if let Some(pic) = tag.pictures().first() {
+                            song.embedded_cover = true;
+                            pic_bytes = Some(pic.data().to_vec());
                         }
                     }
                 }
+
+                // 2. Poblar SongData con los valores fusionados (Alta Fidelidad)
+                let get_fused = |key: ItemKey| fused_map.get(&key).map(|(_, v)| v.clone());
+
+                song.title = get_fused(ItemKey::TrackTitle);
+                song.artist = get_fused(ItemKey::TrackArtist);
+                song.album = get_fused(ItemKey::AlbumTitle);
+                song.genre = get_fused(ItemKey::Genre);
+                song.track_number = get_fused(ItemKey::TrackNumber);
+                song.album_artist = get_fused(ItemKey::AlbumArtist);
                 
-                if let Some(t) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
-                    // Extraer siempre como String Literal sin conversiones
-                    record.track_number = t.get_string(ItemKey::TrackNumber).map(|s| s.to_string())
-                                           .or_else(|| t.track().map(|n| n.to_string()));
-                    record.total_tracks = t.get_string(ItemKey::TrackTotal).map(|s| s.to_string())
-                                           .or_else(|| t.track_total().map(|n| n.to_string()));
-                    record.disc_number = t.get_string(ItemKey::DiscNumber).map(|s| s.to_string())
-                                          .or_else(|| t.disk().map(|n| n.to_string()));
-                    record.total_discs = t.get_string(ItemKey::DiscTotal).map(|s| s.to_string())
-                                          .or_else(|| t.disk_total().map(|n| n.to_string()));
-                    
-                    record.title = t.title().as_deref().map(|s| s.to_string());
-                    record.artist = t.artist().as_deref().map(|s| s.to_string());
-                    record.album = t.album().as_deref().map(|s| s.to_string());
-                    record.genre = t.genre().as_deref().map(|s| s.to_string());
-                    // release_year in lofty 0.23: Accessor::year is replaced by date. 
-                    record.release_year = t.get_string(ItemKey::Year).map(|s| s.to_string())
-                        .or_else(|| t.get_string(ItemKey::RecordingDate).map(|s| s.to_string()))
-                        .or_else(|| t.get_string(ItemKey::OriginalReleaseDate).map(|s| s.to_string()))
-                        .or_else(|| t.date().map(|d| d.to_string()));
-                    
-                    record.album_artist = t.get_string(ItemKey::AlbumArtist).map(|s| s.to_string());
-                    if record.album_artist.is_some() {
-                        // En 0.23 lofty resuelve ALBUM ARTIST de manera estándar
-                        record.album_artist_tag_format = Some("ALBUMARTIST".to_string());
-                    }
-                    
-                    // Lyrics is no longer supported directly, changed to UnsyncLyrics
-                    record.lyrics = t.get_string(ItemKey::UnsyncLyrics).map(|s| s.to_string());
-                    record.comments = t.get_string(ItemKey::Comment).map(|s| s.to_string());
-                    record.composer = t.get_string(ItemKey::Composer).map(|s| s.to_string());
-                    record.publisher = t.get_string(ItemKey::Publisher).map(|s| s.to_string());
-                    record.isrc = t.get_string(ItemKey::Isrc).map(|s| s.to_string());
-                    record.bpm = t.get_string(ItemKey::Bpm).map(|s| s.to_string());
-                    
-                    if !t.pictures().is_empty() {
-                        record.embedded_cover = true;
-                        if let Some(pic) = t.pictures().first() {
-                            let artist_name = record.album_artist.as_deref().or(record.artist.as_deref()).unwrap_or("Desconocido");
-                            let album_name = record.album.as_deref().unwrap_or("Desconocido");
-                            
-                            // 1. Generar ID único de álbum (Hash Artista + Álbum)
-                             let album_hash = crate::utils::covers::generate_album_id(artist_name, album_name);
-                             let final_id = album_hash.clone(); // Usamos siempre el hash del álbum para consistencia masiva
-                             
-                             // 2. Ejecutar la creación de la caché en el Pool de Hilos dedicado (512x512, avif, 80%)
-                             let expected_cached_path = std::path::PathBuf::from(format!("cache/covers/{}.avif", final_id));
-                             let abs_cache = std::env::current_dir().unwrap_or_default().join(&expected_cached_path).to_string_lossy().to_string();
-                             record.compressed_cached_cover_root = Some(abs_cache.clone());
+                // Año con lógica de fallback robusta pero preservando formato
+                song.release_year = get_fused(ItemKey::Year)
+                    .or_else(|| get_fused(ItemKey::RecordingDate))
+                    .or_else(|| get_fused(ItemKey::OriginalReleaseDate))
+                    .map(|d| d.chars().filter(|c| c.is_digit(10)).take(4).collect::<String>());
 
-                             // Despachar tarea asíncrona mediante el Gateway Throttled solo si NO existe ya y NO ha sido encolado en esta sesión
-                             if !expected_cached_path.exists() && !enqueued_covers.contains(&final_id) {
-                                 let pic_data = pic.data().to_vec();
-                                 crate::utils::covers::enqueue_cover_job(pic_data, final_id.clone());
-                                 enqueued_covers.insert(final_id);
-                             }
+                extended.lyrics = get_fused(ItemKey::UnsyncLyrics).or_else(|| get_fused(ItemKey::Lyrics));
+                extended.comments = get_fused(ItemKey::Comment);
+                extended.composer = get_fused(ItemKey::Composer);
+                extended.lyricist = get_fused(ItemKey::Lyricist);
+                extended.publisher = get_fused(ItemKey::Publisher);
+                extended.copyright = get_fused(ItemKey::CopyrightMessage);
+                extended.encoded_by = get_fused(ItemKey::EncodedBy);
+                extended.catalog = get_fused(ItemKey::CatalogNumber);
+                extended.isrc = get_fused(ItemKey::Isrc);
+                extended.key = get_fused(ItemKey::InitialKey);
+                extended.bpm = get_fused(ItemKey::Bpm);
+                
+                extended.track_gain = get_fused(ItemKey::ReplayGainTrackGain)
+                    .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
+                extended.album_gain = get_fused(ItemKey::ReplayGainAlbumGain)
+                    .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
+            }
+        }
 
-                            // 3. Registrar en la tabla de ALBUMS para acceso instantáneo
-                            if let Ok(db) = db_m.lock() {
-                                let _ = db.upsert_album(
-                                    &album_hash,
-                                    album_name,
-                                    artist_name,
-                                    record.genre.as_deref().unwrap_or(""),
-                                    record.release_year.as_deref().unwrap_or(""),
-                                    Some(&abs_cache),
-                                    record.duration_secs.unwrap_or(0.0)
-                                );
-                            }
+        let pic_hash = pic_bytes.as_ref().map(|b| Database::generate_hash(&hex::encode(b)));
+
+        if let Ok(mut db) = db_m.lock() {
+            if let Ok((target_hash, needs_processing)) = db.insert_song_full(&song, &extended, pic_hash, raw_tag_items) {
+                if needs_processing && !enqueued_covers.contains(&target_hash) {
+                    if let Some(data) = pic_bytes {
+                        // Solo encolamos si es un archivo AVIF que no existe
+                        let expected_path = format!("cache/covers/{}.avif", target_hash);
+                        if !std::path::Path::new(&expected_path).exists() {
+                            crate::utils::covers::enqueue_cover_job(data, target_hash.clone());
+                            enqueued_covers.insert(target_hash);
                         }
                     }
                 }
             }
-        }
-        
-        if let Ok(mut db) = db_m.lock() {
-            let _ = db.insert_song(&record);
         }
     }
 }

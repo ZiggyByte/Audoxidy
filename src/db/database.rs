@@ -512,6 +512,44 @@ impl Database {
         Ok(results)
     }
 
+    /// Obtiene álbumes desglosados por artista para la vista Grid (Consistencia con Listas)
+    pub fn get_grid_items_by_artist(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
+        let mut stmt = self.conn.prepare("
+            SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
+            FROM SONGS s
+            JOIN ARTISTS ar ON s.artist_id = ar.id
+            JOIN ALBUMS al ON s.album_id = al.id
+            GROUP BY al.id, ar.id
+            ORDER BY ar.name ASC, al.year ASC, al.title ASC
+        ")?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3).unwrap_or_default(), 
+                row.get(4).unwrap_or_default(), row.get(5)?
+            ))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            if let Ok(a) = r { results.push(a); }
+        }
+        Ok(results)
+    }
+
+    pub fn get_all_folders(&self) -> Result<Vec<(i64, String, String)>> {
+        let mut stmt = self.conn.prepare("SELECT id, path, name FROM FOLDERS ORDER BY path ASC")?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })?;
+
+        let mut results = Vec::new();
+        for r in rows {
+            if let Ok(f) = r { results.push(f); }
+        }
+        Ok(results)
+    }
+
     pub fn get_album_stats_by_hash(&self, album_hash: &str) -> Result<(u64, f64, f64)> {
         let mut stmt = self.conn.prepare("
             SELECT COUNT(*), SUM(duration), SUM(size)
@@ -521,6 +559,25 @@ impl Database {
         ")?;
         
         let stats = stmt.query_row(params![album_hash], |row| {
+            Ok((
+                row.get::<_, i64>(0)? as u64,
+                row.get::<_, f64>(1).unwrap_or(0.0),
+                row.get::<_, f64>(2).unwrap_or(0.0) as f64,
+            ))
+        })?;
+        Ok(stats)
+    }
+
+    pub fn get_album_stats_by_hash_and_artist(&self, album_hash: &str, artist_name: &str) -> Result<(u64, f64, f64)> {
+        let mut stmt = self.conn.prepare("
+            SELECT COUNT(*), SUM(s.duration), SUM(s.size)
+            FROM SONGS s
+            JOIN ALBUMS al ON s.album_id = al.id
+            JOIN ARTISTS ar ON s.artist_id = ar.id
+            WHERE al.hash_id = ?1 AND ar.name = ?2
+        ")?;
+        
+        let stats = stmt.query_row(params![album_hash, artist_name], |row| {
             Ok((
                 row.get::<_, i64>(0)? as u64,
                 row.get::<_, f64>(1).unwrap_or(0.0),
@@ -541,10 +598,55 @@ impl Database {
             JOIN ALBUMS al ON s.album_id = al.id
             JOIN ARTISTS al_ar ON al.artist_id = al_ar.id
             WHERE al.hash_id = ?1
-            ORDER BY s.track_num ASC
+            ORDER BY ar.name ASC, al.year ASC, al.title ASC, CAST(s.track_num AS INTEGER) ASC, s.track_num ASC
         ")?;
 
         let rows = stmt.query_map([album_hash_id], |row| {
+            let mut song = SongData::default();
+            song.id = row.get(0)?;
+            song.full_file_path = row.get(1)?;
+            song.title = row.get(2)?;
+            song.artist = row.get(3)?;
+            song.album = row.get(4)?;
+            song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
+            song.duration_secs = row.get(6)?;
+            song.format = row.get(7)?;
+            song.size = row.get(8)?;
+            song.track_number = row.get(9)?; // TEXT -> Option<String>
+            song.bit_depth = row.get(10)?;
+            song.sample_rate = row.get(11)?;
+            song.channels = row.get(12)?;
+            song.embedded_cover = row.get(13)?;
+            song.cover_override = row.get(14)?;
+            song.import_order = row.get(15)?;
+            song.genre = row.get(16)?;
+            song.release_year = row.get(17)?;
+            song.album_artist = row.get(18)?;
+            Ok(Arc::new(song))
+        })?;
+
+        let mut songs = Vec::new();
+        for r in rows {
+            if let Ok(s) = r { songs.push(s); }
+        }
+        Ok(songs)
+    }
+
+    pub fn get_songs_by_album_and_artist(&self, album_hash_id: &str, artist_name: &str) -> Result<Vec<Arc<SongData>>> {
+        let mut stmt = self.conn.prepare("
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
+                   s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
+                   s.channels, s.embedded_cover, s.cover_override, s.import_order,
+                   al.genre, al.year, al_ar.name
+            FROM SONGS s
+            JOIN ARTISTS ar ON s.artist_id = ar.id
+            JOIN ALBUMS al ON s.album_id = al.id
+            JOIN ARTISTS al_ar ON al.artist_id = al_ar.id
+            WHERE al.hash_id = ?1 AND ar.name = ?2
+            ORDER BY ar.name ASC, al.year ASC, al.title ASC, CAST(s.track_num AS INTEGER) ASC, s.track_num ASC
+        ")?;
+
+        let rows = stmt.query_map([album_hash_id, artist_name], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = row.get(1)?;

@@ -770,7 +770,10 @@ where
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
-        list_col = list_col.push(Space::new().height(Length::Fixed(top_space)));
+        list_col = list_col.push(
+            mouse_area(Space::new().height(Length::Fixed(top_space)))
+                .on_press(crate::gui::app::Message::LibraryDeselect)
+        );
     }
 
     for element in visible_elements {
@@ -804,10 +807,16 @@ where
     }
 
     if bottom_space > 0.0 {
-        list_col = list_col.push(Space::new().height(Length::Fixed(bottom_space)));
+        list_col = list_col.push(
+            mouse_area(Space::new().height(Length::Fixed(bottom_space)))
+                .on_press(crate::gui::app::Message::LibraryDeselect)
+        );
     }
 
-    let main_scroll = scrollable(container(list_col).width(Length::Fill).padding([0, 15]))
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding([0, 15]))
+        .on_press(crate::gui::app::Message::LibraryDeselect);
+
+    let main_scroll = scrollable(list_container)
         .width(Length::Fill).height(Length::Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new()
@@ -956,6 +965,10 @@ where
 
     let mut top_space = 0.0;
     let mut bottom_space = 0.0;
+    
+    if top_space > 0.0 {
+        // No añadimos espacio clicable aquí por ahora ya que el Sticky Header lo cubre
+    }
 
     enum VirtualRow<'a> {
         ArtistHeader(&'a crate::gui::library::ArtistGroup, bool),
@@ -1019,7 +1032,10 @@ where
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
-        list_col = list_col.push(Space::new().height(Length::Fixed(top_space)));
+        list_col = list_col.push(
+            mouse_area(Space::new().height(Length::Fixed(top_space)))
+                .on_press(crate::gui::app::Message::LibraryDeselect)
+        );
     }
 
     for element in visible_elements {
@@ -1042,10 +1058,16 @@ where
                 list_col = list_col.push(header);
             }
             VirtualRow::AlbumBlock(alb, is_expanded, artist_name, genre, year) => {
-                // Buscamos el cover en cached_albums usando el nombre del álbum (a.1)
-                let album_id = alb.album_name.clone();
-                let cover_path = manager.cached_albums.as_ref()
-                    .and_then(|albums| albums.iter().find(|a| a.1 == album_id).and_then(|a| a.5.clone()));
+                // Buscamos el álbum en cached_albums usando el título para obtener su hash_id y cover_path
+                let (album_hash, cover_path) = if let Some(albums) = &manager.cached_albums {
+                    let match_alb = albums.iter().find(|a| a.1 == alb.album_name && a.2 == artist_name);
+                    (
+                        match_alb.map(|a| a.0.clone()).unwrap_or_else(|| alb.album_name.clone()),
+                        match_alb.and_then(|a| a.5.clone())
+                    )
+                } else {
+                    (alb.album_name.clone(), None)
+                };
 
                 let card_wrapper = album_art_widget(
                     cover_path.as_ref(), // AVIF Path
@@ -1062,7 +1084,11 @@ where
                     text(truncate_text(&genre, 24)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
                     text(year.clone()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
                 ].spacing(2).width(Length::Fill);
-                let is_album_explicitly_selected = manager.selected_album.as_deref() == Some(alb.album_name.as_str()) && manager.selected_song_idx.is_none();
+
+                let composite_id = format!("{}|{}", artist_name, album_hash);
+                let is_album_explicitly_selected = if let Some(sel) = &manager.selected_album {
+                    sel == &composite_id || sel == &alb.album_name
+                } else { false };
                 let is_song_selected_in_album = manager.selected_song_idx.map(|idx| alb.songs.iter().any(|(_, i)| *i == idx)).unwrap_or(false);
                 let is_album_card_highlighted = is_album_explicitly_selected || is_song_selected_in_album;
 
@@ -1082,7 +1108,7 @@ where
                             }
                         })
                 )
-                .on_press(crate::gui::app::Message::SelectAlbum(album_id.clone()))
+                .on_press(crate::gui::app::Message::SelectAlbum(composite_id.clone()))
                 .interaction(iced::mouse::Interaction::Pointer);
 
                 // Lado Derecho (Album Header + Canciones)
@@ -1108,10 +1134,10 @@ where
                     text(format!("{} Canciones | {}", alb.songs.len(), time_str))
                         .size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
                     Space::new().width(15),
-                    chevron_btn(chevron, crate::gui::app::Message::ToggleAlbumExpansion(album_id.clone()), 32.0, 28.0),
+                    chevron_btn(chevron, crate::gui::app::Message::ToggleAlbumExpansion(album_hash.clone()), 32.0, 28.0),
                 ].align_y(Alignment::Center).padding([0, 15]);
 
-                let alb_header = container(mouse_area(alb_header_content).on_press(crate::gui::app::Message::SelectAlbum(album_id.clone())))
+                let alb_header = container(mouse_area(alb_header_content).on_press(crate::gui::app::Message::SelectAlbum(composite_id)))
                     .width(Length::Fill)
                     .height(Length::Fixed(album_header_h))
                     .center_y(Length::Fill)
@@ -1148,10 +1174,16 @@ where
     }
 
     if bottom_space > 0.0 {
-        list_col = list_col.push(Space::new().height(Length::Fixed(bottom_space)));
+        list_col = list_col.push(
+            mouse_area(Space::new().height(Length::Fixed(bottom_space)))
+                .on_press(crate::gui::app::Message::LibraryDeselect)
+        );
     }
 
-    let main_scroll = scrollable(container(list_col).width(Length::Fill).padding([0, 15]))
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding([0, 15]))
+        .on_press(crate::gui::app::Message::LibraryDeselect);
+
+    let main_scroll = scrollable(list_container)
         .width(Length::Fill).height(Length::Fill)
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new().width(4).margin(0).scroller_width(4)

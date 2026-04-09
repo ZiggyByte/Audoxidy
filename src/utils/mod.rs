@@ -136,3 +136,100 @@ pub fn format_size(bytes: i64) -> String {
         format!("{:.2} MB", size_mb)
     }
 }
+
+/// Estructura para gestionar la visualización de rutas en la biblioteca de forma inteligente.
+pub struct IntelligentPath {
+    pub display: String,
+    pub is_multi_drive: bool,
+}
+
+/// Formatea una ruta física según las reglas de Audoxidy:
+/// 1. Prefijo de disco si provienen de diferentes puntos de montaje.
+/// 2. Desambiguación de raíces con nombres idénticos (ej. /Descargas/Musica vs /Documentos/Musica).
+/// 3. Abreviación "4-atrás" para rutas profundas en paneles estrechos.
+pub fn format_intelligent_path(
+    full_path: &str, 
+    all_roots: &[String], 
+    mount_points: &[(String, String)]
+) -> String {
+    // A. Detectar Disco / Punto de Montaje
+    let mut drive_prefix = String::new();
+    if mount_points.len() > 1 {
+        let mut best_mnt = "/";
+        for (mnt, _) in mount_points {
+            if full_path.starts_with(mnt) && mnt.len() > best_mnt.len() {
+                best_mnt = mnt;
+            }
+        }
+        if best_mnt != "/" {
+            let mnt_name = best_mnt.trim_start_matches("/mnt/").trim_start_matches("/media/");
+            drive_prefix = format!("[{}] ", if mnt_name.is_empty() { "/" } else { mnt_name });
+        } else {
+            drive_prefix = "[/] ".to_string();
+        }
+    }
+
+    // B. Identificar Raíz y Desambiguar
+    let mut root_part = String::new();
+    let mut selected_root = "";
+    for r in all_roots {
+        if full_path.starts_with(r) && r.len() > selected_root.len() {
+            selected_root = r;
+        }
+    }
+
+    if !selected_root.is_empty() {
+        let root_path = std::path::Path::new(selected_root);
+        let root_name = root_path.file_name().and_then(|n| n.to_str()).unwrap_or("Raíz");
+        
+        // Verificar si este nombre de raíz está duplicado en las rutas añadidas
+        let duplicates = all_roots.iter()
+            .filter(|r| std::path::Path::new(r).file_name().and_then(|n| n.to_str()) == Some(root_name))
+            .count();
+            
+        if duplicates > 1 {
+            // Usar padre + raíz para desambiguar
+            let parent_name = root_path.parent().and_then(|p| p.file_name()).and_then(|n| n.to_str()).unwrap_or("..");
+            root_part = format!("{}/{} ", parent_name, root_name);
+        } else {
+            root_part = format!("{} ", root_name);
+        }
+    }
+
+    // C. Algoritmo "4-atrás" para profundidad
+    let relative = if !selected_root.is_empty() {
+        full_path.strip_prefix(selected_root).unwrap_or(full_path).trim_start_matches('/')
+    } else {
+        full_path.trim_start_matches('/')
+    };
+
+    let components: Vec<&str> = relative.split('/').filter(|s| !s.is_empty()).collect();
+    let inner_path = if components.len() > 4 {
+        let last_four = components[components.len()-4..].join("/");
+        format!("... / {}", last_four)
+    } else {
+        components.join("/")
+    };
+
+    format!("{}{}{}", drive_prefix, root_part, inner_path).trim().to_string()
+}
+
+/// Función central de ordenamiento canónico para Audoxidy: Artista -> Año -> Álbum -> Número de Pista.
+pub fn compare_songs_for_listing(a: &SongData, b: &SongData) -> std::cmp::Ordering {
+    let empty = String::new();
+    let art_a = a.artist.as_ref().or(a.album_artist.as_ref()).unwrap_or(&empty);
+    let art_b = b.artist.as_ref().or(b.album_artist.as_ref()).unwrap_or(&empty);
+    
+    art_a.cmp(art_b)
+        .then(a.release_year.cmp(&b.release_year))
+        .then(a.album.cmp(&b.album))
+        .then({
+            let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
+            let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
+            match (tn_a, tn_b) {
+                (Some(na), Some(nb)) => na.cmp(&nb),
+                _ => a.track_number.cmp(&b.track_number),
+            }
+        })
+}
+

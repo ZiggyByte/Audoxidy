@@ -166,7 +166,7 @@ pub fn view<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crate::
             search_bar
         ].spacing(0)
     )
-    .width(Length::Fixed(200.0))
+    .width(Length::Fixed(202.0))
     .height(Length::Fill)
     .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
     .into()
@@ -276,6 +276,8 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                 FilterType::Year => song.release_year.clone(),
                 FilterType::Folder => None,
             }.unwrap_or_else(|| "Desconocido".to_string());
+            
+            if manager.selected_type == FilterType::Folder { continue; }
             
             // Filtro por subfiltro (letra/signo)
             if let Some(sub) = &manager.selected_subfilter {
@@ -396,6 +398,60 @@ fn render_tree<'a>(manager: &'a LibraryFiltersManager, library_manager: &'a crat
                         ]
                         .align_y(iced::Alignment::Center)
                         .height(Length::Fixed(32.0))
+                    );
+                }
+            }
+        }
+
+        // --- LÓGICA ESPECIAL PARA EL ÁRBOL DE CARPETAS ---
+        if manager.selected_type == FilterType::Folder {
+            if let Some(folders) = &library_manager.cached_folders {
+                // Para desambiguar carpetas con el mismo nombre, pasamos todas las rutas a la utilidad
+                let all_paths: Vec<String> = folders.iter().map(|f| f.1.clone()).collect();
+                
+                for (id, path, _) in folders {
+                    let display_name = crate::utils::format_intelligent_path(
+                        path, 
+                        &all_paths, 
+                        &library_manager.mount_points
+                    );
+
+                    // Filtro de búsqueda rápida para carpetas
+                    if !manager.search_query.is_empty() && !display_name.to_lowercase().contains(&manager.search_query.to_lowercase()) {
+                        continue;
+                    }
+
+                    tree_col = tree_col.push(
+                        button(
+                            container(
+                                row![
+                                    svg(svg::Handle::from_path("assets/icons/folder.svg"))
+                                        .width(Length::Fixed(18.0))
+                                        .height(Length::Fixed(18.0))
+                                        .style(|_t, _s| svg::Style { color: Some(COLOR_TEXT_SECONDARY) }),
+                                    Space::new().width(Length::Fixed(8.0)),
+                                    text(display_name)
+                                        .size(12)
+                                        .font(FONT_INTER_SANS_MEDIUM)
+                                        .color(COLOR_TEXT_SECONDARY)
+                                ]
+                                .align_y(iced::Alignment::Center)
+                            )
+                            .width(Length::Fill)
+                            .height(Length::Fixed(32.0))
+                            .center_y(Length::Fill)
+                            .padding([0, 10])
+                        )
+                        .width(Length::Fill)
+                        .padding(0)
+                        .style(|_t, status| {
+                            let mut style = button::Style::default().with_background(Color::TRANSPARENT);
+                            if status == iced::widget::button::Status::Hovered {
+                                style.background = Some(COLOR_CONTRAST.into());
+                            }
+                            style
+                        })
+                        .on_press(Message::SelectFolder(*id))
                     );
                 }
             }

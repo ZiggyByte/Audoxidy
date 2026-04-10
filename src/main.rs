@@ -25,8 +25,8 @@ fn main() -> iced::Result {
     .subscription(|state: &AudoxidyApp| state.subscription())
     .theme(|state: &AudoxidyApp| state.theme())
     .window(iced::window::Settings {
-        size: iced::Size::new(1400.0, 900.0),
-        min_size: Some(iced::Size::new(900.0, 700.0)),
+        size: iced::Size::new(1360.0, 880.0),
+        min_size: Some(iced::Size::new(900.0, 500.0)),
         decorations: false,
         transparent: true,
         ..Default::default()

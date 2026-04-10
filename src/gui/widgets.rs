@@ -363,12 +363,13 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
     column_widths: &HashMap<SortColumn, u16>,
     resizing_column: Option<SortColumn>,
     hovered_column: Option<SortColumn>,
+    left_padding: f32,
     on_hover: impl Fn(Option<SortColumn>) -> Message + 'a,
     on_resize: impl Fn(SortColumn) -> Message + 'a,
     on_sort: impl Fn(SortColumn) -> Message + 'a,
 ) -> Element<'a, Message> {
 
-    let mut sort_bar_content = row![].align_y(Alignment::Center).height(Length::Fill).padding(iced::Padding { top: 0.0, right: 5.0, bottom: 0.0, left: 35.0 });
+    let mut sort_bar_content = row![].align_y(Alignment::Center).height(Length::Fill).padding(iced::Padding { top: 0.0, right: 5.0, bottom: 0.0, left: left_padding });
 
     for &sort in columns {
         let is_active = current_sort == Some(sort);
@@ -424,10 +425,18 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
                 .into()
         };
 
-        let sort_btn_content = if let Some(ic) = icon_el {
-            row![t, Space::new().width(Length::Fill), ic].align_y(Alignment::Center)
+        let sort_btn_content = if sort == SortColumn::TrackNumber {
+            if let Some(ic) = icon_el {
+                row![Space::new().width(Length::Fill), t, ic, Space::new().width(5.0)].align_y(Alignment::Center)
+            } else {
+                row![Space::new().width(Length::Fill), t, Space::new().width(5.0)].align_y(Alignment::Center)
+            }
         } else {
-            row![t, Space::new().width(Length::Fill)].align_y(Alignment::Center)
+            if let Some(ic) = icon_el {
+                row![t, Space::new().width(Length::Fill), ic].align_y(Alignment::Center)
+            } else {
+                row![t, Space::new().width(Length::Fill)].align_y(Alignment::Center)
+            }
         };
 
         let sort_btn = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
@@ -506,6 +515,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     name: String,
     is_collapsed: bool,
     is_selected: bool,
+    is_playing: bool,
     albums_count: usize,
     songs_count: usize,
     duration_secs: f64,
@@ -516,15 +526,21 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     let chevron = if is_collapsed { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
     let time_str = format_duration(duration_secs);
     
-    let artist_name_row = row![
-        text(name).size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY),
+    let (name_color, dot_color, show_dot) = if is_selected {
+        (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, true)
+    } else if is_playing {
+        (COLOR_ACCENT, COLOR_ACCENT, true)
+    } else {
+        (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, false)
+    };
+
+    let mut artist_name_row = row![
+        text(name).size(15).font(FONT_INTER_SANS_MEDIUM).color(name_color).wrapping(iced::widget::text::Wrapping::None),
     ].align_y(Alignment::Center);
 
-    let artist_name_row = if is_selected {
-        artist_name_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY))
-    } else {
-        artist_name_row
-    };
+    if show_dot {
+        artist_name_row = artist_name_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(dot_color).wrapping(iced::widget::text::Wrapping::None));
+    }
 
     let header_content = row![
         artist_name_row,
@@ -533,7 +549,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
             .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(15),
         chevron_btn(chevron, on_toggle, row_h, row_h - 4.0),
-    ].align_y(Alignment::Center).padding([0, 15]);
+    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 });
 
     container(
         mouse_area(header_content)
@@ -555,18 +571,33 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
     column_widths: &HashMap<SortColumn, u16>,
     on_select: Message,
     on_add_playlist: Message,
+    playing_path: &str,
 ) -> Element<'a, Message> {
     let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
     
+    let is_playing = song.full_file_path == playing_path;
+
     let get_col = |col: SortColumn| -> Element<'a, Message> {
         let w = *column_widths.get(&col).unwrap_or(&100) as f32;
         let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
-        let val = format_metadata(song, &col); // Reutiliza lógica de utils/mod.rs
+        let val = format_metadata(song, &col);
         let truncated = truncate_text(&val, max_chars);
 
-        container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fixed(w)).height(Length::Fixed(15.0)).center_y(Length::Fill)
-            .padding(Padding { left: 5.0, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+        let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
+            row![
+                container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
+                container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
+                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)
+            ].spacing(0).align_y(Alignment::Center).into()
+        } else {
+            text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None).into()
+        };
+
+        let pad_left = if col == SortColumn::TrackNumber { 0.0 } else { 15.0 };
+        container(content)
+            .width(Length::Fixed(w)).height(Length::Fill).center_y(Length::Fill)
+            .padding(Padding { left: pad_left, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
     };
 
     let mut elements: Vec<Element<'a, Message>> = Vec::new();
@@ -582,7 +613,7 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
     );
 
     let song_row_inner = iced::widget::Row::with_children(elements)
-        .align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0));
+        .align_y(Alignment::Center).padding([0, 5]).height(Length::Fill);
 
     mouse_area(
         container(song_row_inner).width(Length::Fill).height(Length::Fixed(32.0)).align_y(Alignment::Center)
@@ -602,8 +633,11 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     column_widths: &HashMap<SortColumn, u16>,
     on_select: Message,
     on_add_playlist: Message,
+    playing_path: &str,
 ) -> Element<'a, Message> {
     let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+    
+    let is_playing = song.full_file_path == playing_path;
 
     let thumb_img = album_art_widget(
         song.compressed_cached_cover_root.as_ref(),
@@ -620,7 +654,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
         .height(Length::Fixed(42.0))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
-        .padding(Padding { left: 0.0, right: 10.0, top: 0.0, bottom: 0.0 })
+        .padding(Padding { left: 0.0, right: 0.0, top: 0.0, bottom: 0.0 })
         .into();
 
     // --- Columnas de texto (misma lógica de SimpleList, excluye AlbumCard y AlbumThumbnail) ---
@@ -630,9 +664,21 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
         let val = format_metadata(song, &col);
         let truncated = truncate_text(&val, max_chars);
 
-        container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fixed(w)).height(Length::Fixed(15.0)).center_y(Length::Fill)
-            .padding(Padding { left: 5.0, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+        let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
+            row![
+                container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
+                container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
+                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)
+            ].spacing(0).align_y(Alignment::Center).into()
+        } else {
+            text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None).into()
+        };
+
+        let pad_left = if col == SortColumn::TrackNumber { 0.0 } else { 15.0 };
+        container(content)
+            .width(Length::Fixed(w)).height(Length::Fill).center_y(Length::Fill)
+            .padding(Padding { left: pad_left, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
     };
 
     let mut elements: Vec<Element<'a, Message>> = vec![thumb_col];
@@ -650,8 +696,8 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     // Fila interna: 10px izq. para alinear metadatos con sort bar, 10px der.
     let song_row_inner = iced::widget::Row::with_children(elements)
         .align_y(Alignment::Center)
-        .padding(Padding { left: 15.0, right: 10.0, top: 0.0, bottom: 0.0 })
-        .height(Length::Fixed(42.0));
+        .padding(Padding { left: 5.0, right: 10.0, top: 0.0, bottom: 0.0 })
+        .height(Length::Fill);
 
     mouse_area(
         container(song_row_inner)
@@ -672,9 +718,10 @@ pub fn universal_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
     row_height: f32, // Altura estimada para virtualización
+    playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool, &str) -> Element<'a, crate::gui::app::Message> + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
@@ -781,10 +828,13 @@ where
             VirtualRow::Header(group, is_collapsed) => {
                 let is_header_selected = manager.selected_header.as_ref() == Some(&group.name);
                 
+                let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
+                
                 let header = artist_header_widget(
                     group.name.clone(),
                     is_collapsed,
                     is_header_selected,
+                    is_artist_playing,
                     group.albums_count,
                     group.songs_count,
                     group.duration_secs,
@@ -799,7 +849,7 @@ where
                 let is_song_selected = manager.selected_song_idx == Some(song_i);
                 
                 // Usamos el constructor inyectado
-                let song_row = row_builder(song, song_i, is_song_selected);
+                let song_row = row_builder(song, song_i, is_song_selected, playing_path);
 
                 list_col = list_col.push(song_row);
             }
@@ -813,7 +863,7 @@ where
         );
     }
 
-    let list_container = mouse_area(container(list_col).width(Length::Fill).padding([0, 15]))
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
         .on_press(crate::gui::app::Message::LibraryDeselect);
 
     let main_scroll = scrollable(list_container)
@@ -831,11 +881,14 @@ where
     let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
         let is_header_selected = manager.selected_header.as_ref() == Some(&st_group.name);
         
+        let is_artist_playing = st_group.songs.iter().any(|s| s.full_file_path == playing_path);
+
         let sticky_overlay = container(
             artist_header_widget(
                 st_group.name.clone(),
                 is_collapsed,
                 is_header_selected,
+                is_artist_playing,
                 st_group.albums_count,
                 st_group.songs_count,
                 st_group.duration_secs,
@@ -846,7 +899,7 @@ where
         )
         .width(Length::Fill)
         .height(Length::Fixed(header_h))
-        .padding([0, 15])
+        .padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 })
         .align_y(iced::alignment::Vertical::Top);
 
         iced::widget::stack![
@@ -866,9 +919,10 @@ pub fn detailed_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
     row_height: f32, // 32.0
+    playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool, &str) -> Element<'a, crate::gui::app::Message> + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
@@ -1041,13 +1095,15 @@ where
     for element in visible_elements {
         match element {
             VirtualRow::ArtistHeader(group, is_collapsed) => {
-                let is_header_explicitly_selected = manager.selected_header.as_ref() == Some(&group.name) 
+                let is_artist_explicitly_selected = manager.selected_header.as_ref() == Some(&group.name) 
                     && manager.selected_album.is_none() 
                     && manager.selected_song_idx.is_none();
+                let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
                 let header = artist_header_widget(
                     group.name.clone(),
                     is_collapsed,
-                    is_header_explicitly_selected,
+                    is_artist_explicitly_selected,
+                    is_artist_playing,
                     group.albums_count,
                     group.songs_count,
                     group.duration_secs,
@@ -1079,10 +1135,10 @@ where
                 );
 
                 let info_col = column![
-                    text(truncate_text(&artist_name, 24)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                    text(truncate_text(&alb.album_name, 24)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                    text(truncate_text(&genre, 24)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                    text(year.clone()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+                    text(truncate_text(&artist_name, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
+                    text(truncate_text(&alb.album_name, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
+                    text(truncate_text(&genre, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
+                    text(year.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
                 ].spacing(2).width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);
@@ -1121,12 +1177,23 @@ where
                 let chevron = if !is_expanded { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
                 let time_str = format_duration(alb.duration_secs);
                 
-                let album_title_row = if is_album_explicitly_selected {
-                    row![text(alb.album_name.clone()).size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY),
-                         text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY)]
+                let is_album_playing = alb.songs.iter().any(|(s, _)| s.full_file_path == playing_path);
+                
+                let (alb_txt_color, alb_dot_color, alb_show_dot) = if is_album_explicitly_selected {
+                    (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, true)
+                } else if is_album_playing {
+                    (COLOR_ACCENT, COLOR_ACCENT, true)
                 } else {
-                    row![text(alb.album_name.clone()).size(15).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY)]
-                }.align_y(Alignment::Center);
+                    (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, false)
+                };
+
+                let mut album_title_row = row![
+                    text(alb.album_name.clone()).size(15).font(FONT_INTER_SANS_MEDIUM).color(alb_txt_color).wrapping(iced::widget::text::Wrapping::None)
+                ].align_y(Alignment::Center);
+
+                if alb_show_dot {
+                    album_title_row = album_title_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(alb_dot_color).wrapping(iced::widget::text::Wrapping::None));
+                }
 
                 let alb_header_content = row![
                     album_title_row,
@@ -1148,7 +1215,7 @@ where
                 if is_expanded {
                     for (song, song_i) in alb.songs {
                         let is_song_selected = manager.selected_song_idx == Some(song_i);
-                        let song_row = row_builder(song, song_i, is_song_selected);
+                        let song_row = row_builder(song, song_i, is_song_selected, playing_path);
                         right_col = right_col.push(song_row);
                     }
                 }
@@ -1180,7 +1247,7 @@ where
         );
     }
 
-    let list_container = mouse_area(container(list_col).width(Length::Fill).padding([0, 15]))
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
         .on_press(crate::gui::app::Message::LibraryDeselect);
 
     let main_scroll = scrollable(list_container)
@@ -1197,11 +1264,14 @@ where
             && manager.selected_album.is_none()
             && manager.selected_song_idx.is_none();
         
+        let is_artist_playing = st_group.songs.iter().any(|s| s.full_file_path == playing_path);
+        
         let sticky_overlay = container(
             artist_header_widget(
                 st_group.name.clone(),
                 is_collapsed,
                 is_header_explicitly_selected,
+                is_artist_playing,
                 st_group.albums_count,
                 st_group.songs_count,
                 st_group.duration_secs,
@@ -1212,7 +1282,7 @@ where
         )
         .width(Length::Fill)
         .height(Length::Fixed(32.0))
-        .padding([0, 15])
+        .padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 })
         .align_y(iced::alignment::Vertical::Top);
 
         iced::widget::stack![

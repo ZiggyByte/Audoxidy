@@ -122,7 +122,7 @@ pub struct LibraryManager {
 impl Default for LibraryManager {
     fn default() -> Self {
         let mut column_widths = std::collections::HashMap::new();
-        column_widths.insert(SortColumn::TrackNumber, 30);
+        column_widths.insert(SortColumn::TrackNumber, 47);
         column_widths.insert(SortColumn::Title, 285);
         column_widths.insert(SortColumn::Artist, 155);
         column_widths.insert(SortColumn::AlbumArtist, 155);
@@ -131,9 +131,9 @@ impl Default for LibraryManager {
         column_widths.insert(SortColumn::Year, 50);
         column_widths.insert(SortColumn::Duration, 53);
         column_widths.insert(SortColumn::Format, 53);
-        column_widths.insert(SortColumn::SampleRate, 75);
-        column_widths.insert(SortColumn::Channels, 40);
-        column_widths.insert(SortColumn::BitDepth, 55);
+        column_widths.insert(SortColumn::SampleRate, 80);
+        column_widths.insert(SortColumn::Channels, 55);
+        column_widths.insert(SortColumn::BitDepth, 60);
         column_widths.insert(SortColumn::Bitrate, 90);
         column_widths.insert(SortColumn::Size, 85);
         column_widths.insert(SortColumn::AlbumCard, 250);
@@ -724,6 +724,7 @@ impl LibraryManager {
 pub fn view<'a>(
     manager: &'a LibraryManager,
     _database: &'a Arc<Mutex<Database>>,
+    playing_path: &'a str,
 ) -> Element<'a, Message> {
     
     // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
@@ -844,6 +845,13 @@ pub fn view<'a>(
         ]
     };
     
+    let sort_bar_pad = match manager.view_mode {
+        LibraryViewMode::Grid => 22.0,
+        LibraryViewMode::DetailedList => 27.0,
+        LibraryViewMode::ThumbnailList => 29.0,
+        LibraryViewMode::SimpleList => 27.0,
+    };
+    
     let sort_container = crate::gui::widgets::build_sort_bar(
         &columns,
         manager.sort_column,
@@ -851,6 +859,7 @@ pub fn view<'a>(
         &manager.column_widths,
         manager.resizing_column,
         manager.hovered_column,
+        sort_bar_pad,
         |col| Message::ColumnHover(col),
         |col| Message::StartColumnResize(col),
         |col| Message::LibrarySortChanged(col),
@@ -924,10 +933,18 @@ pub fn view<'a>(
                                 );
                                 
                                 let info_col = column![
-                                    text(truncate_text(artist, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
-                                    text(truncate_text(album, 17)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
-                                    text(truncate_text(genre, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
-                                    text(year.as_str()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
+                                    text(truncate_text(artist, 22)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+                                        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
+                                        .wrapping(iced::widget::text::Wrapping::None),
+                                    text(truncate_text(album, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+                                        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
+                                        .wrapping(iced::widget::text::Wrapping::None),
+                                    text(truncate_text(genre, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+                                        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
+                                        .wrapping(iced::widget::text::Wrapping::None),
+                                    text(year.as_str()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+                                        .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
+                                        .wrapping(iced::widget::text::Wrapping::None),
                                 ].spacing(2).width(Length::Fill);
 
                                 let chevron_svg = if is_expanded { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
@@ -965,51 +982,66 @@ pub fn view<'a>(
 
                             if let Some(_exp_album) = active_expansion {
                                 let mut album_songs_col = column![].spacing(0).padding([25, 0]);
-                                if let Some(songs) = manager.expanded_album_songs.as_ref() {
-                                    let query = manager.search_query.trim();
-                                    let filtered_songs: Vec<_> = if query.is_empty() {
-                                        songs.iter().enumerate().collect()
-                                    } else {
-                                        songs.iter().enumerate()
-                                            .filter(|(_, s)| crate::utils::song_matches_search(s, query))
-                                            .collect()
-                                    };
+                                    if let Some(songs) = manager.expanded_album_songs.as_ref() {
+                                        let query = manager.search_query.trim();
+                                        let filtered_songs: Vec<_> = if query.is_empty() {
+                                            songs.iter().enumerate().collect()
+                                        } else {
+                                            songs.iter().enumerate()
+                                                .filter(|(_, s)| crate::utils::song_matches_search(s, query))
+                                                .collect()
+                                        };
 
-                                    if !filtered_songs.is_empty() {
-                                        for (song_i, song) in filtered_songs {
-                                            let s_clone = song.clone();
-                                            let is_song_selected = manager.selected_song_idx == Some(song_i);
-                                            let txt_color = if is_song_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
-                                            
-                                            let get_col = |col: SortColumn| -> Element<'a, Message> {
-                                                let w = *manager.column_widths.get(&col).unwrap_or(&100) as f32;
-                                                let val = format_metadata(song, &col);
-                                                let truncated = truncate_text(&val, ((w - 10.0) / 7.0).max(1.0) as usize);
-                                                container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM))
-                                                    .width(Length::Fixed(w)).height(Length::Fixed(15.0)).center_y(Length::Fill).padding([0, 5]).clip(true).into()
-                                            };
+                                        if !filtered_songs.is_empty() {
+                                            for (song_i, song) in filtered_songs {
+                                                let s_clone = song.clone();
+                                                let is_song_selected = manager.selected_song_idx == Some(song_i);
+                                                let is_playing = song.full_file_path == playing_path;
+                                                let txt_color = if is_song_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+                                                
+                                                let get_col = |col: SortColumn| -> Element<'a, Message> {
+                                                    let w = *manager.column_widths.get(&col).unwrap_or(&100) as f32;
+                                                    let val = format_metadata(song, &col);
+                                                    let truncated = truncate_text(&val, ((w - 10.0) / 7.0).max(1.0) as usize);
 
-                                            let song_row = iced::widget::mouse_area(
-                                                container(row![
-                                                    get_col(SortColumn::TrackNumber), get_col(SortColumn::Title), get_col(SortColumn::Artist),
-                                                    get_col(SortColumn::AlbumArtist), get_col(SortColumn::Album), get_col(SortColumn::Genre),
-                                                    get_col(SortColumn::Year), get_col(SortColumn::Duration), get_col(SortColumn::Format),
-                                                    get_col(SortColumn::SampleRate), get_col(SortColumn::Channels), get_col(SortColumn::BitDepth),
-                                                    get_col(SortColumn::Bitrate), get_col(SortColumn::Size),
-                                                    button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT)),
-                                                ].align_y(Alignment::Center).padding([0, 15]).height(Length::Fixed(15.0)))
-                                                .width(Length::Fill).height(Length::Fixed(32.0)).align_y(Alignment::Center)
-                                                .style(move |_t| if is_song_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } else { container::Style::default() })
-                                            ).on_press(Message::SelectSong(Some(song_i))).interaction(iced::mouse::Interaction::Pointer);
-                                            album_songs_col = album_songs_col.push(song_row);
+                                                    let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
+                                                        row![
+                                                            container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                                                                .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
+                                                            container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
+                                                                .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)
+                                                        ].spacing(0).align_y(Alignment::Center).into()
+                                                    } else {
+                                                        text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None).into()
+                                                    };
+
+                                                    let pad_left = if col == SortColumn::TrackNumber { 0.0 } else { 15.0 };
+                                                    container(content)
+                                                        .width(Length::Fixed(w)).height(Length::Fill).center_y(Length::Fill)
+                                                        .padding(iced::Padding { left: pad_left, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+                                                };
+
+                                                let song_row = iced::widget::mouse_area(
+                                                    container(row![
+                                                        get_col(SortColumn::TrackNumber), get_col(SortColumn::Title), get_col(SortColumn::Artist),
+                                                        get_col(SortColumn::AlbumArtist), get_col(SortColumn::Album), get_col(SortColumn::Genre),
+                                                        get_col(SortColumn::Year), get_col(SortColumn::Duration), get_col(SortColumn::Format),
+                                                        get_col(SortColumn::SampleRate), get_col(SortColumn::Channels), get_col(SortColumn::BitDepth),
+                                                        get_col(SortColumn::Bitrate), get_col(SortColumn::Size),
+                                                        button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT)),
+                                                    ].align_y(Alignment::Center).padding([0, 5]).height(Length::Fill))
+                                                    .width(Length::Fill).height(Length::Fixed(32.0)).align_y(Alignment::Center)
+                                                    .style(move |_t| if is_song_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } else { container::Style::default() })
+                                                ).on_press(Message::SelectSong(Some(song_i))).interaction(iced::mouse::Interaction::Pointer);
+                                                album_songs_col = album_songs_col.push(song_row);
+                                            }
+                                        } else {
+                                            album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY));
                                         }
                                     } else {
-                                        album_songs_col = album_songs_col.push(text("No se encontraron canciones.").color(COLOR_TEXT_SECONDARY));
+                                        album_songs_col = album_songs_col.push(text("Cargando...").color(COLOR_TEXT_SECONDARY));
                                     }
-                                } else {
-                                    album_songs_col = album_songs_col.push(text("Cargando...").color(COLOR_TEXT_SECONDARY));
-                                }
-                                grid_col = grid_col.push(container(album_songs_col).width(Length::Fill).padding([5, 15]).style(|_t| container::Style::default().background(COLOR_BG)));
+                                    grid_col = grid_col.push(container(album_songs_col).width(Length::Fill).padding([5, 5]).style(|_t| container::Style::default().background(COLOR_BG)));
                             }
                         } else {
                             grid_col = grid_col.push(iced::widget::Space::new().height(252.0));
@@ -1039,39 +1071,45 @@ pub fn view<'a>(
             let cols = columns.clone();
             crate::gui::widgets::universal_song_list(
                 manager,
-                move |song, song_idx, is_selected| {
+                move |song, song_idx, is_selected, playing_path| {
                     crate::gui::widgets::library_song_row_widget(
                         song, song_idx, is_selected, &cols, &manager.column_widths,
                         Message::SelectSong(Some(song_idx)), Message::AddSongToPlaylist(song.clone()),
+                        playing_path,
                     )
                 },
                 32.0,
+                playing_path,
             )
         },
         LibraryViewMode::DetailedList => {
             let cols = columns;
             crate::gui::widgets::detailed_song_list(
                 manager,
-                move |song, song_idx, is_selected| {
+                move |song, song_idx, is_selected, playing_path| {
                     crate::gui::widgets::library_song_row_widget(
                         song, song_idx, is_selected, &cols, &manager.column_widths,
                         Message::SelectSong(Some(song_idx)), Message::AddSongToPlaylist(song.clone()),
+                        playing_path,
                     )
                 },
                 32.0,
+                playing_path,
             )
         },
         LibraryViewMode::ThumbnailList => {
             let cols = columns.clone();
             crate::gui::widgets::universal_song_list(
                 manager,
-                move |song, song_idx, is_selected| {
+                move |song, song_idx, is_selected, playing_path| {
                     crate::gui::widgets::thumbnail_song_row_widget(
                         song, song_idx, is_selected, &cols, &manager.column_widths,
                         Message::SelectSong(Some(song_idx)), Message::AddSongToPlaylist(song.clone()),
+                        playing_path,
                     )
                 },
                 42.0,
+                playing_path,
             )
         }
     };

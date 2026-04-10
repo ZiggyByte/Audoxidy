@@ -1495,7 +1495,7 @@ impl AudoxidyApp {
         let player_view = crate::gui::player::view(&self.audio_manager, &self.player_ui_state);
         let playlist_view = crate::gui::playlist::view(&self.playlist_manager, &self.audio_manager);
         let filters_view = crate::gui::library_filters::view(&self.filters_manager, &self.library_manager);
-        let library_view = crate::gui::library::view(&self.library_manager, &self.database);
+        let library_view = crate::gui::library::view(&self.library_manager, &self.database, &self.player_ui_state.current_art_id);
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda
         let left_column = iced::widget::column![player_view, playlist_view]
@@ -1561,14 +1561,14 @@ impl AudoxidyApp {
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        // Tick adaptivo: 1000ms durante reproducción (1 FPS), 4000ms en reposo, 3000ms low-resource
+        // Tick adaptivo: 250ms durante reproducción (4 FPS), 4000ms en reposo, 3000ms low-resource
         let tick_interval = if self.audio_manager.get_state().is_playing {
             let state = self.audio_manager.get_state();
             let remaining = state.total_duration_sec - state.current_pos_sec;
             if remaining > 0.0 && remaining < 0.5 {
-                std::time::Duration::from_millis(50)
+                std::time::Duration::from_millis(250)
             } else {
-                std::time::Duration::from_millis(1000)
+                std::time::Duration::from_millis(250)
             }
         } else if self.low_resource_mode {
             std::time::Duration::from_millis(3000)

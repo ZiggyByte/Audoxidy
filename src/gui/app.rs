@@ -1561,17 +1561,20 @@ impl AudoxidyApp {
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        // Tick adaptivo: 250ms durante reproducción (4 FPS), 4000ms en reposo, 3000ms low-resource
+        // Tick dinámico inteligente: 1000ms normal, 100ms en transiciones (inicio/fin canción)
         let tick_interval = if self.audio_manager.get_state().is_playing {
             let state = self.audio_manager.get_state();
             let remaining = state.total_duration_sec - state.current_pos_sec;
-            if remaining > 0.0 && remaining < 0.5 {
-                std::time::Duration::from_millis(250)
+            let current = state.current_pos_sec;
+            
+            // "Zona de Alta Sensibilidad": 0.5s antes de acabar y 0.5s después de empezar
+            if (remaining > 0.0 && remaining < 0.5) || current < 0.5 {
+                std::time::Duration::from_millis(100)
             } else {
-                std::time::Duration::from_millis(250)
+                std::time::Duration::from_millis(1000)
             }
         } else if self.low_resource_mode {
-            std::time::Duration::from_millis(3000)
+            std::time::Duration::from_millis(1000)
         } else {
             std::time::Duration::from_millis(4000)
         };

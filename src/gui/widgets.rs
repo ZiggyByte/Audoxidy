@@ -427,9 +427,9 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
         let sort_btn_content = if sort == SortColumn::TrackNumber {
             if let Some(ic) = icon_el {
-                row![Space::new().width(Length::Fill), t, ic, Space::new().width(5.0)].align_y(Alignment::Center)
+                row![Space::new().width(Length::Fill), t, ic, Space::new().width(7.0)].align_y(Alignment::Center)
             } else {
-                row![Space::new().width(Length::Fill), t, Space::new().width(5.0)].align_y(Alignment::Center)
+                row![Space::new().width(Length::Fill), t, Space::new().width(7.0)].align_y(Alignment::Center)
             }
         } else {
             if let Some(ic) = icon_el {
@@ -585,7 +585,7 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
 
         let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
             row![
-                container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                container(if is_playing { text("•").size(13).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(13) })
                     .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
                 container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
                     .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)
@@ -666,7 +666,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
 
         let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
             row![
-                container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                container(if is_playing { text("•").size(13).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(13) })
                     .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
                 container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
                     .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)

@@ -846,10 +846,10 @@ pub fn view<'a>(
     };
     
     let sort_bar_pad = match manager.view_mode {
-        LibraryViewMode::Grid => 22.0,
-        LibraryViewMode::DetailedList => 27.0,
-        LibraryViewMode::ThumbnailList => 29.0,
-        LibraryViewMode::SimpleList => 27.0,
+        LibraryViewMode::Grid => 24.0,
+        LibraryViewMode::DetailedList => 29.0,
+        LibraryViewMode::ThumbnailList => 31.0,
+        LibraryViewMode::SimpleList => 29.0,
     };
     
     let sort_container = crate::gui::widgets::build_sort_bar(
@@ -1006,7 +1006,7 @@ pub fn view<'a>(
 
                                                     let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
                                                         row![
-                                                            container(if is_playing { text("·").size(26).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(26) })
+                                                            container(if is_playing { text("•").size(13).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(13) })
                                                                 .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
                                                             container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
                                                                 .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)

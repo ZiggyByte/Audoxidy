@@ -209,6 +209,8 @@ impl Database {
         conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_folder ON SONGS(folder_id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_album ON SONGS(album_id)", [])?;
         conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_artist ON SONGS(artist_id)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_albums_year ON ALBUMS(year)", [])?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_albums_genre ON ALBUMS(genre)", [])?;
 
         Ok(())
     }

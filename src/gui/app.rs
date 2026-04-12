@@ -366,6 +366,7 @@ impl AudoxidyApp {
                             }
                             self.library_manager.cached_all_songs = Some(songs);
                             self.library_manager.apply_filter();
+                            self.filters_manager.refresh_data(&self.library_manager);
                         }
                         
                         // Estadísticas siempre (son ligeras)
@@ -1226,8 +1227,9 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ChangeGeneralFilter(ft) => {
-                self.filters_manager.selected_type = ft;
+                self.filters_manager.current_filter = ft;
                 self.filters_manager.selected_subfilter = None;
+                self.filters_manager.selected_tree_node = None;
                 self.filters_manager.expanded_nodes.clear();
                 self.filters_manager.menu_open = false;
                 
@@ -1238,6 +1240,7 @@ impl AudoxidyApp {
                 self.library_manager.filter_year = None;
                 self.library_manager.filter_folder_id = None;
                 self.library_manager.apply_filter();
+                self.filters_manager.refresh_data(&self.library_manager);
                 Task::none()
             }
             Message::SelectSubfilter(sub) => {
@@ -1246,6 +1249,7 @@ impl AudoxidyApp {
                 } else {
                      self.filters_manager.selected_subfilter = sub;
                 }
+                self.filters_manager.selected_tree_node = None;
                 
                 // Si se selecciona None (Mostrar todo), resetear filtros de la biblioteca
                 if self.filters_manager.selected_subfilter.is_none() {
@@ -1256,6 +1260,7 @@ impl AudoxidyApp {
                     self.library_manager.filter_folder_id = None;
                     self.library_manager.apply_filter();
                 }
+                self.filters_manager.refresh_data(&self.library_manager);
                 Task::none()
             }
             Message::ToggleTreeNode(name) => {
@@ -1267,6 +1272,8 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::SelectTreeNode(name) => {
+                self.filters_manager.selected_tree_node = Some(name.clone());
+                
                 // Apply filter to library
                 self.library_manager.filter_artist = None;
                 self.library_manager.filter_album = None;
@@ -1278,7 +1285,7 @@ impl AudoxidyApp {
                 let main_val = parts[0];
                 let sub_val = parts.get(1).cloned();
 
-                match self.filters_manager.selected_type {
+                match self.filters_manager.current_filter {
                     crate::gui::library_filters::FilterType::Artist => {
                         self.library_manager.filter_artist = Some(main_val.to_string());
                         if let Some(alb) = sub_val {
@@ -1324,6 +1331,7 @@ impl AudoxidyApp {
             }
             Message::FilterSearchChanged(q) => {
                 self.filters_manager.search_query = q;
+                self.filters_manager.refresh_data(&self.library_manager);
                 Task::none()
             }
             Message::ToggleAudioCenter => {
@@ -1494,7 +1502,7 @@ impl AudoxidyApp {
         
         let player_view = crate::gui::player::view(&self.audio_manager, &self.player_ui_state);
         let playlist_view = crate::gui::playlist::view(&self.playlist_manager, &self.audio_manager);
-        let filters_view = crate::gui::library_filters::view(&self.filters_manager, &self.library_manager);
+        let filters_view = crate::gui::library_filters::view(&self.filters_manager);
         let library_view = crate::gui::library::view(&self.library_manager, &self.database, &self.player_ui_state.current_art_id);
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda

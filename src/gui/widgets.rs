@@ -375,8 +375,8 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let is_active = current_sort == Some(sort);
         let width = *column_widths.get(&sort).unwrap_or(&100) as f32;
         
-        let available_w = width - 25.0; // Espacio reservado para icono/separador
-        let max_chars = (available_w / 7.0).max(1.0) as usize;
+        let available_w = width - 15.0; // Espacio reservado para icono/separador
+        let max_chars = (available_w / 6.2).max(1.0) as usize;
         let t_str = truncate_text(sort.as_str(), max_chars);
         
         let t = text(t_str)
@@ -403,13 +403,17 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let is_hovered = resizing_column == Some(sort) || hovered_column == Some(sort);
         
         let separator_visual = container(Space::new())
-            .width(Length::Fixed(3.0))
+            .width(Length::Fixed(2.0))
             .height(Length::Fixed(16.0))
             .style(move |_t: &Theme| {
                 let bg_color = if is_hovered { COLOR_ACCENT } else { Color::from_rgba(COLOR_TEXT_SECONDARY.r, COLOR_TEXT_SECONDARY.g, COLOR_TEXT_SECONDARY.b, 0.3)};
                 container::Style::default()
                     .background(bg_color)
-                    .border(iced::Border { radius: 4.0.into(), ..Default::default() })
+                    .border(iced::Border { 
+                        radius: 4.0.into(), 
+                        width: 2.0, 
+                        color: COLOR_TEXT_PRIMARY 
+                    })
             });
 
         let on_h = on_hover(Some(sort));

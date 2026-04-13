@@ -376,13 +376,14 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let width = *column_widths.get(&sort).unwrap_or(&100) as f32;
         
         let available_w = width - 15.0; // Espacio reservado para icono/separador
-        let max_chars = (available_w / 6.2).max(1.0) as usize;
+        let max_chars = (available_w / 7.0).max(1.0) as usize;
         let t_str = truncate_text(sort.as_str(), max_chars);
         
         let t = text(t_str)
             .size(12)
             .font(FONT_INTER_SANS_MEDIUM)
-            .color(COLOR_TEXT_SECONDARY);
+            .color(COLOR_TEXT_SECONDARY)
+            .wrapping(iced::widget::text::Wrapping::None);
 
         let icon_el = if is_active {
              let handle = match sort_ascending {
@@ -403,16 +404,16 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let is_hovered = resizing_column == Some(sort) || hovered_column == Some(sort);
         
         let separator_visual = container(Space::new())
-            .width(Length::Fixed(2.0))
+            .width(Length::Fixed(9.0))
             .height(Length::Fixed(16.0))
             .style(move |_t: &Theme| {
-                let bg_color = if is_hovered { COLOR_ACCENT } else { Color::from_rgba(COLOR_TEXT_SECONDARY.r, COLOR_TEXT_SECONDARY.g, COLOR_TEXT_SECONDARY.b, 0.3)};
+                let bg_color = if is_hovered { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
                 container::Style::default()
                     .background(bg_color)
                     .border(iced::Border { 
                         radius: 4.0.into(), 
-                        width: 2.0, 
-                        color: COLOR_TEXT_PRIMARY 
+                        width: 4.0, 
+                        color: Color::TRANSPARENT
                     })
             });
 
@@ -431,9 +432,9 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
         let sort_btn_content = if sort == SortColumn::TrackNumber {
             if let Some(ic) = icon_el {
-                row![Space::new().width(Length::Fill), t, ic, Space::new().width(7.0)].align_y(Alignment::Center)
+                row![Space::new().width(Length::Fill), t, ic, Space::new().width(3.0)].align_y(Alignment::Center)
             } else {
-                row![Space::new().width(Length::Fill), t, Space::new().width(7.0)].align_y(Alignment::Center)
+                row![Space::new().width(Length::Fill), t, Space::new().width(3.0)].align_y(Alignment::Center)
             }
         } else {
             if let Some(ic) = icon_el {

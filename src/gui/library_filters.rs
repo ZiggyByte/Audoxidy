@@ -64,7 +64,7 @@ impl Default for LibraryFiltersManager {
 }
 
 impl LibraryFiltersManager {
-    /// Obtiene el grupo inicial ("#", "·", o letra mayúscula) a partir del texto
+    /// Obtiene el grupo inicial ("#", "•", o letra mayúscula) a partir del texto
     fn get_group_char(s: &str) -> String {
         let first = s.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?');
         if first.is_numeric() {
@@ -72,7 +72,7 @@ impl LibraryFiltersManager {
         } else if first.is_alphabetic() {
             first.to_string()
         } else {
-            "·".to_string()
+            "•".to_string()
         }
     }
 
@@ -216,14 +216,31 @@ impl LibraryFiltersManager {
             sorted_chars.sort_by(|a, b| {
                 if a == "#" && b != "#" { return std::cmp::Ordering::Less; }
                 if b == "#" && a != "#" { return std::cmp::Ordering::Greater; }
-                if a == "·" && b != "·" { return std::cmp::Ordering::Less; }
-                if b == "·" && a != "·" { return std::cmp::Ordering::Greater; }
+                if a == "•" && b != "•" { return std::cmp::Ordering::Less; }
+                if b == "•" && a != "•" { return std::cmp::Ordering::Greater; }
                 a.cmp(b)
             });
             self.active_subfilters = sorted_chars;
         }
 
         self.tree_data = level1_map.into_values().collect();
+
+        // Ordenamos el árbol: primero "#", luego "•", y finalmente A-Z.
+        fn sort_tree(nodes: &mut Vec<TreeNode>) {
+            nodes.sort_by(|a, b| {
+                let group_a = LibraryFiltersManager::get_group_char(&a.label);
+                let group_b = LibraryFiltersManager::get_group_char(&b.label);
+                let w_a = if group_a == "#" { 0 } else if group_a == "•" { 1 } else { 2 };
+                let w_b = if group_b == "#" { 0 } else if group_b == "•" { 1 } else { 2 };
+                w_a.cmp(&w_b).then_with(|| a.label.cmp(&b.label))
+            });
+            for node in nodes.iter_mut() {
+                if !node.children.is_empty() {
+                    sort_tree(&mut node.children);
+                }
+            }
+        }
+        sort_tree(&mut self.tree_data);
     }
 }
 
@@ -248,66 +265,106 @@ pub fn view<'a>(
     let mut middle_content = column![].spacing(0);
 
     // Dropdown Header
+    let drop_icon = if manager.menu_open { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
     let dropdown_header = button(
         row![
-            text(manager.current_filter.label()).size(15).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+            text(manager.current_filter.label()).size(15).font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fill),
-            text(if manager.menu_open { "▲" } else { "▼" }).size(10).color(COLOR_TEXT_SECONDARY)
+            iced::widget::svg(iced::widget::svg::Handle::from_path(format!("assets/icons/{}", drop_icon)))
+                .width(28).height(28)
+                .style(|_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) })
         ]
         .align_y(Alignment::Center)
         .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 15.0 })
     )
     .width(Length::Fill)
     .height(Length::Fixed(30.0))
-    .style(move |_t: &Theme, status: button::Status| {
-        let mut st = button::Style::default().with_background(if manager.menu_open { COLOR_CONTRAST } else { COLOR_CONTRAST });
+    .padding(0)
+    .style(move |_t: &Theme, _s: button::Status| {
+        let mut st = button::Style::default().with_background(COLOR_CONTRAST);
         st.border.radius = 0.0.into();
+        st.text_color = COLOR_TEXT_SECONDARY;
         st
     })
     .on_press(Message::ToggleFilterMenu);
 
     middle_content = middle_content.push(dropdown_header);
 
-    // Dropdown Items List
-    if manager.menu_open {
+    // Build Menu Options layout (to be overlayed)
+    let menu_options_container = if manager.menu_open {
         let all_filters = vec![
             FilterType::Folder, FilterType::Artist, FilterType::Album, FilterType::Genre, FilterType::Year
         ];
-        let mut menu_options = column![].spacing(0);
+        let mut menu_options = column![].spacing(10);
         for f in all_filters {
             let is_selected = manager.current_filter == f;
             menu_options = menu_options.push(
                 button(
-                    container(text(f.label()).size(15).color(if is_selected { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY }).font(FONT_INTER_SANS_MEDIUM))
+                    container(text(f.label()).size(15).font(FONT_INTER_SANS_MEDIUM))
                         .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 15.0 })
                         .height(Length::Fixed(30.0))
                         .center_y(Length::Fill)
                 )
                 .width(Length::Fill)
-                .style(|_t: &Theme, _s| {
+                .padding(0)
+                .style(move |_t: &Theme, _s| {
                     let mut st = button::Style::default().with_background(COLOR_CONTRAST);
                     st.border.radius = 0.0.into();
+                    if is_selected {
+                        st.text_color = COLOR_ACCENT;
+                    } else if _s == button::Status::Hovered {
+                        st.text_color = COLOR_TEXT_PRIMARY;
+                    } else {
+                        st.text_color = COLOR_TEXT_SECONDARY;
+                    }
                     st
                 })
                 .on_press(Message::ChangeGeneralFilter(f))
             );
         }
-        middle_content = middle_content.push(container(menu_options).width(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST)));
-    }
+        Some(
+            container(menu_options)
+                .width(Length::Fill)
+                .height(Length::Shrink)
+                .padding(iced::Padding { top: 10.0, bottom: 10.0, left: 0.0, right: 0.0 })
+                .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+        )
+    } else {
+        None
+    };
 
     // Subfilters (Alfabeto/Numeros/Signos)
-    if !manager.menu_open && !manager.active_subfilters.is_empty() {
-        let mut rows_of_chars = column![].spacing(0).padding(iced::Padding { top: 10.0, bottom: 10.0, left: 15.0, right: 15.0 });
+    if !manager.active_subfilters.is_empty() {
+        let mut rows_of_chars = column![].spacing(3).padding(iced::Padding { top: 10.0, bottom: 0.0, left: 15.0, right: 15.0 });
         
         let mut line_width = 0.0;
         let max_w = 202.0 - 30.0; // 202 total - 15 padding L/R
         let mut current_row = iced::widget::Row::new().spacing(0);
         
+        // El boton "mostrar todo" usando icono restore
+        let restore_icon = container(iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/restore-straight.svg")).width(14).height(14).style(move |_t, _s| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) }))
+            .width(Length::Fixed(16.0)).height(Length::Fixed(16.0)).center_x(Length::Fill).center_y(Length::Fill);
+
+        let restore_btn = button(restore_icon)
+             .width(Length::Fixed(16.0)).height(Length::Fixed(16.0)).padding(0)
+             .style(move |_t: &Theme, _s: button::Status| {
+                 let mut st = button::Style::default().with_background(Color::TRANSPARENT);
+                 if _s == button::Status::Pressed {
+                     st.background = Some(iced::Background::Color(COLOR_ACCENT));
+                     st.border.radius = 18.0.into();
+                 }
+                 st
+             })
+             .on_press(Message::SelectSubfilter(None));
+        
+        current_row = current_row.push(restore_btn);
+        line_width += 16.0;
+        
         for c in &manager.active_subfilters {
             let is_selected = manager.selected_subfilter.as_deref() == Some(c.as_str());
             let clr = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
-            let size = 13.0; // 13px typopgraphy
-            let char_width = 17.0; // exact layout width
+            let size = 12.0; // 13px typopgraphy
+            let char_width = 16.0; // exact layout width
 
             if line_width + char_width > max_w {
                 rows_of_chars = rows_of_chars.push(current_row.align_y(iced::alignment::Vertical::Center));
@@ -316,7 +373,7 @@ pub fn view<'a>(
             }
             
             let char_content = container(text(c).size(size as f32).color(clr).font(FONT_INTER_SANS_MEDIUM))
-                .width(Length::Fixed(17.0)).height(Length::Fixed(17.0)).center_x(Length::Fill).center_y(Length::Fill);
+                .width(Length::Fixed(16.0)).height(Length::Fixed(16.0)).center_x(Length::Fill).center_y(Length::Fill);
 
             let btn = button(char_content)
             .width(Length::Fixed(char_width))
@@ -326,7 +383,7 @@ pub fn view<'a>(
                  let mut st = button::Style::default();
                  if is_selected {
                      st.background = Some(iced::Background::Color(COLOR_ACCENT));
-                     st.border.radius = 4.0.into();
+                     st.border.radius = 18.0.into();
                  } else {
                      st.background = Some(iced::Background::Color(Color::TRANSPARENT));
                  }
@@ -343,28 +400,11 @@ pub fn view<'a>(
         
         middle_content = middle_content.push(rows_of_chars);
         
-        // (mostrar todo) link
-        middle_content = middle_content.push(
-            container(
-                button(text("mostrar todo").size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
-                    .padding([5, 10])
-                    .style(|_t: &Theme, _s: button::Status| {
-                        let mut st = button::Style::default();
-                        st.background = Some(iced::Background::Color(if _s == button::Status::Hovered { COLOR_CONTRAST } else { Color::TRANSPARENT }));
-                        st.border.radius = 4.0.into();
-                        st
-                    })
-                    .on_press(Message::SelectSubfilter(None))
-            )
-            .width(Length::Fill)
-            .align_x(iced::alignment::Horizontal::Center)
-            .padding(iced::Padding { top: 10.0, bottom: 10.0, left: 0.0, right: 0.0 })
-        );
     }
     
     let mut tree_col_content: Element<'a, Message> = column![].into();
 
-    if !manager.menu_open && !manager.active_subfilters.is_empty() {
+    if !manager.active_subfilters.is_empty() {
         // Tree Recursive Rendering
         fn render_tree<'a>(nodes: &'a [TreeNode], expanded: &'a HashSet<String>, depth: usize, manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
             let mut col = column![].spacing(0);
@@ -379,7 +419,7 @@ pub fn view<'a>(
                 };
 
                 let padding_left = 0.0 + (depth as f32 * 12.0); // Indentation
-                let t_len = (28 - (depth * 2)).max(1);
+                let t_len = (23 - (depth * 2)).max(1);
                 let t_label = text(crate::utils::truncate_text(&node.label, t_len)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None);
                 
                 let row_content = if has_children {
@@ -455,17 +495,33 @@ pub fn view<'a>(
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
 
-    // Main wrapping
-    container(
-        column![
-            top_bar,
-            middle_content, // static fixed
-            container(scrollable_tree).width(Length::Fill).height(Length::Fill),
-            bottom_bar,
-        ]
-    )
-    .width(Length::Fixed(202.0))
-    .height(Length::Fill)
-    .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
-    .into()
+    // Container base de contenido central inferior a The Top Bar
+    let base_middle = column![
+        middle_content, // header and subfilters
+        container(scrollable_tree).width(Length::Fill).height(Length::Fill),
+    ];
+
+    let main_col = column![
+        top_bar,
+        base_middle,
+        bottom_bar,
+    ];
+
+    let base_view = container(main_col)
+        .width(Length::Fixed(202.0))
+        .height(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
+
+    if let Some(menu) = menu_options_container {
+        iced::widget::stack![
+            base_view,
+            container(menu)
+                .width(Length::Fixed(202.0))
+                .height(Length::Shrink)
+                .align_y(iced::alignment::Vertical::Top)
+                .padding(iced::Padding { top: 70.0, bottom: 0.0, left: 0.0, right: 0.0 })
+        ].into()
+    } else {
+        base_view.into()
+    }
 }

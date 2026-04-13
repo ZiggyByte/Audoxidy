@@ -123,16 +123,16 @@ impl Default for LibraryManager {
     fn default() -> Self {
         let mut column_widths = std::collections::HashMap::new();
         column_widths.insert(SortColumn::TrackNumber, 47);
-        column_widths.insert(SortColumn::Title, 285);
+        column_widths.insert(SortColumn::Title, 275);
         column_widths.insert(SortColumn::Artist, 155);
-        column_widths.insert(SortColumn::AlbumArtist, 155);
+        column_widths.insert(SortColumn::AlbumArtist, 135);
         column_widths.insert(SortColumn::Album, 165);
         column_widths.insert(SortColumn::Genre, 135);
         column_widths.insert(SortColumn::Year, 50);
         column_widths.insert(SortColumn::Duration, 53);
         column_widths.insert(SortColumn::Format, 53);
         column_widths.insert(SortColumn::SampleRate, 80);
-        column_widths.insert(SortColumn::Channels, 55);
+        column_widths.insert(SortColumn::Channels, 43);
         column_widths.insert(SortColumn::BitDepth, 60);
         column_widths.insert(SortColumn::Bitrate, 90);
         column_widths.insert(SortColumn::Size, 85);

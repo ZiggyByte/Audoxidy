@@ -4,7 +4,8 @@ use crate::audio::AudioManager;
 use crate::db::{Database, scanner::Scanner};
 use crate::gui::playlist::PlaylistManager;
 use crate::gui::library_filters::LibraryFiltersManager;
-use crate::gui::library::LibraryManager;
+use crate::gui::library::{LibraryManager, LIBRARY_SCROLL_ID};
+use iced::widget::operation::{scroll_to, AbsoluteOffset};
 use crate::gui::audio_center::{AudioCenterManager, AudioCenterMessage};
 use crate::integrations::media_controls::SystemMediaControls;
 
@@ -252,6 +253,15 @@ impl AudoxidyApp {
         }
         library_manager.mount_points = mount_points;
 
+        // Cargar canciones inmediatamente para que los filtros estén disponibles al instante
+        if let Ok(mut songs) = db.get_all_songs() {
+            if library_manager.sort_column.is_some() {
+                library_manager.sort_songs(&mut songs);
+            }
+            library_manager.cached_all_songs = Some(songs);
+            library_manager.apply_filter();
+        }
+
         let database_arc = Arc::new(Mutex::new(db));
         let scanner_arc = Arc::new(Scanner::new(Arc::clone(&database_arc)));
 
@@ -272,6 +282,10 @@ impl AudoxidyApp {
             println!("Audoxidy Performance: Low resource mode ENABLED (RAM: {}GB, Cores: {})", total_ram_gb, cpu_cores);
         }
 
+        // Construir el índice de filtros con las canciones ya cargadas
+        let mut filters_manager = LibraryFiltersManager::default();
+        filters_manager.build_filter_index(&library_manager);
+
         (
             Self {
                 audio_manager,
@@ -279,7 +293,7 @@ impl AudoxidyApp {
                 scanner: scanner_arc,
                 media_controls,
                 playlist_manager: PlaylistManager::default(),
-                filters_manager: LibraryFiltersManager::default(),
+                filters_manager,
                 library_manager,
                 audio_center_manager: AudioCenterManager::default(),
                 player_ui_state: crate::gui::player::PlayerUiState::default(),
@@ -287,7 +301,7 @@ impl AudoxidyApp {
                 last_artist_header_click: None,
                 last_album_header_click: None,
                 low_resource_mode,
-                db_needs_refresh: true,
+                db_needs_refresh: false, // Ya cargamos todo, no necesita refresh inicial
             },
             Task::none(),
         )
@@ -366,7 +380,7 @@ impl AudoxidyApp {
                             }
                             self.library_manager.cached_all_songs = Some(songs);
                             self.library_manager.apply_filter();
-                            self.filters_manager.refresh_data(&self.library_manager);
+                            self.filters_manager.build_filter_index(&self.library_manager);
                         }
                         
                         // Estadísticas siempre (son ligeras)
@@ -531,7 +545,7 @@ impl AudoxidyApp {
                 self.library_manager.search_query = q;
                 self.library_manager.apply_filter();
                 self.library_manager.last_viewport = None;
-                Task::none()
+                scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::LibrarySourceSelected(source) => {
                 self.library_manager.source = source;
@@ -1239,9 +1253,15 @@ impl AudoxidyApp {
                 self.library_manager.filter_genre = None;
                 self.library_manager.filter_year = None;
                 self.library_manager.filter_folder_id = None;
+                // Limpiar selección de la biblioteca para que filter_stats tenga prioridad
+                self.library_manager.selected_album = None;
+                self.library_manager.selected_song_idx = None;
+                self.library_manager.selected_header = None;
+                self.library_manager.selection_stats = None;
                 self.library_manager.apply_filter();
-                self.filters_manager.refresh_data(&self.library_manager);
-                Task::none()
+                self.filters_manager.apply_view();
+                self.library_manager.last_viewport = None;
+                scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::SelectSubfilter(sub) => {
                 if sub == self.filters_manager.selected_subfilter {
@@ -1250,6 +1270,12 @@ impl AudoxidyApp {
                      self.filters_manager.selected_subfilter = sub;
                 }
                 self.filters_manager.selected_tree_node = None;
+                
+                // Limpiar selección de la biblioteca
+                self.library_manager.selected_album = None;
+                self.library_manager.selected_song_idx = None;
+                self.library_manager.selected_header = None;
+                self.library_manager.selection_stats = None;
                 
                 // Si se selecciona None (Mostrar todo), resetear filtros de la biblioteca
                 if self.filters_manager.selected_subfilter.is_none() {
@@ -1260,8 +1286,9 @@ impl AudoxidyApp {
                     self.library_manager.filter_folder_id = None;
                     self.library_manager.apply_filter();
                 }
-                self.filters_manager.refresh_data(&self.library_manager);
-                Task::none()
+                self.filters_manager.apply_view();
+                self.library_manager.last_viewport = None;
+                scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::ToggleTreeNode(name) => {
                 if self.filters_manager.expanded_nodes.contains(&name) {
@@ -1273,6 +1300,12 @@ impl AudoxidyApp {
             }
             Message::SelectTreeNode(name) => {
                 self.filters_manager.selected_tree_node = Some(name.clone());
+                
+                // Limpiar selección de la biblioteca para que filter_stats tenga prioridad
+                self.library_manager.selected_album = None;
+                self.library_manager.selected_song_idx = None;
+                self.library_manager.selected_header = None;
+                self.library_manager.selection_stats = None;
                 
                 // Apply filter to library
                 self.library_manager.filter_artist = None;
@@ -1312,7 +1345,8 @@ impl AudoxidyApp {
                 }
                 
                 self.library_manager.apply_filter();
-                Task::none()
+                self.library_manager.last_viewport = None;
+                scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::SelectFolder(id) => {
                 // Limpiar otros filtros para evitar conflictos si estamos en modo carpeta
@@ -1320,14 +1354,20 @@ impl AudoxidyApp {
                 self.library_manager.filter_album = None;
                 self.library_manager.filter_genre = None;
                 self.library_manager.filter_year = None;
+                // Limpiar selección de la biblioteca
+                self.library_manager.selected_album = None;
+                self.library_manager.selected_song_idx = None;
+                self.library_manager.selected_header = None;
+                self.library_manager.selection_stats = None;
                 
                 self.library_manager.filter_folder_id = Some(id);
                 self.library_manager.apply_filter();
-                Task::none()
+                self.library_manager.last_viewport = None;
+                scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::FilterSearchChanged(q) => {
                 self.filters_manager.search_query = q;
-                self.filters_manager.refresh_data(&self.library_manager);
+                self.filters_manager.apply_view();
                 Task::none()
             }
             Message::ToggleAudioCenter => {

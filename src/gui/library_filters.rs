@@ -1,13 +1,13 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space},
+    widget::{button, column, container, mouse_area, row, scrollable, text, text_input, Space},
     Alignment, Color, Element, Length, Theme,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::gui::app::Message;
 use crate::gui::theme::*;
 use crate::gui::widgets::{custom_scrollbar_style, chevron_btn};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilterType {
     Folder,
     Artist,
@@ -35,14 +35,25 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
+/// Índice pre-calculado de filtros. Se construye UNA sola vez al cargar canciones.
+struct FilterIndex {
+    /// Árbol completo y ordenado por cada FilterType
+    trees: HashMap<FilterType, Vec<TreeNode>>,
+    /// Letras del abecedario disponibles por cada FilterType
+    subfilters: HashMap<FilterType, Vec<String>>,
+}
+
 pub struct LibraryFiltersManager {
     pub current_filter: FilterType,
     pub menu_open: bool,
     pub selected_subfilter: Option<String>,
     pub expanded_nodes: HashSet<String>,
-    pub search_query: String, // internal search internal specific to this module
+    pub search_query: String, // internal search specific to this module
 
-    // Cached built variables
+    // Índice pre-calculado (se construye una vez con build_filter_index)
+    filter_index: Option<FilterIndex>,
+
+    // Datos visibles para la UI (se actualizan con apply_view)
     pub active_subfilters: Vec<String>, // available characters e.g. ["#", "·", "A", "C", "R"]
     pub tree_data: Vec<TreeNode>,
     pub selected_tree_node: Option<String>,
@@ -56,6 +67,7 @@ impl Default for LibraryFiltersManager {
             selected_subfilter: None,
             expanded_nodes: HashSet::new(),
             search_query: String::new(),
+            filter_index: None,
             active_subfilters: Vec::new(),
             tree_data: Vec::new(),
             selected_tree_node: None,
@@ -76,171 +88,199 @@ impl LibraryFiltersManager {
         }
     }
 
-    /// Refresh method to rebuild the tree when DB or options change
-    pub fn refresh_data(&mut self, library_manager: &crate::gui::library::LibraryManager) {
+    fn sort_subfilters(chars: &mut Vec<String>) {
+        chars.sort_by(|a, b| {
+            if a == "#" && b != "#" { return std::cmp::Ordering::Less; }
+            if b == "#" && a != "#" { return std::cmp::Ordering::Greater; }
+            if a == "•" && b != "•" { return std::cmp::Ordering::Less; }
+            if b == "•" && a != "•" { return std::cmp::Ordering::Greater; }
+            a.cmp(b)
+        });
+    }
+
+    fn sort_tree(nodes: &mut Vec<TreeNode>) {
+        nodes.sort_by(|a, b| {
+            let group_a = Self::get_group_char(&a.label);
+            let group_b = Self::get_group_char(&b.label);
+            let w_a = if group_a == "#" { 0 } else if group_a == "•" { 1 } else { 2 };
+            let w_b = if group_b == "#" { 0 } else if group_b == "•" { 1 } else { 2 };
+            w_a.cmp(&w_b).then_with(|| a.label.cmp(&b.label))
+        });
+        for node in nodes.iter_mut() {
+            if !node.children.is_empty() {
+                Self::sort_tree(&mut node.children);
+            }
+        }
+    }
+
+    /// Construye el índice de filtros UNA sola vez. Llamar al cargar canciones o cuando el escáner detecta cambios.
+    pub fn build_filter_index(&mut self, library_manager: &crate::gui::library::LibraryManager) {
+        let songs = match &library_manager.cached_all_songs {
+            Some(s) => s,
+            None => {
+                self.filter_index = None;
+                self.tree_data.clear();
+                self.active_subfilters.clear();
+                return;
+            }
+        };
+
+        let all_types = [FilterType::Genre, FilterType::Artist, FilterType::Album, FilterType::Year, FilterType::Folder];
+
+        // Estructura intermedia con HashMap para O(1) lookup de hijos
+        // L1 -> HashMap<L1_key, HashMap<L2_key, HashSet<L3_key>>>
+        let mut indices: HashMap<FilterType, BTreeMap<String, HashMap<String, HashSet<String>>>> = HashMap::new();
+        let mut char_sets: HashMap<FilterType, HashSet<String>> = HashMap::new();
+
+        for ft in &all_types {
+            indices.insert(*ft, BTreeMap::new());
+            char_sets.insert(*ft, HashSet::new());
+        }
+
+        // UNA sola iteración sobre todas las canciones
+        for song in songs {
+            let artist_val = song.artist.as_deref()
+                .or(song.album_artist.as_deref())
+                .unwrap_or("Desconocido");
+            let album_val = song.album.as_deref().unwrap_or("Desconocido");
+            let genre_val = song.genre.as_deref().unwrap_or("Desconocido");
+            let year_val = song.release_year.as_deref().unwrap_or("Desconocido");
+
+            // Para cada FilterType, extraer (L1, L2, L3)
+            let mappings: [(FilterType, &str, &str, Option<&str>); 5] = [
+                (FilterType::Genre,  genre_val,  artist_val, Some(album_val)),
+                (FilterType::Artist, artist_val, album_val,  None),
+                (FilterType::Album,  album_val,  artist_val, None),
+                (FilterType::Year,   year_val,   artist_val, Some(album_val)),
+                (FilterType::Folder, "Raiz",     artist_val, None),
+            ];
+
+            for (ft, l1, l2, l3) in &mappings {
+                // Registrar la letra del abecedario
+                char_sets.get_mut(ft).unwrap().insert(Self::get_group_char(l1));
+
+                // Insertar en el índice
+                let l1_map = indices.get_mut(ft).unwrap();
+                let l2_map = l1_map.entry(l1.to_string()).or_default();
+                let l3_set = l2_map.entry(l2.to_string()).or_default();
+                if let Some(l3_val) = l3 {
+                    l3_set.insert(l3_val.to_string());
+                }
+            }
+        }
+
+        // Convertir índices a TreeNodes
+        let mut trees: HashMap<FilterType, Vec<TreeNode>> = HashMap::new();
+        let mut subfilters: HashMap<FilterType, Vec<String>> = HashMap::new();
+
+        for ft in &all_types {
+            let ft_label = format!("{:?}", ft);
+            let l1_map = indices.remove(ft).unwrap();
+            let mut tree: Vec<TreeNode> = Vec::with_capacity(l1_map.len());
+
+            for (l1_key, l2_map) in l1_map {
+                let id1 = format!("{}|{}", ft_label, l1_key);
+                let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
+
+                for (l2_key, l3_set) in l2_map {
+                    let id2 = format!("{}|{}", id1, l2_key);
+                    let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
+
+                    for l3_key in l3_set {
+                        let id3 = format!("{}|{}", id2, l3_key);
+                        children2.push(TreeNode { label: l3_key, id: id3, children: Vec::new() });
+                    }
+
+                    Self::sort_tree(&mut children2);
+                    children1.push(TreeNode { label: l2_key, id: id2, children: children2 });
+                }
+
+                Self::sort_tree(&mut children1);
+                tree.push(TreeNode { label: l1_key, id: id1, children: children1 });
+            }
+
+            Self::sort_tree(&mut tree);
+            trees.insert(*ft, tree);
+
+            let mut chars: Vec<String> = char_sets.remove(ft).unwrap().into_iter().collect();
+            Self::sort_subfilters(&mut chars);
+            subfilters.insert(*ft, chars);
+        }
+
+        self.filter_index = Some(FilterIndex { trees, subfilters });
+
+        // Actualizar la vista inmediatamente
+        self.apply_view();
+    }
+
+    /// Actualiza tree_data y active_subfilters desde el índice pre-calculado.
+    /// Operación instantánea (<1ms). Llamar al cambiar filtro general, subfiltro o búsqueda.
+    pub fn apply_view(&mut self) {
         self.tree_data.clear();
         self.active_subfilters.clear();
 
-        // 1. Recolectar pares dependiendo del `current_filter`
-        // Para Genre: Genre -> Artist -> Album
-        // Para Artist: Artist -> Album
-        // etc...
-        let songs_opt = &library_manager.cached_all_songs;
-        let mut level1_map: BTreeMap<String, TreeNode> = BTreeMap::new();
+        let index = match &self.filter_index {
+            Some(idx) => idx,
+            None => return,
+        };
 
-        if let Some(songs) = songs_opt {
-            for song in songs {
-                // Ignore songs that don't match the internal text search (if not empty)
-                if !self.search_query.is_empty() {
-                    let q = self.search_query.to_lowercase();
-                    let t = song.title.as_deref().unwrap_or("").to_lowercase();
-                    let a = song.artist.as_deref().unwrap_or("").to_lowercase();
-                    let al = song.album.as_deref().unwrap_or("").to_lowercase();
-                    let g = song.genre.as_deref().unwrap_or("").to_lowercase();
-                    let y = song.release_year.as_deref().unwrap_or("").to_lowercase();
-                    if !t.contains(&q) && !a.contains(&q) && !al.contains(&q) && !g.contains(&q) && !y.contains(&q) {
+        // 1. Subfilters (letras del abecedario) - directo de la caché
+        if let Some(chars) = index.subfilters.get(&self.current_filter) {
+            self.active_subfilters = chars.clone();
+        }
+
+        // 2. Árbol filtrado
+        if let Some(full_tree) = index.trees.get(&self.current_filter) {
+            let has_search = !self.search_query.is_empty();
+            let query_lower = self.search_query.to_lowercase();
+
+            for node in full_tree {
+                // Filtro por subfiltro (letra del abecedario)
+                if let Some(ref sub) = self.selected_subfilter {
+                    let group = Self::get_group_char(&node.label);
+                    if &group != sub {
                         continue;
                     }
                 }
 
-                let artist_val = song.artist.clone().or_else(|| song.album_artist.clone()).unwrap_or_else(|| "Desconocido".to_string());
-                let album_val = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
-                let genre_val = song.genre.clone().unwrap_or_else(|| "Desconocido".to_string());
-                let year_val = song.release_year.clone().unwrap_or_else(|| "Desconocido".to_string());
-                // let track_val = song.title.clone().unwrap_or_else(|| "Pista Desconocida".to_string());
-
-                let (l1, l2, l3, l4) = match self.current_filter {
-                    FilterType::Genre => (Some(genre_val), Some(artist_val), Some(album_val), None),
-                    FilterType::Artist => (Some(artist_val), Some(album_val), None, None),
-                    FilterType::Album => (Some(album_val), Some(artist_val), None, None), // Album -> Artist
-                    FilterType::Year => (Some(year_val), Some(artist_val), Some(album_val), None),
-                    FilterType::Folder => {
-                        // TODO: Map Folders logic. Temporarily using track details for structural check.
-                        // Wait, Folders usually uses the file path parts.
-                        // Let's fallback to artists for structure tests, we will improve folder logic later.
-                        (Some("Raiz".to_string()), Some(artist_val), None, None)
+                // Filtro por búsqueda de texto
+                if has_search {
+                    let filtered = Self::filter_node_by_search(node, &query_lower);
+                    if let Some(filtered_node) = filtered {
+                        self.tree_data.push(filtered_node);
                     }
-                };
-
-                if let Some(lvl1_key) = l1 {
-                    let group_char = Self::get_group_char(&lvl1_key);
-                    
-                    // Solo lo agregamos si no hay subfiltro seleccionado, O si coincide con el subfiltro.
-                    if self.selected_subfilter.is_none() || self.selected_subfilter.as_deref() == Some(group_char.as_str()) {
-                        let id1 = format!("{:?}|{}", self.current_filter, lvl1_key);
-                        let node1 = level1_map.entry(lvl1_key.clone()).or_insert_with(|| TreeNode {
-                            label: lvl1_key,
-                            id: id1.clone(),
-                            children: Vec::new(),
-                        });
-
-                        if let Some(lvl2_key) = l2 {
-                            let id2 = format!("{}|{}", id1, lvl2_key);
-                            let node2_idx_opt = node1.children.iter().position(|c| c.label == lvl2_key);
-                            
-                            let node2_idx = if let Some(idx) = node2_idx_opt {
-                                idx
-                            } else {
-                                node1.children.push(TreeNode {
-                                    label: lvl2_key.clone(),
-                                    id: id2.clone(),
-                                    children: Vec::new(),
-                                });
-                                node1.children.len() - 1
-                            };
-
-                            if let Some(lvl3_key) = l3 {
-                                let id3 = format!("{}|{}", id2, lvl3_key);
-                                let node3_idx_opt = node1.children[node2_idx].children.iter().position(|c| c.label == lvl3_key);
-                                
-                                let node3_idx = if let Some(idx) = node3_idx_opt {
-                                    idx
-                                } else {
-                                    node1.children[node2_idx].children.push(TreeNode {
-                                        label: lvl3_key,
-                                        id: id3.clone(),
-                                        children: Vec::new(),
-                                    });
-                                    node1.children[node2_idx].children.len() - 1
-                                };
-                                
-                                if let Some(lvl4_key) = l4 {
-                                    let id4 = format!("{}|{}", id3, lvl4_key);
-                                    let has_n4 = node1.children[node2_idx].children[node3_idx].children.iter().any(|c| c.label == lvl4_key);
-                                    if !has_n4 {
-                                        node1.children[node2_idx].children[node3_idx].children.push(TreeNode {
-                                            label: lvl4_key,
-                                            id: id4,
-                                            children: Vec::new(),
-                                        });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Collect the active subfilters by inspecting all songs regardless of selected_subfilter
-            // (We want to show the full alphabet ribbon always, but only letters that have at least one match).
-            let mut unique_chars = HashSet::new();
-            for song in songs {
-                if !self.search_query.is_empty() {
-                    let q = self.search_query.to_lowercase();
-                    let t = song.title.as_deref().unwrap_or("").to_lowercase();
-                    let a = song.artist.as_deref().unwrap_or("").to_lowercase();
-                    let al = song.album.as_deref().unwrap_or("").to_lowercase();
-                    let g = song.genre.as_deref().unwrap_or("").to_lowercase();
-                    let y = song.release_year.as_deref().unwrap_or("").to_lowercase();
-                    if !t.contains(&q) && !a.contains(&q) && !al.contains(&q) && !g.contains(&q) && !y.contains(&q) {
-                        continue;
-                    }
-                }
-
-                let artist_val = song.artist.clone().or_else(|| song.album_artist.clone()).unwrap_or_else(|| "Desconocido".to_string());
-                let album_val = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
-                let genre_val = song.genre.clone().unwrap_or_else(|| "Desconocido".to_string());
-                let year_val = song.release_year.clone().unwrap_or_else(|| "Desconocido".to_string());
-
-                let l1 = match self.current_filter {
-                    FilterType::Genre => genre_val,
-                    FilterType::Artist => artist_val,
-                    FilterType::Album => album_val,
-                    FilterType::Year => year_val,
-                    FilterType::Folder => "Raiz".to_string(), // Placeholder
-                };
-                unique_chars.insert(Self::get_group_char(&l1));
-            }
-            
-            let mut sorted_chars: Vec<String> = unique_chars.into_iter().collect();
-            sorted_chars.sort_by(|a, b| {
-                if a == "#" && b != "#" { return std::cmp::Ordering::Less; }
-                if b == "#" && a != "#" { return std::cmp::Ordering::Greater; }
-                if a == "•" && b != "•" { return std::cmp::Ordering::Less; }
-                if b == "•" && a != "•" { return std::cmp::Ordering::Greater; }
-                a.cmp(b)
-            });
-            self.active_subfilters = sorted_chars;
-        }
-
-        self.tree_data = level1_map.into_values().collect();
-
-        // Ordenamos el árbol: primero "#", luego "•", y finalmente A-Z.
-        fn sort_tree(nodes: &mut Vec<TreeNode>) {
-            nodes.sort_by(|a, b| {
-                let group_a = LibraryFiltersManager::get_group_char(&a.label);
-                let group_b = LibraryFiltersManager::get_group_char(&b.label);
-                let w_a = if group_a == "#" { 0 } else if group_a == "•" { 1 } else { 2 };
-                let w_b = if group_b == "#" { 0 } else if group_b == "•" { 1 } else { 2 };
-                w_a.cmp(&w_b).then_with(|| a.label.cmp(&b.label))
-            });
-            for node in nodes.iter_mut() {
-                if !node.children.is_empty() {
-                    sort_tree(&mut node.children);
+                } else {
+                    self.tree_data.push(node.clone());
                 }
             }
         }
-        sort_tree(&mut self.tree_data);
+    }
+
+    /// Filtra recursivamente un nodo del árbol por búsqueda de texto.
+    /// Retorna None si ni el nodo ni sus hijos coinciden.
+    fn filter_node_by_search(node: &TreeNode, query: &str) -> Option<TreeNode> {
+        let self_matches = node.label.to_lowercase().contains(query);
+
+        // Filtrar hijos recursivamente
+        let filtered_children: Vec<TreeNode> = node.children.iter()
+            .filter_map(|child| Self::filter_node_by_search(child, query))
+            .collect();
+
+        if self_matches || !filtered_children.is_empty() {
+            Some(TreeNode {
+                label: node.label.clone(),
+                id: node.id.clone(),
+                children: if self_matches {
+                    // Si el padre coincide, mostrar todos sus hijos
+                    node.children.clone()
+                } else {
+                    // Si solo coinciden hijos, mostrar solo los que coinciden
+                    filtered_children
+                },
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -268,7 +308,7 @@ pub fn view<'a>(
     let drop_icon = if manager.menu_open { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
     let dropdown_header = button(
         row![
-            text(manager.current_filter.label()).size(15).font(FONT_INTER_SANS_MEDIUM),
+            text(manager.current_filter.label()).size(14).font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fill),
             iced::widget::svg(iced::widget::svg::Handle::from_path(format!("assets/icons/{}", drop_icon)))
                 .width(28).height(28)
@@ -300,7 +340,7 @@ pub fn view<'a>(
             let is_selected = manager.current_filter == f;
             menu_options = menu_options.push(
                 button(
-                    container(text(f.label()).size(15).font(FONT_INTER_SANS_MEDIUM))
+                    container(text(f.label()).size(14).font(FONT_INTER_SANS_MEDIUM))
                         .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 15.0 })
                         .height(Length::Fixed(30.0))
                         .center_y(Length::Fill)
@@ -323,8 +363,8 @@ pub fn view<'a>(
             );
         }
         Some(
-            container(menu_options)
-                .width(Length::Fill)
+            container(menu_options.width(Length::Fill))
+                .width(Length::Fixed(202.0))
                 .height(Length::Shrink)
                 .padding(iced::Padding { top: 10.0, bottom: 10.0, left: 0.0, right: 0.0 })
                 .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
@@ -335,14 +375,23 @@ pub fn view<'a>(
 
     // Subfilters (Alfabeto/Numeros/Signos)
     if !manager.active_subfilters.is_empty() {
-        let mut rows_of_chars = column![].spacing(3).padding(iced::Padding { top: 10.0, bottom: 0.0, left: 15.0, right: 15.0 });
+        let mut rows_of_chars = column![].spacing(4).padding(iced::Padding { top: 10.0, bottom: 10.0, left: 15.0, right: 15.0 });
         
         let mut line_width = 0.0;
         let max_w = 202.0 - 30.0; // 202 total - 15 padding L/R
         let mut current_row = iced::widget::Row::new().spacing(0);
         
-        // El boton "mostrar todo" usando icono restore
-        let restore_icon = container(iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/restore-straight.svg")).width(14).height(14).style(move |_t, _s| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) }))
+        let restore_icon = container(
+            iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/restore-straight.svg"))
+                .width(14).height(14)
+                .style(move |_t, s: iced::widget::svg::Status| {
+                    if s == iced::widget::svg::Status::Hovered {
+                        iced::widget::svg::Style { color: Some(COLOR_TEXT_PRIMARY) }
+                    } else {
+                        iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) }
+                    }
+                })
+        )
             .width(Length::Fixed(16.0)).height(Length::Fixed(16.0)).center_x(Length::Fill).center_y(Length::Fill);
 
         let restore_btn = button(restore_icon)
@@ -351,7 +400,11 @@ pub fn view<'a>(
                  let mut st = button::Style::default().with_background(Color::TRANSPARENT);
                  if _s == button::Status::Pressed {
                      st.background = Some(iced::Background::Color(COLOR_ACCENT));
+                     st.text_color = COLOR_TEXT_PRIMARY;
                      st.border.radius = 18.0.into();
+                 }
+                 else {
+                     st.text_color = COLOR_TEXT_SECONDARY;
                  }
                  st
              })
@@ -515,11 +568,13 @@ pub fn view<'a>(
     if let Some(menu) = menu_options_container {
         iced::widget::stack![
             base_view,
-            container(menu)
-                .width(Length::Fixed(202.0))
-                .height(Length::Shrink)
-                .align_y(iced::alignment::Vertical::Top)
-                .padding(iced::Padding { top: 70.0, bottom: 0.0, left: 0.0, right: 0.0 })
+            container(
+                mouse_area(menu).on_press(Message::NoOp)
+            )
+            .width(Length::Fixed(202.0))
+            .height(Length::Fill)
+            .padding(iced::Padding { top: 70.0, bottom: 0.0, left: 0.0, right: 0.0 })
+            .align_y(iced::alignment::Vertical::Top)
         ].into()
     } else {
         base_view.into()

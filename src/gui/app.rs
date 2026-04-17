@@ -148,6 +148,12 @@ pub enum Message {
     PlayAlbum(Vec<std::sync::Arc<crate::db::database::SongData>>),
     PlaySongIndex(usize),
     ClearPlaylist,
+    ToggleSongEnabled(usize),
+    SwitchPlaylist(i64),
+    ToggleTabDropdown,
+    PlaylistSearchChanged(String),
+    ToggleLyrics,
+    ToggleGroupEnabled(usize),
 
     // Library
     ScanLibrary(String),
@@ -215,6 +221,7 @@ pub struct AudoxidyApp {
     window_id: Option<iced::window::Id>,
     last_artist_header_click: Option<(String, std::time::Instant)>,
     last_album_header_click: Option<(String, std::time::Instant)>,
+    last_playlist_click: Option<(usize, std::time::Instant)>,
     pub low_resource_mode: bool,
     pub db_needs_refresh: bool,
 }
@@ -286,13 +293,24 @@ impl AudoxidyApp {
         let mut filters_manager = LibraryFiltersManager::default();
         filters_manager.build_filter_index(&library_manager);
 
+        let mut playlist_manager = PlaylistManager::default();
+        if let Ok(db) = database_arc.lock() {
+            if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(playlist_manager.active_playlist_id) {
+                playlist_manager.groups = groups;
+            }
+            if let Ok(Some(session)) = db.load_shuffle_session(playlist_manager.active_playlist_id) {
+                playlist_manager.shuffle_session = Some(session);
+                playlist_manager.shuffle_active = true;
+            }
+        }
+
         (
             Self {
                 audio_manager,
                 database: database_arc,
                 scanner: scanner_arc,
                 media_controls,
-                playlist_manager: PlaylistManager::default(),
+                playlist_manager,
                 filters_manager,
                 library_manager,
                 audio_center_manager: AudioCenterManager::default(),
@@ -300,6 +318,7 @@ impl AudoxidyApp {
                 window_id: None,
                 last_artist_header_click: None,
                 last_album_header_click: None,
+                last_playlist_click: None,
                 low_resource_mode,
                 db_needs_refresh: false, // Ya cargamos todo, no necesita refresh inicial
             },
@@ -426,6 +445,15 @@ impl AudoxidyApp {
                 if state.eof_reached {
                     self.audio_manager.clear_eof();
                     self.playlist_manager.play_next(&self.audio_manager);
+                    
+                    if self.playlist_manager.shuffle_active {
+                        if let Some(session) = &self.playlist_manager.shuffle_session {
+                            if let Ok(db) = self.database.lock() {
+                                let _ = db.save_shuffle_session(self.playlist_manager.active_playlist_id, session);
+                            }
+                        }
+                    }
+                    
                     self.sync_player_art();
                 }
                 Task::none()
@@ -437,12 +465,30 @@ impl AudoxidyApp {
             Message::NextTrack => {
                 crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_next(&self.audio_manager);
+                
+                if self.playlist_manager.shuffle_active {
+                    if let Some(session) = &self.playlist_manager.shuffle_session {
+                        if let Ok(db) = self.database.lock() {
+                            let _ = db.save_shuffle_session(self.playlist_manager.active_playlist_id, session);
+                        }
+                    }
+                }
+                
                 self.sync_player_art();
                 self.wake_up_controls(false)
             }
             Message::PreviousTrack => {
                 crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_prev(&self.audio_manager);
+                
+                if self.playlist_manager.shuffle_active {
+                    if let Some(session) = &self.playlist_manager.shuffle_session {
+                        if let Ok(db) = self.database.lock() {
+                            let _ = db.save_shuffle_session(self.playlist_manager.active_playlist_id, session);
+                        }
+                    }
+                }
+                
                 self.sync_player_art();
                 self.wake_up_controls(false)
             }
@@ -463,10 +509,30 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ToggleShuffle => {
-                self.playlist_manager.shuffle_active = !self.playlist_manager.shuffle_active;
+                if !self.playlist_manager.shuffle_active {
+                    self.playlist_manager.activate_shuffle();
+                    if let Some(session) = &self.playlist_manager.shuffle_session {
+                        if let Ok(db) = self.database.lock() {
+                            let _ = db.save_shuffle_session(self.playlist_manager.active_playlist_id, session);
+                        }
+                    }
+                } else {
+                    self.playlist_manager.deactivate_shuffle();
+                    if let Ok(db) = self.database.lock() {
+                        let _ = db.clear_shuffle_session(self.playlist_manager.active_playlist_id);
+                    }
+                }
                 Task::none()
             }
             Message::AddSongToPlaylist(song) => {
+                if let Ok(db) = self.database.lock() {
+                    let _ = db.add_song_to_playlist(self.playlist_manager.active_playlist_id, song.id);
+                    if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(self.playlist_manager.active_playlist_id) {
+                        self.playlist_manager.groups = groups;
+                    }
+                }
+                
+                // Mantenemos compatibilidad con legacy lists para precache de covers
                 if self.playlist_manager.lists.is_empty() {
                     self.playlist_manager.lists.push(("Default".to_string(), vec![]));
                 }
@@ -475,7 +541,7 @@ impl AudoxidyApp {
                     title: song.title.clone().unwrap_or_else(|| "Unknown".to_string()),
                     artist: song.artist.clone().unwrap_or_else(|| "Unknown".to_string()),
                     album: song.album.clone().unwrap_or_else(|| "Unknown".to_string()),
-                    duration_sec: 0.0,
+                    duration_sec: song.duration_secs.unwrap_or(0.0) as f32,
                     year: song.release_year.clone().unwrap_or_else(|| "".to_string()),
                     path: song.full_file_path.clone(),
                     cover_cache_path: song.compressed_cached_cover_root.clone(),
@@ -485,6 +551,15 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::PlayAlbum(songs) => {
+                if let Ok(db) = self.database.lock() {
+                    let song_ids: Vec<i64> = songs.iter().map(|s| s.id).collect();
+                    let _ = db.add_songs_to_playlist(self.playlist_manager.active_playlist_id, &song_ids);
+                    if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(self.playlist_manager.active_playlist_id) {
+                        self.playlist_manager.groups = groups;
+                    }
+                }
+
+                // Legacy compatibility
                 if self.playlist_manager.lists.is_empty() {
                     self.playlist_manager.lists.push(("Default".to_string(), vec![]));
                 }
@@ -496,7 +571,7 @@ impl AudoxidyApp {
                         title: s.title.clone().unwrap_or_else(|| "Unknown".to_string()),
                         artist: s.artist.clone().unwrap_or_else(|| "Unknown".to_string()),
                         album: s.album.clone().unwrap_or_else(|| "Unknown".to_string()),
-                        duration_sec: 0.0, // Default duration, will be updated by active player if needed
+                        duration_sec: s.duration_secs.unwrap_or(0.0) as f32,
                         year: s.release_year.clone().unwrap_or_else(|| "".to_string()),
                         path: s.full_file_path.clone(),
                         cover_cache_path: s.compressed_cached_cover_root.clone(),
@@ -510,13 +585,26 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::PlaySongIndex(idx) => {
-                self.playlist_manager.playing_song_idx = Some(idx);
-                if let Some(song) = self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx).cloned() {
-                    self.sync_player_art();
-                    if let Err(e) = self.audio_manager.load_file(&song.path) {
-                        tracing::error!("Error reproduciendo archivo: {}", e);
-                    } else {
-                        self.audio_manager.play();
+                let now = std::time::Instant::now();
+                let is_double_click = if let Some((last_idx, last_time)) = self.last_playlist_click {
+                    last_idx == idx && now.duration_since(last_time).as_millis() < 400
+                } else {
+                    false
+                };
+
+                self.last_playlist_click = Some((idx, now));
+                self.playlist_manager.selected_song_idx = Some(idx);
+
+                if is_double_click {
+                    if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
+                        let path = song.file_path.clone();
+                        self.sync_player_art();
+                        if let Err(e) = self.audio_manager.load_file(&path) {
+                            tracing::error!("Error reproduciendo archivo: {}", e);
+                        } else {
+                            self.audio_manager.play();
+                            self.playlist_manager.playing_song_idx = Some(idx);
+                        }
                     }
                 }
                 Task::none()
@@ -527,6 +615,49 @@ impl AudoxidyApp {
                     self.playlist_manager.playing_song_idx = None;
                     self.audio_manager.stop();
                 }
+                Task::none()
+            }
+            Message::ToggleSongEnabled(linear_idx) => {
+                self.playlist_manager.toggle_song_enabled_at_linear_index(linear_idx);
+                // Persistir en BD (Fase 4)
+                Task::none()
+            }
+            Message::ToggleGroupEnabled(idx) => {
+                self.playlist_manager.toggle_group_enabled_at_linear_index(idx);
+                Task::none()
+            }
+            Message::SwitchPlaylist(id) => {
+                self.playlist_manager.active_playlist_id = id;
+                if let Ok(db) = self.database.lock() {
+                    if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(id) {
+                        self.playlist_manager.groups = groups;
+                    }
+                    if let Ok(Some(session)) = db.load_shuffle_session(id) {
+                        self.playlist_manager.shuffle_session = Some(session);
+                        self.playlist_manager.shuffle_active = true;
+                    } else {
+                        self.playlist_manager.shuffle_active = false;
+                        self.playlist_manager.shuffle_session = None;
+                    }
+                }
+                
+                self.playlist_manager.show_tab_dropdown = false;
+                self.playlist_manager.selected_song_idx = None;
+                self.playlist_manager.playing_song_idx = None;
+                self.playlist_manager.apply_filter();
+                Task::none()
+            }
+            Message::ToggleTabDropdown => {
+                self.playlist_manager.show_tab_dropdown = !self.playlist_manager.show_tab_dropdown;
+                Task::none()
+            }
+            Message::PlaylistSearchChanged(q) => {
+                self.playlist_manager.search_query = q;
+                self.playlist_manager.apply_filter();
+                Task::none()
+            }
+            Message::ToggleLyrics => {
+                // Fase 6: abrir módulo de letras
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
@@ -1152,7 +1283,22 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::PlayLibrarySelection => {
-                // Determinar qué lista de canciones usar (Grid usa las del álbum expandido, resto usa filtered_songs)
+                // Prioridad: Si hay una canción seleccionada en la playlist (Enter en Playlist)
+                if let Some(idx) = self.playlist_manager.selected_song_idx {
+                    if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
+                        let path = song.file_path.clone();
+                        self.sync_player_art();
+                        if let Err(e) = self.audio_manager.load_file(&path) {
+                            tracing::error!("Error reproduciendo archivo de playlist: {}", e);
+                        } else {
+                            self.audio_manager.play();
+                            self.playlist_manager.playing_song_idx = Some(idx);
+                        }
+                        return Task::none();
+                    }
+                }
+
+                // Si no, proceder con la lógica de selección de la biblioteca
                 let songs_opt = if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::Grid {
                     self.library_manager.expanded_album_songs.as_ref()
                 } else {
@@ -1485,9 +1631,9 @@ impl AudoxidyApp {
         // 2. Obtener la ruta AVIF de la canción actual desde la playlist
         let mut new_cover_path = String::new();
         if let Some(idx) = self.playlist_manager.playing_song_idx {
-            if let Some(song) = self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx) {
-                if song.path == audio_state.path {
-                    if let Some(ref cp) = song.cover_cache_path {
+            if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
+                if song.file_path == audio_state.path {
+                    if let Some(ref cp) = song.cover_path {
                         new_cover_path = cp.clone();
                     }
                 }
@@ -1647,6 +1793,7 @@ impl AudoxidyApp {
                     Key::Named(Named::ArrowDown) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Down, modifiers)),
                     Key::Named(Named::ArrowLeft) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Left, modifiers)),
                     Key::Named(Named::ArrowRight) => Some(Message::LibraryKeyNav(crate::gui::library::LibraryNavDir::Right, modifiers)),
+                    Key::Named(Named::Enter) => Some(Message::PlayLibrarySelection),
                     Key::Named(Named::Delete) => Some(Message::LibraryDeleteSelection),
                     _ => None,
                 }

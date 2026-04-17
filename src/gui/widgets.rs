@@ -1204,7 +1204,7 @@ where
                     album_title_row,
                     Space::new().width(Length::Fill),
                     text(format!("{} Canciones | {}", alb.songs.len(), time_str))
-                        .size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+                        .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
                     Space::new().width(15),
                     chevron_btn(chevron, crate::gui::app::Message::ToggleAlbumExpansion(album_hash.clone()), 32.0, 28.0),
                 ].align_y(Alignment::Center).padding([0, 15]);

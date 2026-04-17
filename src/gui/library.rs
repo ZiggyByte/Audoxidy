@@ -875,7 +875,7 @@ pub fn view<'a>(
     };
     
     let sort_bar_pad = match manager.view_mode {
-        LibraryViewMode::Grid => 24.0,
+        LibraryViewMode::Grid => 19.0,
         LibraryViewMode::DetailedList => 29.0,
         LibraryViewMode::ThumbnailList => 31.0,
         LibraryViewMode::SimpleList => 29.0,
@@ -1099,7 +1099,7 @@ pub fn view<'a>(
                                                 get_col(SortColumn::SampleRate), get_col(SortColumn::Channels), get_col(SortColumn::BitDepth),
                                                 get_col(SortColumn::Bitrate), get_col(SortColumn::Size),
                                                 button(text("►").size(11).color(Color::from(txt_color))).on_press(Message::AddSongToPlaylist(s_clone)).style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT)),
-                                            ].align_y(Alignment::Center).padding([0, 5]).height(Length::Fill))
+                                            ].align_y(Alignment::Center).padding([0, 0]).height(Length::Fill))
                                             .width(Length::Fill).height(Length::Fixed(32.0)).align_y(Alignment::Center)
                                             .style(move |_t| if is_song_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } else { container::Style::default() })
                                         ).on_press(Message::SelectSong(Some(song_i))).interaction(iced::mouse::Interaction::Pointer);

@@ -63,6 +63,11 @@ pub struct PlaylistData {
     pub sort_order: i64,
     pub is_system: bool,
     pub created_at: i64,
+    pub last_song_id: Option<i64>,
+    pub last_pos_sec: f64,
+    pub is_playing: bool,
+    pub shuffle_active: bool,
+    pub repeat_mode: i32,
 }
 
 /// Item de una lista de reproducción (referencia + estado, sin duplicar metadata).
@@ -234,10 +239,22 @@ impl Database {
                 name TEXT NOT NULL UNIQUE,
                 sort_order INTEGER NOT NULL DEFAULT 0,
                 is_system INTEGER NOT NULL DEFAULT 0,
-                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+                created_at INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+                last_song_id INTEGER,
+                last_pos_sec REAL NOT NULL DEFAULT 0.0,
+                is_playing INTEGER NOT NULL DEFAULT 0,
+                shuffle_active INTEGER NOT NULL DEFAULT 0,
+                repeat_mode INTEGER NOT NULL DEFAULT 0
             )",
             [],
         )?;
+
+        // Intentar añadir columnas si la tabla ya existe (migración ligera)
+        let _ = conn.execute("ALTER TABLE PLAYLISTS ADD COLUMN last_song_id INTEGER", []);
+        let _ = conn.execute("ALTER TABLE PLAYLISTS ADD COLUMN last_pos_sec REAL NOT NULL DEFAULT 0.0", []);
+        let _ = conn.execute("ALTER TABLE PLAYLISTS ADD COLUMN is_playing INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE PLAYLISTS ADD COLUMN shuffle_active INTEGER NOT NULL DEFAULT 0", []);
+        let _ = conn.execute("ALTER TABLE PLAYLISTS ADD COLUMN repeat_mode INTEGER NOT NULL DEFAULT 0", []);
 
         // 8. ITEMS DE LISTA DE REPRODUCCIÓN
         conn.execute(
@@ -932,55 +949,72 @@ impl Database {
     /// Obtiene todas las playlists ordenadas por sort_order.
     pub fn get_all_playlists(&self) -> Result<Vec<PlaylistData>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, sort_order, is_system, created_at FROM PLAYLISTS ORDER BY sort_order ASC"
+            "SELECT id, name, sort_order, is_system, created_at, last_song_id, last_pos_sec, is_playing, shuffle_active, repeat_mode 
+             FROM PLAYLISTS ORDER BY sort_order ASC"
         )?;
-
         let rows = stmt.query_map([], |r| {
             Ok(PlaylistData {
                 id: r.get(0)?,
                 name: r.get(1)?,
                 sort_order: r.get(2)?,
-                is_system: r.get::<_, i64>(3)? != 0,
+                is_system: r.get::<_, i32>(3)? != 0,
                 created_at: r.get(4)?,
+                last_song_id: r.get(5)?,
+                last_pos_sec: r.get(6)?,
+                is_playing: r.get::<_, i32>(7)? != 0,
+                shuffle_active: r.get::<_, i32>(8)? != 0,
+                repeat_mode: r.get(9)?,
             })
         })?;
 
-        let mut results = Vec::new();
+        let mut playlists = Vec::new();
         for row in rows {
-            if let Ok(p) = row { results.push(p); }
+            playlists.push(row?);
         }
-        Ok(results)
+        Ok(playlists)
     }
 
     /// Obtiene una playlist por ID.
     pub fn get_playlist_by_id(&self, playlist_id: i64) -> Result<Option<PlaylistData>> {
         self.conn.query_row(
-            "SELECT id, name, sort_order, is_system, created_at FROM PLAYLISTS WHERE id = ?1",
+            "SELECT id, name, sort_order, is_system, created_at, last_song_id, last_pos_sec, is_playing, shuffle_active, repeat_mode 
+             FROM PLAYLISTS WHERE id = ?1",
             [playlist_id],
             |r| {
                 Ok(PlaylistData {
                     id: r.get(0)?,
                     name: r.get(1)?,
                     sort_order: r.get(2)?,
-                    is_system: r.get::<_, i64>(3)? != 0,
+                    is_system: r.get::<_, i32>(3)? != 0,
                     created_at: r.get(4)?,
+                    last_song_id: r.get(5)?,
+                    last_pos_sec: r.get(6)?,
+                    is_playing: r.get::<_, i32>(7)? != 0,
+                    shuffle_active: r.get::<_, i32>(8)? != 0,
+                    repeat_mode: r.get(9)?,
                 })
-            }
+            },
         ).optional()
     }
 
     /// Obtiene una playlist por nombre.
     pub fn get_playlist_by_name(&self, name: &str) -> Result<Option<PlaylistData>> {
         self.conn.query_row(
-            "SELECT id, name, sort_order, is_system, created_at FROM PLAYLISTS WHERE name = ?1",
+            "SELECT id, name, sort_order, is_system, created_at, last_song_id, last_pos_sec, is_playing, shuffle_active, repeat_mode 
+             FROM PLAYLISTS WHERE name = ?1",
             [name],
             |r| {
                 Ok(PlaylistData {
                     id: r.get(0)?,
                     name: r.get(1)?,
                     sort_order: r.get(2)?,
-                    is_system: r.get::<_, i64>(3)? != 0,
+                    is_system: r.get::<_, i32>(3)? != 0,
                     created_at: r.get(4)?,
+                    last_song_id: r.get(5)?,
+                    last_pos_sec: r.get(6)?,
+                    is_playing: r.get::<_, i32>(7)? != 0,
+                    shuffle_active: r.get::<_, i32>(8)? != 0,
+                    repeat_mode: r.get(9)?,
                 })
             }
         ).optional()
@@ -1109,6 +1143,36 @@ impl Database {
         self.conn.execute(
             "UPDATE PLAYLIST_ITEMS SET sequence_order = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
             params![new_sequence, playlist_id, song_id],
+        )?;
+        Ok(())
+    }
+
+    /// Actualiza el estado de persistencia de una playlist.
+    pub fn update_playlist_persistence(
+        &self, 
+        playlist_id: i64, 
+        last_song_id: Option<i64>, 
+        last_pos_sec: f64, 
+        is_playing: bool, 
+        shuffle_active: bool, 
+        repeat_mode: i32
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE PLAYLISTS SET 
+                last_song_id = ?1, 
+                last_pos_sec = ?2, 
+                is_playing = ?3, 
+                shuffle_active = ?4, 
+                repeat_mode = ?5 
+             WHERE id = ?6",
+            params![
+                last_song_id, 
+                last_pos_sec, 
+                if is_playing { 1 } else { 0 }, 
+                if shuffle_active { 1 } else { 0 }, 
+                repeat_mode,
+                playlist_id
+            ],
         )?;
         Ok(())
     }

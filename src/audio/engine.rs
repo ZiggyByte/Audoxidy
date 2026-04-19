@@ -599,7 +599,6 @@ impl AudioEngine {
                                          
                                          current_format = Some(probed.format);
                                          let mut s = state.write();
-                                         s.is_playing = true; // Auto-play on load
                                          s.eof_reached = false;
                                      }
                                  }

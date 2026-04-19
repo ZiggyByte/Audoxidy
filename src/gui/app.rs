@@ -210,6 +210,7 @@ pub enum Message {
     PlayerActivityTimeout(u64),
     GlobalClick,
     WindowResized(u32, u32),
+    InitStartup,
     NoOp,
 }
 
@@ -307,19 +308,39 @@ impl AudoxidyApp {
         filters_manager.build_filter_index(&library_manager);
 
         let mut playlist_manager = PlaylistManager::default();
-        if let Ok(db) = database_arc.lock() {
+        if let Ok(db_lock) = database_arc.lock() {
+            // 1. Cargar última playlist activa
+            if let Some(last_id_str) = db_lock.get_setting("last_active_playlist_id") {
+                if let Ok(last_id) = last_id_str.parse::<i64>() {
+                    playlist_manager.active_playlist_id = last_id;
+                }
+            }
+            
             let active_id = playlist_manager.active_playlist_id;
-            if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(active_id) {
+            if let Ok(groups) = db_lock.get_playlist_songs_grouped_by_folder(active_id) {
                 playlist_manager.groups = groups;
             }
             
+            if let Ok(all_p) = db_lock.get_all_playlists() {
+                playlist_manager.playlists = all_p;
+            }
+            
             // Cargar persistencia inicial
-            if let Ok(Some(p_data)) = db.get_playlist_by_id(active_id) {
+            if let Ok(Some(p_data)) = db_lock.get_playlist_by_id(active_id) {
                 playlist_manager.shuffle_active = p_data.shuffle_active;
                 playlist_manager.repeat_mode = p_data.repeat_mode as u8;
                 
                 if p_data.shuffle_active {
-                    if let Ok(Some(session)) = db.load_shuffle_session(active_id) {
+                    if let Ok(Some(mut session)) = db_lock.load_shuffle_session(active_id) {
+                        // Sincronizar posición de sesión con la canción restaurada
+                        if let Some(song_id) = p_data.last_song_id {
+                            if let Some(pos) = session.shuffle_order.iter().position(|&id| id == song_id) {
+                                session.current_position = pos + 1; // Apuntar a la siguiente en la cola
+                                if !session.history.contains(&song_id) {
+                                    session.history.push(song_id);
+                                }
+                            }
+                        }
                         playlist_manager.shuffle_session = Some(session);
                     }
                 }
@@ -361,7 +382,10 @@ impl AudoxidyApp {
                 low_resource_mode,
                 db_needs_refresh: false, // Ya cargamos todo, no necesita refresh inicial
             },
-            Task::none(),
+            Task::perform(
+                async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await; },
+                |_| Message::InitStartup
+            )
         )
     }
     fn wake_up_controls(&mut self, is_mouse_move: bool) -> Task<Message> {
@@ -488,18 +512,18 @@ impl AudoxidyApp {
                         let remaining = duration - position;
                         if remaining <= 30.0 && remaining > 29.5 {
                             // Precargar carátula de la siguiente canción
-                            if let Some(next_song) = self.playlist_manager.get_next_song() {
-                                if let Some(ref cover_path) = next_song.cover_cache_path {
+                            if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
+                                if let Some(ref cover_path) = next_song.cover_path {
                                     // Comparar hash del álbum actual vs siguiente
                                     let current_cover = self.playlist_manager.playing_song_idx
-                                        .and_then(|idx| self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.get(idx))
-                                        .and_then(|s| s.cover_cache_path.clone());
+                                        .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
+                                        .and_then(|s| s.cover_path.clone());
+                                    
                                     if current_cover.as_deref() != Some(cover_path.as_str()) {
                                         // Álbum diferente: precargar handle
                                         self.player_ui_state.prefetched_next_handle = 
                                             crate::utils::covers::load_cover_handle(cover_path);
                                     }
-                                    // Si es el mismo álbum, no hacer nada — se reusa el handle actual
                                 }
                             }
                         }
@@ -519,6 +543,7 @@ impl AudoxidyApp {
                     }
                     
                     self.sync_player_art();
+                    self.persist_playlist_state();
                     
                     if !self.is_mouse_over_playlist {
                         if let Some(idx) = self.playlist_manager.playing_song_idx {
@@ -529,29 +554,20 @@ impl AudoxidyApp {
 
                 // Auto-guardado de persistencia cada ~20 segundos (120 ticks de ~166ms)
                 if self.player_ui_state.tick_count % 120 == 0 {
-                    let playlist_id = self.playlist_manager.active_playlist_id;
-                    let last_song_id = self.playlist_manager.playing_song_idx
-                        .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
-                        .map(|s| s.song_id);
-                    let pos = state.current_pos_sec;
-                    let is_p = state.is_playing;
-                    let shuffle = self.playlist_manager.shuffle_active;
-                    let repeat = self.playlist_manager.repeat_mode as i32;
-
-                    if let Ok(db) = self.database.lock() {
-                        let _ = db.update_playlist_persistence(playlist_id, last_song_id, pos, is_p, shuffle, repeat);
-                    }
+                    self.persist_playlist_state();
                 }
 
                 Task::none()
             }
             Message::PlayPause => {
                 let _ = self.audio_manager.toggle_play_pause();
+                self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
             Message::NextTrack => {
                 crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_next(&self.audio_manager);
+                self.persist_playlist_state();
                 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
@@ -574,6 +590,7 @@ impl AudoxidyApp {
             Message::PreviousTrack => {
                 crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_prev(&self.audio_manager);
+                self.persist_playlist_state();
                 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
@@ -603,10 +620,12 @@ impl AudoxidyApp {
             }
             Message::SeekTo(pos) => {
                 self.audio_manager.seek(pos as f64);
+                self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
             Message::ToggleRepeat => {
                 self.playlist_manager.repeat_mode = (self.playlist_manager.repeat_mode + 1) % 3;
+                self.persist_playlist_state();
                 Task::none()
             }
             Message::ToggleShuffle => {
@@ -623,6 +642,7 @@ impl AudoxidyApp {
                         let _ = db.clear_shuffle_session(self.playlist_manager.active_playlist_id);
                     }
                 }
+                self.persist_playlist_state();
                 Task::none()
             }
             Message::AddSongToPlaylist(song) => {
@@ -632,23 +652,6 @@ impl AudoxidyApp {
                         self.playlist_manager.groups = groups;
                     }
                 }
-                
-                // Mantenemos compatibilidad con legacy lists para precache de covers
-                if self.playlist_manager.lists.is_empty() {
-                    self.playlist_manager.lists.push(("Default".to_string(), vec![]));
-                }
-                
-                let playlist_item = crate::gui::playlist::PlaylistItem {
-                    title: song.title.clone().unwrap_or_else(|| "Unknown".to_string()),
-                    artist: song.artist.clone().unwrap_or_else(|| "Unknown".to_string()),
-                    album: song.album.clone().unwrap_or_else(|| "Unknown".to_string()),
-                    duration_sec: song.duration_secs.unwrap_or(0.0) as f32,
-                    year: song.release_year.clone().unwrap_or_else(|| "".to_string()),
-                    path: song.full_file_path.clone(),
-                    cover_cache_path: song.compressed_cached_cover_root.clone(),
-                };
-
-                self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.push(playlist_item);
                 Task::none()
             }
             Message::PlayAlbum(songs) => {
@@ -658,30 +661,6 @@ impl AudoxidyApp {
                     if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(self.playlist_manager.active_playlist_id) {
                         self.playlist_manager.groups = groups;
                     }
-                }
-
-                // Legacy compatibility
-                if self.playlist_manager.lists.is_empty() {
-                    self.playlist_manager.lists.push(("Default".to_string(), vec![]));
-                }
-                let list = &mut self.playlist_manager.lists[self.playlist_manager.active_list_idx].1;
-                let start_idx = list.len();
-                
-                let playlist_items: Vec<crate::gui::playlist::PlaylistItem> = songs.into_iter().map(|s| {
-                    crate::gui::playlist::PlaylistItem {
-                        title: s.title.clone().unwrap_or_else(|| "Unknown".to_string()),
-                        artist: s.artist.clone().unwrap_or_else(|| "Unknown".to_string()),
-                        album: s.album.clone().unwrap_or_else(|| "Unknown".to_string()),
-                        duration_sec: s.duration_secs.unwrap_or(0.0) as f32,
-                        year: s.release_year.clone().unwrap_or_else(|| "".to_string()),
-                        path: s.full_file_path.clone(),
-                        cover_cache_path: s.compressed_cached_cover_root.clone(),
-                    }
-                }).collect();
-
-                list.extend(playlist_items);
-                if self.playlist_manager.playing_song_idx.is_none() {
-                    return self.update(Message::PlaySongIndex(start_idx));
                 }
                 Task::none()
             }
@@ -706,16 +685,19 @@ impl AudoxidyApp {
                         } else {
                             self.audio_manager.play();
                             self.playlist_manager.playing_song_idx = Some(idx);
+                            self.persist_playlist_state();
                         }
                     }
                 }
                 Task::none()
             }
             Message::ClearPlaylist => {
-                if !self.playlist_manager.lists.is_empty() {
-                    self.playlist_manager.lists[self.playlist_manager.active_list_idx].1.clear();
+                if let Ok(db) = self.database.lock() {
+                    let _ = db.clear_playlist(self.playlist_manager.active_playlist_id);
+                    self.playlist_manager.groups = Vec::new();
                     self.playlist_manager.playing_song_idx = None;
                     self.audio_manager.stop();
+                    self.persist_playlist_state();
                 }
                 Task::none()
             }
@@ -743,8 +725,8 @@ impl AudoxidyApp {
                 self.playlist_manager.selected_song_idx = Some(linear_idx);
 
                 if is_double_click {
-                    use crate::gui::playlist::ItemInfo;
-                    if let Some(ItemInfo::Separator(path)) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    use crate::gui::playlist::PlaylistItemType;
+                    if let Some(PlaylistItemType::Separator(path)) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
                         self.playlist_manager.toggle_group_expansion(path);
                     }
                 }
@@ -752,17 +734,9 @@ impl AudoxidyApp {
             }
             Message::SwitchPlaylist(id) => {
                 // 1. Guardar estado de la lista actual antes de cambiar
-                let old_id = self.playlist_manager.active_playlist_id;
-                let last_song_id = self.playlist_manager.playing_song_idx
-                    .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
-                    .map(|s| s.song_id);
-                let pos = self.audio_manager.get_state().current_pos_sec;
-                let is_p = self.audio_manager.get_state().is_playing;
-                let shuffle = self.playlist_manager.shuffle_active;
-                let repeat = self.playlist_manager.repeat_mode as i32;
-
+                self.persist_playlist_state();
                 if let Ok(db) = self.database.lock() {
-                    let _ = db.update_playlist_persistence(old_id, last_song_id, pos, is_p, shuffle, repeat);
+                    let _ = db.set_setting("last_active_playlist_id", &id.to_string());
                 }
 
                 // 2. Cambiar a la nueva lista
@@ -777,7 +751,18 @@ impl AudoxidyApp {
                     p_data_opt = db.get_playlist_by_id(id).ok().flatten();
                     if let Some(p) = &p_data_opt {
                         if p.shuffle_active {
-                            session_opt = db.load_shuffle_session(id).ok().flatten();
+                            if let Ok(Some(mut session)) = db.load_shuffle_session(id) {
+                                // Sincronizar posición de sesión con la canción restaurada de la nueva lista
+                                if let Some(song_id) = p.last_song_id {
+                                    if let Some(pos) = session.shuffle_order.iter().position(|&sid| sid == song_id) {
+                                        session.current_position = pos + 1;
+                                        if !session.history.contains(&song_id) {
+                                            session.history.push(song_id);
+                                        }
+                                    }
+                                }
+                                session_opt = Some(session);
+                            }
                         }
                     }
                 }
@@ -1377,6 +1362,7 @@ impl AudoxidyApp {
                                     } else {
                                         self.audio_manager.play();
                                         self.playlist_manager.playing_song_idx = Some(idx);
+                                        self.persist_playlist_state();
                                     }
                                 }
                             }
@@ -1395,11 +1381,11 @@ impl AudoxidyApp {
                     Key::Named(Named::Space) => {
                         if self.focus == AppFocus::Playlist {
                             if let Some(sel) = self.playlist_manager.selected_song_idx {
-                                use crate::gui::playlist::ItemInfo;
+                                use crate::gui::playlist::PlaylistItemType;
                                 if let Some(info) = self.playlist_manager.get_item_info_at_linear_index(sel) {
                                     match info {
-                                        ItemInfo::Song(..) => return self.update(Message::ToggleSongEnabled(sel)),
-                                        ItemInfo::Separator(..) => return self.update(Message::ToggleGroupEnabled(sel)),
+                                        PlaylistItemType::Song(..) => return self.update(Message::ToggleSongEnabled(sel)),
+                                        PlaylistItemType::Separator(..) => return self.update(Message::ToggleGroupEnabled(sel)),
                                     }
                                 }
                             }
@@ -1558,6 +1544,7 @@ impl AudoxidyApp {
                             self.audio_manager.play();
                             self.playlist_manager.playing_song_idx = Some(idx);
                             self.playlist_manager.notify_manual_play(s_id);
+                            self.persist_playlist_state();
                         }
                         return Task::none();
                     }
@@ -1572,6 +1559,7 @@ impl AudoxidyApp {
 
                 if let (Some(song_idx), Some(songs)) = (self.library_manager.selected_song_idx, songs_opt) {
                     if let Some(song) = songs.get(song_idx) {
+                        self.persist_playlist_state();
                         return self.update(Message::AddSongToPlaylist(song.clone()));
                     }
                 } else if let Some(album_id) = &self.library_manager.selected_album {
@@ -1596,6 +1584,7 @@ impl AudoxidyApp {
                             .cloned()
                             .collect();
                         if !alb_songs.is_empty() {
+                            self.persist_playlist_state();
                             return self.update(Message::PlayAlbum(alb_songs));
                         }
                     }
@@ -1614,6 +1603,7 @@ impl AudoxidyApp {
                         }
                     }
                     if let Some(songs) = db_songs_to_play {
+                        self.persist_playlist_state();
                         return self.update(Message::PlayAlbum(songs));
                     }
                 } else if let Some(artist_name) = &self.library_manager.selected_header {
@@ -1621,12 +1611,14 @@ impl AudoxidyApp {
                     if let Some(group) = self.library_manager.artist_groups.iter().find(|g| &g.name == artist_name) {
                         let art_songs = group.songs.clone();
                         if !art_songs.is_empty() {
+                            self.persist_playlist_state();
                             return self.update(Message::PlayAlbum(art_songs));
                         }
                     }
                 } else if !self.library_manager.is_list_mode() {
                     if let Some(songs) = &self.library_manager.expanded_album_songs {
                         if !songs.is_empty() {
+                            self.persist_playlist_state();
                             return self.update(Message::PlayAlbum(songs.clone()));
                         }
                     }
@@ -1897,6 +1889,16 @@ impl AudoxidyApp {
             Message::PlayerActivityTimeout(_tick) => {
                 Task::none()
             }
+            Message::InitStartup => {
+                // Sincronizar carátula inicial
+                self.sync_player_art();
+                
+                // Forzar auto-scroll a la canción que se restauró
+                if let Some(idx) = self.playlist_manager.playing_song_idx {
+                    return self.execute_playlist_autoscroll(idx);
+                }
+                Task::none()
+            }
             Message::NoOp => Task::none(),
         }
     }
@@ -1961,6 +1963,25 @@ impl AudoxidyApp {
              self.player_ui_state.cached_art_handle = None;
              self.player_ui_state.current_art_id = audio_state.path.clone();
              self.player_ui_state.current_cover_path.clear();
+        }
+    }
+
+    fn persist_playlist_state(&self) {
+        let state = self.audio_manager.get_state();
+        let playlist_id = self.playlist_manager.active_playlist_id;
+        let last_song_id = self.playlist_manager.playing_song_idx
+            .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
+            .map(|s| s.song_id);
+        let pos = state.current_pos_sec;
+        let is_p = state.is_playing;
+        let shuffle = self.playlist_manager.shuffle_active;
+        let repeat = self.playlist_manager.repeat_mode as i32;
+        let (s_pos, s_id) = if let Some(session) = &self.playlist_manager.shuffle_session {
+            (session.current_position, Some(session.session_id.clone()))
+        } else { (0, None) };
+
+        if let Ok(db) = self.database.lock() {
+            let _ = db.update_playlist_persistence(playlist_id, last_song_id, pos, is_p, shuffle, repeat, s_pos, s_id);
         }
     }
 

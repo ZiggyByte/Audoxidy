@@ -24,12 +24,6 @@ pub enum PlaylistItemType {
     Song(String, usize), // folder_path, index local dentro del grupo
 }
 
-#[derive(Debug, Clone)]
-pub enum ItemInfo {
-    Separator(String),
-    Song(String, usize),
-}
-
 // ============================================================
 // Estado del PlaylistManager
 // ============================================================
@@ -64,6 +58,9 @@ pub struct PlaylistManager {
     /// Sesión de shuffle activa
     pub shuffle_session: Option<ShuffleSession>,
 
+    /// Lista de todas las playlists disponibles (para la barra de pestañas)
+    pub playlists: Vec<crate::db::database::PlaylistData>,
+
     /// Carpetas plegadas (rutas)
     pub collapsed_groups: std::collections::HashSet<String>,
 
@@ -72,13 +69,6 @@ pub struct PlaylistManager {
 
     /// Guardar el último viewport (ventana visible) para autoscroll
     pub last_viewport: Option<iced::Rectangle>,
-
-    // ============================================================
-    // Campos legacy para compatibilidad con app.rs existente
-    // Se eliminarán cuando se migre app.rs completamente.
-    // ============================================================
-    pub lists: Vec<(String, Vec<PlaylistItem>)>,
-    pub active_list_idx: usize,
 }
 
 impl Default for PlaylistManager {
@@ -95,14 +85,10 @@ impl Default for PlaylistManager {
             show_tab_dropdown: false,
             visible_tabs_count: None,
             shuffle_session: None,
+            playlists: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
             last_click_info: None,
             last_viewport: None,
-            lists: vec![
-                ("Default".into(), Vec::new()),
-                ("Favoritos".into(), Vec::new()),
-            ],
-            active_list_idx: 0,
         }
     }
 }
@@ -148,6 +134,28 @@ impl PlaylistManager {
         }
 
         self.filtered_groups = if filtered.is_empty() { None } else { Some(filtered) };
+    }
+
+    /// Obtiene la siguiente canción para precarga de carátulas (basado en lógica secuencial)
+    pub fn get_next_song_ref(&self) -> Option<&PlaylistSongRef> {
+        let current = self.playing_song_idx?;
+        let next_idx = if self.repeat_mode == 2 {
+            Some(current)
+        } else if self.shuffle_active {
+            // En shuffle es difícil predecir sin mirar la sesión, pero podemos intentar
+            self.shuffle_session.as_ref().and_then(|session| {
+                if session.current_position < session.shuffle_order.len() {
+                    let next_song_id = session.shuffle_order[session.current_position];
+                    self.get_linear_index_by_song_id(next_song_id)
+                } else {
+                    None
+                }
+            })
+        } else {
+            self.find_next_enabled_song_internal(current)
+        };
+
+        next_idx.and_then(|idx| self.get_song_at_linear_index(idx))
     }
 
     /// Obtener los grupos activos (filtrados o no)
@@ -206,17 +214,17 @@ impl PlaylistManager {
         }
     }
 
-    /// Obtener información del item en un índice lineal
-    pub fn get_item_info_at_linear_index(&self, linear_idx: usize) -> Option<ItemInfo> {
+    /// Obtiene información de un item en base a su índice lineal (Canónico)
+    pub fn get_item_info_at_linear_index(&self, linear_idx: usize) -> Option<PlaylistItemType> {
         let groups = self.active_groups();
         let mut count = 0;
         for group in groups {
             if linear_idx == count {
-                return Some(ItemInfo::Separator(group.folder_path.clone()));
+                return Some(PlaylistItemType::Separator(group.folder_path.clone()));
             }
             let song_local_idx = linear_idx - count - 1;
             if song_local_idx < group.songs.len() {
-                return Some(ItemInfo::Song(group.folder_path.clone(), song_local_idx));
+                return Some(PlaylistItemType::Song(group.folder_path.clone(), song_local_idx));
             }
             count += 1 + group.songs.len();
         }
@@ -267,11 +275,11 @@ impl PlaylistManager {
                 if let Some(sel) = self.selected_song_idx {
                     if let Some(info) = self.get_item_info_at_linear_index(sel) {
                         match info {
-                            ItemInfo::Separator(path) => {
-                                self.collapsed_groups.insert(path);
+                            PlaylistItemType::Separator(path) => {
+                                self.toggle_group_expansion(path);
                             }
-                            ItemInfo::Song(path, _) => {
-                                self.collapsed_groups.insert(path.clone());
+                            PlaylistItemType::Song(path, _) => {
+                                self.toggle_group_expansion(path.clone());
                                 self.selected_song_idx = self.find_separator_index_for_path(&path);
                             }
                         }
@@ -280,7 +288,7 @@ impl PlaylistManager {
             }
             crate::gui::library::LibraryNavDir::Right => {
                 if let Some(sel) = self.selected_song_idx {
-                    if let Some(ItemInfo::Separator(path)) = self.get_item_info_at_linear_index(sel) {
+                    if let Some(PlaylistItemType::Separator(path)) = self.get_item_info_at_linear_index(sel) {
                         self.collapsed_groups.remove(&path);
                     }
                 }
@@ -484,10 +492,7 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
 // ============================================================
 
 fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
-    let playlists: Vec<(&'static str, i64, bool)> = vec![
-        ("Archivos locales", 1, true),
-        ("Default", 2, true),
-    ];
+    let playlists = &manager.playlists;
 
     let mut tabs_row = row![]
         .spacing(10)
@@ -499,14 +504,18 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let mut visible_count: usize = 0;
     let chevron_width: f32 = 38.0; // 28 + 10 spacing
 
-    for (i, (name, id, is_system)) in playlists.iter().enumerate() {
-        let is_active = *id == manager.active_playlist_id;
+    for (i, p_data) in playlists.iter().enumerate() {
+        let name = &p_data.name;
+        let id = p_data.id;
+        let is_system = p_data.is_system;
+        
+        let is_active = id == manager.active_playlist_id;
         let estimated_tab_width = estimate_tab_width(name);
-        let force_visible = *is_system && i < 2;
+        let force_visible = is_system && i < 2;
 
         if force_visible || used_width + estimated_tab_width + chevron_width <= total_width {
             let tab_color = if is_active { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
-            let tab = text(*name)
+            let tab = text(name.clone())
                 .size(14)
                 .color(tab_color)
                 .font(FONT_INTER_SANS_MEDIUM);
@@ -514,7 +523,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
             let tab_btn = button(tab)
                 .padding([5, 2])
                 .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-                .on_press(Message::SwitchPlaylist(*id));
+                .on_press(Message::SwitchPlaylist(id));
 
             tabs_row = tabs_row.push(tab_btn);
             used_width += estimated_tab_width + 10.0;
@@ -561,16 +570,18 @@ fn build_tab_dropdown_button<'a>(_manager: &'a PlaylistManager) -> Element<'a, M
 }
 
 fn build_dropdown_menu<'a>(
-    playlists: &[(&'static str, i64, bool)],
+    playlists: &[crate::db::database::PlaylistData],
     visible_count: usize,
 ) -> Element<'a, Message> {
     let mut items = column![]
         .padding([5, TABS_PADDING_H as u16])
         .spacing(4);
 
-    for (i, (name, id, _is_system)) in playlists.iter().enumerate().skip(visible_count) {
-        let _ = i;
-        let item = text(*name)
+    for p_data in playlists.iter().skip(visible_count) {
+        let name = &p_data.name;
+        let id = p_data.id;
+        
+        let item = text(name.clone())
             .size(14)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM);
@@ -579,7 +590,7 @@ fn build_dropdown_menu<'a>(
             .width(Length::Fill)
             .padding([6, 10])
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::SwitchPlaylist(*id));
+            .on_press(Message::SwitchPlaylist(id));
 
         items = items.push(item_btn);
     }
@@ -941,46 +952,7 @@ fn icon_button<'a>(icon_name: &str, active: bool, msg: Message) -> Element<'a, M
 // Compatibilidad temporal con app.rs existente
 // ============================================================
 
-/// Estructura temporal para compatibilidad con app.rs que espera PlaylistItem.
-/// Se eliminará cuando se migre app.rs completamente a la nueva estructura.
-#[derive(Clone, PartialEq, Debug)]
-pub struct PlaylistItem {
-    pub title: String,
-    pub artist: String,
-    pub album: String,
-    pub duration_sec: f32,
-    pub year: String,
-    pub path: String,
-    pub cover_cache_path: Option<String>,
-}
-
 impl PlaylistManager {
-    /// Obtiene la siguiente canción para precarga de cover (compatibilidad temporal).
-    pub fn get_next_song(&self) -> Option<PlaylistItem> {
-        let groups = self.active_groups();
-        let current = self.playing_song_idx?;
-        let total = count_linear_items(groups);
-
-        let next_idx = if self.repeat_mode == 2 {
-            current // Repeat one
-        } else if self.shuffle_active {
-            return None; // No se puede predecir en shuffle
-        } else {
-            let n = current + 1;
-            if n < total { n } else if self.repeat_mode == 1 { 0 } else { return None; }
-        };
-
-        self.get_song_at_linear_index(next_idx).map(|s| PlaylistItem {
-            title: s.title.clone(),
-            artist: s.artist_name.clone(),
-            album: s.album_title.clone(),
-            duration_sec: s.duration as f32,
-            year: s.year.clone().unwrap_or_default(),
-            path: s.file_path.clone(),
-            cover_cache_path: s.cover_path.clone(),
-        })
-    }
-
     /// Avanza a la siguiente canción (auto-advance EOF).
     pub fn play_next(&mut self, audio_manager: &AudioManager) {
         if self.repeat_mode == 2 {
@@ -1038,21 +1010,14 @@ impl PlaylistManager {
         }
 
         // Sequential logic
-        let next_info = {
-            let groups = self.active_groups();
-            let total = count_linear_items(groups);
-            if total == 0 { None } else {
-                let current = self.playing_song_idx.unwrap_or(usize::MAX);
-                self.find_next_enabled_song_internal(groups, current, total).and_then(|next| {
-                    self.get_song_at_linear_index_from(groups, next).map(|s| (next, s.file_path.clone()))
-                })
+        let current = self.playing_song_idx.unwrap_or(usize::MAX);
+        if let Some(next_idx) = self.find_next_enabled_song_internal(current) {
+            if let Some(song) = self.get_song_at_linear_index(next_idx) {
+                let path = song.file_path.clone();
+                self.playing_song_idx = Some(next_idx);
+                let _ = audio_manager.load_file(&path);
+                audio_manager.play();
             }
-        };
-
-        if let Some((next_idx, path)) = next_info {
-            self.playing_song_idx = Some(next_idx);
-            let _ = audio_manager.load_file(&path);
-            audio_manager.play();
         }
     }
 
@@ -1083,47 +1048,40 @@ impl PlaylistManager {
         }
 
         let current = self.playing_song_idx.unwrap_or(0);
-        let prev_info = {
-            let groups = self.active_groups();
-            let total = count_linear_items(groups);
-            if total == 0 { None } else if current == 0 {
-                if self.repeat_mode == 1 {
-                    self.find_last_enabled(groups, total).and_then(|last| {
-                        self.get_song_at_linear_index_from(groups, last).map(|s| (last, s.file_path.clone()))
-                    })
-                } else { None }
-            } else {
-                // Buscar hacia atrás
-                let mut idx = current - 1;
-                let mut found = None;
-                loop {
-                    if let Some(song) = self.get_song_at_linear_index_from(groups, idx) {
-                        if song.enabled {
-                            found = Some((idx, song.file_path.clone()));
-                            break;
-                        }
+        
+        let prev_idx = if current == 0 {
+            if self.repeat_mode == 1 { self.find_last_enabled() } else { None }
+        } else {
+            // Buscar hacia atrás el anterior habilitado
+            let mut idx = current - 1;
+            let mut found = None;
+            loop {
+                if let Some(song) = self.get_song_at_linear_index(idx) {
+                    if song.enabled {
+                        found = Some(idx);
+                        break;
                     }
-                    if idx == 0 { break; }
-                    idx -= 1;
                 }
-                found
+                if idx == 0 { break; }
+                idx -= 1;
             }
+            found
         };
 
-        if let Some((next_idx, path)) = prev_info {
-            self.playing_song_idx = Some(next_idx);
-            let _ = audio_manager.load_file(&path);
-            audio_manager.play();
+        if let Some(idx) = prev_idx {
+            if let Some(song) = self.get_song_at_linear_index(idx) {
+                let path = song.file_path.clone();
+                self.playing_song_idx = Some(idx);
+                let _ = audio_manager.load_file(&path);
+                audio_manager.play();
+            }
         }
     }
 
-    fn find_next_enabled_song_internal(
-        &self,
-        groups: &[PlaylistFolderGroup],
-        current: usize,
-        total: usize,
-    ) -> Option<usize> {
-        if groups.is_empty() { return None; }
+    fn find_next_enabled_song_internal(&self, current: usize) -> Option<usize> {
+        let groups = self.active_groups();
+        let total = count_linear_items(groups);
+        if total == 0 { return None; }
 
         let mut idx = if current == usize::MAX { 0 } else { current + 1 };
         let mut wrapped = false;
@@ -1135,23 +1093,23 @@ impl PlaylistManager {
                 wrapped = true;
             }
 
-            // Saltar separadores (índices que son inicio de grupo)
-            if let Some(song) = self.get_song_at_linear_index_from(groups, idx) {
+            if let Some(song) = self.get_song_at_linear_index(idx) {
                 if song.enabled {
                     return Some(idx);
                 }
             }
-
             idx += 1;
         }
     }
 
-    fn find_last_enabled(&self, groups: &[PlaylistFolderGroup], total: usize) -> Option<usize> {
+    fn find_last_enabled(&self) -> Option<usize> {
+        let groups = self.active_groups();
+        let total = count_linear_items(groups);
         let mut idx = total;
         loop {
             if idx == 0 { return None; }
             idx -= 1;
-            if let Some(song) = self.get_song_at_linear_index_from(groups, idx) {
+            if let Some(song) = self.get_song_at_linear_index(idx) {
                 if song.enabled {
                     return Some(idx);
                 }
@@ -1175,52 +1133,6 @@ impl PlaylistManager {
                     }
                 }
             }
-        }
-    }
-
-    fn get_song_at_linear_index_from<'b>(
-        &self,
-        groups: &'b [PlaylistFolderGroup],
-        linear_idx: usize,
-    ) -> Option<&'b PlaylistSongRef> {
-        let mut count = 0;
-        for group in groups {
-            if linear_idx == count {
-                return None; // Separador
-            }
-            
-            let song_local_idx = linear_idx - count - 1;
-            
-            if song_local_idx < group.songs.len() {
-                return Some(&group.songs[song_local_idx]);
-            }
-            count += 1 + group.songs.len();
-        }
-        None
-    }
-
-    fn find_next_enabled_song(&self, current_linear_idx: usize) -> Option<usize> {
-        let groups = self.active_groups();
-        let total = count_linear_items(groups);
-        if total == 0 { return None; }
-
-        let mut idx = current_linear_idx + 1;
-        let mut wrapped = false;
-
-        loop {
-            if idx >= total {
-                if wrapped || self.repeat_mode != 1 { return None; }
-                idx = 0;
-                wrapped = true;
-            }
-
-            if let Some(song) = self.get_song_at_linear_index(idx) {
-                if song.enabled {
-                    return Some(idx);
-                }
-            }
-
-            idx += 1;
         }
     }
 }

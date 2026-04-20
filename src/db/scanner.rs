@@ -49,7 +49,7 @@ impl Scanner {
             if path.is_file() {
                 if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
                     if supported_extensions.contains(&ext.to_lowercase().as_str()) {
-                        Self::process_file(db_m, path, root, current_order, &mut enqueued_covers);
+                        Self::process_file(db_m, path, root, current_order, &mut enqueued_covers, false);
                         current_order += 1;
                         
                         if count % 500 == 0 {
@@ -72,7 +72,7 @@ impl Scanner {
         dirty_flag.store(true, Ordering::Relaxed);
     }
 
-    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, _root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>) {
+    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, _root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>, is_external: bool) {
         let mut song = SongData::default();
         let mut extended = SongMetadataExtended::default();
         
@@ -191,7 +191,7 @@ impl Scanner {
         let pic_hash = pic_bytes.as_ref().map(|b| Database::generate_hash(&hex::encode(b)));
 
         if let Ok(mut db) = db_m.lock() {
-            if let Ok((target_hash, needs_processing)) = db.insert_song_full(&song, &extended, pic_hash, raw_tag_items) {
+            if let Ok((target_hash, needs_processing)) = db.insert_song_full(&song, &extended, pic_hash, raw_tag_items, is_external) {
                 if needs_processing && !enqueued_covers.contains(&target_hash) {
                     if let Some(data) = pic_bytes {
                         // Solo encolamos si es un archivo AVIF que no existe
@@ -204,5 +204,65 @@ impl Scanner {
                 }
             }
         }
+    }
+
+    pub fn import_m3u(db_m: &Arc<Mutex<Database>>, m3u_path: &str) -> Option<i64> {
+        use std::io::BufRead;
+        let path = Path::new(m3u_path);
+        let playlist_name = path.file_stem()?.to_string_lossy().to_string();
+        
+        let file = std::fs::File::open(path).ok()?;
+        let reader = std::io::BufReader::new(file);
+        
+        let mut paths = Vec::new();
+        for line in reader.lines().filter_map(|l| l.ok()) {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            
+            // Manejar rutas relativas respecto a la ubicación del .m3u
+            let song_path = if Path::new(line).is_absolute() {
+                Path::new(line).to_path_buf()
+            } else {
+                path.parent()?.join(line)
+            };
+            
+            if song_path.exists() {
+                paths.push(song_path);
+            }
+        }
+        
+        if paths.is_empty() { return None; }
+        
+        let playlist_id = {
+            let mut db = db_m.lock().ok()?;
+            let _ = db.begin_transaction();
+            let id = db.create_playlist(&playlist_name, false).ok()?;
+            
+            let mut enqueued_covers = std::collections::HashSet::new();
+            for (_i, p) in paths.iter().enumerate() {
+                let p_str = p.to_string_lossy().to_string();
+                
+                // 1. Verificar si la canción ya existe (para no duplicar)
+                let song_id = if let Ok(Some(sid)) = db.get_song_id_by_path(&p_str) {
+                    sid
+                } else {
+                    // 2. Si no existe, procesarla como EXTERNA (is_external = true)
+                    // Soltamos el lock momentáneamente si process_file lo requiere (aunque aquí ya lo tenemos)
+                    // Pero process_file pide Arc<Mutex<Database>>, así que necesitamos soltarlo o reestructurar.
+                    // Para evitar Deadlock, usaremos un método interno que no pida el lock.
+                    drop(db);
+                    Self::process_file(db_m, p, "", 0, &mut enqueued_covers, true);
+                    db = db_m.lock().ok()?;
+                    db.get_song_id_by_path(&p_str).ok().flatten()?
+                };
+                
+                let _ = db.add_song_to_playlist(id, song_id);
+            }
+            
+            let _ = db.commit_transaction();
+            id
+        };
+        
+        Some(playlist_id)
     }
 }

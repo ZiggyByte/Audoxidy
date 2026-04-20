@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, text, text_input, Space},
+    widget::{button, column, container, mouse_area, row, scrollable, text, Space},
     Alignment, Color, Element, Length, Theme,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -533,12 +533,13 @@ pub fn view<'a>(
 
 
     // --- 3. BOTTOM BAR (40px) ---
-    let search_input = text_input("Búsqueda rápida", &manager.search_query)
-        .on_input(Message::FilterSearchChanged)
-        .size(13)
-        .padding([4, 8])
-        .font(FONT_INTER_SANS_MEDIUM)
-        .width(Length::Fixed(160.0));
+    let search_input = crate::gui::widgets::standard_search_input(
+        "Buscar...",
+        &manager.search_query,
+        Message::FilterSearchChanged,
+        Message::FilterSearchChanged(String::new()),
+        Length::Fixed(180.0),
+    );
 
     let bottom_bar = container(search_input)
         .width(Length::Fill)

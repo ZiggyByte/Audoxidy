@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, svg, mouse_area, Space},
+    widget::{button, column, container, row, scrollable, text, svg, mouse_area, Space},
     Alignment, Color, Element, Length, Theme, Background, Padding,
 };
 use crate::audio::AudioManager;
@@ -28,6 +28,7 @@ pub enum PlaylistItemType {
 // Estado del PlaylistManager
 // ============================================================
 
+#[derive(Clone)]
 pub struct PlaylistManager {
     /// ID de la playlist activa (referencia a BD)
     pub active_playlist_id: i64,
@@ -523,9 +524,55 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
             let tab_btn = button(tab)
                 .padding([5, 2])
                 .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-                .on_press(Message::SwitchPlaylist(id));
+                .on_press(Message::SwitchPlaylist(id, false));
 
-            tabs_row = tabs_row.push(tab_btn);
+            let tab_entries = vec![
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Reproducir".to_string(),
+                    icon: Some("playlist-play-straight.svg".to_string()),
+                    action: Some(Message::SwitchPlaylist(id, true)),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Crear nueva lista".to_string(),
+                    icon: Some("playlist-add-straight.svg".to_string()),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Eliminar lista".to_string(),
+                    icon: Some("playlist-remove-straight.svg".to_string()),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::DeleteConfirm { id, name: name.clone() })),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Renombrar lista".to_string(),
+                    icon: Some("playlist-add-check-circle-straight-outlined.svg".to_string()),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::RenamePlaylist { id, current_name: name.clone(), new_name: name.clone() })),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "".to_string(), // Divisor
+                    icon: None,
+                    action: None,
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Guardar lista".to_string(),
+                    icon: Some("playlist-add-check-straight.svg".to_string()),
+                    action: Some(Message::NoOp), // A implementar
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Importar lista".to_string(),
+                    icon: Some("arrow-down-chevron.svg".to_string()),
+                    action: Some(Message::OpenPlaylistFilePicker),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Exportar lista".to_string(),
+                    icon: Some("arrow-up-chevron.svg".to_string()),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { id, name: name.clone() })),
+                },
+            ];
+
+            tabs_row = tabs_row.push(
+                mouse_area(tab_btn)
+                    .on_right_press(Message::OpenContextMenu(iced::Point::ORIGIN, tab_entries))
+            );
             used_width += estimated_tab_width + 10.0;
             visible_count += 1;
         } else {
@@ -544,12 +591,28 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         content = content.push(build_dropdown_menu(&playlists, visible_count));
     }
 
-    container(content)
-        .width(Length::Fill)
-        .height(Length::Fixed(TABS_BAR_HEIGHT))
-        .align_y(iced::alignment::Vertical::Center)
-        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
-        .into()
+    let bar_entries = vec![
+        crate::gui::widgets::ContextMenuEntry {
+            label: "Crear nueva lista de reproducción".to_string(),
+            icon: Some("playlist-add-straight.svg".to_string()),
+            action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
+        },
+        crate::gui::widgets::ContextMenuEntry {
+            label: "Importar lista de reproducción".to_string(),
+            icon: Some("arrow-down-chevron.svg".to_string()),
+            action: Some(Message::OpenFolderPicker),
+        },
+    ];
+
+    mouse_area(
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fixed(TABS_BAR_HEIGHT))
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+    )
+    .on_right_press(Message::OpenContextMenu(iced::Point::ORIGIN, bar_entries))
+    .into()
 }
 
 fn estimate_tab_width(name: &str) -> f32 {
@@ -590,7 +653,7 @@ fn build_dropdown_menu<'a>(
             .width(Length::Fill)
             .padding([6, 10])
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::SwitchPlaylist(id));
+            .on_press(Message::SwitchPlaylist(id, false));
 
         items = items.push(item_btn);
     }
@@ -887,12 +950,13 @@ fn build_song_row<'a>(
 // ============================================================
 
 fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
-    let search_box = text_input("Buscar...", &manager.search_query)
-        .on_input(Message::PlaylistSearchChanged)
-        .width(Length::Fixed(170.0))
-        .size(13)
-        .padding([6, 10])
-        .font(FONT_INTER_SANS_MEDIUM);
+    let search_box = crate::gui::widgets::standard_search_input(
+        "Buscar...",
+        &manager.search_query,
+        Message::PlaylistSearchChanged,
+        Message::PlaylistSearchChanged(String::new()),
+        Length::Fixed(180.0),
+    );
 
     let eq_btn = icon_button("equalizer-straight.svg", false, Message::ToggleAudioCenter);
     let (repeat_icon, repeat_active) = if manager.repeat_mode == 2 {

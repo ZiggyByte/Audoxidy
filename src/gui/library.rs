@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, text_input, Space},
+    widget::{button, column, container, row, scrollable, text, Space},
     Alignment, Color, Element, Length, Theme, Task,
 };
 use std::sync::{Arc, Mutex};
@@ -1185,12 +1185,13 @@ pub fn view<'a>(
     };
 
     // --- BARRA INFERIOR (40px) ---
-    let search_input = container(
-        text_input("Buscar...", &manager.search_query)
-            .on_input(Message::LibrarySearchQueryChanged)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .width(Length::Fixed(200.0))
-    ).padding([0, 0]).center_y(Length::Fill);
+    let search_input = crate::gui::widgets::standard_search_input(
+        "Buscar...",
+        &manager.search_query,
+        Message::LibrarySearchQueryChanged,
+        Message::LibrarySearchQueryChanged(String::new()),
+        Length::Fixed(180.0),
+    );
 
     let (s_count, a_count, art_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats {
         (sel.songs, sel.albums, sel.artists, sel.duration_secs, sel.size_bytes)
@@ -1214,7 +1215,7 @@ pub fn view<'a>(
     };
 
     let bottom_actions = row![
-        icon_btn_size("play-rounded.outlined.svg", Message::PlayLibrarySelection, 36.0),
+        icon_btn_size("play-straight-outlined.svg", Message::PlayLibrarySelection, 36.0),
         Space::new().width(5.0),
         icon_btn_size("more-small.svg", Message::OpenFolderPicker, 31.0),
         Space::new().width(5.0),

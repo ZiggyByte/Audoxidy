@@ -1,4 +1,4 @@
-use iced::{Element, Task, Theme};
+use iced::{Element, Task, Theme, Color};
 use std::sync::{Arc, Mutex};
 use crate::audio::AudioManager;
 use crate::db::{Database, scanner::Scanner};
@@ -8,6 +8,9 @@ use crate::gui::library::{LibraryManager, LIBRARY_SCROLL_ID};
 use iced::widget::operation::{scroll_to, AbsoluteOffset};
 use crate::gui::audio_center::{AudioCenterManager, AudioCenterMessage};
 use crate::integrations::media_controls::SystemMediaControls;
+use crate::gui::theme::{
+    COLOR_ACCENT, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+};
 
 pub mod helpers {
     use iced::advanced::{Widget, layout, mouse, Clipboard, Shell, Layout};
@@ -149,7 +152,7 @@ pub enum Message {
     PlaySongIndex(usize),
     ClearPlaylist,
     ToggleSongEnabled(usize),
-    SwitchPlaylist(i64),
+    SwitchPlaylist(i64, bool), // id, auto_play
     ToggleTabDropdown,
     PlaylistSearchChanged(String),
     PlaylistFocus,
@@ -157,6 +160,10 @@ pub enum Message {
     ToggleGroupEnabled(usize),
     TogglePlaylistFolder(usize),
     GlobalKeyDown(iced::keyboard::Key, iced::keyboard::Modifiers),
+    CreatePlaylist,
+    ExportPlaylist(i64, String), // id, target_path
+    OpenPlaylistFilePicker,
+    ImportPlaylistFile(String),   // path
 
     // Library
     ScanLibrary(String),
@@ -211,7 +218,27 @@ pub enum Message {
     GlobalClick,
     WindowResized(u32, u32),
     InitStartup,
+
+    // Dialogs
+    OpenDialog(ActiveDialog),
+    CloseDialog,
+    UpdateDialogInput(String),
+    ConfirmDialogAction,
+
+    // Context Menu
+    OpenContextMenu(iced::Point, Vec<crate::gui::widgets::ContextMenuEntry<Message>>),
+    CloseContextMenu,
+
     NoOp,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActiveDialog {
+    None,
+    CreatePlaylist { name: String },
+    RenamePlaylist { id: i64, current_name: String, new_name: String },
+    DeleteConfirm { id: i64, name: String },
+    ExportConfirm { id: i64, name: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -238,6 +265,11 @@ pub struct AudoxidyApp {
     pub is_mouse_over_playlist: bool,
     pub low_resource_mode: bool,
     pub db_needs_refresh: bool,
+    pub active_dialog: ActiveDialog,
+    pub last_mouse_pos: iced::Point,
+    pub dialog_pos: Option<iced::Point>,
+    pub context_menu: Option<(iced::Point, Vec<crate::gui::widgets::ContextMenuEntry<Message>>)>,
+    pub window_size: (u32, u32),
 }
 
 impl AudoxidyApp {
@@ -353,9 +385,7 @@ impl AudoxidyApp {
                              playlist_manager.playing_song_idx = Some(l_idx);
                              let _ = audio_manager.load_file(&path);
                              audio_manager.seek(p_data.last_pos_sec);
-                             if p_data.is_playing {
-                                 audio_manager.play();
-                             }
+                             audio_manager.set_playing(p_data.is_playing);
                         }
                     }
                 }
@@ -380,7 +410,12 @@ impl AudoxidyApp {
                 focus: AppFocus::Library,
                 is_mouse_over_playlist: false,
                 low_resource_mode,
-                db_needs_refresh: false, // Ya cargamos todo, no necesita refresh inicial
+                db_needs_refresh: false,
+                active_dialog: ActiveDialog::None,
+                last_mouse_pos: iced::Point::ORIGIN,
+                dialog_pos: None,
+                context_menu: None,
+                window_size: (1280, 720), // Default inicial
             },
             Task::perform(
                 async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await; },
@@ -732,7 +767,142 @@ impl AudoxidyApp {
                 }
                 Task::none()
             }
-            Message::SwitchPlaylist(id) => {
+            Message::CreatePlaylist => {
+                let name = format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1);
+                if let Ok(new_id) = self.database.lock().unwrap().create_playlist(&name, false) {
+                    if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
+                        self.playlist_manager.playlists = playlists;
+                        return Task::done(Message::SwitchPlaylist(new_id, false));
+                    }
+                }
+                Task::none()
+            }
+
+            Message::OpenDialog(dialog) => {
+                self.active_dialog = dialog;
+                self.dialog_pos = Some(self.last_mouse_pos);
+                Task::none()
+            }
+
+            Message::CloseDialog => {
+                self.active_dialog = ActiveDialog::None;
+                self.dialog_pos = None;
+                Task::none()
+            }
+
+            Message::UpdateDialogInput(s) => {
+                match &mut self.active_dialog {
+                    ActiveDialog::CreatePlaylist { name } => *name = s,
+                    ActiveDialog::RenamePlaylist { new_name, .. } => *new_name = s,
+                    _ => {}
+                }
+                Task::none()
+            }
+
+            Message::ConfirmDialogAction => {
+                let dialog = std::mem::replace(&mut self.active_dialog, ActiveDialog::None);
+                match dialog {
+                    ActiveDialog::CreatePlaylist { name } => {
+                        let final_name = if name.trim().is_empty() { 
+                            format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1) 
+                        } else { name };
+
+                        if let Ok(new_id) = self.database.lock().unwrap().create_playlist(&final_name, false) {
+                            if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
+                                self.playlist_manager.playlists = playlists;
+                                // Cierre inmediato
+                                self.active_dialog = ActiveDialog::None;
+                                self.dialog_pos = None;
+                                return Task::done(Message::SwitchPlaylist(new_id, false));
+                            }
+                        }
+                    }
+                    ActiveDialog::RenamePlaylist { id, new_name, .. } => {
+                        if !new_name.trim().is_empty() {
+                            if let Ok(_) = self.database.lock().unwrap().rename_playlist(id, &new_name) {
+                                if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
+                                    self.playlist_manager.playlists = playlists;
+                                    self.active_dialog = ActiveDialog::None;
+                                    self.dialog_pos = None;
+                                }
+                            }
+                        }
+                    }
+                    ActiveDialog::DeleteConfirm { id, .. } => {
+                        if let Ok(_) = self.database.lock().unwrap().delete_playlist(id) {
+                            if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
+                                if self.playlist_manager.active_playlist_id == id {
+                                    if let Some(first) = playlists.first() {
+                                        let first_id = first.id;
+                                        self.playlist_manager.playlists = playlists;
+                                        self.active_dialog = ActiveDialog::None;
+                                        self.dialog_pos = None;
+                                        return Task::done(Message::SwitchPlaylist(first_id, false));
+                                    }
+                                }
+                                self.playlist_manager.playlists = playlists;
+                                self.active_dialog = ActiveDialog::None;
+                                self.dialog_pos = None;
+                            }
+                        }
+                    }
+                    ActiveDialog::ExportConfirm { id, name: _ } => {
+                        return Task::perform(async move {
+                            if let Some(folder) = rfd::AsyncFileDialog::new()
+                                .set_title("Seleccionar carpeta de exportación")
+                                .pick_folder().await {
+                                    Some((id, folder.path().to_string_lossy().into_owned()))
+                            } else { None }
+                        }, |res| {
+                            if let Some((pid, path)) = res {
+                                Message::ExportPlaylist(pid, path)
+                            } else { Message::NoOp }
+                        });
+                    }
+                    _ => {}
+                }
+                Task::none()
+            }
+
+            Message::ExportPlaylist(id, target_path) => {
+                let db = self.database.clone();
+                
+                return Task::perform(async move {
+                    let sanitize_name = |s: &str| s.chars().map(|c| if "/\\?%*:|\"<>".contains(c) { '_' } else { c }).collect::<String>();
+                    
+                    let songs = if let Ok(db_lock) = db.lock() {
+                        db_lock.search_playlist_songs(id, "").unwrap_or_default()
+                    } else { vec![] };
+
+                    let p_name = if let Ok(db_lock) = db.lock() {
+                        db_lock.get_playlist_by_id(id).ok().flatten().map(|p| p.name).unwrap_or_else(|| "Playlist_Exportada".to_string())
+                    } else { "Playlist_Exportada".to_string() };
+
+                    let base_dir = std::path::PathBuf::from(target_path);
+                    let mut m3u_content = String::from("#EXTM3U\n");
+
+                    for song in songs {
+                        let artist_dir = sanitize_name(&song.artist_name);
+                        let album_dir = sanitize_name(&song.album_title);
+                        let song_file = std::path::Path::new(&song.file_path).file_name().unwrap_or_default().to_string_lossy();
+                        
+                        let relative_path = format!("{}/{}/{}", artist_dir, album_dir, song_file);
+                        let full_target_dir = base_dir.join(&artist_dir).join(&album_dir);
+                        let full_target_path = full_target_dir.join(song_file.as_ref());
+
+                        let _ = std::fs::create_dir_all(&full_target_dir);
+                        let _ = std::fs::copy(&song.file_path, &full_target_path);
+
+                        m3u_content.push_str(&format!("#EXTINF:{},{}\n{}\n", song.duration as i32, song.title, relative_path));
+                    }
+
+                    let m3u_path = base_dir.join(format!("{}.m3u8", sanitize_name(&p_name)));
+                    let _ = std::fs::write(m3u_path, m3u_content);
+                    
+                }, |_| Message::NoOp);
+            }
+
+            Message::SwitchPlaylist(id, auto_play) => {
                 // 1. Guardar estado de la lista actual antes de cambiar
                 self.persist_playlist_state();
                 if let Ok(db) = self.database.lock() {
@@ -771,6 +941,7 @@ impl AudoxidyApp {
                     self.playlist_manager.groups = groups;
                 }
 
+                let mut was_restored = false;
                 if let Some(p_data) = p_data_opt {
                     self.playlist_manager.shuffle_active = p_data.shuffle_active;
                     self.playlist_manager.repeat_mode = p_data.repeat_mode as u8;
@@ -781,16 +952,15 @@ impl AudoxidyApp {
                         if let Some(l_idx) = self.playlist_manager.get_linear_index_by_song_id(song_id) {
                             if let Some(song) = self.playlist_manager.get_song_at_linear_index(l_idx) {
                                 let path = song.file_path.clone();
-                                let is_playing_needed = p_data.is_playing;
+                                let is_playing_needed = if auto_play { true } else { p_data.is_playing };
                                 let last_pos = p_data.last_pos_sec;
                                 
                                 self.playlist_manager.playing_song_idx = Some(l_idx);
                                 let _ = self.audio_manager.load_file(&path);
                                 self.audio_manager.seek(last_pos);
-                                if is_playing_needed {
-                                    self.audio_manager.play();
-                                }
+                                self.audio_manager.set_playing(is_playing_needed);
                                 self.sync_player_art();
+                                was_restored = true;
                             }
                         }
                     }
@@ -799,6 +969,12 @@ impl AudoxidyApp {
                 self.playlist_manager.show_tab_dropdown = false;
                 self.playlist_manager.selected_song_idx = None;
                 self.playlist_manager.apply_filter();
+                
+                if auto_play && !was_restored {
+                    // Si auto_play es true y no había canción previa guardada, reproducimos la primera
+                    return Task::done(Message::PlaySongIndex(0));
+                }
+                
                 Task::none()
             }
             Message::ToggleTabDropdown => {
@@ -1149,7 +1325,7 @@ impl AudoxidyApp {
                 
                 // Restaurar selección si no hay ninguna activa y se presiona una tecla
                 if self.library_manager.selected_album.is_none() && self.library_manager.selected_song_idx.is_none() {
-                    if let Some(last_album) = self.library_manager.last_selected_album.clone() {
+                    if let Some(_last_album) = self.library_manager.last_selected_album.clone() {
                         if let Some(sel) = self.library_manager.selected_album.clone() {
                             if self.library_manager.expanded_album.as_deref() != Some(sel.as_str()) {
                                 return self.update(Message::ToggleAlbumExpansion(sel));
@@ -1360,6 +1536,8 @@ impl AudoxidyApp {
                                     if let Err(e) = self.audio_manager.load_file(&path) {
                                         tracing::error!("Error reproducidendo archivo con Enter: {}", e);
                                     } else {
+                                        self.audio_manager.set_playing(true);
+                                        self.sync_player_art();
                                         self.audio_manager.play();
                                         self.playlist_manager.playing_song_idx = Some(idx);
                                         self.persist_playlist_state();
@@ -1511,7 +1689,8 @@ impl AudoxidyApp {
                 
                 Task::none()
             }
-            Message::WindowResized(w, _h) => {
+            Message::WindowResized(w, h) => {
+                self.window_size = (w, h);
                 // La biblioteca ocupa todo el ancho menos el panel izquierdo (~520px) y filtros (~202px)
                 let sidebar_w = 722.0_f32;
                 self.library_manager.library_area_width = (w as f32 - sidebar_w).max(202.0);
@@ -1631,13 +1810,45 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::OpenFolderPicker => {
-                // TODO: Iced no soporta rfd síncrono muy bien durante update. Se requerirá un thread spawn.
-                // Para simplificar, usaremos the rfd en un custom Task.
-                if let Some(folder) = rfd::FileDialog::new().pick_folder() {
-                    let path_str = folder.to_string_lossy().to_string();
-                    self.scanner.scan_folder_async(path_str);
-                }
-                Task::none()
+                let scanner_arc = self.scanner.clone();
+                Task::perform(async move {
+                    rfd::FileDialog::new().pick_folder()
+                }, move |folder| {
+                    if let Some(f) = folder {
+                        let path_str = f.to_string_lossy().to_string();
+                        scanner_arc.scan_folder_async(path_str);
+                    }
+                    Message::NoOp
+                })
+            }
+            Message::OpenPlaylistFilePicker => {
+                Task::perform(async move {
+                    rfd::FileDialog::new()
+                        .add_filter("Lista de reproducción", &["m3u", "m3u8"])
+                        .pick_file()
+                }, |file| {
+                    if let Some(f) = file {
+                        Message::ImportPlaylistFile(f.to_string_lossy().to_string())
+                    } else {
+                        Message::NoOp
+                    }
+                })
+            }
+
+            Message::ImportPlaylistFile(path) => {
+                let db_arc = self.database.clone();
+                let path_clone = path.clone();
+                
+                // Usamos perform para no bloquear la UI si el M3U es muy grande
+                Task::perform(async move {
+                    crate::db::scanner::Scanner::import_m3u(&db_arc, &path_clone)
+                }, |playlist_id| {
+                    if let Some(id) = playlist_id {
+                        Message::SwitchPlaylist(id, true)
+                    } else {
+                        Message::NoOp
+                    }
+                })
             }
             Message::ToggleFilterMenu => {
                 self.filters_manager.menu_open = !self.filters_manager.menu_open;
@@ -1825,6 +2036,7 @@ impl AudoxidyApp {
                 if self.player_ui_state.is_menu_open {
                     self.player_ui_state.is_menu_open = false;
                 }
+                self.context_menu = None;
                 Task::none()
             }
             Message::PlayerWindowAction(action) => {
@@ -1849,6 +2061,7 @@ impl AudoxidyApp {
                 }
             }
             Message::PlayerMouseMoved(pos) => {
+                self.last_mouse_pos = pos;
                 let is_resizing = self.library_manager.resizing_column.is_some();
                 if is_resizing {
                     let col = self.library_manager.resizing_column.unwrap();
@@ -1897,6 +2110,14 @@ impl AudoxidyApp {
                 if let Some(idx) = self.playlist_manager.playing_song_idx {
                     return self.execute_playlist_autoscroll(idx);
                 }
+                Task::none()
+            }
+            Message::OpenContextMenu(pos, entries) => {
+                self.context_menu = Some((pos, entries));
+                Task::none()
+            }
+            Message::CloseContextMenu => {
+                self.context_menu = None;
                 Task::none()
             }
             Message::NoOp => Task::none(),
@@ -2008,10 +2229,10 @@ impl AudoxidyApp {
         let final_content: Element<'_, Message> = if self.audio_center_manager.open {
             let ac_view = crate::gui::audio_center::view(&self.audio_center_manager, &self.audio_manager);
             
-            // Falso modal: fondo negro semitransparente
+            // Falso modal: fondo transparente para bloqueo de clics
             let modal_bg = iced::widget::mouse_area(
                 iced::widget::container(iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill))
-                .style(|_t: &iced::Theme| iced::widget::container::Style::default().background(iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8)))
+                .style(|_t: &iced::Theme| iced::widget::container::Style::default().background(iced::Color::TRANSPARENT))
             );
 
             // Contenedor centrado para el Control Center
@@ -2041,6 +2262,166 @@ impl AudoxidyApp {
         let final_stack = iced::widget::Stack::new()
             .push(app_underlay)
             .push(final_content);
+
+        // --- Capa de Diálogos Modales ---
+        let mut final_stack = final_stack;
+        
+        if self.active_dialog != ActiveDialog::None {
+            let dialog_content = match &self.active_dialog {
+                ActiveDialog::CreatePlaylist { name } => {
+                    crate::gui::widgets::standard_modal(
+                        "Nueva lista de reproducción".to_string(),
+                        iced::widget::column![
+                            iced::widget::text("Escribe el nombre:").size(14).color(COLOR_TEXT_SECONDARY),
+                            iced::widget::text_input("Nombre de la lista...", name)
+                                .on_input(Message::UpdateDialogInput)
+                                .on_submit(Message::ConfirmDialogAction)
+                                .padding(10)
+                                .size(14)
+                                .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
+                                    iced::widget::text_input::Style {
+                                        background: COLOR_CONTRAST.into(),
+                                        border: iced::Border { radius: 4.0.into(), width: 1.0, color: COLOR_ACCENT },
+                                        icon: Color::TRANSPARENT,
+                                        placeholder: COLOR_TEXT_SECONDARY,
+                                        value: COLOR_TEXT_PRIMARY,
+                                        selection: COLOR_ACCENT,
+                                    }
+                                })
+                        ].spacing(10).into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Crear".to_string(),
+                    )
+                },
+                ActiveDialog::RenamePlaylist { new_name, .. } => {
+                    crate::gui::widgets::standard_modal(
+                        "Renombrar lista".to_string(),
+                        iced::widget::column![
+                            iced::widget::text("Nuevo nombre:").size(14).color(COLOR_TEXT_SECONDARY),
+                            iced::widget::text_input("Nuevo nombre...", new_name)
+                                .on_input(Message::UpdateDialogInput)
+                                .on_submit(Message::ConfirmDialogAction)
+                                .padding(10)
+                                .size(14)
+                                .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
+                                    iced::widget::text_input::Style {
+                                        background: COLOR_CONTRAST.into(),
+                                        border: iced::Border { radius: 4.0.into(), width: 1.0, color: COLOR_ACCENT },
+                                        icon: Color::TRANSPARENT,
+                                        placeholder: COLOR_TEXT_SECONDARY,
+                                        value: COLOR_TEXT_PRIMARY,
+                                        selection: COLOR_ACCENT,
+                                    }
+                                })
+                        ].spacing(10).into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Renombrar".to_string(),
+                    )
+                },
+                ActiveDialog::DeleteConfirm { name, .. } => {
+                    crate::gui::widgets::standard_modal(
+                        "¿Eliminar lista?".to_string(),
+                        iced::widget::text(format!("¿Estás seguro de que quieres eliminar \"{}\"? Esta acción no se puede deshacer.", name))
+                            .size(14)
+                            .color(COLOR_TEXT_SECONDARY).into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Eliminar".to_string(),
+                    )
+                },
+                ActiveDialog::ExportConfirm { name, .. } => {
+                    crate::gui::widgets::standard_modal(
+                        "Exportar lista".to_string(),
+                        iced::widget::text(format!("¿Estas seguro de querer exportar la lista \"{}\" como una carpeta portátil junto con sus archivos de audio.?", name))
+                            .size(14)
+                            .color(COLOR_TEXT_SECONDARY).into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Exportar".to_string(),
+                    )
+                },
+                _ => iced::widget::Space::new().into(),
+            };
+
+            // Cálculo de posición dinámica
+            let (target_x, target_y) = if let Some(pos) = self.dialog_pos {
+                let modal_w = 350.0;
+                let modal_h = 240.0;
+                let mut x = pos.x - 20.0;
+                let mut y = pos.y - 20.0;
+
+                if x + modal_w + 40.0 > self.window_size.0 as f32 {
+                    x = (self.window_size.0 as f32 - modal_w - 40.0).max(10.0);
+                }
+                if y + modal_h + 40.0 > self.window_size.1 as f32 {
+                    y = (self.window_size.1 as f32 - modal_h - 40.0).max(10.0);
+                }
+                (x, y)
+            } else {
+                (200.0, 200.0)
+            };
+
+            // Área de bloqueo invisible - Fill para asegurar cobertura total
+            let click_blocker = iced::widget::mouse_area(
+                iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill)
+            )
+            .on_press(Message::CloseDialog);
+            final_stack = final_stack
+                .push(click_blocker)
+                .push(
+                    iced::widget::container(dialog_content)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                        .padding(iced::Padding {
+                            top: target_y,
+                            left: target_x,
+                            ..Default::default()
+                        })
+                        .align_x(iced::Alignment::Start)
+                        .align_y(iced::Alignment::Start)
+                );
+        }
+
+        // --- Renderizar Menú Contextual Nativo ---
+        if let Some((pos, entries)) = &self.context_menu {
+            let menu_content = crate::gui::widgets::build_context_menu_content(entries.clone());
+            
+            // Área de bloqueo para el menú
+            let menu_blocker = iced::widget::mouse_area(
+                iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill)
+            )
+            .on_press(Message::GlobalClick);
+
+            // Ajuste de bordes (Stay within window)
+            let mut target_x = pos.x;
+            let mut target_y = pos.y;
+            let menu_w = 260.0;
+            let menu_h = (entries.len() as f32 * 32.0) + 10.0; // aprox
+
+            if target_x + menu_w > self.window_size.0 as f32 {
+                target_x = (self.window_size.0 as f32 - menu_w - 5.0).max(5.0);
+            }
+            if target_y + menu_h > self.window_size.1 as f32 {
+                target_y = (self.window_size.1 as f32 - menu_h - 5.0).max(5.0);
+            }
+
+            final_stack = final_stack
+                .push(menu_blocker)
+                .push(
+                    iced::widget::container(menu_content)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                        .padding(iced::Padding {
+                            top: target_y,
+                            left: target_x,
+                            ..Default::default()
+                        })
+                        .align_x(iced::Alignment::Start)
+                        .align_y(iced::Alignment::Start)
+                );
+        }
 
         let wrapped_app = helpers::CursorOff::new(
             iced::widget::container(final_stack)

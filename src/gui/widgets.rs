@@ -1,11 +1,11 @@
 use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, svg, text, Space},
+    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space},
     Alignment, Color, Element, Length, Theme,
 };
 use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
 use iced::{Event, Rectangle, Size, Vector, Padding};
 
-use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST, COLOR_TEXT_SECONDARY, COLOR_ACCENT, COLOR_BG, FONT_INTER_SANS_MEDIUM};
+use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST, COLOR_TEXT_SECONDARY, COLOR_ACCENT, COLOR_BG, FONT_INTER_SANS_NORMAL,FONT_INTER_SANS_MEDIUM};
 use crate::utils::{truncate_text, SortColumn, format_duration, format_metadata};
 use std::collections::HashMap;
 
@@ -487,7 +487,249 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 }
 
 // ==========================================
-// 3. Componentes Específicos de Biblioteca
+// 4. Widgets de Entrada y Búsqueda
+// ==========================================
+
+/// Widget de búsqueda estandarizado para toda la aplicación.
+pub fn standard_search_input<'a, Message: Clone + 'a>(
+    placeholder: &'a str,
+    value: &'a str,
+    on_change: impl Fn(String) -> Message + 'a,
+    on_clear: Message,
+    width: Length,
+) -> Element<'a, Message> {
+    let has_content = !value.is_empty();
+
+    let input = text_input(placeholder, value)
+        .on_input(on_change)
+        .padding(iced::Padding { right: 25.0, ..Default::default() }) // Espacio a la derecha para la 'x'
+        .size(14)
+        .font(FONT_INTER_SANS_MEDIUM)
+        .width(Length::Fill)
+        .style(move |_t: &Theme, status: iced::widget::text_input::Status| {
+            let is_focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
+            
+            let (bg, txt) = if is_focused {
+                (COLOR_CONTRAST, COLOR_TEXT_PRIMARY)
+            } else {
+                (COLOR_CONTRAST, COLOR_TEXT_SECONDARY)
+            };
+
+            iced::widget::text_input::Style {
+                background: bg.into(),
+                border: iced::Border { 
+                    radius: 0.0.into(), 
+                    width: 0.0, 
+                    color: Color::TRANSPARENT 
+                },
+                icon: COLOR_TEXT_SECONDARY,
+                placeholder: COLOR_TEXT_SECONDARY,
+                value: txt,
+                selection: COLOR_ACCENT,
+            }
+        });
+
+    let mut content = iced::widget::stack![input];
+
+    if has_content {
+        let clear_btn = button(
+            container(text("x").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
+                .width(Length::Fixed(20.0))
+                .height(Length::Fixed(20.0))
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center)
+        )
+        .padding(0)
+        .style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT))
+        .on_press(on_clear);
+
+        content = content.push(
+            container(clear_btn)
+                .width(Length::Fill)
+                .height(Length::Fixed(24.0))
+                .align_x(iced::alignment::Horizontal::Right)
+                .padding(iced::Padding { right: 5.0, ..Default::default() })
+        );
+    }
+
+    container(content)
+        .width(width)
+        .height(Length::Fixed(24.0))
+        .center_y(Length::Fill)
+        .into()
+}
+
+// ==========================================
+// 5. Menús Contextuales
+// ==========================================
+
+/// Representa una entrada en un menú contextual.
+#[derive(Debug, Clone)]
+pub struct ContextMenuEntry<Message> {
+    pub label: String,
+    pub icon: Option<String>,    // Nombre del icono en assets/icons/
+    pub action: Option<Message>, // None representa un divisor
+}
+
+/// Construye el contenido visual de un menú contextual basado en una lista de entradas.
+pub fn build_context_menu_content<'a, Message: Clone + 'a>(
+    entries: Vec<ContextMenuEntry<Message>>,
+) -> Element<'a, Message> {
+    let mut content = column![].spacing(0).width(Length::Fill);
+
+    for entry in entries {
+        if let Some(action) = entry.action {
+            let label = entry.label.clone();
+            let icon_name = entry.icon.clone();
+
+            let btn = button(
+                container(
+                    row![
+                        // Icono
+                        if let Some(icon) = icon_name {
+                            Element::from(
+                                container(
+                                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
+                                        .width(Length::Fixed(24.0))
+                                        .height(Length::Fixed(24.0))
+                                )
+                                .width(Length::Fixed(24.0))
+                            )
+                        } else {
+                            Element::from(Space::new().width(Length::Fixed(24.0)))
+                        },
+                        Space::new().width(Length::Fixed(10.0)),
+                        // Texto
+                        text(label)
+                            .size(13)
+                            .font(FONT_INTER_SANS_NORMAL)
+                            .wrapping(iced::widget::text::Wrapping::None)
+                    ]
+                    .align_y(Alignment::Center)
+                )
+                .width(Length::Fill)
+                .height(Length::Fixed(32.0))
+                .padding(iced::Padding { left: 10.0, right: 10.0, ..Default::default() })
+                .align_y(iced::alignment::Vertical::Center)
+            )
+            .on_press(action)
+            .padding(0)
+            .style(move |_t: &Theme, status: iced::widget::button::Status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                
+                button::Style {
+                    background: if is_hovered { Some(COLOR_ACCENT.into()) } else { None },
+                    text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                    border: iced::Border { radius: 4.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    ..Default::default()
+                }
+            });
+
+            content = content.push(btn);
+        } else {
+            // Divisor
+            content = content.push(
+                container(Space::new().height(Length::Fixed(1.0)))
+                    .width(Length::Fill)
+                    .padding(iced::Padding { top: 4.0, bottom: 4.0, ..Default::default() })
+                    .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY.scale_alpha(0.3)))
+            );
+        }
+    }
+
+    container(content)
+        .width(Length::Fixed(260.0))
+        .style(|_t: &Theme| {
+            container::Style::default()
+                .background(COLOR_BG)
+                .border(iced::Border {
+                    color: COLOR_TEXT_SECONDARY.scale_alpha(0.5),
+                    width: 1.0,
+                    radius: 8.0.into(),
+                })
+                .shadow(iced::Shadow {
+                    offset: iced::Vector::new(0.0, 4.0),
+                    blur_radius: 10.0,
+                    color: Color::from_rgba8(0, 0, 0, 0.5),
+                })
+        })
+        .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 1.0, right: 1.0 })
+        .into()
+}
+
+/// Widget para diálogos modales (sub-ventanas).
+pub fn standard_modal<'a, Message: Clone + 'a>(
+    title: String,
+    content: Element<'a, Message>,
+    cancel_msg: Option<Message>,
+    confirm_msg: Option<Message>,
+    confirm_label: String,
+) -> Element<'a, Message> {
+    let mut footer = row![].spacing(10).padding(iced::Padding { top: 5.0,  ..Default::default() }).align_y(Alignment::Center);
+
+    if let Some(cancel) = cancel_msg {
+        footer = footer.push(
+            button(text("Cancelar").size(14).font(FONT_INTER_SANS_MEDIUM))
+                .padding([5, 10])
+                .on_press(cancel)
+                .style(|_t: &Theme, status: iced::widget::button::Status| {
+                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                    button::Style {
+                        background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
+                        text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                        border: iced::Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        ..Default::default()
+                    }
+                })
+        );
+    }
+
+    if let Some(confirm) = confirm_msg {
+        footer = footer.push(
+            button(text(confirm_label).size(14).font(FONT_INTER_SANS_MEDIUM))
+                .padding([5, 10])
+                .on_press(confirm)
+                .style(|_t: &Theme, status: iced::widget::button::Status| {
+                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                    button::Style {
+                        background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
+                        text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                        border: iced::Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        ..Default::default()
+                    }
+                })
+        );
+    }
+
+    container(
+        column![
+            text(title).size(16).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY),
+            container(content).padding([10, 0]),
+            footer,
+        ]
+        .spacing(0)
+    )
+    .padding(15)
+    .width(Length::Fixed(250.0))
+    .style(|_t: &Theme| container::Style {
+        background: Some(COLOR_BG.into()),
+        border: iced::Border {
+            color: COLOR_ACCENT,
+            width: 2.0,
+            radius: 8.0.into(),
+        },
+        shadow: iced::Shadow {
+            offset: iced::Vector::new(0.0, 10.0),
+            blur_radius: 30.0,
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.8),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
+// ==========================================
+// 6. Lógica de Virtualización y Scroll
 // ==========================================
 
 /// Botón circular pequeño para cheurones (flechas) de expansión.

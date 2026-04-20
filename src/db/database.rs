@@ -191,6 +191,7 @@ impl Database {
                 embedded_cover BOOLEAN DEFAULT 0,
                 cover_override TEXT,
                 import_order INTEGER DEFAULT 0,
+                is_external INTEGER DEFAULT 0,
                 FOREIGN KEY(album_id) REFERENCES ALBUMS(id) ON DELETE CASCADE,
                 FOREIGN KEY(artist_id) REFERENCES ARTISTS(id) ON DELETE CASCADE,
                 FOREIGN KEY(folder_id) REFERENCES FOLDERS(id) ON DELETE CASCADE
@@ -268,6 +269,9 @@ impl Database {
             )",
             [],
         )?;
+
+        // Migración: Asegurar que is_external existe si la tabla ya fue creada
+        let _ = conn.execute("ALTER TABLE SONGS ADD COLUMN is_external INTEGER DEFAULT 0", []);
 
         // 9. HISTORIAL DE SHUFFLE POR SESIÓN
         conn.execute(
@@ -413,7 +417,8 @@ impl Database {
         song: &SongData, 
         extended: &SongMetadataExtended, 
         pic_bytes_hash: Option<String>,
-        raw_tags: Vec<(String, String, String)> // (tag_type, item_key, raw_value)
+        raw_tags: Vec<(String, String, String)>, // (tag_type, item_key, raw_value)
+        is_external: bool
     ) -> Result<(String, bool)> {
         let folder_path = std::path::Path::new(&song.full_file_path).parent().and_then(|p| p.to_str()).unwrap_or("");
         
@@ -488,17 +493,18 @@ impl Database {
         self.conn.execute(
             "INSERT INTO SONGS (
                 album_id, artist_id, folder_id, file_path, title, track_num, duration, format, 
-                bit_depth, sample_rate, channels, size, embedded_cover, cover_override, import_order
+                bit_depth, sample_rate, channels, size, embedded_cover, cover_override, import_order, is_external
             ) VALUES (
-                (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
+                (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
             ) ON CONFLICT(file_path) DO UPDATE SET 
                 title = excluded.title, track_num = excluded.track_num, duration = excluded.duration,
-                artist_id = excluded.artist_id, cover_override = excluded.cover_override",
+                artist_id = excluded.artist_id, cover_override = excluded.cover_override, is_external = excluded.is_external",
             params![
                 album_hash_id, track_artist_id, folder_id, song.full_file_path, song.title, 
                 song.track_number,
                 song.duration_secs, song.format, song.bit_depth, song.sample_rate, 
-                song.channels, song.size, song.embedded_cover, final_song_cover_override, song.import_order
+                song.channels, song.size, song.embedded_cover, final_song_cover_override, song.import_order,
+                if is_external { 1 } else { 0 }
             ],
         )?;
 
@@ -529,6 +535,15 @@ impl Database {
         )?;
 
         Ok((target_hash_for_processing, needs_processing))
+    }
+
+    /// Obtiene el ID de una canción por su ruta de archivo.
+    pub fn get_song_id_by_path(&self, path: &str) -> Result<Option<i64>> {
+        self.conn.query_row(
+            "SELECT id FROM SONGS WHERE file_path = ?1",
+            [path],
+            |row| row.get(0)
+        ).optional()
     }
 
     // --- Métodos de Transacción ---
@@ -671,6 +686,7 @@ impl Database {
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
+            WHERE s.is_external = 0
             GROUP BY al.id, ar.id
             ORDER BY ar.name ASC, al.year ASC, al.title ASC
         ")?;
@@ -835,12 +851,13 @@ impl Database {
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
+            WHERE s.is_external = 0
         ");
         
         let mut params_vec = Vec::new();
         if let Some(q) = search_query {
             if !q.is_empty() {
-                sql.push_str(" WHERE s.id IN (SELECT rowid FROM SONGS_FTS WHERE SONGS_FTS MATCH ?1)");
+                sql.push_str(" AND s.id IN (SELECT rowid FROM SONGS_FTS WHERE SONGS_FTS MATCH ?1)");
                 params_vec.push(format!("{}*", q));
             }
         }
@@ -878,11 +895,11 @@ impl Database {
     }
 
     pub fn get_library_stats(&self) -> Result<(usize, usize, f64, f64, usize)> {
-        let songs: i64 = self.conn.query_row("SELECT COUNT(*) FROM SONGS", [], |r| r.get(0))?;
-        let albums: i64 = self.conn.query_row("SELECT COUNT(*) FROM ALBUMS", [], |r| r.get(0))?;
-        let artists: i64 = self.conn.query_row("SELECT COUNT(*) FROM ARTISTS", [], |r| r.get(0))?;
-        let duration: f64 = self.conn.query_row("SELECT SUM(duration) FROM SONGS", [], |r| Ok(r.get::<_, Option<f64>>(0)?.unwrap_or(0.0)))?;
-        let size: f64 = self.conn.query_row("SELECT SUM(size) FROM SONGS", [], |r| Ok(r.get::<_, Option<i64>>(0)?.unwrap_or(0) as f64))?;
+        let songs: i64 = self.conn.query_row("SELECT COUNT(*) FROM SONGS WHERE is_external = 0", [], |r| r.get(0))?;
+        let albums: i64 = self.conn.query_row("SELECT COUNT(*) FROM ALBUMS WHERE id IN (SELECT album_id FROM SONGS WHERE is_external = 0)", [], |r| r.get(0))?;
+        let artists: i64 = self.conn.query_row("SELECT COUNT(*) FROM ARTISTS WHERE id IN (SELECT artist_id FROM SONGS WHERE is_external = 0)", [], |r| r.get(0))?;
+        let duration: f64 = self.conn.query_row("SELECT SUM(duration) FROM SONGS WHERE is_external = 0", [], |r| Ok(r.get::<_, Option<f64>>(0)?.unwrap_or(0.0)))?;
+        let size: f64 = self.conn.query_row("SELECT SUM(size) FROM SONGS WHERE is_external = 0", [], |r| Ok(r.get::<_, Option<i64>>(0)?.unwrap_or(0) as f64))?;
         
         Ok((songs as usize, albums as usize, duration, size, artists as usize))
     }

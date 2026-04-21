@@ -80,7 +80,7 @@ pub fn generate_pic_hash(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Extrae de un buffer raw de imagen, recorta/escala a 512x512 y guarda como .avif 80% de calidad.
+/// Extrae de un buffer raw de imagen, recorta/escala a 400x400 y guarda como .avif 90% de calidad.
 pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
     let cache_dir = PathBuf::from("cache/covers");
     if !cache_dir.exists() {
@@ -108,8 +108,8 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     let src_image = Image::from_vec_u8(width, height, img.into_raw(), fast_image_resize::PixelType::U8x4)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
-    let dst_width = 512;
-    let dst_height = 512;
+    let dst_width = 400;
+    let dst_height = 400;
     let mut dst_image = Image::new(dst_width, dst_height, src_image.pixel_type());
 
     let mut resizer = Resizer::new();
@@ -123,9 +123,9 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     resizer.resize(&src_image, &mut dst_image, &options)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
-    // Guardar como AVIF con calidad 80 y velocidad rápida (8) para ahorrar RAM/CPU
+    // Guardar como AVIF con calidad 90 y velocidad rápida (8) para ahorrar RAM/CPU
     let file = std::fs::File::create(&dst_path)?;
-    let encoder = AvifEncoder::new_with_speed_quality(file, 8, 80);
+    let encoder = AvifEncoder::new_with_speed_quality(file, 8, 90);
     
     encoder.write_image(dst_image.buffer(), dst_width, dst_height, ExtendedColorType::Rgba8.into())
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;

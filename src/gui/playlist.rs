@@ -468,7 +468,7 @@ impl PlaylistManager {
 
 const TABS_BAR_HEIGHT: f32 = 40.0;
 const BOTTOM_BAR_HEIGHT: f32 = 40.0;
-const TABS_PADDING_H: u16 = 10;
+const TABS_PADDING_H: u16 = 7;
 
 pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> Element<'a, Message> {
     let tabs_container = build_tabs_bar(manager);
@@ -496,11 +496,11 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let playlists = &manager.playlists;
 
     let mut tabs_row = row![]
-        .spacing(10)
+        .spacing(5)
         .padding([0, TABS_PADDING_H as u16])
         .align_y(Alignment::Center);
 
-    let total_width: f32 = 400.0;
+    let total_width: f32 = 380.0;
     let mut used_width: f32 = TABS_PADDING_H as f32 * 2.0;
     let mut visible_count: usize = 0;
     let chevron_width: f32 = 38.0; // 28 + 10 spacing
@@ -522,7 +522,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 .font(FONT_INTER_SANS_MEDIUM);
 
             let tab_btn = button(tab)
-                .padding([5, 2])
+                .padding([5, 5])
                 .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
                 .on_press(Message::SwitchPlaylist(id, false));
 
@@ -533,19 +533,19 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                     action: Some(Message::SwitchPlaylist(id, true)),
                 },
                 crate::gui::widgets::ContextMenuEntry {
-                    label: "Crear nueva lista".to_string(),
+                    label: "Nueva lista".to_string(),
                     icon: Some("playlist-add-straight.svg".to_string()),
                     action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
+                },
+                crate::gui::widgets::ContextMenuEntry {
+                    label: "Renombrar lista".to_string(),
+                    icon: Some("playlist-edit-straight.svg".to_string()),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::RenamePlaylist { id, current_name: name.clone(), new_name: name.clone() })),
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Eliminar lista".to_string(),
                     icon: Some("playlist-remove-straight.svg".to_string()),
                     action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::DeleteConfirm { id, name: name.clone() })),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Renombrar lista".to_string(),
-                    icon: Some("playlist-add-check-circle-straight-outlined.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::RenamePlaylist { id, current_name: name.clone(), new_name: name.clone() })),
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "".to_string(), // Divisor
@@ -555,7 +555,12 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Guardar lista".to_string(),
                     icon: Some("playlist-add-check-straight.svg".to_string()),
-                    action: Some(Message::NoOp), // A implementar
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
+                        id, 
+                        name: name.clone(),
+                        format: crate::gui::app::ExportFormat::M3U8,
+                        mode: crate::gui::app::ExportMode::SingleFile
+                    })),
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Importar lista".to_string(),
@@ -565,13 +570,18 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Exportar lista".to_string(),
                     icon: Some("arrow-up-chevron.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { id, name: name.clone() })),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
+                        id, 
+                        name: name.clone(),
+                        format: crate::gui::app::ExportFormat::M3U8,
+                        mode: crate::gui::app::ExportMode::PortableFolder
+                    })),
                 },
             ];
 
             tabs_row = tabs_row.push(
                 mouse_area(tab_btn)
-                    .on_right_press(Message::OpenContextMenu(iced::Point::ORIGIN, tab_entries))
+                    .on_right_press(Message::RequestContextMenu(tab_entries.clone()))
             );
             used_width += estimated_tab_width + 10.0;
             visible_count += 1;
@@ -582,6 +592,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
     let has_overflow = visible_count < playlists.len();
     if has_overflow {
+        tabs_row = tabs_row.push(Space::new().width(Length::Fill));
         tabs_row = tabs_row.push(build_tab_dropdown_button(manager));
     }
 
@@ -593,30 +604,30 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
     let bar_entries = vec![
         crate::gui::widgets::ContextMenuEntry {
-            label: "Crear nueva lista de reproducción".to_string(),
+            label: "Nueva lista".to_string(),
             icon: Some("playlist-add-straight.svg".to_string()),
             action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
         },
         crate::gui::widgets::ContextMenuEntry {
-            label: "Importar lista de reproducción".to_string(),
+            label: "Importar lista".to_string(),
             icon: Some("arrow-down-chevron.svg".to_string()),
-            action: Some(Message::OpenFolderPicker),
+            action: Some(Message::OpenPlaylistFilePicker),
         },
     ];
 
     mouse_area(
         container(content)
             .width(Length::Fill)
-            .height(Length::Fixed(TABS_BAR_HEIGHT))
+            .height(if manager.show_tab_dropdown && has_overflow { Length::Shrink } else { Length::Fixed(TABS_BAR_HEIGHT) })
             .align_y(iced::alignment::Vertical::Center)
             .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
     )
-    .on_right_press(Message::OpenContextMenu(iced::Point::ORIGIN, bar_entries))
+    .on_right_press(Message::RequestContextMenu(bar_entries))
     .into()
 }
 
 fn estimate_tab_width(name: &str) -> f32 {
-    name.chars().count() as f32 * 7.5 + 20.0
+    name.chars().count() as f32 * 7.5 + 10.0
 }
 
 fn build_tab_dropdown_button<'a>(_manager: &'a PlaylistManager) -> Element<'a, Message> {
@@ -651,8 +662,8 @@ fn build_dropdown_menu<'a>(
 
         let item_btn = button(item)
             .width(Length::Fill)
-            .padding([6, 10])
-            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .padding([5, 5])
+            .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_BG))
             .on_press(Message::SwitchPlaylist(id, false));
 
         items = items.push(item_btn);
@@ -739,7 +750,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new()
                 .width(4)
-                .margin(0)
+                .margin(4)
                 .scroller_width(4)
         ))
         .on_scroll(Message::PlaylistScrolled)

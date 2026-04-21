@@ -315,20 +315,27 @@ pub fn view<'a>(
                 .style(|_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style { color: Some(COLOR_TEXT_SECONDARY) })
         ]
         .align_y(Alignment::Center)
-        .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 15.0 })
+        .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 7.0 })
     )
     .width(Length::Fill)
-    .height(Length::Fixed(30.0))
+    .height(Length::Fixed(28.0))
     .padding(0)
     .style(move |_t: &Theme, _s: button::Status| {
-        let mut st = button::Style::default().with_background(COLOR_CONTRAST);
+        let mut st = button::Style::default().with_background(COLOR_BG);
         st.border.radius = 0.0.into();
         st.text_color = COLOR_TEXT_SECONDARY;
         st
     })
     .on_press(Message::ToggleFilterMenu);
 
-    middle_content = middle_content.push(dropdown_header);
+    middle_content = middle_content.push(
+        column![
+            dropdown_header,
+            container(iced::widget::Space::new().height(2.0))
+                .width(Length::Fill)
+                .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+        ]
+    );
 
     // Build Menu Options layout (to be overlayed)
     let menu_options_container = if manager.menu_open {
@@ -526,7 +533,7 @@ pub fn view<'a>(
             scrollable::Scrollbar::new()
                 .width(4)
                 .scroller_width(4)
-                .margin(0),
+                .margin(4),
         ))
         .style(custom_scrollbar_style);
 

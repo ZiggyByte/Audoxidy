@@ -161,10 +161,9 @@ pub enum Message {
     TogglePlaylistFolder(usize),
     GlobalKeyDown(iced::keyboard::Key, iced::keyboard::Modifiers),
     CreatePlaylist,
-    ExportPlaylist(i64, String), // id, target_path
-    OpenPlaylistFilePicker,
-    ImportPlaylistFile(String),   // path
-
+    ExportPlaylist(i64, String, ExportFormat, ExportMode), // id, target_path, format, mode
+    RefreshPlaylists(Option<i64>),
+    InternalPlaylistsRefreshed(Vec<crate::db::database::PlaylistData>, Option<i64>),
     // Library
     ScanLibrary(String),
     SearchQueryChanged(String),
@@ -189,6 +188,10 @@ pub enum Message {
     PlayLibraryAll,
     LibraryAllSongsLoaded(Vec<std::sync::Arc<crate::db::database::SongData>>),
     OpenFolderPicker,
+    OpenPlaylistFilePicker,
+    ImportPlaylistFile(String), // path
+    SelectExportFormat(ExportFormat),
+    SelectExportMode(ExportMode),
 
     // Filters
     ToggleFilterMenu,
@@ -227,10 +230,18 @@ pub enum Message {
 
     // Context Menu
     OpenContextMenu(iced::Point, Vec<crate::gui::widgets::ContextMenuEntry<Message>>),
+    RequestContextMenu(Vec<crate::gui::widgets::ContextMenuEntry<Message>>),
     CloseContextMenu,
+    ContextMenuAction(Box<Message>),
 
     NoOp,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportFormat { M3U, M3U8 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExportMode { SingleFile, PortableFolder }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActiveDialog {
@@ -238,7 +249,12 @@ pub enum ActiveDialog {
     CreatePlaylist { name: String },
     RenamePlaylist { id: i64, current_name: String, new_name: String },
     DeleteConfirm { id: i64, name: String },
-    ExportConfirm { id: i64, name: String },
+    ExportConfirm { 
+        id: i64, 
+        name: String, 
+        format: ExportFormat, 
+        mode: ExportMode 
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -801,61 +817,62 @@ impl AudoxidyApp {
 
             Message::ConfirmDialogAction => {
                 let dialog = std::mem::replace(&mut self.active_dialog, ActiveDialog::None);
+                self.active_dialog = ActiveDialog::None;
+                self.dialog_pos = None;
+                let db = self.database.clone();
+
                 match dialog {
                     ActiveDialog::CreatePlaylist { name } => {
                         let final_name = if name.trim().is_empty() { 
                             format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1) 
                         } else { name };
 
-                        if let Ok(new_id) = self.database.lock().unwrap().create_playlist(&final_name, false) {
-                            if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
-                                self.playlist_manager.playlists = playlists;
-                                // Cierre inmediato
-                                self.active_dialog = ActiveDialog::None;
-                                self.dialog_pos = None;
-                                return Task::done(Message::SwitchPlaylist(new_id, false));
-                            }
-                        }
+                        return Task::perform(async move {
+                            let db_lock = db.lock().unwrap();
+                            db_lock.create_playlist(&final_name, false).ok()
+                        }, Message::RefreshPlaylists);
                     }
                     ActiveDialog::RenamePlaylist { id, new_name, .. } => {
                         if !new_name.trim().is_empty() {
-                            if let Ok(_) = self.database.lock().unwrap().rename_playlist(id, &new_name) {
-                                if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
-                                    self.playlist_manager.playlists = playlists;
-                                    self.active_dialog = ActiveDialog::None;
-                                    self.dialog_pos = None;
-                                }
-                            }
+                            return Task::perform(async move {
+                                let db_lock = db.lock().unwrap();
+                                if db_lock.rename_playlist(id, &new_name).is_ok() {
+                                    Some(id)
+                                } else { None }
+                            }, Message::RefreshPlaylists);
                         }
                     }
                     ActiveDialog::DeleteConfirm { id, .. } => {
-                        if let Ok(_) = self.database.lock().unwrap().delete_playlist(id) {
-                            if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
-                                if self.playlist_manager.active_playlist_id == id {
-                                    if let Some(first) = playlists.first() {
-                                        let first_id = first.id;
-                                        self.playlist_manager.playlists = playlists;
-                                        self.active_dialog = ActiveDialog::None;
-                                        self.dialog_pos = None;
-                                        return Task::done(Message::SwitchPlaylist(first_id, false));
-                                    }
-                                }
-                                self.playlist_manager.playlists = playlists;
-                                self.active_dialog = ActiveDialog::None;
-                                self.dialog_pos = None;
-                            }
-                        }
-                    }
-                    ActiveDialog::ExportConfirm { id, name: _ } => {
                         return Task::perform(async move {
-                            if let Some(folder) = rfd::AsyncFileDialog::new()
-                                .set_title("Seleccionar carpeta de exportación")
-                                .pick_folder().await {
-                                    Some((id, folder.path().to_string_lossy().into_owned()))
+                            let db_lock = db.lock().unwrap();
+                            if db_lock.delete_playlist(id).is_ok() {
+                                Some(0) 
                             } else { None }
+                        }, Message::RefreshPlaylists);
+                    }
+                    ActiveDialog::ExportConfirm { id, name: _, format, mode } => {
+                        return Task::perform(async move {
+                            match mode {
+                                ExportMode::PortableFolder => {
+                                    if let Some(folder) = rfd::AsyncFileDialog::new()
+                                        .set_title("Seleccionar carpeta de exportación")
+                                        .pick_folder().await {
+                                            Some((id, folder.path().to_string_lossy().into_owned(), format, mode))
+                                    } else { None }
+                                }
+                                ExportMode::SingleFile => {
+                                    let ext = match format { ExportFormat::M3U => "m3u", ExportFormat::M3U8 => "m3u8" };
+                                    if let Some(file) = rfd::AsyncFileDialog::new()
+                                        .set_title("Guardar lista de reproducción")
+                                        .add_filter("Lista de reproducción", &[ext])
+                                        .save_file().await {
+                                            Some((id, file.path().to_string_lossy().into_owned(), format, mode))
+                                    } else { None }
+                                }
+                            }
                         }, |res| {
-                            if let Some((pid, path)) = res {
-                                Message::ExportPlaylist(pid, path)
+                            if let Some((pid, path, fmt, m)) = res {
+                                Message::ExportPlaylist(pid, path, fmt, m)
                             } else { Message::NoOp }
                         });
                     }
@@ -864,7 +881,40 @@ impl AudoxidyApp {
                 Task::none()
             }
 
-            Message::ExportPlaylist(id, target_path) => {
+            Message::RefreshPlaylists(id_opt) => {
+                let db = self.database.clone();
+                return Task::perform(async move {
+                    let db_lock = db.lock().unwrap();
+                    db_lock.get_all_playlists().ok()
+                }, move |playlists_opt| {
+                    if let Some(playlists) = playlists_opt {
+                        Message::InternalPlaylistsRefreshed(playlists, id_opt)
+                    } else { Message::NoOp }
+                });
+            }
+
+            Message::InternalPlaylistsRefreshed(playlists, id_opt) => {
+                let active_id = self.playlist_manager.active_playlist_id;
+                self.playlist_manager.playlists = playlists;
+                
+                if let Some(id) = id_opt {
+                    if id > 0 {
+                        // Es un rename o create con ID específico
+                        return Task::done(Message::SwitchPlaylist(id, false));
+                    } else if id == 0 {
+                        // Es un delete, verificar si la lista activa murió
+                        let still_exists = self.playlist_manager.playlists.iter().any(|p| p.id == active_id);
+                        if !still_exists {
+                            if let Some(first) = self.playlist_manager.playlists.first() {
+                                return Task::done(Message::SwitchPlaylist(first.id, false));
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+
+            Message::ExportPlaylist(id, target_path, format, mode) => {
                 let db = self.database.clone();
                 
                 return Task::perform(async move {
@@ -878,26 +928,38 @@ impl AudoxidyApp {
                         db_lock.get_playlist_by_id(id).ok().flatten().map(|p| p.name).unwrap_or_else(|| "Playlist_Exportada".to_string())
                     } else { "Playlist_Exportada".to_string() };
 
-                    let base_dir = std::path::PathBuf::from(target_path);
+                    let is_portable = mode == ExportMode::PortableFolder;
                     let mut m3u_content = String::from("#EXTM3U\n");
+                    let base_target_path = std::path::PathBuf::from(target_path);
 
                     for song in songs {
-                        let artist_dir = sanitize_name(&song.artist_name);
-                        let album_dir = sanitize_name(&song.album_title);
-                        let song_file = std::path::Path::new(&song.file_path).file_name().unwrap_or_default().to_string_lossy();
-                        
-                        let relative_path = format!("{}/{}/{}", artist_dir, album_dir, song_file);
-                        let full_target_dir = base_dir.join(&artist_dir).join(&album_dir);
-                        let full_target_path = full_target_dir.join(song_file.as_ref());
+                        let path_to_write = if is_portable {
+                            let artist_dir = sanitize_name(&song.artist_name);
+                            let album_dir = sanitize_name(&song.album_title);
+                            let song_file = std::path::Path::new(&song.file_path).file_name().unwrap_or_default().to_string_lossy();
+                            
+                            let relative_path = format!("{}/{}/{}", artist_dir, album_dir, song_file);
+                            let full_target_dir = base_target_path.join(&artist_dir).join(&album_dir);
+                            let full_target_path = full_target_dir.join(song_file.as_ref());
 
-                        let _ = std::fs::create_dir_all(&full_target_dir);
-                        let _ = std::fs::copy(&song.file_path, &full_target_path);
+                            let _ = std::fs::create_dir_all(&full_target_dir);
+                            let _ = std::fs::copy(&song.file_path, &full_target_path);
+                            relative_path
+                        } else {
+                            song.file_path.clone()
+                        };
 
-                        m3u_content.push_str(&format!("#EXTINF:{},{}\n{}\n", song.duration as i32, song.title, relative_path));
+                        m3u_content.push_str(&format!("#EXTINF:{},{}\n{}\n", song.duration as i32, song.title, path_to_write));
                     }
 
-                    let m3u_path = base_dir.join(format!("{}.m3u8", sanitize_name(&p_name)));
-                    let _ = std::fs::write(m3u_path, m3u_content);
+                    // Escribir el archivo
+                    let final_m3u_path = if is_portable {
+                        let ext = match format { ExportFormat::M3U => "m3u", ExportFormat::M3U8 => "m3u8" };
+                        base_target_path.join(format!("{}.{}", sanitize_name(&p_name), ext))
+                    } else {
+                        base_target_path
+                    };
+                    let _ = std::fs::write(&final_m3u_path, m3u_content);
                     
                 }, |_| Message::NoOp);
             }
@@ -970,8 +1032,8 @@ impl AudoxidyApp {
                 self.playlist_manager.selected_song_idx = None;
                 self.playlist_manager.apply_filter();
                 
-                if auto_play && !was_restored {
-                    // Si auto_play es true y no había canción previa guardada, reproducimos la primera
+                if auto_play {
+                    // Si se solicita reproducción, empezamos desde la primera canción ignorando el estado previo
                     return Task::done(Message::PlaySongIndex(0));
                 }
                 
@@ -1338,6 +1400,15 @@ impl AudoxidyApp {
                 if dir == LibraryNavDir::Up && modifiers.alt() {
                     if let Some(sel) = self.library_manager.selected_album.clone() {
                         if self.library_manager.expanded_album.as_deref() == Some(sel.as_str()) {
+                            return self.update(Message::ToggleAlbumExpansion(sel));
+                        }
+                    }
+                }
+
+                // Alt + Abajo -> Expandir álbum seleccionado
+                if dir == LibraryNavDir::Down && modifiers.alt() {
+                    if let Some(sel) = self.library_manager.selected_album.clone() {
+                        if self.library_manager.expanded_album.as_deref() != Some(sel.as_str()) {
                             return self.update(Message::ToggleAlbumExpansion(sel));
                         }
                     }
@@ -1850,6 +1921,19 @@ impl AudoxidyApp {
                     }
                 })
             }
+            Message::SelectExportFormat(fmt) => {
+                if let ActiveDialog::ExportConfirm { format, .. } = &mut self.active_dialog {
+                    *format = fmt;
+                }
+                Task::none()
+            }
+            Message::SelectExportMode(m) => {
+                if let ActiveDialog::ExportConfirm { mode, .. } = &mut self.active_dialog {
+                    *mode = m;
+                }
+                Task::none()
+            }
+
             Message::ToggleFilterMenu => {
                 self.filters_manager.menu_open = !self.filters_manager.menu_open;
                 Task::none()
@@ -2113,15 +2197,41 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::OpenContextMenu(pos, entries) => {
-                self.context_menu = Some((pos, entries));
+                let wrapped = self.wrap_context_menu(entries);
+                self.context_menu = Some((pos, wrapped));
+                Task::none()
+            }
+            Message::RequestContextMenu(entries) => {
+                let pos = self.last_mouse_pos;
+                let wrapped = self.wrap_context_menu(entries);
+                self.context_menu = Some((pos, wrapped));
                 Task::none()
             }
             Message::CloseContextMenu => {
                 self.context_menu = None;
                 Task::none()
             }
+            Message::ContextMenuAction(msg) => {
+                self.context_menu = None;
+                self.update(*msg)
+            }
             Message::NoOp => Task::none(),
         }
+    }
+
+    fn wrap_context_menu(&self, entries: Vec<crate::gui::widgets::ContextMenuEntry<Message>>) -> Vec<crate::gui::widgets::ContextMenuEntry<Message>> {
+        entries.into_iter().map(|mut e| {
+            if let Some(a) = e.action.take() {
+                // No envolver selectores recursivos o NoOp
+                match &a {
+                    Message::ContextMenuAction(_) | Message::NoOp => {
+                        e.action = Some(a);
+                    },
+                    _ => e.action = Some(Message::ContextMenuAction(Box::new(a))),
+                }
+            }
+            e
+        }).collect()
     }
 
     fn sync_player_art(&mut self) {
@@ -2272,11 +2382,11 @@ impl AudoxidyApp {
                     crate::gui::widgets::standard_modal(
                         "Nueva lista de reproducción".to_string(),
                         iced::widget::column![
-                            iced::widget::text("Escribe el nombre:").size(14).color(COLOR_TEXT_SECONDARY),
+                            crate::gui::widgets::modal_text("Nombre para la nueva lista:".to_string()),
                             iced::widget::text_input("Nombre de la lista...", name)
                                 .on_input(Message::UpdateDialogInput)
                                 .on_submit(Message::ConfirmDialogAction)
-                                .padding(10)
+                                .padding([4, 5])
                                 .size(14)
                                 .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
                                     iced::widget::text_input::Style {
@@ -2288,7 +2398,7 @@ impl AudoxidyApp {
                                         selection: COLOR_ACCENT,
                                     }
                                 })
-                        ].spacing(10).into(),
+                        ].spacing(12).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Crear".to_string(),
@@ -2298,11 +2408,11 @@ impl AudoxidyApp {
                     crate::gui::widgets::standard_modal(
                         "Renombrar lista".to_string(),
                         iced::widget::column![
-                            iced::widget::text("Nuevo nombre:").size(14).color(COLOR_TEXT_SECONDARY),
+                            crate::gui::widgets::modal_text("Nuevo nombre de la lista:".to_string()),
                             iced::widget::text_input("Nuevo nombre...", new_name)
                                 .on_input(Message::UpdateDialogInput)
                                 .on_submit(Message::ConfirmDialogAction)
-                                .padding(10)
+                                .padding([4, 5])
                                 .size(14)
                                 .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
                                     iced::widget::text_input::Style {
@@ -2314,7 +2424,7 @@ impl AudoxidyApp {
                                         selection: COLOR_ACCENT,
                                     }
                                 })
-                        ].spacing(10).into(),
+                        ].spacing(12).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Renombrar".to_string(),
@@ -2323,23 +2433,37 @@ impl AudoxidyApp {
                 ActiveDialog::DeleteConfirm { name, .. } => {
                     crate::gui::widgets::standard_modal(
                         "¿Eliminar lista?".to_string(),
-                        iced::widget::text(format!("¿Estás seguro de que quieres eliminar \"{}\"? Esta acción no se puede deshacer.", name))
-                            .size(14)
-                            .color(COLOR_TEXT_SECONDARY).into(),
+                        crate::gui::widgets::modal_text(format!("¿Estás seguro de querer eliminar\nla lista \"{}\"?\nEsta acción no se puede deshacer.", name)),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Eliminar".to_string(),
                     )
                 },
-                ActiveDialog::ExportConfirm { name, .. } => {
+                ActiveDialog::ExportConfirm { name, id: _, format, mode } => {
+                    let format_choices = iced::widget::row![
+                        export_choice_button("M3U", *format == ExportFormat::M3U, Message::SelectExportFormat(ExportFormat::M3U)),
+                        export_choice_button("M3U8", *format == ExportFormat::M3U8, Message::SelectExportFormat(ExportFormat::M3U8)),
+                    ].spacing(10).align_y(iced::Alignment::Center);
+                    
+                    let mode_choices = iced::widget::row![
+                        export_choice_button("Solo Lista", *mode == ExportMode::SingleFile, Message::SelectExportMode(ExportMode::SingleFile)),
+                        export_choice_button("Carpeta Portable", *mode == ExportMode::PortableFolder, Message::SelectExportMode(ExportMode::PortableFolder)),
+                    ].spacing(10).align_y(iced::Alignment::Center);
+
                     crate::gui::widgets::standard_modal(
-                        "Exportar lista".to_string(),
-                        iced::widget::text(format!("¿Estas seguro de querer exportar la lista \"{}\" como una carpeta portátil junto con sus archivos de audio.?", name))
-                            .size(14)
-                            .color(COLOR_TEXT_SECONDARY).into(),
+                        "Guardar | Exportar lista".to_string(),
+                        iced::widget::column![
+                            crate::gui::widgets::modal_text(format!("Puedes guardar solo la lista o también\nexportar todas las canciones de la lista\n\"{}\".", name)),
+                            iced::widget::Space::new().height(iced::Length::Fixed(0.0)),
+                            crate::gui::widgets::modal_text("Formato de la lista:".to_string()),
+                            format_choices,
+                            iced::widget::Space::new().height(iced::Length::Fixed(0.0)),
+                            crate::gui::widgets::modal_text("Modo:".to_string()),
+                            mode_choices,
+                        ].spacing(10).align_x(iced::Alignment::Center).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
-                        "Exportar".to_string(),
+                        "Continuar".to_string(),
                     )
                 },
                 _ => iced::widget::Space::new().into(),
@@ -2382,6 +2506,40 @@ impl AudoxidyApp {
                         .align_x(iced::Alignment::Start)
                         .align_y(iced::Alignment::Start)
                 );
+        }
+
+        fn export_choice_button<'a>(label: &'a str, active: bool, msg: Message) -> iced::Element<'a, Message> {
+            iced::widget::button(
+                iced::widget::text(label)
+                    .size(14)
+                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
+            )
+                .padding([5, 10])
+                .on_press(msg)
+                .style(move |_t, status| {
+                    let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                    iced::widget::button::Style {
+                        background: if active { 
+                            Some(COLOR_ACCENT.into())
+                        } else if is_hovered {
+                            Some(COLOR_ACCENT.into())
+                        } else { 
+                            Some(COLOR_CONTRAST.into()) 
+                        },
+                        text_color: if active { COLOR_TEXT_PRIMARY } else if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                        border: iced::Border { 
+                            radius: 6.0.into(), 
+                            width: 0.0, 
+                            color: if active { 
+                                iced::Color::TRANSPARENT 
+                            } else { 
+                                COLOR_TEXT_SECONDARY
+                            } 
+                        },
+                        ..Default::default()
+                    }
+                })
+                .into()
         }
 
         // --- Renderizar Menú Contextual Nativo ---
@@ -2625,4 +2783,3 @@ impl AudoxidyApp {
     }
 
 }
-

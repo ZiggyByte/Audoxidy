@@ -1130,7 +1130,7 @@ pub fn view<'a>(
                     .direction(iced::widget::scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
                             .width(4.0)
-                            .margin(0.0)
+                            .margin(4.0)
                             .scroller_width(4.0)
                     ));
 

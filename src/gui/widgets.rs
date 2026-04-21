@@ -306,7 +306,11 @@ pub fn custom_scrollbar_style(
             border: iced::Border::default(),
             scroller: iced::widget::scrollable::Scroller {
                 background: color.into(),
-                border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                border: iced::Border { 
+                    radius: 2.0.into(), 
+                    width: 4.0, 
+                    color: Color::TRANSPARENT 
+                },
             },
         },
         horizontal_rail: iced::widget::scrollable::Rail {
@@ -575,7 +579,11 @@ pub struct ContextMenuEntry<Message> {
 pub fn build_context_menu_content<'a, Message: Clone + 'a>(
     entries: Vec<ContextMenuEntry<Message>>,
 ) -> Element<'a, Message> {
-    let mut content = column![].spacing(0).width(Length::Fill);
+    let max_chars = entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0);
+    let calculated_width = (max_chars as f32 * 7.5) + 45.0;
+    let final_width = calculated_width.max(90.0);
+
+    let mut content = column![].spacing(0).width(Length::Fixed(final_width));
 
     for entry in entries {
         if let Some(action) = entry.action {
@@ -590,13 +598,13 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                             Element::from(
                                 container(
                                     svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                                        .width(Length::Fixed(24.0))
-                                        .height(Length::Fixed(24.0))
+                                        .width(Length::Fixed(21.0))
+                                        .height(Length::Fixed(21.0))
                                 )
-                                .width(Length::Fixed(24.0))
+                                .width(Length::Fixed(21.0))
                             )
                         } else {
-                            Element::from(Space::new().width(Length::Fixed(24.0)))
+                            Element::from(Space::new().width(Length::Fixed(21.0)))
                         },
                         Space::new().width(Length::Fixed(10.0)),
                         // Texto
@@ -609,7 +617,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                 )
                 .width(Length::Fill)
                 .height(Length::Fixed(32.0))
-                .padding(iced::Padding { left: 10.0, right: 10.0, ..Default::default() })
+                .padding(iced::Padding { left: 10.0, right: 0.0, ..Default::default() })
                 .align_y(iced::alignment::Vertical::Center)
             )
             .on_press(action)
@@ -618,9 +626,9 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                 let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
                 
                 button::Style {
-                    background: if is_hovered { Some(COLOR_ACCENT.into()) } else { None },
-                    text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
-                    border: iced::Border { radius: 4.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    background: if is_hovered { Some(COLOR_CONTRAST.into()) } else { None },
+                    text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_PRIMARY },
+                    border: iced::Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
                     ..Default::default()
                 }
             });
@@ -631,19 +639,23 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
             content = content.push(
                 container(Space::new().height(Length::Fixed(1.0)))
                     .width(Length::Fill)
-                    .padding(iced::Padding { top: 4.0, bottom: 4.0, ..Default::default() })
-                    .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY.scale_alpha(0.3)))
+                    .padding(iced::Padding { top: 0.0, bottom: 0.0, ..Default::default() })
+                    .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
             );
         }
     }
 
-    container(content)
-        .width(Length::Fixed(260.0))
+    container(
+        column![
+            content
+        ].spacing(0)
+    )
+    .width(Length::Fixed(final_width))
         .style(|_t: &Theme| {
             container::Style::default()
                 .background(COLOR_BG)
                 .border(iced::Border {
-                    color: COLOR_TEXT_SECONDARY.scale_alpha(0.5),
+                    color: COLOR_TEXT_SECONDARY,
                     width: 1.0,
                     radius: 8.0.into(),
                 })
@@ -665,6 +677,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     confirm_msg: Option<Message>,
     confirm_label: String,
 ) -> Element<'a, Message> {
+
     let mut footer = row![].spacing(10).padding(iced::Padding { top: 5.0,  ..Default::default() }).align_y(Alignment::Center);
 
     if let Some(cancel) = cancel_msg {
@@ -677,7 +690,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                     button::Style {
                         background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
                         text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
-                        border: iced::Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
                         ..Default::default()
                     }
                 })
@@ -694,7 +707,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                     button::Style {
                         background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
                         text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
-                        border: iced::Border { radius: 8.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
                         ..Default::default()
                     }
                 })
@@ -703,14 +716,17 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
 
     container(
         column![
-            text(title).size(16).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY),
-            container(content).padding([10, 0]),
+            Space::new().width(Length::Fixed(200.0)).height(Length::Fixed(0.0)),
+            text(title).size(16).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY).align_x(iced::alignment::Horizontal::Center),
+            container(content).padding([10, 0]).width(Length::Shrink),
             footer,
         ]
         .spacing(0)
+        .align_x(Alignment::Center)
+        .width(Length::Shrink)
     )
     .padding(15)
-    .width(Length::Fixed(250.0))
+    .width(Length::Shrink)
     .style(|_t: &Theme| container::Style {
         background: Some(COLOR_BG.into()),
         border: iced::Border {
@@ -726,6 +742,16 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
         ..container::Style::default()
     })
     .into()
+}
+
+/// Helper para texto dentro de modales con estilo global.
+pub fn modal_text<'a, Message: Clone + 'a>(content: String) -> Element<'a, Message> {
+    text(content)
+        .size(14)
+        .color(COLOR_TEXT_PRIMARY)
+        .font(FONT_INTER_SANS_NORMAL)
+        .align_x(iced::alignment::Horizontal::Center)
+        .into()
 }
 
 // ==========================================
@@ -1118,7 +1144,7 @@ where
         .direction(iced::widget::scrollable::Direction::Vertical(
             iced::widget::scrollable::Scrollbar::new()
                 .width(4)
-                .margin(0)
+                .margin(4)
                 .scroller_width(4)
         ))
         .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())

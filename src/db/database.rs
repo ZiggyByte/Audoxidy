@@ -270,9 +270,6 @@ impl Database {
             [],
         )?;
 
-        // Migración: Asegurar que is_external existe si la tabla ya fue creada
-        let _ = conn.execute("ALTER TABLE SONGS ADD COLUMN is_external INTEGER DEFAULT 0", []);
-
         // 9. HISTORIAL DE SHUFFLE POR SESIÓN
         conn.execute(
             "CREATE TABLE IF NOT EXISTS PLAYLIST_SHUFFLE_HISTORY (

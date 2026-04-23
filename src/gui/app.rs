@@ -183,6 +183,7 @@ pub enum Message {
     LibraryDeleteSelection,
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
+    LibraryShowPlaying,
     ToggleLibraryAddDropdown,
     PlayLibrarySelection,
     PlayLibraryAll,
@@ -234,6 +235,18 @@ pub enum Message {
     CloseContextMenu,
     ContextMenuAction(Box<Message>),
 
+    // Context Menu Actions
+    PlaylistContextMenuPlay(usize),
+    PlaylistAddFiles,
+    PlaylistAddFolder,
+    PlaylistProcessExternalFiles(Vec<std::path::PathBuf>),
+    PlaylistShowFileLocation(usize),
+    PlaylistShowInLibrary(usize),
+    PlaylistDeleteSelection(usize),
+    PlaylistRequestSubMenu(usize),
+    PlaylistSendToNewList(usize),
+    PlaylistSendToList(usize, i64),
+
     NoOp,
 }
 
@@ -246,7 +259,7 @@ pub enum ExportMode { SingleFile, PortableFolder }
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActiveDialog {
     None,
-    CreatePlaylist { name: String },
+    CreatePlaylist { name: String, pending_add_items: Option<usize> },
     RenamePlaylist { id: i64, current_name: String, new_name: String },
     DeleteConfirm { id: i64, name: String },
     ExportConfirm { 
@@ -754,13 +767,37 @@ impl AudoxidyApp {
             }
             Message::ToggleSongEnabled(linear_idx) => {
                 self.focus = AppFocus::Playlist;
+                let mut song_id_to_update = None;
+                if let Some(song) = self.playlist_manager.get_song_at_linear_index(linear_idx) {
+                    song_id_to_update = Some(song.song_id);
+                }
+
                 self.playlist_manager.toggle_song_enabled_at_linear_index(linear_idx);
-                // Persistir en BD (Fase 4)
+                
+                if let Some(song_id) = song_id_to_update {
+                    if let Ok(db) = self.database.lock() {
+                        let _ = db.toggle_song_enabled_in_playlist(self.playlist_manager.active_playlist_id, song_id);
+                    }
+                }
+                
                 Task::none()
             }
             Message::ToggleGroupEnabled(linear_idx) => {
                 self.focus = AppFocus::Playlist;
-                let _ = self.playlist_manager.toggle_group_enabled_at_linear_index(linear_idx);
+                let mut folder_to_update = None;
+                use crate::gui::playlist::PlaylistItemType;
+                if let Some(PlaylistItemType::Separator(path)) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    folder_to_update = Some(path);
+                }
+
+                self.playlist_manager.toggle_group_enabled_at_linear_index(linear_idx);
+
+                if let Some(path) = folder_to_update {
+                    if let Ok(db) = self.database.lock() {
+                        let _ = db.toggle_folder_enabled_in_playlist(self.playlist_manager.active_playlist_id, &path);
+                    }
+                }
+
                 Task::none()
             }
             Message::TogglePlaylistFolder(linear_idx) => {
@@ -808,7 +845,7 @@ impl AudoxidyApp {
 
             Message::UpdateDialogInput(s) => {
                 match &mut self.active_dialog {
-                    ActiveDialog::CreatePlaylist { name } => *name = s,
+                    ActiveDialog::CreatePlaylist { name, .. } => *name = s,
                     ActiveDialog::RenamePlaylist { new_name, .. } => *new_name = s,
                     _ => {}
                 }
@@ -822,14 +859,42 @@ impl AudoxidyApp {
                 let db = self.database.clone();
 
                 match dialog {
-                    ActiveDialog::CreatePlaylist { name } => {
+                    ActiveDialog::CreatePlaylist { name, pending_add_items } => {
                         let final_name = if name.trim().is_empty() { 
                             format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1) 
                         } else { name };
 
+                        let playlist_manager_clone = self.playlist_manager.clone();
                         return Task::perform(async move {
+                            let mut target_songs = Vec::new();
+                            if let Some(idx) = pending_add_items {
+                                if let Some(item_info) = playlist_manager_clone.get_item_info_at_linear_index(idx) {
+                                    match item_info {
+                                        crate::gui::playlist::PlaylistItemType::Song(folder, local_idx) => {
+                                            if let Some(group) = playlist_manager_clone.groups.iter().find(|g| g.folder_path == folder) {
+                                                if let Some(song_ref) = group.songs.get(local_idx) {
+                                                    target_songs.push(song_ref.song_id);
+                                                }
+                                            }
+                                        }
+                                        crate::gui::playlist::PlaylistItemType::Separator(folder) => {
+                                            if let Some(group) = playlist_manager_clone.groups.iter().find(|g| g.folder_path == folder) {
+                                                target_songs.extend(group.songs.iter().map(|s| s.song_id));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             let db_lock = db.lock().unwrap();
-                            db_lock.create_playlist(&final_name, false).ok()
+                            if let Ok(new_id) = db_lock.create_playlist(&final_name, false) {
+                                if !target_songs.is_empty() {
+                                    for song_id in target_songs {
+                                        let _ = db_lock.add_song_to_playlist(new_id, song_id);
+                                    }
+                                }
+                                Some(new_id)
+                            } else { None }
                         }, Message::RefreshPlaylists);
                     }
                     ActiveDialog::RenamePlaylist { id, new_name, .. } => {
@@ -1906,6 +1971,261 @@ impl AudoxidyApp {
                 })
             }
 
+            Message::RefreshPlaylists(target_id) => {
+                let db_arc = self.database.clone();
+                Task::perform(async move {
+                    db_arc.lock().unwrap().get_all_playlists()
+                }, move |playlists| Message::InternalPlaylistsRefreshed(playlists.unwrap_or_default(), target_id))
+            }
+
+            Message::PlaylistContextMenuPlay(linear_idx) => {
+                use crate::gui::playlist::PlaylistItemType;
+                if let Some(item) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    let target_song_idx = match item {
+                        PlaylistItemType::Song(..) => Some(linear_idx),
+                        PlaylistItemType::Separator(..) => {
+                            let groups = self.playlist_manager.active_groups();
+                            let mut current_idx = 0;
+                            let mut found_idx = None;
+                            for group in groups {
+                                if current_idx == linear_idx {
+                                    for (i, song) in group.songs.iter().enumerate() {
+                                        if song.enabled {
+                                            found_idx = Some(linear_idx + 1 + i);
+                                            break;
+                                        }
+                                    }
+                                    break;
+                                }
+                                current_idx += 1 + group.songs.len();
+                            }
+                            found_idx
+                        }
+                    };
+
+                    if let Some(idx) = target_song_idx {
+                        if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
+                            let path = song.file_path.clone();
+                            self.sync_player_art();
+                            if let Err(e) = self.audio_manager.load_file(&path) {
+                                tracing::error!("Error reproduciendo archivo: {}", e);
+                            } else {
+                                self.audio_manager.play();
+                                self.playlist_manager.playing_song_idx = Some(idx);
+                                self.playlist_manager.selected_song_idx = Some(idx);
+                                self.persist_playlist_state();
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+
+            Message::PlaylistAddFiles => {
+                Task::perform(async move {
+                    rfd::FileDialog::new()
+                        .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv"])
+                        .add_filter("Listas", &["m3u", "m3u8"])
+                        .pick_files()
+                }, |files| {
+                    if let Some(f) = files {
+                        Message::PlaylistProcessExternalFiles(f)
+                    } else {
+                        Message::NoOp
+                    }
+                })
+            }
+
+            Message::PlaylistAddFolder => {
+                Task::perform(async move {
+                    rfd::FileDialog::new().pick_folder()
+                }, |folder| {
+                    if let Some(f) = folder {
+                        Message::PlaylistProcessExternalFiles(vec![f])
+                    } else {
+                        Message::NoOp
+                    }
+                })
+            }
+
+            Message::PlaylistProcessExternalFiles(paths) => {
+                let db_arc = self.database.clone();
+                let active_id = self.playlist_manager.active_playlist_id;
+                Task::perform(async move {
+                    crate::db::scanner::Scanner::process_external_batch(&db_arc, paths, active_id);
+                }, move |_| Message::RefreshPlaylists(Some(active_id)))
+            }
+
+            Message::PlaylistShowFileLocation(linear_idx) => {
+                if let Some(song) = self.playlist_manager.get_song_at_linear_index(linear_idx) {
+                    let path_str = song.file_path.clone();
+                    Task::perform(async move {
+                        let path = std::path::Path::new(&path_str);
+                        if let Some(parent) = path.parent() {
+                            #[cfg(target_os = "linux")]
+                            {
+                                let _ = std::process::Command::new("xdg-open")
+                                    .arg(parent)
+                                    .spawn();
+                            }
+                            #[cfg(target_os = "windows")]
+                            {
+                                let _ = std::process::Command::new("explorer")
+                                    .arg(format!("/select,\"{}\"", path_str))
+                                    .spawn();
+                            }
+                            #[cfg(target_os = "macos")]
+                            {
+                                let _ = std::process::Command::new("open")
+                                    .arg("-R")
+                                    .arg(&path_str)
+                                    .spawn();
+                            }
+                        }
+                    }, |_| Message::NoOp)
+                } else {
+                    Task::none()
+                }
+            }
+
+            Message::PlaylistShowInLibrary(linear_idx) => {
+                let mut path_opt = None;
+                if let Some(item_info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    match item_info {
+                        crate::gui::playlist::PlaylistItemType::Song(folder, local_idx) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                if let Some(song_ref) = group.songs.get(local_idx) {
+                                    path_opt = Some(song_ref.file_path.clone());
+                                }
+                            }
+                        }
+                        crate::gui::playlist::PlaylistItemType::Separator(folder) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                if let Some(first_song) = group.songs.first() {
+                                    path_opt = Some(first_song.file_path.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+                self.handle_library_reveal(path_opt)
+            }
+
+            Message::PlaylistDeleteSelection(linear_idx) => {
+                let db_arc = self.database.clone();
+                let active_playlist_id = self.playlist_manager.active_playlist_id;
+                
+                let mut target_songs = Vec::new();
+                if let Some(item_info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    match item_info {
+                        crate::gui::playlist::PlaylistItemType::Song(folder, local_idx) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                if let Some(song_ref) = group.songs.get(local_idx) {
+                                    target_songs.push(song_ref.song_id);
+                                }
+                            }
+                        }
+                        crate::gui::playlist::PlaylistItemType::Separator(folder) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                target_songs.extend(group.songs.iter().map(|s| s.song_id));
+                            }
+                        }
+                    }
+                }
+
+                if !target_songs.is_empty() {
+                    return Task::perform(async move {
+                        let db_lock = db_arc.lock().unwrap();
+                        for song_id in target_songs {
+                            let _ = db_lock.remove_song_from_playlist(active_playlist_id, song_id);
+                        }
+                        Some(active_playlist_id)
+                    }, Message::RefreshPlaylists);
+                }
+                Task::none()
+            }
+
+            Message::PlaylistRequestSubMenu(linear_idx) => {
+                let pos = self.last_mouse_pos;
+                use crate::gui::widgets::ContextMenuEntry;
+                let mut entries = vec![
+                    ContextMenuEntry {
+                        label: "Atrás".to_string(),
+                        icon: Some("double-arrow-left.svg".to_string()),
+                        action: Some(Message::RequestContextMenu(crate::gui::playlist::get_item_context_menu_entries(linear_idx))),
+                    },
+                    ContextMenuEntry {
+                        label: "".to_string(), icon: None, action: None,
+                    },
+                    ContextMenuEntry {
+                        label: "Nueva lista".to_string(),
+                        icon: Some("playlist-add-straight.svg".to_string()), 
+                        action: Some(Message::PlaylistSendToNewList(linear_idx)),
+                    },
+                    ContextMenuEntry {
+                        label: "".to_string(), icon: None, action: None,
+                    },
+                ];
+                
+                let mut sorted_playlists = self.playlist_manager.playlists.clone();
+                sorted_playlists.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+                
+                for pl in sorted_playlists {
+                    entries.push(ContextMenuEntry {
+                        label: pl.name.clone(),
+                        icon: Some("playlist-music.svg".to_string()),
+                        action: Some(Message::PlaylistSendToList(linear_idx, pl.id)),
+                    });
+                }
+
+                self.update(Message::OpenContextMenu(pos, entries))
+            }
+
+            Message::PlaylistSendToNewList(linear_idx) => {
+                self.context_menu = None;
+                self.update(Message::OpenDialog(ActiveDialog::CreatePlaylist { name: "".to_string(), pending_add_items: Some(linear_idx) }))
+            }
+
+            Message::PlaylistSendToList(linear_idx, target_playlist_id) => {
+                self.context_menu = None;
+                let db_arc = self.database.clone();
+                let mut target_songs = Vec::new();
+
+                if let Some(item_info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    match item_info {
+                        crate::gui::playlist::PlaylistItemType::Song(folder, local_idx) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                if let Some(song_ref) = group.songs.get(local_idx) {
+                                    target_songs.push(song_ref.song_id);
+                                }
+                            }
+                        }
+                        crate::gui::playlist::PlaylistItemType::Separator(folder) => {
+                            if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.folder_path == folder) {
+                                target_songs.extend(group.songs.iter().map(|s| s.song_id));
+                            }
+                        }
+                    }
+                }
+
+                if !target_songs.is_empty() {
+                    return Task::perform(async move {
+                        let db_lock = db_arc.lock().unwrap();
+                        for song_id in target_songs {
+                            let _ = db_lock.add_song_to_playlist(target_playlist_id, song_id);
+                        }
+                    }, |_| Message::NoOp);
+                }
+                Task::none()
+            }
+
+            Message::LibraryShowPlaying => {
+                let path_opt = self.playlist_manager.playing_song_idx
+                    .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
+                    .map(|s| s.file_path.clone());
+                self.handle_library_reveal(path_opt)
+            }
+
             Message::ImportPlaylistFile(path) => {
                 let db_arc = self.database.clone();
                 let path_clone = path.clone();
@@ -2378,7 +2698,7 @@ impl AudoxidyApp {
         
         if self.active_dialog != ActiveDialog::None {
             let dialog_content = match &self.active_dialog {
-                ActiveDialog::CreatePlaylist { name } => {
+                ActiveDialog::CreatePlaylist { name, .. } => {
                     crate::gui::widgets::standard_modal(
                         "Nueva lista de reproducción".to_string(),
                         iced::widget::column![
@@ -2782,4 +3102,157 @@ impl AudoxidyApp {
         };
     }
 
+    fn handle_library_reveal(&mut self, path_opt: Option<String>) -> Task<Message> {
+        if let Some(path) = path_opt {
+            if let Some(all_songs) = &self.library_manager.cached_all_songs {
+                if let Some(lib_song) = all_songs.iter().find(|s| s.full_file_path == path).cloned() {
+                    self.focus = crate::gui::app::AppFocus::Library;
+
+                    // 1. Determinar si necesitamos limpiar filtros (si la canción no es visible actualmente)
+                    let is_visible = self.library_manager.filtered_songs.as_ref()
+                        .map(|songs| songs.iter().any(|s| s.full_file_path == path))
+                        .unwrap_or(false);
+
+                    if !is_visible {
+                        // Limpiar búsqueda
+                        self.library_manager.search_query.clear();
+                        
+                        // Limpiar filtros internos de la biblioteca
+                        self.library_manager.filter_artist = None;
+                        self.library_manager.filter_album = None;
+                        self.library_manager.filter_genre = None;
+                        self.library_manager.filter_year = None;
+                        self.library_manager.filter_folder_id = None;
+                        
+                        // Limpiar VISUALMENTE el módulo de filtros lateral
+                        self.filters_manager.selected_subfilter = None;
+                        self.filters_manager.selected_tree_node = None;
+                        self.filters_manager.apply_view();
+                        
+                        // Aplicar los cambios para regenerar la vista completa
+                        self.library_manager.apply_filter();
+                    }
+
+                    let mut total_y = 0.0;
+                    let item_h = self.library_manager.get_row_height();
+
+                    match self.library_manager.view_mode {
+                        crate::gui::library::LibraryViewMode::Grid => {
+                             let album_name = lib_song.album.as_deref().unwrap_or("Desconocido");
+                             let artist_name = lib_song.artist.as_deref().unwrap_or("Desconocido");
+                             
+                             let albums_list = if self.library_manager.filtered_albums.is_some() {
+                                 self.library_manager.filtered_albums.as_ref()
+                             } else {
+                                 self.library_manager.cached_albums.as_ref()
+                             };
+
+                             if let Some(albums) = albums_list {
+                                 if let Some(album_info) = albums.iter().find(|a| a.1 == album_name && a.2 == artist_name) {
+                                     let hash_id = album_info.0.clone();
+                                     let composite_id = format!("{}|{}", artist_name, hash_id);
+                                     
+                                     if self.library_manager.expanded_album.as_deref() != Some(&composite_id) {
+                                         self.library_manager.expanded_album = Some(composite_id.clone());
+                                         if let Ok(db) = self.database.lock() {
+                                             if let Ok(mut songs) = db.get_songs_by_album_and_artist(&hash_id, artist_name) {
+                                                 if self.library_manager.sort_column.is_some() {
+                                                     self.library_manager.sort_songs(&mut songs);
+                                                 }
+                                                 self.library_manager.expanded_album_songs = Some(songs);
+                                             }
+                                         }
+                                     }
+                                     
+                                     let cols = self.library_manager.albums_per_row.get().max(2);
+                                     let mut current_y = 0.0;
+                                     let mut found_y = None;
+                                     let search_query = self.library_manager.search_query.trim();
+
+                                     for chunk in albums.chunks(cols) {
+                                         let mut row_h = 252.0;
+                                         for (a_id, _, a_artist, _, _, _) in chunk {
+                                             let comp = format!("{}|{}", a_artist, a_id);
+                                             if self.library_manager.expanded_album.as_deref() == Some(&comp) {
+                                                 let s_count = if let Some(songs) = &self.library_manager.expanded_album_songs { 
+                                                     if search_query.is_empty() {
+                                                         songs.len()
+                                                     } else {
+                                                         songs.iter().filter(|s| crate::utils::song_matches_search(s, search_query)).count()
+                                                     }
+                                                 } else { 0 };
+                                                 row_h += 60.0 + (s_count.max(1) as f32 * 32.0);
+                                                 break;
+                                             }
+                                         }
+
+                                         if chunk.iter().any(|a| a.0 == hash_id && a.2 == artist_name) {
+                                             if let Some(expanded) = &self.library_manager.expanded_album_songs {
+                                                 // Encontrar la posición RENDERIZADA de la canción (teniendo en cuenta la búsqueda interna)
+                                                 let mut rendered_idx = 0;
+                                                 let mut found_match = false;
+                                                 for (idx, s) in expanded.iter().enumerate() {
+                                                     let matches = search_query.is_empty() || crate::utils::song_matches_search(s, search_query);
+                                                     if matches {
+                                                         if s.full_file_path == path {
+                                                             found_y = Some(current_y + 252.0 + 30.0 + (rendered_idx as f32 * 32.0));
+                                                             self.library_manager.selected_song_idx = Some(idx);
+                                                             self.library_manager.selected_album = Some(composite_id.clone());
+                                                             found_match = true;
+                                                             break;
+                                                         }
+                                                         rendered_idx += 1;
+                                                     }
+                                                 }
+                                                 if found_match {
+                                                     if let Some(y) = found_y { 
+                                                         total_y = y; 
+                                                         self.library_manager.selected_item_hint = Some((y, 32.0));
+                                                     }
+                                                     break;
+                                                 }
+                                             }
+                                         }
+                                         current_y += row_h;
+                                     }
+                                 }
+                             }
+                        },
+                        _ => {
+                            let artist_name = lib_song.artist.as_ref().or(lib_song.album_artist.as_ref()).map(|s| s.as_str()).unwrap_or("Artista Desconocido").to_string();
+                            self.library_manager.collapsed_artists.remove(&artist_name);
+                            
+                            if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::DetailedList {
+                                if let Some(album_name) = &lib_song.album {
+                                    self.library_manager.collapsed_albums.remove(album_name);
+                                }
+                            }
+
+                            if let Some(filtered) = &self.library_manager.filtered_songs {
+                                if let Some(idx) = filtered.iter().position(|s| s.full_file_path == path) {
+                                    self.library_manager.selected_song_idx = Some(idx);
+                                    self.library_manager.selected_header = None;
+                                    self.library_manager.selected_album = None;
+                                    
+                                    let items = self.library_manager.get_visible_items();
+                                    if let Some((_, y, h)) = items.iter().find(|(it, _, _)| {
+                                        if let crate::gui::library::LibraryListItem::Song(s_idx) = it {
+                                            *s_idx == idx
+                                        } else { false }
+                                    }) {
+                                        total_y = *y;
+                                        self.library_manager.selected_item_hint = Some((*y, *h));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    self.update_selection_stats();
+                    return self.library_manager.get_scroll_task(false);
+                }
+            }
+        }
+        Task::none()
+    }
 }

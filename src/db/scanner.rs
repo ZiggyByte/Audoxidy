@@ -72,7 +72,7 @@ impl Scanner {
         dirty_flag.store(true, Ordering::Relaxed);
     }
 
-    fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, _root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>, is_external: bool) {
+    pub fn process_file(db_m: &Arc<Mutex<Database>>, path: &Path, _root: &str, import_order: i64, enqueued_covers: &mut std::collections::HashSet<String>, is_external: bool) {
         let mut song = SongData::default();
         let mut extended = SongMetadataExtended::default();
         
@@ -264,5 +264,59 @@ impl Scanner {
         };
         
         Some(playlist_id)
+    }
+
+    pub fn process_external_batch(db_m: &Arc<Mutex<Database>>, paths: Vec<std::path::PathBuf>, playlist_id: i64) {
+        let mut enqueued_covers = std::collections::HashSet::new();
+        let supported_extensions = [
+            "mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv"
+        ];
+
+        if let Ok(db) = db_m.lock() {
+            let _ = db.begin_transaction();
+        }
+
+        for path in paths {
+            if path.is_file() {
+                let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                if supported_extensions.contains(&ext.as_str()) {
+                    Self::process_file(db_m, &path, "", 0, &mut enqueued_covers, true);
+                    
+                    // Añadir a la playlist
+                    if let Ok(db) = db_m.lock() {
+                        let path_str = path.to_string_lossy();
+                        if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
+                            let _ = db.add_song_to_playlist(playlist_id, song_id);
+                        }
+                    }
+                } else if ext == "m3u" || ext == "m3u8" {
+                    // El import_m3u ya hace su propia transacción y añade a una NUEVA playlist.
+                    // Para "Agregar archivo", el usuario podría querer anexar a la ACTUAL.
+                    // Pero por ahora seguiremos la lógica de import_m3u o la adaptaremos.
+                    Self::import_m3u(db_m, &path.to_string_lossy());
+                }
+            } else if path.is_dir() {
+                // Si es un directorio, escaneamos recursivamente
+                for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
+                    let p = entry.path();
+                    if p.is_file() {
+                        let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+                        if supported_extensions.contains(&ext.as_str()) {
+                            Self::process_file(db_m, p, "", 0, &mut enqueued_covers, true);
+                            if let Ok(db) = db_m.lock() {
+                                let path_str = p.to_string_lossy();
+                                if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
+                                    let _ = db.add_song_to_playlist(playlist_id, song_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Ok(db) = db_m.lock() {
+            let _ = db.commit_transaction();
+        }
     }
 }

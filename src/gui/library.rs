@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, Space},
+    widget::{button, column, container, row, text, Space},
     Alignment, Color, Element, Length, Theme, Task,
 };
 use std::sync::{Arc, Mutex};
@@ -7,6 +7,7 @@ use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::theme::*;
 // Import deleted since song row is injected and artist header is in universal_song_list
+use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
 use crate::utils::{format_duration, format_size, format_metadata, truncate_text, SortColumn};
 
 /// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
@@ -287,6 +288,20 @@ impl LibraryManager {
 
     /// Maneja la navegación por teclado unificada entre cabeceras y canciones.
     /// Devuelve (NuevaCabecera, NuevoIndiceCanción, FocoEnCanción).
+    pub fn get_row_height(&self) -> f32 {
+        match self.view_mode {
+            LibraryViewMode::ThumbnailList => 42.0,
+            _ => 32.0,
+        }
+    }
+
+    pub fn get_header_height(&self) -> f32 {
+        match self.view_mode {
+            LibraryViewMode::ThumbnailList => 42.0,
+            _ => 32.0,
+        }
+    }
+
     pub fn is_list_mode(&self) -> bool {
         self.view_mode == LibraryViewMode::SimpleList ||
         self.view_mode == LibraryViewMode::DetailedList ||
@@ -442,15 +457,11 @@ impl LibraryManager {
     /// Calcula la tarea de scroll para asegurar que el elemento seleccionado sea visible.
     /// Si 'force_top' es true, el elemento se moverá directamente a la parte superior.
     pub fn get_scroll_task<Message: 'static>(&self, force_top: bool) -> Task<Message> {
-        if !self.is_list_mode() {
-            return Task::none();
-        }
-
         let scroll_id = LIBRARY_SCROLL_ID.clone();
         let margin_top = match self.view_mode {
             LibraryViewMode::DetailedList => 32.0_f32,
             LibraryViewMode::ThumbnailList => 84.0_f32,
-            LibraryViewMode::Grid => 0.0, // Grid usa navegación propia pero permitimos el cálculo
+            LibraryViewMode::Grid => 64.0, // Barra superior + tabs
             _ => 64.0_f32,
         };
 
@@ -1124,15 +1135,14 @@ pub fn view<'a>(
                 // IMPORTANTE: NO usamos IDs dinámicos (A/B) basados en search_nonce a menos que sea estrictamente necesario.
                 // Mantener el scroll_id constante permite que Iced mantenga el caché de carátulas y estado del scroll.
                 let scroll_id = LIBRARY_SCROLL_ID.clone();
-                let scrollable_grid = scrollable(res_grid)
-                    .width(Length::Fill).height(Length::Fill).id(scroll_id).on_scroll(Message::LibraryScroll)
-                    .style(crate::gui::widgets::custom_scrollbar_style)
-                    .direction(iced::widget::scrollable::Direction::Vertical(
-                        iced::widget::scrollable::Scrollbar::new()
-                            .width(4.0)
-                            .margin(4.0)
-                            .scroller_width(4.0)
-                    ));
+                let scrollable_grid = standard_scrollable(
+                    scroll_id,
+                    res_grid,
+                    iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+                )
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .on_scroll(Message::LibraryScroll);
 
                 container(scrollable_grid).width(Length::Fill).height(Length::Fill).into()
             }
@@ -1218,6 +1228,8 @@ pub fn view<'a>(
         icon_btn_size("play-straight-outlined.svg", Message::PlayLibrarySelection, 36.0),
         Space::new().width(5.0),
         icon_btn_size("more-small.svg", Message::OpenFolderPicker, 31.0),
+        Space::new().width(5.0),
+        icon_btn_size("radio-button-on.svg", Message::LibraryShowPlaying, 30.0),
         Space::new().width(5.0),
         icon_btn_size(view_icon_str, Message::ToggleLibraryViewDropdown, 30.0),
     ].align_y(Alignment::Center).height(Length::Fill);

@@ -1,9 +1,9 @@
 use iced::{
     widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space},
-    Alignment, Color, Element, Length, Theme,
+    Alignment, Color, Element, Length, Theme, Padding,
 };
 use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
-use iced::{Event, Rectangle, Size, Vector, Padding};
+use iced::{Event, Rectangle, Size, Vector};
 
 use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST, COLOR_TEXT_SECONDARY, COLOR_ACCENT, COLOR_BG, FONT_INTER_SANS_NORMAL,FONT_INTER_SANS_MEDIUM};
 use crate::utils::{truncate_text, SortColumn, format_duration, format_metadata};
@@ -305,10 +305,22 @@ pub fn custom_scrollbar_style(
             background: None,
             border: iced::Border::default(),
             scroller: iced::widget::scrollable::Scroller {
-                background: color.into(),
+                background: if color != Color::TRANSPARENT {
+                    iced::Background::Gradient(iced::Gradient::Linear(iced::gradient::Linear {
+                        angle: 1.5707964.into(), // 90 grados (Horizontal)
+                        stops: [
+                            Some(iced::gradient::ColorStop { offset: 0.49, color: Color::TRANSPARENT }),
+                            Some(iced::gradient::ColorStop { offset: 0.5, color: color }),
+                            Some(iced::gradient::ColorStop { offset: 1.0, color: color }),
+                            None, None, None, None, None
+                        ],
+                    }))
+                } else {
+                    Color::TRANSPARENT.into()
+                },
                 border: iced::Border { 
-                    radius: 2.0.into(), 
-                    width: 4.0, 
+                    radius: 0.0.into(), 
+                    width: 0.0, 
                     color: Color::TRANSPARENT 
                 },
             },
@@ -317,8 +329,24 @@ pub fn custom_scrollbar_style(
             background: None,
             border: iced::Border::default(),
             scroller: iced::widget::scrollable::Scroller {
-                background: Color::TRANSPARENT.into(),
-                border: iced::Border::default(),
+                background: if color != Color::TRANSPARENT {
+                    iced::Background::Gradient(iced::Gradient::Linear(iced::gradient::Linear {
+                        angle: 3.1415927.into(), // 180 grados (Vertical)
+                        stops: [
+                            Some(iced::gradient::ColorStop { offset: 0.49, color: Color::TRANSPARENT }),
+                            Some(iced::gradient::ColorStop { offset: 0.5, color: color }),
+                            Some(iced::gradient::ColorStop { offset: 1.0, color: color }),
+                            None, None, None, None, None
+                        ],
+                    }))
+                } else {
+                    Color::TRANSPARENT.into()
+                },
+                border: iced::Border { 
+                    radius: 0.0.into(), 
+                    width: 0.0, 
+                    color: Color::TRANSPARENT 
+                },
             },
         },
         gap: None,
@@ -329,6 +357,26 @@ pub fn custom_scrollbar_style(
             icon: Color::TRANSPARENT,
         },
     }
+}
+
+/// Widget scrollable estándar con barra de desplazamiento de 12px (4px visibles + 4px de margen interactivo transparente a cada lado).
+pub fn standard_scrollable<'a, Message: 'a>(
+    id: iced::widget::Id,
+    content: impl Into<Element<'a, Message>>,
+    direction: iced::widget::scrollable::Direction,
+) -> iced::widget::scrollable::Scrollable<'a, Message> {
+    scrollable(content)
+        .id(id)
+        .direction(direction)
+        .style(custom_scrollbar_style)
+}
+
+/// Configuración estándar de la barra de desplazamiento para uso global.
+pub fn standard_scrollbar() -> iced::widget::scrollable::Scrollbar {
+    iced::widget::scrollable::Scrollbar::new()
+        .width(8)
+        .scroller_width(8)
+        .margin(0)
 }
 
 /// Aplica un efecto de rotación tipo "Marquesina" sobre una cadena de texto dada una longitud límite.
@@ -478,8 +526,8 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
     column![
         container(
             scrollable(sort_bar_content)
-                .direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new().width(0).scroller_width(0)
+                .direction(iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0)
                 ))
         )
             .width(Length::Fill)
@@ -580,8 +628,8 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
     entries: Vec<ContextMenuEntry<Message>>,
 ) -> Element<'a, Message> {
     let max_chars = entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0);
-    let calculated_width = (max_chars as f32 * 7.5) + 45.0;
-    let final_width = calculated_width.max(90.0);
+    let calculated_width = (max_chars as f32 * 7.5) + 52.0;
+    let final_width = calculated_width.max(80.0);
 
     let mut content = column![].spacing(0).width(Length::Fixed(final_width));
 
@@ -589,6 +637,10 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
         if let Some(action) = entry.action {
             let label = entry.label.clone();
             let icon_name = entry.icon.clone();
+            
+            let is_rename = label == "Renombrar lista";
+            let left_padding = if is_rename { 9.0 } else { 10.0 };
+            let row_spacing = if is_rename { 16.0 } else { 15.0 };
 
             let btn = button(
                 container(
@@ -598,15 +650,15 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                             Element::from(
                                 container(
                                     svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                                        .width(Length::Fixed(21.0))
-                                        .height(Length::Fixed(21.0))
+                                        .width(Length::Fixed(24.0))
+                                        .height(Length::Fixed(24.0))
                                 )
-                                .width(Length::Fixed(21.0))
+                                .width(Length::Fixed(24.0))
                             )
                         } else {
-                            Element::from(Space::new().width(Length::Fixed(21.0)))
+                            Element::from(Space::new().width(Length::Fixed(24.0)))
                         },
-                        Space::new().width(Length::Fixed(10.0)),
+                        Space::new().width(Length::Fixed(row_spacing)),
                         // Texto
                         text(label)
                             .size(13)
@@ -617,7 +669,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                 )
                 .width(Length::Fill)
                 .height(Length::Fixed(32.0))
-                .padding(iced::Padding { left: 10.0, right: 0.0, ..Default::default() })
+                .padding(iced::Padding { left: left_padding, right: 0.0, ..Default::default() })
                 .align_y(iced::alignment::Vertical::Center)
             )
             .on_press(action)
@@ -1139,17 +1191,14 @@ where
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
         .on_press(crate::gui::app::Message::LibraryDeselect);
 
-    let main_scroll = scrollable(list_container)
-        .width(Length::Fill).height(Length::Fill)
-        .direction(iced::widget::scrollable::Direction::Vertical(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(4)
-                .margin(4)
-                .scroller_width(4)
-        ))
-        .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())
-        .on_scroll(crate::gui::app::Message::LibraryScroll)
-        .style(crate::gui::widgets::custom_scrollbar_style);
+    let main_scroll = standard_scrollable(
+        crate::gui::library::LIBRARY_SCROLL_ID.clone(),
+        list_container,
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .on_scroll(crate::gui::app::Message::LibraryScroll);
 
     let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
         let is_header_selected = manager.selected_header.as_ref() == Some(&st_group.name);
@@ -1523,14 +1572,14 @@ where
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
         .on_press(crate::gui::app::Message::LibraryDeselect);
 
-    let main_scroll = scrollable(list_container)
-        .width(Length::Fill).height(Length::Fill)
-        .direction(iced::widget::scrollable::Direction::Vertical(
-            iced::widget::scrollable::Scrollbar::new().width(4).margin(0).scroller_width(4)
-        ))
-        .id(crate::gui::library::LIBRARY_SCROLL_ID.clone())
-        .on_scroll(crate::gui::app::Message::LibraryScroll)
-        .style(crate::gui::widgets::custom_scrollbar_style);
+    let main_scroll = standard_scrollable(
+        crate::gui::library::LIBRARY_SCROLL_ID.clone(),
+        list_container,
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .on_scroll(crate::gui::app::Message::LibraryScroll);
 
     let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
         let is_header_explicitly_selected = manager.selected_header.as_ref() == Some(&st_group.name)

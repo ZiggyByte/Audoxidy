@@ -619,6 +619,7 @@ impl Database {
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
             JOIN ARTISTS al_ar ON al.artist_id = al_ar.id
+            WHERE s.is_external = 0
             ORDER BY ar.name ASC, al.year ASC, al.title ASC, s.track_num ASC
         ")?;
 
@@ -656,9 +657,11 @@ impl Database {
 
     pub fn get_all_albums(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
-            SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
+            SELECT DISTINCT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
             FROM ALBUMS al
             JOIN ARTISTS ar ON al.artist_id = ar.id
+            JOIN SONGS s ON s.album_id = al.id
+            WHERE s.is_external = 0
             ORDER BY ar.name ASC, al.year ASC, al.title ASC
         ")?;
 

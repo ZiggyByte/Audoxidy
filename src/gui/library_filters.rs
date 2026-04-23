@@ -1,11 +1,11 @@
 use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, text, Space},
+    widget::{button, column, container, mouse_area, row, text, Space},
     Alignment, Color, Element, Length, Theme,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::gui::app::Message;
 use crate::gui::theme::*;
-use crate::gui::widgets::{custom_scrollbar_style, chevron_btn};
+use crate::gui::widgets::{standard_scrollable, standard_scrollbar, chevron_btn};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FilterType {
@@ -528,14 +528,11 @@ pub fn view<'a>(
         tree_col_content = render_tree(&manager.tree_data, &manager.expanded_nodes, 0, manager);
     }
 
-    let scrollable_tree = scrollable(tree_col_content)
-        .direction(scrollable::Direction::Vertical(
-            scrollable::Scrollbar::new()
-                .width(4)
-                .scroller_width(4)
-                .margin(4),
-        ))
-        .style(custom_scrollbar_style);
+    let scrollable_tree = standard_scrollable(
+        iced::widget::Id::unique(),
+        tree_col_content,
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+    );
 
 
 

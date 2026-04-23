@@ -1,11 +1,12 @@
 use iced::{
-    widget::{button, column, container, row, scrollable, text, svg, mouse_area, Space},
+    widget::{button, column, container, row, text, svg, mouse_area, Space},
     Alignment, Color, Element, Length, Theme, Background, Padding,
 };
 use crate::audio::AudioManager;
 use crate::db::database::{PlaylistFolderGroup, PlaylistSongRef, ShuffleSession};
 use crate::gui::app::Message;
 use crate::gui::theme::*;
+use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
 use crate::utils::{format_duration, truncate_text};
 
 // ============================================================
@@ -535,7 +536,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Nueva lista".to_string(),
                     icon: Some("playlist-add-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
+                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into(), pending_add_items: None })),
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Renombrar lista".to_string(),
@@ -564,12 +565,12 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Importar lista".to_string(),
-                    icon: Some("arrow-down-chevron.svg".to_string()),
+                    icon: Some("import-straight.svg".to_string()),
                     action: Some(Message::OpenPlaylistFilePicker),
                 },
                 crate::gui::widgets::ContextMenuEntry {
                     label: "Exportar lista".to_string(),
-                    icon: Some("arrow-up-chevron.svg".to_string()),
+                    icon: Some("export-straight.svg".to_string()),
                     action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
                         id, 
                         name: name.clone(),
@@ -606,11 +607,11 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         crate::gui::widgets::ContextMenuEntry {
             label: "Nueva lista".to_string(),
             icon: Some("playlist-add-straight.svg".to_string()),
-            action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into() })),
+            action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into(), pending_add_items: None })),
         },
         crate::gui::widgets::ContextMenuEntry {
             label: "Importar lista".to_string(),
-            icon: Some("arrow-down-chevron.svg".to_string()),
+            icon: Some("import-straight.svg".to_string()),
             action: Some(Message::OpenPlaylistFilePicker),
         },
     ];
@@ -744,21 +745,18 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         );
     }
 
-    let scroll = scrollable(songs_col)
-        .id(PLAYLIST_SCROLL_ID.clone())
-        .height(Length::Fill)
-        .direction(iced::widget::scrollable::Direction::Vertical(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(4)
-                .margin(4)
-                .scroller_width(4)
-        ))
-        .on_scroll(Message::PlaylistScrolled)
-        .style(crate::gui::widgets::custom_scrollbar_style);
+    let scroll = standard_scrollable(
+        PLAYLIST_SCROLL_ID.clone(),
+        songs_col,
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+    )
+    .height(Length::Fill)
+    .on_scroll(Message::PlaylistScrolled);
 
     mouse_area(scroll)
         .on_enter(Message::PlaylistMouseOver(true))
         .on_exit(Message::PlaylistMouseOver(false))
+        .on_right_press(Message::RequestContextMenu(get_empty_playlist_context_menu_entries()))
         .into()
 }
 
@@ -830,6 +828,7 @@ fn build_folder_separator<'a>(
         })
     )
     .on_press(Message::TogglePlaylistFolder(linear_idx))
+    .on_right_press(Message::RequestContextMenu(get_item_context_menu_entries(linear_idx)))
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
 }
@@ -952,8 +951,99 @@ fn build_song_row<'a>(
             })
     )
     .on_press(Message::PlaySongIndex(linear_idx))
+    .on_right_press(Message::RequestContextMenu(get_item_context_menu_entries(linear_idx)))
     .interaction(iced::mouse::Interaction::Pointer)
     .into()
+}
+
+
+/// Genera las opciones del menú contextual para canciones y carpetas en la lista de reproducción.
+pub fn get_item_context_menu_entries(linear_idx: usize) -> Vec<crate::gui::widgets::ContextMenuEntry<Message>> {
+    use crate::gui::widgets::ContextMenuEntry;
+    vec![
+        ContextMenuEntry {
+            label: "Reproducir".to_string(),
+            icon: Some("play-straight-outlined.svg".to_string()),
+            action: Some(Message::PlaylistContextMenuPlay(linear_idx)),
+        },
+        ContextMenuEntry {
+            label: "".to_string(),
+            icon: None,
+            action: None,
+        },
+        ContextMenuEntry {
+            label: "Agregar archivo".to_string(),
+            icon: Some("audio-file-outlined-straight.svg".to_string()),
+            action: Some(Message::PlaylistAddFiles),
+        },
+        ContextMenuEntry {
+            label: "Agregar carpeta".to_string(),
+            icon: Some("folder-add-outlined.svg".to_string()),
+            action: Some(Message::PlaylistAddFolder),
+        },
+        ContextMenuEntry {
+            label: "".to_string(),
+            icon: None,
+            action: None,
+        },
+        ContextMenuEntry {
+            label: "Información".to_string(),
+            icon: Some("info-outlined-straight.svg".to_string()),
+            action: Some(Message::NoOp),
+        },
+        ContextMenuEntry {
+            label: "Ubicación del archivo".to_string(),
+            icon: Some("folder-open-outlined.svg".to_string()),
+            action: Some(Message::PlaylistShowFileLocation(linear_idx)),
+        },
+        ContextMenuEntry {
+            label: "Mostrar en la biblioteca".to_string(),
+            icon: Some("show-library-outlined-straight.svg".to_string()),
+            action: Some(Message::PlaylistShowInLibrary(linear_idx)),
+        },
+        ContextMenuEntry {
+            label: "".to_string(),
+            icon: None,
+            action: None,
+        },
+        ContextMenuEntry {
+            label: "Editor de Etiquetas".to_string(),
+            icon: Some("edit-tag.svg".to_string()),
+            action: Some(Message::NoOp),
+        },
+        ContextMenuEntry {
+            label: "Enviar a otra lista".to_string(),
+            icon: Some("send-straight.svg".to_string()),
+            action: Some(Message::PlaylistRequestSubMenu(linear_idx)),
+        },
+        ContextMenuEntry {
+            label: "".to_string(),
+            icon: None,
+            action: None,
+        },
+        ContextMenuEntry {
+            label: "Eliminar de la lista".to_string(),
+            icon: Some("delete-oulined.svg".to_string()),
+            action: Some(Message::PlaylistDeleteSelection(linear_idx)),
+        },
+    ]
+}
+
+/// Genera las opciones del menú contextual para el área vacía de la lista de reproducción.
+fn get_empty_playlist_context_menu_entries() -> Vec<crate::gui::widgets::ContextMenuEntry<Message>> {
+    use crate::gui::widgets::ContextMenuEntry;
+    vec![
+        ContextMenuEntry {
+            label: "Agregar archivo".to_string(),
+            icon: Some("audio-file-outlined-straight.svg".to_string()),
+            action: Some(Message::PlaylistAddFiles),
+        },
+        ContextMenuEntry {
+            label: "Agregar carpeta".to_string(),
+            icon: Some("folder-add-outlined.svg".to_string()),
+            action: Some(Message::PlaylistAddFolder),
+        },
+    ]
 }
 
 // ============================================================
@@ -970,19 +1060,19 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     );
 
     let eq_btn = icon_button("equalizer-straight.svg", false, Message::ToggleAudioCenter);
+    let shuffle_btn = icon_button("shuffle-straight.svg", manager.shuffle_active, Message::ToggleShuffle);
     let (repeat_icon, repeat_active) = if manager.repeat_mode == 2 {
         ("repeat-one-straight-outlined.svg", true)
     } else {
         ("repeat-straight-outlined.svg", manager.repeat_mode > 0)
     };
-    let shuffle_btn = icon_button("shuffle-straight.svg", manager.shuffle_active, Message::ToggleShuffle);
     let repeat_btn = icon_button(repeat_icon, repeat_active, Message::ToggleRepeat);
     let lyrics_icon = icon_button("lyrics-straight-outlined.svg", false, Message::ToggleLyrics);
 
     let icons_group = row![
         container(lyrics_icon).padding(Padding { top: 3.0, right: 0.0, bottom: 0.0, left: 0.0 }),
-        shuffle_btn,
         repeat_btn,
+        shuffle_btn,
         eq_btn
     ]
         .spacing(10)

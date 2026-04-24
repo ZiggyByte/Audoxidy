@@ -342,39 +342,70 @@ pub fn view<'a>(
         let all_filters = vec![
             FilterType::Folder, FilterType::Artist, FilterType::Album, FilterType::Genre, FilterType::Year
         ];
-        let mut menu_options = column![].spacing(10);
+        
+        let mut content = column![].spacing(0).width(Length::Fixed(172.0));
+        
         for f in all_filters {
             let is_selected = manager.current_filter == f;
-            menu_options = menu_options.push(
-                button(
-                    container(text(f.label()).size(14).font(FONT_INTER_SANS_MEDIUM))
-                        .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 15.0, right: 15.0 })
-                        .height(Length::Fixed(30.0))
-                        .center_y(Length::Fill)
+            
+            let btn = button(
+                container(
+                    row![
+                        container(
+                            iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/music-history-straight.svg"))
+                                .width(Length::Fixed(24.0))
+                                .height(Length::Fixed(24.0))
+                                .style(|_t, _s| iced::widget::svg::Style {
+                                    color: Some(COLOR_TEXT_PRIMARY),
+                                })
+                        ).width(Length::Fixed(24.0)),
+                        Space::new().width(Length::Fixed(15.0)),
+                        text(f.label())
+                            .size(15)
+                            .font(FONT_INTER_SANS_NORMAL)
+                            .wrapping(iced::widget::text::Wrapping::None)
+                    ]
+                    .align_y(Alignment::Center)
                 )
                 .width(Length::Fill)
-                .padding(0)
-                .style(move |_t: &Theme, _s| {
-                    let mut st = button::Style::default().with_background(COLOR_CONTRAST);
-                    st.border.radius = 0.0.into();
-                    if is_selected {
-                        st.text_color = COLOR_ACCENT;
-                    } else if _s == button::Status::Hovered {
-                        st.text_color = COLOR_TEXT_PRIMARY;
-                    } else {
-                        st.text_color = COLOR_TEXT_SECONDARY;
-                    }
-                    st
-                })
-                .on_press(Message::ChangeGeneralFilter(f))
-            );
+                .height(Length::Fixed(32.0))
+                .padding(iced::Padding { left: 10.0, right: 0.0, ..Default::default() })
+                .align_y(iced::alignment::Vertical::Center)
+            )
+            .on_press(Message::ChangeGeneralFilter(f))
+            .padding(0)
+            .style(move |_t: &Theme, status: iced::widget::button::Status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                
+                button::Style {
+                    background: if is_hovered { Some(COLOR_CONTRAST.into()) } else { None },
+                    text_color: if is_selected { COLOR_ACCENT } else { COLOR_TEXT_PRIMARY },
+                    border: iced::Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    ..Default::default()
+                }
+            });
+
+            content = content.push(btn);
         }
+        
         Some(
-            container(menu_options.width(Length::Fill))
-                .width(Length::Fixed(202.0))
-                .height(Length::Shrink)
-                .padding(iced::Padding { top: 10.0, bottom: 10.0, left: 0.0, right: 0.0 })
-                .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+            container(content)
+                .width(Length::Fixed(172.0))
+                .style(|_t: &Theme| {
+                    container::Style::default()
+                        .background(COLOR_BG)
+                        .border(iced::Border {
+                            color: COLOR_TEXT_SECONDARY,
+                            width: 1.0,
+                            radius: 8.0.into(),
+                        })
+                        .shadow(iced::Shadow {
+                            offset: iced::Vector::new(0.0, 4.0),
+                            blur_radius: 10.0,
+                            color: Color::from_rgba8(0, 0, 0, 0.5),
+                        })
+                })
+                .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 1.0, right: 1.0 })
         )
     } else {
         None
@@ -579,6 +610,7 @@ pub fn view<'a>(
             .width(Length::Fixed(202.0))
             .height(Length::Fill)
             .padding(iced::Padding { top: 70.0, bottom: 0.0, left: 0.0, right: 0.0 })
+            .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Top)
         ].into()
     } else {

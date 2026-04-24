@@ -652,6 +652,9 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                                     svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
                                         .width(Length::Fixed(24.0))
                                         .height(Length::Fixed(24.0))
+                                        .style(|_t, _s| iced::widget::svg::Style {
+                                            color: Some(COLOR_TEXT_PRIMARY),
+                                        })
                                 )
                                 .width(Length::Fixed(24.0))
                             )
@@ -679,7 +682,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                 
                 button::Style {
                     background: if is_hovered { Some(COLOR_CONTRAST.into()) } else { None },
-                    text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_PRIMARY },
+                    text_color: COLOR_TEXT_PRIMARY,
                     border: iced::Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
                     ..Default::default()
                 }

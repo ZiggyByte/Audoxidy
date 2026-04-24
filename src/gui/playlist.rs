@@ -14,6 +14,7 @@ use crate::utils::{format_duration, truncate_text};
 // ============================================================
 
 pub static PLAYLIST_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
+pub static PLAYLIST_TABS_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
 
 // ============================================================
 // Tipos auxiliares
@@ -71,6 +72,9 @@ pub struct PlaylistManager {
 
     /// Guardar el último viewport (ventana visible) para autoscroll
     pub last_viewport: Option<iced::Rectangle>,
+
+    /// Guardar el último viewport de la barra de pestañas
+    pub tabs_viewport: Option<iced::Rectangle>,
 }
 
 impl Default for PlaylistManager {
@@ -91,6 +95,7 @@ impl Default for PlaylistManager {
             collapsed_groups: std::collections::HashSet::new(),
             last_click_info: None,
             last_viewport: None,
+            tabs_viewport: None,
         }
     }
 }
@@ -496,112 +501,116 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
 fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let playlists = &manager.playlists;
 
+    // Use zero padding internally so the scrollable bounds determine visibility
     let mut tabs_row = row![]
         .spacing(5)
-        .padding([0, TABS_PADDING_H as u16])
+        .padding([0, 0])
         .align_y(Alignment::Center);
 
-    let total_width: f32 = 380.0;
-    let mut used_width: f32 = TABS_PADDING_H as f32 * 2.0;
-    let mut visible_count: usize = 0;
-    let chevron_width: f32 = 38.0; // 28 + 10 spacing
+    let mut total_tabs_width: f32 = 0.0;
 
-    for (i, p_data) in playlists.iter().enumerate() {
+    for p_data in playlists.iter() {
         let name = &p_data.name;
         let id = p_data.id;
-        let is_system = p_data.is_system;
         
         let is_active = id == manager.active_playlist_id;
-        let estimated_tab_width = estimate_tab_width(name);
-        let force_visible = is_system && i < 2;
+        let tab_color = if is_active { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+        let tab = text(name.clone())
+            .size(14)
+            .color(tab_color)
+            .font(FONT_INTER_SANS_MEDIUM);
 
-        if force_visible || used_width + estimated_tab_width + chevron_width <= total_width {
-            let tab_color = if is_active { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
-            let tab = text(name.clone())
-                .size(14)
-                .color(tab_color)
-                .font(FONT_INTER_SANS_MEDIUM);
+        let tab_btn = button(tab)
+            .padding([5, 5])
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+            .on_press(Message::SwitchPlaylist(id, false));
 
-            let tab_btn = button(tab)
-                .padding([5, 5])
-                .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-                .on_press(Message::SwitchPlaylist(id, false));
+        let tab_entries = vec![
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Reproducir".to_string(),
+                icon: Some("playlist-play-straight.svg".to_string()),
+                action: Some(Message::SwitchPlaylist(id, true)),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Nueva lista".to_string(),
+                icon: Some("playlist-add-straight.svg".to_string()),
+                action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into(), pending_add_items: None })),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Renombrar lista".to_string(),
+                icon: Some("playlist-edit-straight.svg".to_string()),
+                action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::RenamePlaylist { id, current_name: name.clone(), new_name: name.clone() })),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Eliminar lista".to_string(),
+                icon: Some("playlist-remove-straight.svg".to_string()),
+                action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::DeleteConfirm { id, name: name.clone() })),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "".to_string(), // Divisor
+                icon: None,
+                action: None,
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Guardar lista".to_string(),
+                icon: Some("playlist-add-check-straight.svg".to_string()),
+                action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
+                    id, 
+                    name: name.clone(),
+                    format: crate::gui::app::ExportFormat::M3U8,
+                    mode: crate::gui::app::ExportMode::SingleFile
+                })),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Importar lista".to_string(),
+                icon: Some("import-straight.svg".to_string()),
+                action: Some(Message::OpenPlaylistFilePicker),
+            },
+            crate::gui::widgets::ContextMenuEntry {
+                label: "Exportar lista".to_string(),
+                icon: Some("export-straight.svg".to_string()),
+                action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
+                    id, 
+                    name: name.clone(),
+                    format: crate::gui::app::ExportFormat::M3U8,
+                    mode: crate::gui::app::ExportMode::PortableFolder
+                })),
+            },
+        ];
 
-            let tab_entries = vec![
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Reproducir".to_string(),
-                    icon: Some("playlist-play-straight.svg".to_string()),
-                    action: Some(Message::SwitchPlaylist(id, true)),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Nueva lista".to_string(),
-                    icon: Some("playlist-add-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into(), pending_add_items: None })),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Renombrar lista".to_string(),
-                    icon: Some("playlist-edit-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::RenamePlaylist { id, current_name: name.clone(), new_name: name.clone() })),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Eliminar lista".to_string(),
-                    icon: Some("playlist-remove-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::DeleteConfirm { id, name: name.clone() })),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "".to_string(), // Divisor
-                    icon: None,
-                    action: None,
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Guardar lista".to_string(),
-                    icon: Some("playlist-add-check-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
-                        id, 
-                        name: name.clone(),
-                        format: crate::gui::app::ExportFormat::M3U8,
-                        mode: crate::gui::app::ExportMode::SingleFile
-                    })),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Importar lista".to_string(),
-                    icon: Some("import-straight.svg".to_string()),
-                    action: Some(Message::OpenPlaylistFilePicker),
-                },
-                crate::gui::widgets::ContextMenuEntry {
-                    label: "Exportar lista".to_string(),
-                    icon: Some("export-straight.svg".to_string()),
-                    action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::ExportConfirm { 
-                        id, 
-                        name: name.clone(),
-                        format: crate::gui::app::ExportFormat::M3U8,
-                        mode: crate::gui::app::ExportMode::PortableFolder
-                    })),
-                },
-            ];
-
-            tabs_row = tabs_row.push(
-                mouse_area(tab_btn)
-                    .on_right_press(Message::RequestContextMenu(tab_entries.clone()))
-            );
-            used_width += estimated_tab_width + 10.0;
-            visible_count += 1;
-        } else {
-            break;
-        }
+        tabs_row = tabs_row.push(
+            mouse_area(tab_btn)
+                .on_right_press(Message::RequestContextMenu(tab_entries.clone()))
+        );
+        total_tabs_width += estimate_tab_width(name) + 5.0;
     }
 
-    let has_overflow = visible_count < playlists.len();
+    // Usamos padding 12 a la izquierda para el corte visual, y el limite real a la derecha
+    let bar_width = 345.0;
+    let has_overflow = total_tabs_width > bar_width;
+
+    let scrollable_tabs = iced::widget::scrollable(tabs_row)
+        .id(PLAYLIST_TABS_SCROLL_ID.clone())
+        .direction(iced::widget::scrollable::Direction::Horizontal(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(0)
+                .scroller_width(0)
+                .margin(0)
+        ))
+        .on_scroll(Message::PlaylistTabsScrolled);
+
+    let mut bar_content = row![
+        container(scrollable_tabs)
+            .width(Length::Fill)
+            .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 12.0 }),
+    ]
+    .align_y(Alignment::Center);
+
     if has_overflow {
-        tabs_row = tabs_row.push(Space::new().width(Length::Fill));
-        tabs_row = tabs_row.push(build_tab_dropdown_button(manager));
+        bar_content = bar_content.push(build_tab_dropdown_button(manager));
     }
 
-    let mut content = column![tabs_row];
-
-    if manager.show_tab_dropdown && has_overflow {
-        content = content.push(build_dropdown_menu(&playlists, visible_count));
-    }
+    let content = column![bar_content];
 
     let bar_entries = vec![
         crate::gui::widgets::ContextMenuEntry {
@@ -619,7 +628,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     mouse_area(
         container(content)
             .width(Length::Fill)
-            .height(if manager.show_tab_dropdown && has_overflow { Length::Shrink } else { Length::Fixed(TABS_BAR_HEIGHT) })
+            .height(Length::Fixed(TABS_BAR_HEIGHT))
             .align_y(iced::alignment::Vertical::Center)
             .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
     )
@@ -627,12 +636,18 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     .into()
 }
 
-fn estimate_tab_width(name: &str) -> f32 {
+pub fn estimate_tab_width(name: &str) -> f32 {
     name.chars().count() as f32 * 7.5 + 10.0
 }
 
-fn build_tab_dropdown_button<'a>(_manager: &'a PlaylistManager) -> Element<'a, Message> {
-    let chevron = svg(svg::Handle::from_path("assets/icons/arrow-down-chevron.svg"))
+fn build_tab_dropdown_button<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
+    let icon_path = if manager.show_tab_dropdown {
+        "assets/icons/arrow-up-chevron.svg"
+    } else {
+        "assets/icons/arrow-down-chevron.svg"
+    };
+
+    let chevron = svg(svg::Handle::from_path(icon_path))
         .width(28)
         .height(28)
         .style(|_t: &Theme, _s| svg::Style { color: Some(COLOR_TEXT_SECONDARY) });
@@ -1077,6 +1092,7 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     ]
         .spacing(10)
         .align_y(Alignment::Center);
+
 
     let bar_content = row![
         container(search_box).center_y(Length::Fill),

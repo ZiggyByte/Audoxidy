@@ -5,6 +5,7 @@ use crate::db::{Database, scanner::Scanner};
 use crate::gui::playlist::PlaylistManager;
 use crate::gui::library_filters::LibraryFiltersManager;
 use crate::gui::library::{LibraryManager, LIBRARY_SCROLL_ID};
+use crate::gui::playlist::{PLAYLIST_TABS_SCROLL_ID, estimate_tab_width};
 use iced::widget::operation::{scroll_to, AbsoluteOffset};
 use crate::gui::audio_center::{AudioCenterManager, AudioCenterMessage};
 use crate::integrations::media_controls::SystemMediaControls;
@@ -216,6 +217,7 @@ pub enum Message {
     SetWindowId(iced::window::Id),
     PlayerMouseMoved(iced::Point),
     PlaylistScrolled(iced::widget::scrollable::Viewport),
+    PlaylistTabsScrolled(iced::widget::scrollable::Viewport),
     PlaylistMouseOver(bool),
     GlobalMouseRelease,
     PlayerActivityTimeout(u64),
@@ -246,6 +248,9 @@ pub enum Message {
     PlaylistRequestSubMenu(usize),
     PlaylistSendToNewList(usize),
     PlaylistSendToList(usize, i64),
+    PlaylistToggleAllFolders,
+    PlaylistToggleEnabled(usize),
+    PlaylistShowAllTabs(iced::Point),
 
     NoOp,
 }
@@ -1097,15 +1102,92 @@ impl AudoxidyApp {
                 self.playlist_manager.selected_song_idx = None;
                 self.playlist_manager.apply_filter();
                 
+                // --- Autoscroll de pestaña activa ---
+                let playlists = &self.playlist_manager.playlists;
+                if let Some(pos_idx) = playlists.iter().position(|p| p.id == id) {
+                    let mut used_x = 0.0;
+                    for p in playlists.iter().take(pos_idx) {
+                        used_x += crate::gui::playlist::estimate_tab_width(&p.name) + 5.0; // 5.0 es el spacing de la row
+                    }
+                    
+                    let tab_width = crate::gui::playlist::estimate_tab_width(&playlists[pos_idx].name);
+                    
+                    // Smart Autoscroll: solo desplaza si la pestaña actual no es visible
+                    let mut needs_scroll = true;
+                    if let Some(vp) = self.playlist_manager.tabs_viewport {
+                        let left_visible = used_x >= (vp.x - 2.0); // Leve margen
+                        let right_visible = (used_x + tab_width) <= (vp.x + vp.width + 2.0);
+                        if left_visible && right_visible {
+                            needs_scroll = false; // Ya está completamente visible, no scrollear
+                        }
+                    }
+
+                    if needs_scroll {
+                        // Restamos 12.0px al objetivo del offset calculado
+                        // para que el elemento siempre inicie ligeramente despejado y respete el margen de visibilidad seguro.
+                        let target_x = (used_x - 15.0).max(0.0);
+                        let scroll_action = scroll_to(PLAYLIST_TABS_SCROLL_ID.clone(), AbsoluteOffset { x: target_x, y: 0.0 });
+                        
+                        if auto_play {
+                            return Task::batch(vec![
+                                scroll_action,
+                                Task::done(Message::PlaySongIndex(0))
+                            ]);
+                        }
+                        return scroll_action;
+                    }
+                }
+
                 if auto_play {
-                    // Si se solicita reproducción, empezamos desde la primera canción ignorando el estado previo
                     return Task::done(Message::PlaySongIndex(0));
                 }
                 
                 Task::none()
             }
+            
+            Message::PlaylistShowAllTabs(pos) => {
+                use crate::gui::widgets::ContextMenuEntry;
+                let mut entries = vec![
+                    ContextMenuEntry {
+                        label: "Nueva lista".to_string(),
+                        icon: Some("playlist-add-straight.svg".to_string()),
+                        action: Some(Message::OpenDialog(crate::gui::app::ActiveDialog::CreatePlaylist { name: "".into(), pending_add_items: None })),
+                    },
+                    ContextMenuEntry {
+                        label: "".to_string(), icon: None, action: None,
+                    },
+                ];
+                
+                for pl in &self.playlist_manager.playlists {
+                    entries.push(ContextMenuEntry {
+                        label: pl.name.clone(),
+                        icon: Some("playlist-music.svg".to_string()),
+                        action: Some(Message::SwitchPlaylist(pl.id, false)),
+                    });
+                }
+                
+                let wrapped = self.wrap_context_menu(entries);
+                self.context_menu = Some((pos, wrapped));
+                Task::none()
+            }
+
+            Message::PlaylistTabsScrolled(viewport) => {
+                self.playlist_manager.tabs_viewport = Some(iced::Rectangle {
+                    x: viewport.absolute_offset().x,
+                    y: viewport.absolute_offset().y,
+                    width: viewport.bounds().width,
+                    height: viewport.bounds().height,
+                });
+                Task::none()
+            }
             Message::ToggleTabDropdown => {
                 self.playlist_manager.show_tab_dropdown = !self.playlist_manager.show_tab_dropdown;
+                if self.playlist_manager.show_tab_dropdown {
+                    // Posición fija relativa a la lista: a 10px del borde derecho.
+                    // Ancho del panel (400) - Ancho Menú (180) - Margen derecho demandado (10) = 210.0
+                    let fixed_pos = iced::Point { x: 220.0, y: 440.0 };
+                    return Task::done(Message::PlaylistShowAllTabs(fixed_pos));
+                }
                 Task::none()
             }
             Message::PlaylistSearchChanged(q) => {
@@ -2219,6 +2301,35 @@ impl AudoxidyApp {
                 Task::none()
             }
 
+            Message::PlaylistToggleAllFolders => {
+                let all_groups: Vec<String> = self.playlist_manager.groups.iter().map(|g| g.folder_path.clone()).collect();
+                let any_expanded = self.playlist_manager.groups.iter().any(|g| !self.playlist_manager.collapsed_groups.contains(&g.folder_path));
+                
+                if any_expanded {
+                    // Plegar TODO
+                    for path in all_groups {
+                        self.playlist_manager.collapsed_groups.insert(path);
+                    }
+                } else {
+                    // Desplegar TODO
+                    self.playlist_manager.collapsed_groups.clear();
+                }
+                Task::none()
+            }
+
+            Message::PlaylistToggleEnabled(linear_idx) => {
+                self.context_menu = None;
+                use crate::gui::playlist::PlaylistItemType;
+                if let Some(info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    match info {
+                        PlaylistItemType::Song(..) => self.update(Message::ToggleSongEnabled(linear_idx)),
+                        PlaylistItemType::Separator(..) => self.update(Message::ToggleGroupEnabled(linear_idx)),
+                    }
+                } else {
+                    Task::none()
+                }
+            }
+
             Message::LibraryShowPlaying => {
                 let path_opt = self.playlist_manager.playing_song_idx
                     .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
@@ -2440,6 +2551,8 @@ impl AudoxidyApp {
                 if self.player_ui_state.is_menu_open {
                     self.player_ui_state.is_menu_open = false;
                 }
+                self.playlist_manager.show_tab_dropdown = false;
+                self.filters_manager.menu_open = false;
                 self.context_menu = None;
                 Task::none()
             }
@@ -2493,6 +2606,7 @@ impl AudoxidyApp {
                 });
                 Task::none()
             }
+            Message::PlaylistTabsScrolled(_) => Task::none(),
             Message::PlaylistMouseOver(is_over) => {
                 self.is_mouse_over_playlist = is_over;
                 Task::none()
@@ -2510,11 +2624,18 @@ impl AudoxidyApp {
                 // Sincronizar carátula inicial
                 self.sync_player_art();
                 
+                let mut tasks = Vec::new();
+
                 // Forzar auto-scroll a la canción que se restauró
                 if let Some(idx) = self.playlist_manager.playing_song_idx {
-                    return self.execute_playlist_autoscroll(idx);
+                    tasks.push(self.execute_playlist_autoscroll(idx));
                 }
-                Task::none()
+
+                // Forzar auto-focus a la pestaña de playlist activa
+                let active_id = self.playlist_manager.active_playlist_id;
+                tasks.push(Task::done(Message::SwitchPlaylist(active_id, false)));
+
+                Task::batch(tasks)
             }
             Message::OpenContextMenu(pos, entries) => {
                 let wrapped = self.wrap_context_menu(entries);
@@ -2522,6 +2643,24 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::RequestContextMenu(entries) => {
+                // Auto-seleccionar si el mensaje viene del sistema de playlist
+                // (Normalmente esto lo gestionamos filtrando por el tipo de entrada o mensaje)
+                // Pero como RequestContextMenu es genérico, nos apoyamos en que si hay un linear_idx
+                // en la primera entrada, es de playlist.
+                if let Some(first) = entries.first() {
+                    match &first.action {
+                        Some(Message::PlaylistContextMenuPlay(idx)) |
+                        Some(Message::PlaylistShowFileLocation(idx)) |
+                        Some(Message::PlaylistShowInLibrary(idx)) |
+                        Some(Message::PlaylistDeleteSelection(idx)) |
+                        Some(Message::PlaylistToggleEnabled(idx)) |
+                        Some(Message::PlaylistRequestSubMenu(idx)) => {
+                            self.playlist_manager.selected_song_idx = Some(*idx);
+                        },
+                        _ => {}
+                    }
+                }
+
                 let pos = self.last_mouse_pos;
                 let wrapped = self.wrap_context_menu(entries);
                 self.context_menu = Some((pos, wrapped));
@@ -2529,10 +2668,12 @@ impl AudoxidyApp {
             }
             Message::CloseContextMenu => {
                 self.context_menu = None;
+                self.playlist_manager.show_tab_dropdown = false;
                 Task::none()
             }
             Message::ContextMenuAction(msg) => {
                 self.context_menu = None;
+                self.playlist_manager.show_tab_dropdown = false;
                 self.update(*msg)
             }
             Message::NoOp => Task::none(),

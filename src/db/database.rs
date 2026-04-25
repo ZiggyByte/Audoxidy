@@ -101,6 +101,7 @@ pub struct PlaylistFolderGroup {
     pub folder_name: String,
     pub songs: Vec<PlaylistSongRef>,
     pub total_duration: f64,
+    pub first_item_id: i64,
 }
 
 /// Sesión de shuffle: orden aleatorio + historial para navegación backward.
@@ -1357,16 +1358,22 @@ impl Database {
                 .unwrap_or("Desconocida")
                 .to_string();
 
-            // Encontrar o crear el grupo
-            if let Some(group) = groups.iter_mut().find(|g| g.folder_path == folder_path) {
-                group.total_duration += song.duration;
-                group.songs.push(song);
+            // Encontrar o crear el grupo (solo si es el último grupo para mantener el orden de inserción)
+            let is_same_folder = groups.last().map(|g| g.folder_path == folder_path).unwrap_or(false);
+            
+            if is_same_folder {
+                if let Some(group) = groups.last_mut() {
+                    group.total_duration += song.duration;
+                    group.songs.push(song);
+                }
             } else {
+                let first_item_id = song.item_id;
                 groups.push(PlaylistFolderGroup {
                     folder_path: folder_path.clone(),
                     folder_name,
                     songs: vec![song],
                     total_duration: 0.0,
+                    first_item_id,
                 });
                 // Recalcular duración total del grupo
                 if let Some(last) = groups.last_mut() {
@@ -1601,6 +1608,20 @@ impl Database {
     pub fn get_playlist_enabled_songs(&self, playlist_id: i64) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND enabled = 1 ORDER BY sequence_order ASC"
+        )?;
+
+        let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
+
+        let mut results = Vec::new();
+        for row in rows {
+            if let Ok(song_id) = row { results.push(song_id); }
+        }
+        Ok(results)
+    }
+
+    pub fn get_playlist_all_song_ids(&self, playlist_id: i64) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 ORDER BY sequence_order ASC"
         )?;
 
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;

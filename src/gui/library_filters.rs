@@ -286,7 +286,7 @@ impl LibraryFiltersManager {
 
 pub fn view<'a>(
     manager: &'a LibraryFiltersManager,
-) -> Element<'a, Message> {
+) -> (Element<'a, Message>, Option<Element<'a, Message>>) {
     
     // --- 1. TOP BAR (40px) ---
     let top_bar = container(
@@ -348,20 +348,28 @@ pub fn view<'a>(
         for f in all_filters {
             let is_selected = manager.current_filter == f;
             
+            let icon_path = match f {
+                FilterType::Folder => "folder-open-outlined.svg",
+                FilterType::Artist => "artist-outlined-straight.svg",
+                FilterType::Album => "album.svg",
+                FilterType::Genre => "music-note-2-straight.svg",
+                FilterType::Year => "calendar-rounded.svg",
+            };
+            
             let btn = button(
                 container(
                     row![
                         container(
-                            iced::widget::svg(iced::widget::svg::Handle::from_path("assets/icons/music-history-straight.svg"))
-                                .width(Length::Fixed(24.0))
-                                .height(Length::Fixed(24.0))
+                            iced::widget::svg(iced::widget::svg::Handle::from_path(format!("assets/icons/{}", icon_path)))
+                                .width(Length::Fixed(18.0))
+                                .height(Length::Fixed(18.0))
                                 .style(|_t, _s| iced::widget::svg::Style {
                                     color: Some(COLOR_TEXT_PRIMARY),
                                 })
-                        ).width(Length::Fixed(24.0)),
+                        ).width(Length::Fixed(18.0)),
                         Space::new().width(Length::Fixed(15.0)),
                         text(f.label())
-                            .size(15)
+                            .size(14)
                             .font(FONT_INTER_SANS_NORMAL)
                             .wrapping(iced::widget::text::Wrapping::None)
                     ]
@@ -369,7 +377,7 @@ pub fn view<'a>(
                 )
                 .width(Length::Fill)
                 .height(Length::Fixed(32.0))
-                .padding(iced::Padding { left: 10.0, right: 0.0, ..Default::default() })
+                .padding(iced::Padding { left: 15.0, right: 10.0, ..Default::default() })
                 .align_y(iced::alignment::Vertical::Center)
             )
             .on_press(Message::ChangeGeneralFilter(f))
@@ -601,9 +609,8 @@ pub fn view<'a>(
         .height(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
 
-    if let Some(menu) = menu_options_container {
-        iced::widget::stack![
-            base_view,
+    let overlay = if let Some(menu) = menu_options_container {
+        Some(
             container(
                 mouse_area(menu).on_press(Message::NoOp)
             )
@@ -612,8 +619,11 @@ pub fn view<'a>(
             .padding(iced::Padding { top: 70.0, bottom: 0.0, left: 0.0, right: 0.0 })
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Top)
-        ].into()
+            .into()
+        )
     } else {
-        base_view.into()
-    }
+        None
+    };
+
+    (base_view.into(), overlay)
 }

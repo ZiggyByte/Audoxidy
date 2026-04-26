@@ -76,7 +76,17 @@ pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
         }
         SortColumn::Format => song.format.clone().unwrap_or_else(|| "-".to_string()),
         SortColumn::SampleRate => song.sample_rate.map_or("-".to_string(), |r| format!("{:.1} kHz", r as f64 / 1000.0)),
-        SortColumn::Channels => song.channels.map_or("-".to_string(), |c| c.to_string()),
+        SortColumn::Channels => song.channels.map_or("-".to_string(), |c| {
+            match c {
+                1 => "mono".to_string(),
+                2 => "2".to_string(),
+                3 => "2.1".to_string(),
+                4 => "4.0".to_string(),
+                6 => "5.1".to_string(),
+                8 => "7.1".to_string(),
+                _ => c.to_string(),
+            }
+        }),
         SortColumn::BitDepth => song.bit_depth.map_or("-".to_string(), |b| format!("{} bits", b)),
         SortColumn::Bitrate => {
             if let (Some(s), Some(d)) = (song.size, song.duration_secs) {
@@ -214,11 +224,17 @@ pub fn format_intelligent_path(
     format!("{}{}{}", drive_prefix, root_part, inner_path).trim().to_string()
 }
 
-/// Función central de ordenamiento canónico para Audoxidy: Artista -> Año -> Álbum -> Número de Pista.
+/// Obtiene el nombre del artista que debe usarse para ordenar y agrupar (prioriza Artista del Álbum).
+pub fn get_effective_artist(song: &SongData) -> &str {
+    song.album_artist.as_deref()
+        .or(song.artist.as_deref())
+        .unwrap_or("Artista Desconocido")
+}
+
+/// Función central de ordenamiento canónico para Audoxidy: Artista (Álbum) -> Año -> Álbum -> Número de Pista.
 pub fn compare_songs_for_listing(a: &SongData, b: &SongData) -> std::cmp::Ordering {
-    let empty = String::new();
-    let art_a = a.artist.as_ref().or(a.album_artist.as_ref()).unwrap_or(&empty);
-    let art_b = b.artist.as_ref().or(b.album_artist.as_ref()).unwrap_or(&empty);
+    let art_a = get_effective_artist(a);
+    let art_b = get_effective_artist(b);
     
     art_a.cmp(art_b)
         .then(a.release_year.cmp(&b.release_year))

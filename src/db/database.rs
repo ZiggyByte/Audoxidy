@@ -680,15 +680,15 @@ impl Database {
         Ok(results)
     }
 
-    /// Obtiene álbumes desglosados por artista para la vista Grid (Consistencia con Listas)
+    /// Obtiene álbumes para la vista Grid, agrupados correctamente para evitar duplicados en compilaciones
     pub fn get_grid_items_by_artist(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
             SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
-            FROM SONGS s
-            JOIN ARTISTS ar ON s.artist_id = ar.id
-            JOIN ALBUMS al ON s.album_id = al.id
+            FROM ALBUMS al
+            JOIN ARTISTS ar ON al.artist_id = ar.id
+            JOIN SONGS s ON s.album_id = al.id
             WHERE s.is_external = 0
-            GROUP BY al.id, ar.id
+            GROUP BY al.id
             ORDER BY ar.name ASC, al.year ASC, al.title ASC
         ")?;
 
@@ -1149,6 +1149,16 @@ impl Database {
         Ok(!current) // Retorna el nuevo estado
     }
 
+    /// Establece explícitamente el estado enabled/disabled de una canción.
+    pub fn set_song_enabled_in_playlist(&self, playlist_id: i64, song_id: i64, enabled: bool) -> Result<()> {
+        let val = if enabled { 1 } else { 0 };
+        self.conn.execute(
+            "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
+            params![val, playlist_id, song_id],
+        )?;
+        Ok(())
+    }
+
     /// Cambia el estado enabled/disabled de todas las canciones de un folder/álbum en una playlist.
     pub fn toggle_folder_enabled_in_playlist(&self, playlist_id: i64, folder_path: &str) -> Result<bool> {
         // Leer estado de la primera canción del folder
@@ -1166,6 +1176,16 @@ impl Database {
         )?;
 
         Ok(!any_enabled)
+    }
+
+    /// Establece explícitamente el estado enabled/disabled para todas las canciones de un folder.
+    pub fn set_folder_enabled_in_playlist(&self, playlist_id: i64, folder_path: &str, enabled: bool) -> Result<()> {
+        let val = if enabled { 1 } else { 0 };
+        self.conn.execute(
+            "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id IN (SELECT id FROM SONGS WHERE folder_id = (SELECT id FROM FOLDERS WHERE path = ?3))",
+            params![val, playlist_id, folder_path],
+        )?;
+        Ok(())
     }
 
     /// Actualiza el sequence_order de una canción (para reordenamiento drag-and-drop).

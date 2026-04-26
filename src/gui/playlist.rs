@@ -135,6 +135,7 @@ impl PlaylistManager {
                 .filter(|s| {
                     s.title.to_lowercase().contains(&query)
                         || s.artist_name.to_lowercase().contains(&query)
+                        || s.album_artist_name.to_lowercase().contains(&query)
                         || s.album_title.to_lowercase().contains(&query)
                 })
                 .cloned()

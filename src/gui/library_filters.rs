@@ -139,9 +139,7 @@ impl LibraryFiltersManager {
 
         // UNA sola iteración sobre todas las canciones
         for song in songs {
-            let artist_val = song.artist.as_deref()
-                .or(song.album_artist.as_deref())
-                .unwrap_or("Desconocido");
+            let artist_val = crate::utils::get_effective_artist(song);
             let album_val = song.album.as_deref().unwrap_or("Desconocido");
             let genre_val = song.genre.as_deref().unwrap_or("Desconocido");
             let year_val = song.release_year.as_deref().unwrap_or("Desconocido");

@@ -621,7 +621,7 @@ impl Database {
             JOIN ALBUMS al ON s.album_id = al.id
             JOIN ARTISTS al_ar ON al.artist_id = al_ar.id
             WHERE s.is_external = 0
-            ORDER BY ar.name ASC, al.year ASC, al.title ASC, s.track_num ASC
+            ORDER BY ar.name COLLATE NOCASE ASC, al.year COLLATE NOCASE ASC, al.title COLLATE NOCASE ASC, s.track_num ASC
         ")?;
 
         let rows = stmt.query_map([], |row| {
@@ -663,7 +663,7 @@ impl Database {
             JOIN ARTISTS ar ON al.artist_id = ar.id
             JOIN SONGS s ON s.album_id = al.id
             WHERE s.is_external = 0
-            ORDER BY ar.name ASC, al.year ASC, al.title ASC
+            ORDER BY ar.name COLLATE NOCASE ASC, al.year COLLATE NOCASE ASC, al.title COLLATE NOCASE ASC
         ")?;
 
         let rows = stmt.query_map([], |row| {
@@ -689,7 +689,7 @@ impl Database {
             JOIN SONGS s ON s.album_id = al.id
             WHERE s.is_external = 0
             GROUP BY al.id
-            ORDER BY ar.name ASC, al.year ASC, al.title ASC
+            ORDER BY ar.name COLLATE NOCASE ASC, al.year COLLATE NOCASE ASC, al.title COLLATE NOCASE ASC
         ")?;
 
         let rows = stmt.query_map([], |row| {
@@ -707,7 +707,7 @@ impl Database {
     }
 
     pub fn get_all_folders(&self) -> Result<Vec<(i64, String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT id, path, name FROM FOLDERS ORDER BY path ASC")?;
+        let mut stmt = self.conn.prepare("SELECT id, path, name FROM FOLDERS ORDER BY path COLLATE NOCASE ASC")?;
         let rows = stmt.query_map([], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
@@ -767,7 +767,7 @@ impl Database {
             JOIN ALBUMS al ON s.album_id = al.id
             JOIN ARTISTS al_ar ON al.artist_id = al_ar.id
             WHERE al.hash_id = ?1
-            ORDER BY ar.name ASC, al.year ASC, al.title ASC, CAST(s.track_num AS INTEGER) ASC, s.track_num ASC
+            ORDER BY ar.name COLLATE NOCASE ASC, al.year COLLATE NOCASE ASC, al.title COLLATE NOCASE ASC, CAST(s.track_num AS INTEGER) ASC, s.track_num ASC
         ")?;
 
         let rows = stmt.query_map([album_hash_id], |row| {

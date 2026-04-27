@@ -231,14 +231,19 @@ pub fn get_effective_artist(song: &SongData) -> &str {
         .unwrap_or("Artista Desconocido")
 }
 
+/// Compara dos cadenas de texto ignorando mayúsculas y minúsculas para un ordenamiento musical natural.
+pub fn compare_strings_ignore_case(a: &str, b: &str) -> std::cmp::Ordering {
+    a.to_lowercase().cmp(&b.to_lowercase())
+}
+
 /// Función central de ordenamiento canónico para Audoxidy: Artista (Álbum) -> Año -> Álbum -> Número de Pista.
 pub fn compare_songs_for_listing(a: &SongData, b: &SongData) -> std::cmp::Ordering {
     let art_a = get_effective_artist(a);
     let art_b = get_effective_artist(b);
     
-    art_a.cmp(art_b)
-        .then(a.release_year.cmp(&b.release_year))
-        .then(a.album.cmp(&b.album))
+    compare_strings_ignore_case(art_a, art_b)
+        .then(compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or("")))
+        .then(compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
         .then({
             let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
             let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
@@ -247,5 +252,15 @@ pub fn compare_songs_for_listing(a: &SongData, b: &SongData) -> std::cmp::Orderi
                 _ => a.track_number.cmp(&b.track_number),
             }
         })
+}
+
+/// Función central de ordenamiento para álbumes (Grid/Listas): Artista -> Año -> Título.
+pub fn compare_albums_for_listing(
+    art_a: &str, year_a: &str, title_a: &str,
+    art_b: &str, year_b: &str, title_b: &str
+) -> std::cmp::Ordering {
+    compare_strings_ignore_case(art_a, art_b)
+        .then(compare_strings_ignore_case(year_a, year_b))
+        .then(compare_strings_ignore_case(title_a, title_b))
 }
 

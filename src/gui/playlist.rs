@@ -956,12 +956,7 @@ fn build_folder_separator<'a>(
         .size(19)
         .color(indicator_color);
 
-    let name_text = text(truncate_text(folder_name, 40))
-        .size(14)
-        .color(COLOR_TEXT_SECONDARY)
-        .font(FONT_INTER_SANS_MEDIUM)
-        .width(Length::Fill)
-        .wrapping(iced::widget::text::Wrapping::None);
+    let name_text = crate::gui::widgets::smart_truncate_text(folder_name.to_string(), 14.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_SECONDARY);
 
     let stats_text = text(format!("{} | {}", song_count, total_duration))
         .size(13)
@@ -1056,12 +1051,7 @@ fn build_song_row<'a>(
     .width(Length::Fixed(prefix_width))
     .align_x(Alignment::End);
 
-    let title_text = text(truncate_text(&song.title, 40))
-        .size(13)
-        .color(text_color)
-        .font(FONT_INTER_SANS_MEDIUM)
-        .width(Length::Fill)
-        .wrapping(iced::widget::text::Wrapping::None);
+    let title_text = crate::gui::widgets::smart_truncate_text(song.title.clone(), 13.0, FONT_INTER_SANS_MEDIUM, text_color);
 
     let duration_text = text(format_duration(song.duration))
         .size(13)
@@ -1083,18 +1073,13 @@ fn build_song_row<'a>(
     
     let row2 = row![
         Space::new().width(Length::Fixed(prefix_width + prefix_spacing)),
-        text(truncate_text(&row2_text, 45))
-            .size(13)
-            .color(text_color) // Cambia a primario si está reproduciendo
-            .font(FONT_INTER_SANS_MEDIUM)
-            .width(Length::Fill)
-            .wrapping(iced::widget::text::Wrapping::None)
+        crate::gui::widgets::smart_truncate_text(row2_text, 13.0, FONT_INTER_SANS_MEDIUM, text_color)
     ]
     .spacing(0)
     .align_y(Alignment::Center);
 
     let content = column![row1, row2]
-        .spacing(0)
+        .spacing(2)
         .padding([0, 0]);
 
     let bg_color = if is_selected || is_playing {
@@ -1154,12 +1139,12 @@ pub fn get_item_context_menu_entries(linear_idx: usize) -> Vec<crate::gui::widge
             action: None,
         },
         ContextMenuEntry {
-            label: "Agregar archivo".to_string(),
+            label: "Agregar archivo a la lista".to_string(),
             icon: Some("audio-file-outlined-straight.svg".to_string()),
             action: Some(Message::PlaylistAddFiles),
         },
         ContextMenuEntry {
-            label: "Agregar carpeta".to_string(),
+            label: "Agregar carpeta a la lista".to_string(),
             icon: Some("folder-add-outlined.svg".to_string()),
             action: Some(Message::PlaylistAddFolder),
         },

@@ -104,7 +104,7 @@ impl LibraryFiltersManager {
             let group_b = Self::get_group_char(&b.label);
             let w_a = if group_a == "#" { 0 } else if group_a == "•" { 1 } else { 2 };
             let w_b = if group_b == "#" { 0 } else if group_b == "•" { 1 } else { 2 };
-            w_a.cmp(&w_b).then_with(|| a.label.cmp(&b.label))
+            w_a.cmp(&w_b).then_with(|| crate::utils::compare_strings_ignore_case(&a.label, &b.label))
         });
         for node in nodes.iter_mut() {
             if !node.children.is_empty() {
@@ -129,7 +129,9 @@ impl LibraryFiltersManager {
 
         // Estructura intermedia con HashMap para O(1) lookup de hijos
         // L1 -> HashMap<L1_key, HashMap<L2_key, HashSet<L3_key>>>
-        let mut indices: HashMap<FilterType, BTreeMap<String, HashMap<String, HashSet<String>>>> = HashMap::new();
+        // Estructura intermedia con BTreeMap para mantener el orden de inserción/alfabético base
+        // L1_key_lower -> (L1_display, HashMap<L2_key_lower, (L2_display, HashSet<L3_canon_names>)>)
+        let mut indices: HashMap<FilterType, BTreeMap<String, (String, HashMap<String, (String, HashSet<String>)>)>> = HashMap::new();
         let mut char_sets: HashMap<FilterType, HashSet<String>> = HashMap::new();
 
         for ft in &all_types {
@@ -157,10 +159,14 @@ impl LibraryFiltersManager {
                 // Registrar la letra del abecedario
                 char_sets.get_mut(ft).unwrap().insert(Self::get_group_char(l1));
 
-                // Insertar en el índice
+                // Insertar en el índice con unificación case-insensitive
                 let l1_map = indices.get_mut(ft).unwrap();
-                let l2_map = l1_map.entry(l1.to_string()).or_default();
-                let l3_set = l2_map.entry(l2.to_string()).or_default();
+                let l1_key = l1.to_lowercase();
+                let (_l1_display, l2_map) = l1_map.entry(l1_key).or_insert_with(|| (l1.to_string(), HashMap::new()));
+                
+                let l2_key = l2.to_lowercase();
+                let (_l2_display, l3_set) = l2_map.entry(l2_key).or_insert_with(|| (l2.to_string(), HashSet::new()));
+                
                 if let Some(l3_val) = l3 {
                     l3_set.insert(l3_val.to_string());
                 }
@@ -176,25 +182,25 @@ impl LibraryFiltersManager {
             let l1_map = indices.remove(ft).unwrap();
             let mut tree: Vec<TreeNode> = Vec::with_capacity(l1_map.len());
 
-            for (l1_key, l2_map) in l1_map {
-                let id1 = format!("{}|{}", ft_label, l1_key);
+            for (_l1_lower, (l1_display, l2_map)) in l1_map {
+                let id1 = format!("{}|{}", ft_label, l1_display);
                 let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
 
-                for (l2_key, l3_set) in l2_map {
-                    let id2 = format!("{}|{}", id1, l2_key);
+                for (_l2_lower, (l2_display, l3_set)) in l2_map {
+                    let id2 = format!("{}|{}", id1, l2_display);
                     let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
 
-                    for l3_key in l3_set {
-                        let id3 = format!("{}|{}", id2, l3_key);
-                        children2.push(TreeNode { label: l3_key, id: id3, children: Vec::new() });
+                    for l3_val in l3_set {
+                        let id3 = format!("{}|{}", id2, l3_val);
+                        children2.push(TreeNode { label: l3_val, id: id3, children: Vec::new() });
                     }
 
                     Self::sort_tree(&mut children2);
-                    children1.push(TreeNode { label: l2_key, id: id2, children: children2 });
+                    children1.push(TreeNode { label: l2_display, id: id2, children: children2 });
                 }
 
                 Self::sort_tree(&mut children1);
-                tree.push(TreeNode { label: l1_key, id: id1, children: children1 });
+                tree.push(TreeNode { label: l1_display, id: id1, children: children1 });
             }
 
             Self::sort_tree(&mut tree);
@@ -516,8 +522,7 @@ pub fn view<'a>(
                 };
 
                 let padding_left = 0.0 + (depth as f32 * 12.0); // Indentation
-                let t_len = (23 - (depth * 2)).max(1);
-                let t_label = text(crate::utils::truncate_text(&node.label, t_len)).size(13).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None);
+                let t_label = crate::gui::widgets::smart_truncate_text(node.label.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_SECONDARY);
                 
                 let row_content = if has_children {
                     row![

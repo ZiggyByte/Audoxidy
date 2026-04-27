@@ -222,27 +222,32 @@ impl LibraryManager {
                     SortColumn::Title => {
                         let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        a.title.cmp(&b.title).then(tn_a.cmp(&tn_b))
+                        crate::utils::compare_strings_ignore_case(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")).then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Artist | SortColumn::AlbumArtist => {
                         let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
-                        art_a.cmp(art_b).then(a.release_year.cmp(&b.release_year)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
+                        crate::utils::compare_strings_ignore_case(art_a, art_b)
+                            .then(crate::utils::compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or("")))
+                            .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
+                            .then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Album => {
                         let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
                         let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
-                        a.album.cmp(&b.album).then(art_a.cmp(art_b)).then(match (tn_a, tn_b) {
-                            (Some(na), Some(nb)) => na.cmp(&nb),
-                            _ => a.track_number.cmp(&b.track_number),
-                        })
+                        crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or(""))
+                            .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
+                            .then(match (tn_a, tn_b) {
+                                (Some(na), Some(nb)) => na.cmp(&nb),
+                                _ => a.track_number.cmp(&b.track_number),
+                            })
                     },
                     SortColumn::Format => {
-                        a.format.cmp(&b.format)
+                        crate::utils::compare_strings_ignore_case(a.format.as_deref().unwrap_or(""), b.format.as_deref().unwrap_or(""))
                     },
                     SortColumn::Size => {
                         a.size.unwrap_or(0).cmp(&b.size.unwrap_or(0))
@@ -263,14 +268,20 @@ impl LibraryManager {
                         let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
-                        a.genre.cmp(&b.genre).then(art_a.cmp(art_b)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
+                        crate::utils::compare_strings_ignore_case(a.genre.as_deref().unwrap_or(""), b.genre.as_deref().unwrap_or(""))
+                            .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
+                            .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
+                            .then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Year => {
                         let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
-                        a.release_year.cmp(&b.release_year).then(art_a.cmp(art_b)).then(a.album.cmp(&b.album)).then(tn_a.cmp(&tn_b))
+                        crate::utils::compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or(""))
+                            .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
+                            .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
+                            .then(tn_a.cmp(&tn_b))
                     },
                     SortColumn::Duration => {
                         let dur_a = a.duration_secs.unwrap_or(0.0);
@@ -299,14 +310,31 @@ impl LibraryManager {
             let is_asc = sort_ascending.unwrap_or(true);
             albums.sort_by(|a, b| {
                 let res = match col_ref {
-                    SortColumn::Album => a.title.cmp(&b.title).then(a.artist.cmp(&b.artist)).then(a.year.cmp(&b.year)),
-                    SortColumn::Artist => a.artist.cmp(&b.artist).then(a.year.cmp(&b.year)).then(a.title.cmp(&b.title)),
-                    SortColumn::AlbumArtist => a.artist.cmp(&b.artist).then(a.year.cmp(&b.year)).then(a.title.cmp(&b.title)),
-                    SortColumn::Genre => a.genre.cmp(&b.genre).then(a.artist.cmp(&b.artist)).then(a.year.cmp(&b.year)).then(a.title.cmp(&b.title)),
-                    SortColumn::Year => a.year.cmp(&b.year).then(a.artist.cmp(&b.artist)).then(a.title.cmp(&b.title)),
+                    SortColumn::Album => crate::utils::compare_strings_ignore_case(&a.title, &b.title)
+                        .then(crate::utils::compare_strings_ignore_case(&a.artist, &b.artist))
+                        .then(crate::utils::compare_strings_ignore_case(&a.year, &b.year)),
+                    SortColumn::Artist | SortColumn::AlbumArtist => crate::utils::compare_albums_for_listing(
+                        &a.artist, &a.year, &a.title,
+                        &b.artist, &b.year, &b.title,
+                    ),
+                    SortColumn::Genre => crate::utils::compare_strings_ignore_case(&a.genre, &b.genre)
+                        .then(crate::utils::compare_strings_ignore_case(&a.artist, &b.artist))
+                        .then(crate::utils::compare_strings_ignore_case(&a.year, &b.year))
+                        .then(crate::utils::compare_strings_ignore_case(&a.title, &b.title)),
+                    SortColumn::Year => crate::utils::compare_strings_ignore_case(&a.year, &b.year)
+                        .then(crate::utils::compare_strings_ignore_case(&a.artist, &b.artist))
+                        .then(crate::utils::compare_strings_ignore_case(&a.title, &b.title)),
                     _ => std::cmp::Ordering::Equal,
                 };
                 if is_asc { res } else { res.reverse() }
+            });
+        } else {
+            // Usar el ordenamiento canónico global de Audoxidy por defecto
+            albums.sort_by(|a, b| {
+                crate::utils::compare_albums_for_listing(
+                    &a.artist, &a.year, &a.title,
+                    &b.artist, &b.year, &b.title,
+                )
             });
         }
     }
@@ -711,16 +739,21 @@ impl LibraryManager {
 
                     // B. Filtros específicos (Carpeta, Artista, Álbum, etc.)
                     if let Some(f_art) = &self.filter_artist {
-                        if s.artist.as_deref() != Some(f_art) && s.album_artist.as_deref() != Some(f_art) { return false; }
+                        let art_a = s.artist.as_deref().unwrap_or("");
+                        let art_b = s.album_artist.as_deref().unwrap_or("");
+                        if !art_a.eq_ignore_ascii_case(f_art) && !art_b.eq_ignore_ascii_case(f_art) { return false; }
                     }
                     if let Some(f_alb) = &self.filter_album {
-                        if s.album.as_deref() != Some(f_alb) { return false; }
+                        let alb = s.album.as_deref().unwrap_or("");
+                        if !alb.eq_ignore_ascii_case(f_alb) { return false; }
                     }
                     if let Some(f_gen) = &self.filter_genre {
-                        if s.genre.as_deref() != Some(f_gen) { return false; }
+                        let genre_val = s.genre.as_deref().unwrap_or("");
+                        if !genre_val.eq_ignore_ascii_case(f_gen) { return false; }
                     }
                     if let Some(f_year) = &self.filter_year {
-                        if s.release_year.as_deref() != Some(f_year) { return false; }
+                        let year = s.release_year.as_deref().unwrap_or("");
+                        if !year.eq_ignore_ascii_case(f_year) { return false; }
                     }
                     if let Some(f_id) = self.filter_folder_id {
                         if s.folder_id != f_id { return false; }
@@ -744,10 +777,11 @@ impl LibraryManager {
             
             let mut groups_map: std::collections::BTreeMap<String, ArtistGroup> = std::collections::BTreeMap::new();
             for song in &filtered_songs {
-                let artist_name = crate::utils::get_effective_artist(song).to_string();
+                let artist_name = crate::utils::get_effective_artist(song);
+                let key = artist_name.to_lowercase();
                 
-                let group = groups_map.entry(artist_name.clone()).or_insert(ArtistGroup {
-                    name: artist_name,
+                let group = groups_map.entry(key).or_insert(ArtistGroup {
+                    name: artist_name.to_string(), // Preserve cases from first encountered song
                     albums_count: 0,
                     songs_count: 0,
                     songs: Vec::new(),
@@ -1106,18 +1140,11 @@ pub fn view<'a>(
                             );
                             
                             let info_col = column![
-                                text(truncate_text(artist, 22)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-                                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
-                                    .wrapping(iced::widget::text::Wrapping::None),
-                                text(truncate_text(album, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-                                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
-                                    .wrapping(iced::widget::text::Wrapping::None),
-                                text(truncate_text(genre, 18)).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-                                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
-                                    .wrapping(iced::widget::text::Wrapping::None),
+                                crate::gui::widgets::smart_truncate_text(artist.clone(), 12.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                                crate::gui::widgets::smart_truncate_text(album.clone(), 12.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                                crate::gui::widgets::smart_truncate_text(genre.clone(), 12.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
                                 text(year.as_str()).size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-                                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0)))
-                                    .wrapping(iced::widget::text::Wrapping::None),
+                                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(14.0))),
                             ].spacing(2).width(Length::Fill);
 
                             let chevron_svg = if is_expanded { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };

@@ -13,32 +13,122 @@ use std::collections::HashMap;
 // 2. Elementos de Interfaz Auxiliares
 // ==========================================
 
-/// Un widget de texto que se trunca inteligentemente con elipsis (...) basándose en el ancho real disponible.
-/// Ideal para nombres de canciones, álbumes o artistas que deben adaptarse a cambios de ventana.
+/// ======================================================================================
+/// SISTEMA DE TRUNCAMIENTO DE TEXTO INTELIGENTE (RESPONSIVE)
+/// ======================================================================================
+/// 
+/// Estas funciones proporcionan un widget de texto que se adapta dinámicamente al ancho real
+/// de su contenedor, truncando con elipsis (...) cuando el espacio es insuficiente.
+/// 
+/// El sistema utiliza el componente `Responsive` de Iced para detectar el tamaño en tiempo real,
+/// eliminando la necesidad de conteos de caracteres fijos que fallan al cambiar de fuente o ventana.
+
+/// [NIVEL 1] Versión simplificada para el 90% de los casos.
+/// - Sin saltos de línea (Wrapping::None)
+/// - Sin sufijo adicional
+/// - Alineación: Izquierda (Horizontal) y Centro (Vertical) por defecto.
+/// 
+/// Ejemplo: smart_truncate_text(song_title, 14.0, FONT, COLOR)
 pub fn smart_truncate_text<'a, Message: Clone + 'a>(
     content: String,
     size: f32,
     font: iced::Font,
     color: Color,
-    reserved_width: f32, // Espacio extra a descontar (ej: para estadísticas o iconos a la derecha)
+) -> Element<'a, Message> {
+    smart_truncate_text_advanced(
+        content, size, font, color, 
+        iced::widget::text::Wrapping::None, 
+        None,
+        Alignment::Start,
+        Alignment::Center
+    )
+}
+
+/// [NIVEL 2] Versión con soporte para sufijo pegado al texto.
+/// - Ideal para cabeceras que llevan un punto indicador o icono pegado al nombre.
+/// - El sufijo siempre permanecerá junto al texto, cortando el texto si es necesario.
+/// - Sin saltos de línea (Wrapping::None)
+/// - Alineación: Izquierda (Horizontal) y Centro (Vertical) por defecto.
+/// 
+/// Ejemplo: smart_truncate_text_with_suffix(name, 15.0, FONT, COLOR, (" •".to_string(), DOT_COLOR))
+pub fn smart_truncate_text_with_suffix<'a, Message: Clone + 'a>(
+    content: String,
+    size: f32,
+    font: iced::Font,
+    color: Color,
+    suffix: (String, Color),
+) -> Element<'a, Message> {
+    smart_truncate_text_advanced(
+        content, size, font, color, 
+        iced::widget::text::Wrapping::None, 
+        Some(suffix),
+        Alignment::Start,
+        Alignment::Center
+    )
+}
+
+/// [NIVEL 3] Versión avanzada para control total.
+/// Permite definir manualmente el comportamiento de wrapping, sufijos y alineación.
+/// 
+/// Alineaciones (Usando el enum `Alignment` de Iced):
+/// - `align_x`: Alineación HORIZONTAL (Start = Izquierda, Center = Centro, End = Derecha).
+/// - `align_y`: Alineación VERTICAL (Start = Arriba, Center = Centro, End = Abajo).
+pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
+    content: String,
+    size: f32,
+    font: iced::Font,
+    color: Color,
     wrapping: iced::widget::text::Wrapping,
+    suffix: Option<(String, Color)>,
+    align_x: Alignment,
+    align_y: Alignment,
 ) -> Element<'a, Message> {
     Responsive::new(move |size_info| {
-        // Estimación dinámica muy robusta: ~0.55 el tamaño de la fuente por carácter para Inter/Noto
+        // Estimación: ~0.55 el tamaño de la fuente por carácter.
         let char_w = size * 0.55; 
-        let available_w = (size_info.width - reserved_width).max(0.0);
-        let max_chars = (available_w / char_w).floor() as usize;
+        let suffix_s = suffix.as_ref().map(|(s, _)| s.clone()).unwrap_or_default();
+        let suffix_c = suffix.as_ref().map(|(_, c)| *c).unwrap_or(color);
         
-        let display_text = truncate_text(&content, max_chars);
+        // Calculamos ancho de sufijo (incluyendo un margen de 2px)
+        let suffix_w = if suffix_s.is_empty() { 0.0 } else { (suffix_s.chars().count() as f32) * char_w + 2.0 };
         
-        text(display_text)
-            .size(size)
-            .font(font)
-            .color(color)
-            .wrapping(wrapping)
+        let available_w = size_info.width;
+        let text_w_needed = (content.chars().count() as f32) * char_w;
+
+        // Decidimos si truncar basándonos en el espacio real asignado por Iced
+        let display_text = if (text_w_needed + suffix_w) <= available_w {
+            content.clone()
+        } else {
+            let limit_w = (available_w - suffix_w).max(0.0);
+            let max_chars = (limit_w / char_w).floor() as usize;
+            truncate_text(&content, max_chars)
+        };
+
+        let mut r = row![
+            text(display_text)
+                .size(size)
+                .font(font)
+                .color(color)
+                .wrapping(wrapping)
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(size + 2.0)))
+        ]
+        .align_y(align_y)
+        .spacing(0);
+
+        if !suffix_s.is_empty() {
+            r = r.push(text(suffix_s).size(size).font(font).color(suffix_c).wrapping(wrapping)
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(size + 2.0))));
+        }
+
+        container(r)
+            .width(Length::Fill)
+            .height(Length::Shrink)
+            .align_x(align_x)
+            .align_y(align_y)
             .into()
     })
     .width(Length::Fill)
+    .height(Length::Shrink)
     .into()
 }
 
@@ -898,31 +988,31 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     let on_select_clone = on_select.clone();
     let on_toggle_clone = on_toggle.clone();
 
-    let name_widget = smart_truncate_text(
-        name,
-        15.0,
-        FONT_INTER_SANS_MEDIUM,
-        name_color,
-        280.0, // Reservado para estadísticas y botones de artista
-        iced::widget::text::Wrapping::None,
-    );
+    let font_size = if row_h > 40.0 { 16.0 } else { 15.0 };
 
-    let mut artist_name_row = row![name_widget].align_y(Alignment::Center).width(Length::Fill);
-
-    if show_dot {
-        artist_name_row = artist_name_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(dot_color).wrapping(iced::widget::text::Wrapping::None));
-    }
+    let name_widget = if show_dot {
+        smart_truncate_text_with_suffix(
+            name,
+            font_size,
+            FONT_INTER_SANS_MEDIUM,
+            name_color,
+            (" •".to_string(), dot_color),
+        )
+    } else {
+        smart_truncate_text(name, font_size, FONT_INTER_SANS_MEDIUM, name_color)
+    };
 
     let header_content = row![
-        artist_name_row,
-        // Eliminamos el Space::Fill que causaba el conflicto de ancho al 50%
+        name_widget,
         container(
             text(format!("{} Canciones | {} Álbumes | {}",  songs_count, albums_count, time_str))
                 .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
-        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }),
+                .wrapping(iced::widget::text::Wrapping::None)
+        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }).center_y(Length::Fill),
         Space::new().width(15),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
-    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 });
+    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 })
+    .height(Length::Fill);
 
     container(
         mouse_area(header_content)
@@ -961,31 +1051,29 @@ pub fn album_header_widget<'a, Message: Clone + 'a>(
     let on_select_clone = on_select.clone();
     let on_toggle_clone = on_toggle.clone();
 
-    let name_widget = smart_truncate_text(
-        album_name,
-        15.0,
-        FONT_INTER_SANS_MEDIUM,
-        txt_color,
-        200.0, // Reservado para estadísticas y botones de álbum
-        iced::widget::text::Wrapping::None,
-    );
-
-    let mut album_title_row = row![name_widget].align_y(Alignment::Center).width(Length::Fill);
-
-    if show_dot {
-        album_title_row = album_title_row.push(text(" •").size(15).font(FONT_INTER_SANS_MEDIUM).color(dot_color).wrapping(iced::widget::text::Wrapping::None));
-    }
+    let name_widget = if show_dot {
+        smart_truncate_text_with_suffix(
+            album_name,
+            15.0,
+            FONT_INTER_SANS_MEDIUM,
+            txt_color,
+            (" •".to_string(), dot_color),
+        )
+    } else {
+        smart_truncate_text(album_name, 15.0, FONT_INTER_SANS_MEDIUM, txt_color)
+    };
 
     let header_content = row![
-        album_title_row,
-        // Eliminamos el Space::Fill que causaba el conflicto de ancho al 50%
+        name_widget,
         container(
             text(format!("{} Canciones | {}", songs_count, time_str))
                 .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
-        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }),
+                .wrapping(iced::widget::text::Wrapping::None)
+        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }).center_y(Length::Fill),
         Space::new().width(15),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
-    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 });
+    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 })
+    .height(Length::Fill);
 
     container(
         mouse_area(header_content)
@@ -1640,10 +1728,10 @@ where
                 );
 
                 let info_col = column![
-                    text(truncate_text(&artist_name, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
-                    text(truncate_text(&alb.album_name, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
-                    text(truncate_text(&genre, 32)).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
-                    text(year.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None),
+                    smart_truncate_text(artist_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                    smart_truncate_text(alb.album_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                    smart_truncate_text(genre.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                    text(year.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
                 ].spacing(2).width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);

@@ -1611,20 +1611,23 @@ impl AudoxidyApp {
                                 let song_y = album_card_top + 252.0 + song_header_h + new_idx as f32 * song_row_h;
                                 let song_bottom = song_y + song_row_h;
 
-                                if let Some(viewport) = &self.library_manager.last_viewport {
-                                    let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
-                                    let view_min = viewport.absolute_offset().y;
-                                    let view_max = view_min + viewport.bounds().height;
+                                    if let Some(viewport) = &self.library_manager.last_viewport {
+                                        let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                                        let view_min = viewport.absolute_offset().y;
+                                        let view_max = view_min + viewport.bounds().height;
+                                        
+                                        let margin_top = 0.0;
+                                        let margin_bottom = 0.0;
 
-                                    if song_y < view_min + 64.0 {
-                                        return iced::widget::operation::scroll_to(scroll_id,
-                                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: (song_y - 64.0).max(0.0) });
-                                    } else if song_bottom > view_max - song_row_h {
-                                        let offset = (song_bottom - viewport.bounds().height + song_row_h).max(0.0);
-                                        return iced::widget::operation::scroll_to(scroll_id,
-                                            iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
+                                        if song_y < view_min + margin_top {
+                                            return iced::widget::operation::scroll_to(scroll_id,
+                                                iced::widget::operation::AbsoluteOffset { x: 0.0, y: (song_y - margin_top).max(0.0) });
+                                        } else if song_bottom > view_max - margin_bottom {
+                                            let offset = (song_bottom - viewport.bounds().height + margin_bottom).max(0.0);
+                                            return iced::widget::operation::scroll_to(scroll_id,
+                                                iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
+                                        }
                                     }
-                                }
                             }
                         }
                         return Task::none();
@@ -1682,15 +1685,17 @@ impl AudoxidyApp {
 
                 if let Some(viewport) = &self.library_manager.last_viewport {
                     let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
-                    let margin = 0.0;
-                    if viewport.bounds().height > 0.1 { // Evitar división por cero o scroll en un viewport inválido
+                    let margin_top = 0.0;
+                    let margin_bottom = 0.0;
+                    
+                    if viewport.bounds().height > 0.1 { 
                         let view_min = viewport.absolute_offset().y;
                         let view_max = view_min + viewport.bounds().height;
 
-                        if item_top < view_min + margin {
-                            return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (item_top - margin).max(0.0) });
-                        } else if item_bottom > view_max - margin {
-                            let offset = (item_bottom - viewport.bounds().height + margin).max(0.0);
+                        if item_top < view_min + margin_top {
+                            return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (item_top - margin_top).max(0.0) });
+                        } else if item_bottom > view_max - margin_bottom {
+                            let offset = (item_bottom - viewport.bounds().height + margin_bottom).max(0.0);
                             return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
                         }
                     }
@@ -1913,7 +1918,13 @@ impl AudoxidyApp {
                 self.library_manager.expanded_album = None;
                 self.library_manager.expanded_album_songs = None;
                 
-                Task::none()
+                // Forzar scroll al inicio al cambiar de vista (a pedido del usuario)
+                self.library_manager.last_viewport = None;
+                
+                scroll_to(
+                    crate::gui::library::LIBRARY_SCROLL_ID.clone(),
+                    iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 }
+                )
             }
             Message::WindowResized(w, h) => {
                 self.window_size = (w, h);

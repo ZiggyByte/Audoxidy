@@ -882,7 +882,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
     let mut linear_idx = 0;
 
-    for (gi, group) in groups.iter().enumerate() {
+    for (_gi, group) in groups.iter().enumerate() {
         // Separador de carpeta
         let is_folder_selected = manager.selected_idxs.contains(&linear_idx);
         let is_group_selected = is_folder_selected;
@@ -1139,12 +1139,12 @@ pub fn get_item_context_menu_entries(linear_idx: usize) -> Vec<crate::gui::widge
             action: None,
         },
         ContextMenuEntry {
-            label: "Agregar archivo a la lista".to_string(),
+            label: "Agregar archivo".to_string(),
             icon: Some("audio-file-outlined-straight.svg".to_string()),
             action: Some(Message::PlaylistAddFiles),
         },
         ContextMenuEntry {
-            label: "Agregar carpeta a la lista".to_string(),
+            label: "Agregar carpeta".to_string(),
             icon: Some("folder-add-outlined.svg".to_string()),
             action: Some(Message::PlaylistAddFolder),
         },

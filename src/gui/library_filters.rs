@@ -128,10 +128,8 @@ impl LibraryFiltersManager {
         let all_types = [FilterType::Genre, FilterType::Artist, FilterType::Album, FilterType::Year, FilterType::Folder];
 
         // Estructura intermedia con HashMap para O(1) lookup de hijos
-        // L1 -> HashMap<L1_key, HashMap<L2_key, HashSet<L3_key>>>
-        // Estructura intermedia con BTreeMap para mantener el orden de inserción/alfabético base
-        // L1_key_lower -> (L1_display, HashMap<L2_key_lower, (L2_display, HashSet<L3_canon_names>)>)
-        let mut indices: HashMap<FilterType, BTreeMap<String, (String, HashMap<String, (String, HashSet<String>)>)>> = HashMap::new();
+        // L1_label -> HashMap<L2_label, HashSet<L3_label>>
+        let mut indices: HashMap<FilterType, BTreeMap<String, HashMap<String, HashSet<String>>>> = HashMap::new();
         let mut char_sets: HashMap<FilterType, HashSet<String>> = HashMap::new();
 
         for ft in &all_types {
@@ -159,13 +157,10 @@ impl LibraryFiltersManager {
                 // Registrar la letra del abecedario
                 char_sets.get_mut(ft).unwrap().insert(Self::get_group_char(l1));
 
-                // Insertar en el índice con unificación case-insensitive
+                // Insertar en el índice (ahora tratamos cada variante de mayúsculas como única)
                 let l1_map = indices.get_mut(ft).unwrap();
-                let l1_key = l1.to_lowercase();
-                let (_l1_display, l2_map) = l1_map.entry(l1_key).or_insert_with(|| (l1.to_string(), HashMap::new()));
-                
-                let l2_key = l2.to_lowercase();
-                let (_l2_display, l3_set) = l2_map.entry(l2_key).or_insert_with(|| (l2.to_string(), HashSet::new()));
+                let l2_map = l1_map.entry(l1.to_string()).or_insert_with(HashMap::new);
+                let l3_set = l2_map.entry(l2.to_string()).or_insert_with(HashSet::new);
                 
                 if let Some(l3_val) = l3 {
                     l3_set.insert(l3_val.to_string());
@@ -182,12 +177,12 @@ impl LibraryFiltersManager {
             let l1_map = indices.remove(ft).unwrap();
             let mut tree: Vec<TreeNode> = Vec::with_capacity(l1_map.len());
 
-            for (_l1_lower, (l1_display, l2_map)) in l1_map {
-                let id1 = format!("{}|{}", ft_label, l1_display);
+            for (l1_label, l2_map) in l1_map {
+                let id1 = format!("{}|{}", ft_label, l1_label);
                 let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
 
-                for (_l2_lower, (l2_display, l3_set)) in l2_map {
-                    let id2 = format!("{}|{}", id1, l2_display);
+                for (l2_label, l3_set) in l2_map {
+                    let id2 = format!("{}|{}", id1, l2_label);
                     let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
 
                     for l3_val in l3_set {
@@ -196,11 +191,11 @@ impl LibraryFiltersManager {
                     }
 
                     Self::sort_tree(&mut children2);
-                    children1.push(TreeNode { label: l2_display, id: id2, children: children2 });
+                    children1.push(TreeNode { label: l2_label, id: id2, children: children2 });
                 }
 
                 Self::sort_tree(&mut children1);
-                tree.push(TreeNode { label: l1_display, id: id1, children: children1 });
+                tree.push(TreeNode { label: l1_label, id: id1, children: children1 });
             }
 
             Self::sort_tree(&mut tree);

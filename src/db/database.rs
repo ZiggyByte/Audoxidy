@@ -352,16 +352,16 @@ impl Database {
 
     /// Crea las playlists del sistema si no existen ya.
     fn init_system_playlists(conn: &Connection) -> Result<()> {
-        // "Archivos locales" - playlist principal para la biblioteca
+        // "Audoxidy" - playlist principal para archivos dentro la biblioteca.
         conn.execute(
             "INSERT OR IGNORE INTO PLAYLISTS (name, sort_order, is_system) VALUES (?1, ?2, ?3)",
-            params!["Archivos locales", 0, 1],
+            params!["Audoxidy", 0, 1],
         )?;
 
-        // "Default" - playlist para archivos fuera de biblioteca
+        // "Oxidy Drift" - playlist para archivos fuera de la biblioteca.
         conn.execute(
             "INSERT OR IGNORE INTO PLAYLISTS (name, sort_order, is_system) VALUES (?1, ?2, ?3)",
-            params!["Default", 1, 1],
+            params!["Oxidy Drift", 1, 1],
         )?;
 
         Ok(())

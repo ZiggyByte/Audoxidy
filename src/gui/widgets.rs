@@ -1410,7 +1410,7 @@ where
     for element in visible_elements {
         match element {
             VirtualRow::ArtistHeader(group, is_collapsed) => {
-                let is_header_selected = manager.selected_header.as_ref() == Some(&group.name) && manager.selected_album.is_none() && manager.selected_song_idx.is_none();
+                let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(group.name.clone()));
                 let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
                 
                 list_col = list_col.push(artist_header_widget(
@@ -1422,7 +1422,7 @@ where
             }
             VirtualRow::AlbumHeader(name, hash, artist, count, duration, is_expanded, is_playing) => {
                 let composite_id = format!("{}|{}", artist, hash);
-                let is_album_selected = manager.selected_album.as_ref().map(|s| s == &composite_id || s == &name).unwrap_or(false);
+                let is_album_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
 
                 list_col = list_col.push(album_header_widget(
                     name, count, duration, is_expanded, is_album_selected, is_playing,
@@ -1432,7 +1432,7 @@ where
                 ));
             }
             VirtualRow::SongRow(song, song_i) => {
-                let is_song_selected = manager.selected_song_idx == Some(song_i);
+                let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
                 list_col = list_col.push(row_builder(song, song_i, is_song_selected, playing_path));
             }
         }
@@ -1458,7 +1458,7 @@ where
     .on_scroll(crate::gui::app::Message::LibraryScroll);
 
     let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
-        let is_header_selected = manager.selected_header.as_ref() == Some(&st_group.name);
+        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_group.name.clone()));
         
         let is_artist_playing = st_group.songs.iter().any(|s| s.full_file_path == playing_path);
 
@@ -1688,9 +1688,7 @@ where
     for element in visible_elements {
         match element {
             VirtualRow::ArtistHeader(group, is_collapsed) => {
-                let is_artist_explicitly_selected = manager.selected_header.as_ref() == Some(&group.name) 
-                    && manager.selected_album.is_none() 
-                    && manager.selected_song_idx.is_none();
+                let is_artist_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(group.name.clone()));
                 let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
                 let header = artist_header_widget(
                     group.name.clone(),
@@ -1735,10 +1733,8 @@ where
                 ].spacing(2).width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);
-                let is_album_explicitly_selected = if let Some(sel) = &manager.selected_album {
-                    sel == &composite_id || sel == &alb.album_name
-                } else { false };
-                let is_song_selected_in_album = manager.selected_song_idx.map(|idx| alb.songs.iter().any(|(_, i)| *i == idx)).unwrap_or(false);
+                let is_album_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
+                let is_song_selected_in_album = alb.songs.iter().any(|(s, _)| manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(s.id)));
                 let is_album_card_highlighted = is_album_explicitly_selected || is_song_selected_in_album;
 
                 let card_col = column![card_wrapper, info_col].spacing(5).width(Length::Fixed(card_w - 30.0));
@@ -1788,7 +1784,7 @@ where
 
                 if is_expanded {
                     for (song, song_i) in alb.songs {
-                        let is_song_selected = manager.selected_song_idx == Some(song_i);
+                        let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
                         let song_row = row_builder(song, song_i, is_song_selected, playing_path);
                         right_col = right_col.push(song_row);
                     }

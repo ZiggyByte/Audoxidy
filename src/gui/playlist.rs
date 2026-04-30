@@ -7,7 +7,7 @@ use crate::db::database::{PlaylistFolderGroup, PlaylistSongRef, ShuffleSession};
 use crate::gui::app::Message;
 use crate::gui::theme::*;
 use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
-use crate::utils::{format_duration, truncate_text};
+use crate::utils::{format_duration};
 
 // ============================================================
 // Constantes y IDs

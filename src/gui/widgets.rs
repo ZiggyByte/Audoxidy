@@ -1223,8 +1223,8 @@ where
     let header_h: f32 = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
     let album_header_h: f32 = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
 
-    let view_min_raw = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
-    let viewport_h = manager.last_viewport.as_ref().map(|v| v.bounds().height).unwrap_or(800.0);
+    let view_min_raw = manager.scroll_offset.y;
+    let viewport_h = manager.last_viewport.as_ref().map(|v| v.height).unwrap_or(800.0);
 
     struct AlbumGroup<'a> {
         album_name: String,
@@ -1515,8 +1515,8 @@ where
     // La tarjeta es estricta a 250px como lo definió la columna
     let card_w = 250.0;
 
-    let view_min_raw = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
-    let viewport_h = manager.last_viewport.as_ref().map(|v| v.bounds().height).unwrap_or(800.0);
+    let view_min_raw = manager.scroll_offset.y;
+    let viewport_h = manager.last_viewport.as_ref().map(|v| v.height).unwrap_or(800.0);
 
     let mut total_content_h = 0.0;
     
@@ -1763,8 +1763,6 @@ where
                     album_header_h
                 };
                 let _block_h = (card_w + 30.0).max(right_h);
-                let chevron = if !is_expanded { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
-                let time_str = format_duration(alb.duration_secs);
                 
                 let is_album_playing = alb.songs.iter().any(|(s, _)| s.full_file_path == playing_path);
                 

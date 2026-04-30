@@ -8,7 +8,7 @@ use crate::gui::app::Message;
 use crate::gui::theme::*;
 // Import deleted since song row is injected and artist header is in universal_song_list
 use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
-use crate::utils::{format_duration, format_size, format_metadata, truncate_text, SortColumn};
+use crate::utils::{format_duration, format_size, SortColumn};
 
 /// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
 pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
@@ -126,12 +126,15 @@ pub struct LibraryManager {
     pub library_area_width: f32,
     pub last_selected_album: Option<String>,
     pub last_selected_song_idx: Option<usize>,
-    pub last_viewport: Option<iced::widget::scrollable::Viewport>,
     pub selection_stats: Option<LibraryStats>,
-    pub filter_stats: Option<LibraryStats>, // Estadísticas calculadas de las canciones filtradas
-    pub artist_last_selection: std::collections::HashMap<String, usize>, // artist -> global_song_idx
-    /// Stores the exact (y, h) of the last navigated item to avoid name-based lookup jumping
+    pub filter_stats: Option<LibraryStats>,
+    pub artist_last_selection: std::collections::HashMap<String, usize>,
     pub selected_item_hint: Option<(f32, f32)>,
+    pub last_viewport: Option<iced::Rectangle>,
+    pub scroll_offset: iced::Vector,
+    pub marquee_start: Option<iced::Point>,
+    pub marquee_end: Option<iced::Point>,
+    pub is_dragging: bool,
 }
 
 impl Default for LibraryManager {
@@ -204,6 +207,10 @@ impl Default for LibraryManager {
             filter_stats: None,
             artist_last_selection: std::collections::HashMap::new(),
             selected_item_hint: None,
+            marquee_start: None,
+            marquee_end: None,
+            is_dragging: false,
+            scroll_offset: iced::Vector::new(0.0, 0.0),
         }
     }
 }
@@ -409,15 +416,16 @@ impl LibraryManager {
         None
     }
 
-    pub fn get_visible_items(&self) -> Vec<(LibraryListItem, f32, f32)> {
+    pub fn get_visible_items(&self) -> Vec<(LibraryListItem, iced::Rectangle)> {
         let mut items = Vec::new();
         let mut current_y = 0.0;
         let header_h: f32 = if self.view_mode == LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
         let row_height: f32 = if self.view_mode == LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
+        let lib_width = self.library_area_width.max(100.0);
 
         if self.is_list_mode() {
             for group in &self.artist_groups {
-                items.push((LibraryListItem::Artist(group.name.clone()), current_y, header_h));
+                items.push((LibraryListItem::Artist(group.name.clone()), iced::Rectangle::new(iced::Point::new(0.0, current_y), iced::Size::new(lib_width, header_h))));
                 current_y += header_h;
 
                 let is_collapsed = self.collapsed_artists.contains(&group.name);
@@ -444,7 +452,7 @@ impl LibraryManager {
                 }
 
                 if !is_collapsed {
-                    for (alb_name, alb_hash, song_ids) in albums_info {
+                    for (_alb_name, alb_hash, song_ids) in albums_info {
                         let composite_id = format!("{}|{}", group.name, alb_hash);
                         let is_album_expanded = !self.collapsed_albums.contains(&composite_id);
                         
@@ -457,12 +465,12 @@ impl LibraryManager {
                         };
                         let block_h = card_h.max(right_h) + if self.view_mode == LibraryViewMode::DetailedList { 10.0 } else { 0.0 };
 
-                        items.push((LibraryListItem::Album(composite_id.clone()), current_y, album_header_h));
+                        items.push((LibraryListItem::Album(composite_id.clone()), iced::Rectangle::new(iced::Point::new(0.0, current_y), iced::Size::new(lib_width, album_header_h))));
                         
                         if is_album_expanded {
                             let mut song_y = current_y + album_header_h;
                             for song_id in song_ids {
-                                items.push((LibraryListItem::Song(song_id), song_y, row_height));
+                                items.push((LibraryListItem::Song(song_id), iced::Rectangle::new(iced::Point::new(0.0, song_y), iced::Size::new(lib_width, row_height))));
                                 song_y += row_height;
                             }
                         }
@@ -478,13 +486,16 @@ impl LibraryManager {
             
             if let Some(albums) = albums_to_show {
                 let per_row = self.albums_per_row.get().max(1);
+                let card_width = lib_width / per_row as f32;
+                
                 for chunk in albums.chunks(per_row) {
                     let mut row_h = 252.0;
                     let mut expanded_id = None;
                     
-                    for album_entry in chunk {
+                    for (col, album_entry) in chunk.iter().enumerate() {
                         let composite_id = format!("{}|{}", album_entry.artist, album_entry.id);
-                        items.push((LibraryListItem::Album(composite_id.clone()), current_y, 252.0)); // Placeholder para la posición de la carta
+                        let x = col as f32 * card_width;
+                        items.push((LibraryListItem::Album(composite_id.clone()), iced::Rectangle::new(iced::Point::new(x, current_y), iced::Size::new(card_width, 252.0))));
 
                         if self.expanded_album.as_deref() == Some(composite_id.as_str()) {
                             expanded_id = Some(composite_id);
@@ -492,21 +503,21 @@ impl LibraryManager {
                     }
 
                     if let Some(_exp_id) = expanded_id {
-                    if let Some(songs) = self.expanded_album_songs.as_ref() {
-                        let query = self.search_query.trim();
-                        let filtered = if query.is_empty() {
-                            songs.clone()
-                        } else {
-                            songs.iter().filter(|s| crate::utils::song_matches_search(s, query)).cloned().collect()
-                        };
+                        if let Some(songs) = self.expanded_album_songs.as_ref() {
+                            let query = self.search_query.trim();
+                            let filtered = if query.is_empty() {
+                                songs.clone()
+                            } else {
+                                songs.iter().filter(|s| crate::utils::song_matches_search(s, query)).cloned().collect()
+                            };
 
-                        let mut song_y = current_y + 252.0 + 32.0; // aprox padding
-                        for song in filtered {
-                            items.push((LibraryListItem::Song(song.id), song_y, 32.0));
-                            song_y += 32.0;
+                            let mut song_y = current_y + 252.0 + 32.0; // aprox padding
+                            for song in filtered {
+                                items.push((LibraryListItem::Song(song.id), iced::Rectangle::new(iced::Point::new(0.0, song_y), iced::Size::new(lib_width, 32.0))));
+                                song_y += 32.0;
+                            }
+                            row_h += 60.0 + (songs.len() as f32 * 32.0); // Ajuste de altura de fila para navegación
                         }
-                        row_h += 60.0 + (songs.len() as f32 * 32.0); // Ajuste de altura de fila para navegación
-                    }
                     }
                     current_y += row_h;
                 }
@@ -525,7 +536,7 @@ impl LibraryManager {
 
         // 1. Intentar encontrar por focused_item
         if let Some(focused) = &self.focused_item {
-            if let Some(pos) = items.iter().position(|(it, _, _)| it == focused) {
+            if let Some(pos) = items.iter().position(|(it, _)| it == focused) {
                 current_idx = pos;
                 found = true;
             }
@@ -533,7 +544,7 @@ impl LibraryManager {
 
         // 2. Fallback a campos legados si no se encontró foco explícito
         if !found {
-            for (i, (item, _, _)) in items.iter().enumerate() {
+            for (i, (item, _)) in items.iter().enumerate() {
                 let match_found = match item {
                     LibraryListItem::Song(id) => {
                          // Si tenemos un list mode con filtered_songs, buscamos el índice
@@ -561,18 +572,18 @@ impl LibraryManager {
         // Navegación en Grid vs Lista
         let next_idx = if self.view_mode == LibraryViewMode::Grid {
             let per_row = self.albums_per_row.get().max(1);
-            let is_current_song = matches!(items.get(current_idx), Some((LibraryListItem::Song(_), _, _)));
+            let is_current_song = matches!(items.get(current_idx), Some((LibraryListItem::Song(_), _)));
             
             match dir {
                 LibraryNavDir::Up => {
                     if is_current_song {
                         let prev = current_idx.saturating_sub(1);
-                        if let Some((LibraryListItem::Song(_), _, _)) = items.get(prev) {
+                        if let Some((LibraryListItem::Song(_), _)) = items.get(prev) {
                             prev
                         } else {
                             // Al subir desde la primera canción, ir al álbum que está expandido
                             if let Some(exp_id) = &self.expanded_album {
-                                items.iter().position(|(it, _, _)| {
+                                items.iter().position(|(it, _)| {
                                     if let LibraryListItem::Album(id) = it { id == exp_id }
                                     else { false }
                                 }).unwrap_or(prev)
@@ -587,17 +598,27 @@ impl LibraryManager {
                 LibraryNavDir::Down => {
                     if is_current_song {
                         let next = (current_idx + 1).min(items.len() - 1);
-                        if let Some((LibraryListItem::Song(_), _, _)) = items.get(next) {
+                        if let Some((LibraryListItem::Song(_), _)) = items.get(next) {
                             next
                         } else {
                             current_idx // Se DETIENE al final de la lista de canciones
                         }
                     } else {
-                        (current_idx + per_row).min(items.len() - 1)
+                        let mut target = (current_idx + per_row).min(items.len() - 1);
+                        
+                        // Si hay una lista de canciones expandida justo después de esta fila, 
+                        // entrar en ella por la primera canción.
+                        for i in (current_idx + 1)..=target {
+                            if let Some((LibraryListItem::Song(_), _)) = items.get(i) {
+                                target = i;
+                                break;
+                            }
+                        }
+                        target
                     }
                 },
-                LibraryNavDir::Left => current_idx.saturating_sub(1),
-                LibraryNavDir::Right => (current_idx + 1).min(items.len() - 1),
+                LibraryNavDir::Left => if is_current_song { current_idx } else { current_idx.saturating_sub(1) },
+                LibraryNavDir::Right => if is_current_song { current_idx } else { (current_idx + 1).min(items.len() - 1) },
                 _ => current_idx,
             }
         } else {
@@ -609,7 +630,9 @@ impl LibraryManager {
         };
 
         if items.is_empty() { return None; }
-        let (new_item, y, h) = items[next_idx.min(items.len()-1)].clone();
+        let item_tuple = &items[next_idx.min(items.len()-1)];
+        let new_item = item_tuple.0.clone();
+        let (y, h) = (item_tuple.1.y, item_tuple.1.height);
 
         if modifiers.shift() {
             let pivot = self.selection_pivot.clone().unwrap_or_else(|| items[current_idx].0.clone());
@@ -631,12 +654,74 @@ impl LibraryManager {
         Some((new_item, y, h))
     }
 
+    pub fn select_marquee(&mut self, marquee_rect: iced::Rectangle, modifiers: iced::keyboard::Modifiers) {
+        let items = self.get_visible_items();
+        
+        if !modifiers.shift() && !modifiers.command() && !modifiers.control() {
+            self.selected_items.clear();
+        }
+
+        for (item, bounds) in items {
+            if marquee_rect.intersects(&bounds) {
+                if (modifiers.command() || modifiers.control()) && self.selected_items.contains(&item) {
+                    self.selected_items.remove(&item);
+                } else {
+                    self.selected_items.insert(item);
+                }
+            }
+        }
+        self.update_selection_stats();
+    }
+
+    /// Maneja la selección por clic, soportando modificadores para selección múltiple o por rango.
+    pub fn handle_click(&mut self, item: LibraryListItem, modifiers: iced::keyboard::Modifiers) {
+        if modifiers.command() || modifiers.control() {
+            // Ctrl + Clic: alternar selección individual
+            if self.selected_items.contains(&item) {
+                self.selected_items.remove(&item);
+            } else {
+                self.selected_items.insert(item.clone());
+            }
+            self.focused_item = Some(item.clone());
+            self.selection_pivot = Some(item);
+        } else if modifiers.shift() {
+            // Shift + Clic: selección por rango
+            if let Some(pivot) = self.selection_pivot.clone() {
+                self.select_range(&pivot, &item);
+            } else {
+                self.selected_items.clear();
+                self.selected_items.insert(item.clone());
+                self.focused_item = Some(item.clone());
+                self.selection_pivot = Some(item);
+            }
+        } else {
+            // Clic normal: resetear selección
+            self.selected_items.clear();
+            self.selected_items.insert(item.clone());
+            self.focused_item = Some(item.clone());
+            self.selection_pivot = Some(item);
+        }
+        self.update_selection_stats();
+    }
+
+    /// Selecciona todos los elementos visibles (incluyendo cabeceras colapsadas) según los filtros actuales.
+    pub fn select_all(&mut self) {
+        let visible = self.get_visible_items();
+        self.selected_items.clear();
+        for (item, _) in visible {
+            self.selected_items.insert(item);
+        }
+        self.selection_pivot = None;
+        self.focused_item = None;
+        self.update_selection_stats();
+    }
+
     pub fn select_range(&mut self, start_item: &LibraryListItem, end_item: &LibraryListItem) {
         let items = self.get_visible_items();
         let mut start_v = None;
         let mut end_v = None;
 
-        for (i, (it, _, _)) in items.iter().enumerate() {
+        for (i, (it, _)) in items.iter().enumerate() {
             if it == start_item { start_v = Some(i); }
             if it == end_item { end_v = Some(i); }
         }
@@ -645,23 +730,33 @@ impl LibraryManager {
             let (min, max) = if s < e { (s, e) } else { (e, s) };
             self.selected_items.clear();
             for i in min..=max {
-                let (item, _, _) = &items[i];
+                let (item, _) = &items[i];
                 self.selected_items.insert(item.clone());
                 
                 // Si seleccionamos una cabecera, expandimos la selección a sus hijos según el requisito del usuario
+                // REGLA: Solo auto-expandir si es el inicio/fin del rango O si está colapsado (en medio).
+                // Si está expandido y en medio, dejamos que el bucle del rango seleccione los elementos naturales.
+                let is_boundary = item == start_item || item == end_item;
+                
                 match item {
                     LibraryListItem::Artist(name) => {
-                        if let Some(group) = self.artist_groups.iter().find(|g| g.name == *name) {
-                            for song in &group.songs {
-                                self.selected_items.insert(LibraryListItem::Song(song.id));
+                        let is_collapsed = self.collapsed_artists.contains(name);
+                        if is_boundary || is_collapsed {
+                            if let Some(group) = self.artist_groups.iter().find(|g| g.name == *name) {
+                                for song in &group.songs {
+                                    self.selected_items.insert(LibraryListItem::Song(song.id));
+                                }
                             }
                         }
                     }
                     LibraryListItem::Album(id) => {
-                        // Intentar encontrar las canciones del álbum
-                        if let Some(songs) = self.get_songs_for_album_id(id) {
-                            for song in songs {
-                                self.selected_items.insert(LibraryListItem::Song(song.id));
+                        let is_collapsed = self.collapsed_albums.contains(id);
+                        if is_boundary || is_collapsed {
+                            // Intentar encontrar las canciones del álbum
+                            if let Some(songs) = self.get_songs_for_album_id(id) {
+                                for song in songs {
+                                    self.selected_items.insert(LibraryListItem::Song(song.id));
+                                }
                             }
                         }
                     }
@@ -671,7 +766,7 @@ impl LibraryManager {
         }
     }
 
-    fn get_songs_for_album_id(&self, composite_id: &str) -> Option<Vec<std::sync::Arc<crate::db::database::SongData>>> {
+    pub fn get_songs_for_album_id(&self, composite_id: &str) -> Option<Vec<std::sync::Arc<crate::db::database::SongData>>> {
         // Separar artista y álbum si es un composite ID (Artist|AlbumID)
         let parts: Vec<&str> = composite_id.split('|').collect();
         if parts.len() == 2 {
@@ -755,19 +850,36 @@ impl LibraryManager {
     pub fn get_selected_songs(&self) -> Vec<Arc<crate::db::database::SongData>> {
         if self.selected_items.is_empty() { return Vec::new(); }
 
-        let mut song_ids = std::collections::HashSet::new();
+        let mut explicit_song_ids = std::collections::HashSet::new();
+        let mut albums_to_check = Vec::new();
+        let mut artists_to_check = Vec::new();
+
         for item in &self.selected_items {
             match item {
-                LibraryListItem::Song(id) => { song_ids.insert(*id); }
-                LibraryListItem::Album(id) => {
-                    if let Some(songs) = self.get_songs_for_album_id(id) {
-                        for s in songs { song_ids.insert(s.id); }
-                    }
+                LibraryListItem::Song(id) => { explicit_song_ids.insert(*id); }
+                LibraryListItem::Album(id) => { albums_to_check.push(id); }
+                LibraryListItem::Artist(name) => { artists_to_check.push(name); }
+            }
+        }
+
+        let mut final_song_ids = explicit_song_ids.clone();
+
+        // Expansión inteligente de álbumes: solo si no hay canciones del mismo ya seleccionadas
+        for album_id in albums_to_check {
+            if let Some(songs) = self.get_songs_for_album_id(album_id) {
+                let has_explicit_songs = songs.iter().any(|s| explicit_song_ids.contains(&s.id));
+                if !has_explicit_songs {
+                    for s in songs { final_song_ids.insert(s.id); }
                 }
-                LibraryListItem::Artist(name) => {
-                    if let Some(group) = self.artist_groups.iter().find(|g| g.name == *name) {
-                        for s in &group.songs { song_ids.insert(s.id); }
-                    }
+            }
+        }
+
+        // Expansión inteligente de artistas
+        for artist_name in artists_to_check {
+            if let Some(group) = self.artist_groups.iter().find(|g| g.name == *artist_name) {
+                let has_explicit_songs = group.songs.iter().any(|s| explicit_song_ids.contains(&s.id));
+                if !has_explicit_songs {
+                    for s in &group.songs { final_song_ids.insert(s.id); }
                 }
             }
         }
@@ -775,7 +887,7 @@ impl LibraryManager {
         let mut results = Vec::new();
         if let Some(all_songs) = &self.cached_all_songs {
              for song in all_songs {
-                 if song_ids.contains(&song.id) {
+                 if final_song_ids.contains(&song.id) {
                      results.push(song.clone());
                  }
              }
@@ -801,7 +913,7 @@ impl LibraryManager {
                 _ => false,
             };
             let is_song = matches!(self.focused_item, Some(LibraryListItem::Song(_)));
-            let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 32.0 } else { margin_top };
+            let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 0.0 } else { margin_top };
             
             let effective_margin_top = if is_header { 0.0 } else { current_margin_top };
             let margin_bottom: f32 = 0.0; // Desactivamos el margen dinámico que causaba saltos/espacios vacíos
@@ -814,8 +926,8 @@ impl LibraryManager {
             }
 
             if let Some(viewport) = &self.last_viewport {
-                let view_min = viewport.absolute_offset().y;
-                let view_max = view_min + viewport.bounds().height;
+                let view_min = self.scroll_offset.y;
+                let view_max = view_min + viewport.height;
                 let bottom = hint_y + hint_h;
 
                 if hint_y < view_min + effective_margin_top {
@@ -824,7 +936,7 @@ impl LibraryManager {
                         iced::widget::operation::AbsoluteOffset { x: 0.0, y: (hint_y - effective_margin_top).max(0.0) },
                     );
                 } else if bottom > view_max - margin_bottom {
-                    let offset = (bottom - viewport.bounds().height + margin_bottom).max(0.0);
+                    let offset = (bottom - viewport.height + margin_bottom).max(0.0);
                     return iced::widget::operation::scroll_to(
                         scroll_id,
                         iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset },
@@ -842,7 +954,7 @@ impl LibraryManager {
 
         // FALLBACK: name-based search (used when clicking with mouse)
         let items = self.get_visible_items();
-        for (item, y, h) in &items {
+        for (item, bounds) in &items {
             let is_match = if let Some(focused) = &self.focused_item {
                 item == focused
             } else {
@@ -861,31 +973,34 @@ impl LibraryManager {
             if is_match {
                 let is_header = matches!(item, LibraryListItem::Artist(_) | LibraryListItem::Album(_));
                 let is_song = matches!(item, LibraryListItem::Song(_));
-                let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 32.0 } else { margin_top };
+                let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 0.0 } else { margin_top };
                 
                 let effective_margin_top = if is_header { 0.0 } else { current_margin_top };
                 let margin_bottom: f32 = 0.0;
 
+                let y = bounds.y;
+                let h = bounds.height;
+
                 if force_top {
                     return iced::widget::operation::scroll_to(
                         scroll_id,
-                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: (*y - effective_margin_top).max(0.0) }
+                        iced::widget::operation::AbsoluteOffset { x: 0.0, y: (y - effective_margin_top).max(0.0) }
                     );
                 }
 
-                if let Some(viewport) = &self.last_viewport {
-                    let view_min = viewport.absolute_offset().y;
-                    let view_max = view_min + viewport.bounds().height;
-                    let bottom = *y + *h;
+                if let Some(viewport_rect) = &self.last_viewport {
+                    let view_min = self.scroll_offset.y;
+                    let view_max = view_min + viewport_rect.height;
+                    let bottom = y + h;
 
-                    if *y < view_min + effective_margin_top {
-                        return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (*y - effective_margin_top).max(0.0) });
+                    if y < view_min + effective_margin_top {
+                        return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (y - effective_margin_top).max(0.0) });
                     } else if bottom > view_max - margin_bottom {
-                        let offset = (bottom - viewport.bounds().height + margin_bottom).max(0.0);
+                        let offset = (bottom - viewport_rect.height + margin_bottom).max(0.0);
                         return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: offset });
                     }
                 } else {
-                    return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (*y - effective_margin_top).max(0.0) });
+                    return iced::widget::operation::scroll_to(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: (y - effective_margin_top).max(0.0) });
                 }
                 break;
             }
@@ -1333,8 +1448,8 @@ pub fn view<'a>(
                         total_height += row_h;
                     }
 
-                    let view_top = manager.last_viewport.as_ref().map(|v| v.absolute_offset().y).unwrap_or(0.0);
-                    let view_h = manager.last_viewport.as_ref().map(|v| v.bounds().height).unwrap_or(1000.0);
+                    let view_top = manager.scroll_offset.y;
+                    let view_h = manager.last_viewport.as_ref().map(|v| v.height).unwrap_or(1000.0);
                     let lazy_margin = if crate::utils::is_low_resource() { 600.0 } else { 900.0 };
                     
                     let render_min = view_top - lazy_margin;
@@ -1435,7 +1550,7 @@ pub fn view<'a>(
                                 };
 
                                 if !filtered_songs.is_empty() {
-                                    for (song_i, song) in filtered_songs {
+                                    for (_song_i, song) in filtered_songs {
                                         let is_song_selected = manager.selected_items.contains(&LibraryListItem::Song(song.id));
                                         let columns = [
                                             SortColumn::TrackNumber, SortColumn::Title, SortColumn::Artist,
@@ -1460,7 +1575,7 @@ pub fn view<'a>(
                             }
                             grid_col = grid_col.push(container(album_songs_col)
                                 .width(Length::Fill)
-                                .padding(iced::Padding { top: 5.0, right: 10.0, bottom: 5.0, left: 5.0 })
+                                .padding(iced::Padding { top: 0.0, right: 10.0, bottom: 5.0, left: 5.0 })
                                 .style(|_t| container::Style::default().background(COLOR_BG)));
                         }
                     }
@@ -1580,7 +1695,57 @@ pub fn view<'a>(
         container(content).padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 5.0 }).width(Length::Fill).height(Length::Fill)
     ).on_press(Message::LibraryDeselect);
 
-    container(column![top_container, sort_container, content_with_deselection, container(bottom_bar).width(Length::Fill).height(Length::Fixed(40.0)).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))])
-        .width(Length::Fill).height(Length::Fill).style(|_t: &Theme| container::Style::default().background(COLOR_BG)).into()
+    let mut content_stack = iced::widget::Stack::new().push(content_with_deselection);
+    
+    if manager.is_dragging {
+        if let (Some(start), Some(end)) = (manager.marquee_start, manager.marquee_end) {
+            let dx = start.x - end.x;
+            let dy = start.y - end.y;
+            let dist_sq = dx * dx + dy * dy;
+
+            if dist_sq > 9.0 {
+                let x = start.x.min(end.x);
+                // Ajustamos Y para que sea relativo al inicio del área de contenido (restando cabeceras ~72px)
+                let y = (start.y.min(end.y) - 72.0).max(0.0);
+                let w = dx.abs().max(1.0);
+                let h = dy.abs().max(1.0);
+                
+                let marquee_rect = container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+                    .width(Length::Fixed(w))
+                    .height(Length::Fixed(h))
+                    .style(move |_t| container::Style {
+                        background: Some(COLOR_ACCENT.scale_alpha(0.35).into()),
+                        border: iced::Border {
+                            color: COLOR_ACCENT,
+                            width: 1.0,
+                            radius: 0.0.into(),
+                        },
+                        ..Default::default()
+                    });
+
+                let positioned_marquee = container(marquee_rect)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .padding(iced::Padding { top: y, left: x, right: 0.0, bottom: 0.0 })
+                    .align_x(iced::alignment::Horizontal::Left)
+                    .align_y(iced::alignment::Vertical::Top);
+
+                content_stack = content_stack.push(positioned_marquee);
+            }
+        }
+    }
+
+    let final_view = container(column![
+        top_container, 
+        sort_container, 
+        content_stack, 
+        container(bottom_bar).width(Length::Fill).height(Length::Fixed(40.0)).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+    ])
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .clip(true)
+    .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
+
+    final_view.into()
 }
 

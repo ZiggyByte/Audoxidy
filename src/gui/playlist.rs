@@ -15,6 +15,7 @@ use crate::utils::{format_duration};
 
 pub static PLAYLIST_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
 pub static PLAYLIST_TABS_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
+pub static PLAYLIST_SEARCH_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(|| iced::widget::Id::new("playlist_search_input"));
 
 // ============================================================
 // Tipos auxiliares
@@ -655,16 +656,19 @@ pub fn view<'a>(manager: &'a PlaylistManager, _audio_manager: &AudioManager) -> 
     let playlist_scroll = build_song_list(manager);
     let bottom_container = build_bottom_bar(manager);
 
-    container(
-        column![
-            tabs_container,
-            playlist_scroll,
-            bottom_container
-        ]
+    mouse_area(
+        container(
+            column![
+                tabs_container,
+                playlist_scroll,
+                bottom_container
+            ]
+        )
+        .width(Length::Fixed(400.0))
+        .height(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
     )
-    .width(Length::Fixed(400.0))
-    .height(Length::Fill)
-    .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+    .on_press(Message::PlaylistDeselect)
     .into()
 }
 
@@ -938,6 +942,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     mouse_area(scroll)
         .on_enter(Message::PlaylistMouseOver(true))
         .on_exit(Message::PlaylistMouseOver(false))
+        .on_press(Message::PlaylistDeselect)
         .on_right_press(Message::RequestContextMenu(get_empty_playlist_context_menu_entries()))
         .into()
 }
@@ -1234,6 +1239,7 @@ fn get_empty_playlist_context_menu_entries() -> Vec<crate::gui::widgets::Context
 
 fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let search_box = crate::gui::widgets::standard_search_input(
+        Some(PLAYLIST_SEARCH_ID.clone()),
         "Buscar...",
         &manager.search_query,
         Message::PlaylistSearchChanged,

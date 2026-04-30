@@ -667,6 +667,7 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
 /// Widget de búsqueda estandarizado para toda la aplicación.
 pub fn standard_search_input<'a, Message: Clone + 'a>(
+    id: Option<iced::widget::Id>,
     placeholder: &'a str,
     value: &'a str,
     on_change: impl Fn(String) -> Message + 'a,
@@ -675,7 +676,7 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let has_content = !value.is_empty();
 
-    let input = text_input(placeholder, value)
+    let mut input = text_input(placeholder, value)
         .on_input(on_change)
         .padding(iced::Padding { right: 25.0, ..Default::default() }) // Espacio a la derecha para la 'x'
         .size(14)
@@ -703,6 +704,10 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
                 selection: COLOR_ACCENT,
             }
         });
+
+    if let Some(actual_id) = id {
+        input = input.id(actual_id);
+    }
 
     let mut content = iced::widget::stack![input];
 

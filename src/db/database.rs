@@ -906,17 +906,41 @@ impl Database {
     }
 
     pub fn delete_song(&self, path: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM SONGS WHERE full_file_path = ?1", [path])?;
+        self.conn.execute("DELETE FROM SONGS WHERE file_path = ?1", [path])?;
         Ok(())
     }
 
-    pub fn delete_album_group(&self, album_id: &str) -> Result<()> {
-        // En el nuevo esquema, album_id es el id entero o el hash en metadata.
-        // Aquí asumimos que recibimos el hash que identifica al álbum.
-        let id: i32 = self.conn.query_row("SELECT id FROM ALBUMS WHERE album_hash = ?1", [album_id], |r| r.get(0))?;
-        self.conn.execute("DELETE FROM SONGS WHERE album_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM ALBUMS WHERE id = ?1", [id])?;
+    pub fn delete_album_group(&self, album_hash: &str) -> Result<()> {
+        // En el nuevo esquema usamos hash_id para identificar álbumes
+        self.conn.execute("DELETE FROM SONGS WHERE album_id = (SELECT id FROM ALBUMS WHERE hash_id = ?1)", [album_hash])?;
+        self.conn.execute("DELETE FROM ALBUMS WHERE hash_id = ?1", [album_hash])?;
         Ok(())
+    }
+
+    pub fn batch_delete_songs(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() { return Ok(()); }
+        let mut stmt = self.conn.prepare("DELETE FROM SONGS WHERE id = ?1")?;
+        for id in ids {
+            stmt.execute([id])?;
+        }
+        Ok(())
+    }
+
+    pub fn cleanup_empty_metadata(&self) -> Result<()> {
+        // Eliminar álbumes sin canciones
+        self.conn.execute("DELETE FROM ALBUMS WHERE id NOT IN (SELECT DISTINCT album_id FROM SONGS)", [])?;
+        // Eliminar artistas sin álbumes ni canciones
+        self.conn.execute("DELETE FROM ARTISTS WHERE id NOT IN (SELECT DISTINCT artist_id FROM ALBUMS) AND id NOT IN (SELECT DISTINCT artist_id FROM SONGS)", [])?;
+        Ok(())
+    }
+
+    pub fn is_cover_hash_in_use(&self, hash: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM ALBUMS WHERE hash_id = ? OR cover_hash = ?) + (SELECT COUNT(*) FROM SONGS WHERE cover_override = ?)",
+            [hash, hash, hash],
+            |row: &rusqlite::Row| row.get::<_, i64>(0),
+        )?;
+        Ok(count > 0)
     }
 
     // ============================================================

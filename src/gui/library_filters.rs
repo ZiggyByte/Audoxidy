@@ -575,6 +575,7 @@ pub fn view<'a>(
 
     // --- 3. BOTTOM BAR (40px) ---
     let search_input = crate::gui::widgets::standard_search_input(
+        None,
         "Buscar...",
         &manager.search_query,
         Message::FilterSearchChanged,

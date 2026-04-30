@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, row, text, Space},
+    widget::{button, column, container, row, text, Space, mouse_area},
     Alignment, Color, Element, Length, Theme, Task,
 };
 use std::sync::{Arc, Mutex};
@@ -15,6 +15,7 @@ pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
     std::sync::LazyLock::new(|| iced::widget::Id::unique());
 pub static GRID_ID_A: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(|| iced::widget::Id::new("grid_view_a"));
 pub static GRID_ID_B: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(|| iced::widget::Id::new("grid_view_b"));
+pub static LIBRARY_SEARCH_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(|| iced::widget::Id::new("library_search_input"));
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LibraryViewMode {
@@ -134,6 +135,7 @@ pub struct LibraryManager {
     pub scroll_offset: iced::Vector,
     pub marquee_start: Option<iced::Point>,
     pub marquee_end: Option<iced::Point>,
+    pub marquee_start_pos: Option<iced::Point>, // Posición inicial en pantalla para el umbral
     pub is_dragging: bool,
 }
 
@@ -209,6 +211,7 @@ impl Default for LibraryManager {
             selected_item_hint: None,
             marquee_start: None,
             marquee_end: None,
+            marquee_start_pos: None,
             is_dragging: false,
             scroll_offset: iced::Vector::new(0.0, 0.0),
         }
@@ -486,7 +489,9 @@ impl LibraryManager {
             
             if let Some(albums) = albums_to_show {
                 let per_row = self.albums_per_row.get().max(1);
-                let card_width = lib_width / per_row as f32;
+                let card_inner_width = 182.0;
+                let spacing = 5.0;
+                let x_start = 5.0; // El padding left: 5.0 definido en library.rs para content_with_deselection
                 
                 for chunk in albums.chunks(per_row) {
                     let mut row_h = 252.0;
@@ -494,8 +499,9 @@ impl LibraryManager {
                     
                     for (col, album_entry) in chunk.iter().enumerate() {
                         let composite_id = format!("{}|{}", album_entry.artist, album_entry.id);
-                        let x = col as f32 * card_width;
-                        items.push((LibraryListItem::Album(composite_id.clone()), iced::Rectangle::new(iced::Point::new(x, current_y), iced::Size::new(card_width, 252.0))));
+                        let x = x_start + col as f32 * (card_inner_width + spacing);
+                        // Usamos el ancho exacto de la tarjeta (182) para una selección precisa
+                        items.push((LibraryListItem::Album(composite_id.clone()), iced::Rectangle::new(iced::Point::new(x, current_y), iced::Size::new(card_inner_width, 252.0))));
 
                         if self.expanded_album.as_deref() == Some(composite_id.as_str()) {
                             expanded_id = Some(composite_id);
@@ -767,18 +773,19 @@ impl LibraryManager {
     }
 
     pub fn get_songs_for_album_id(&self, composite_id: &str) -> Option<Vec<std::sync::Arc<crate::db::database::SongData>>> {
-        // Separar artista y álbum si es un composite ID (Artist|AlbumID)
         let parts: Vec<&str> = composite_id.split('|').collect();
         if parts.len() == 2 {
             let artist = parts[0];
             let album_id = parts[1];
             
-            if let Some(all_songs) = &self.cached_all_songs {
-                // Primero intentar coincidencia exacta con el cache de álbumes para obtener el tìtulo real
+            // Priorizar canciones FILTRADAS (búsqueda activa) para que las estadísticas y selección sean coherentes
+            let songs_source = self.filtered_songs.as_ref().or(self.cached_all_songs.as_ref());
+            
+            if let Some(songs) = songs_source {
                 if let Some(alb_entry) = self.cached_albums.as_ref().and_then(|all| 
                     all.iter().find(|a| a.id == album_id && a.artist == artist)
                 ) {
-                    return Some(all_songs.iter()
+                    return Some(songs.iter()
                         .filter(|s| s.album.as_deref() == Some(&alb_entry.title) && crate::utils::get_effective_artist(s) == artist)
                         .cloned().collect());
                 }
@@ -885,8 +892,11 @@ impl LibraryManager {
         }
 
         let mut results = Vec::new();
-        if let Some(all_songs) = &self.cached_all_songs {
-             for song in all_songs {
+        // Usar filtered_songs si existe para que las estadísticas solo cuenten lo que coincide con la búsqueda
+        let songs_source = self.filtered_songs.as_ref().or(self.cached_all_songs.as_ref());
+
+        if let Some(songs) = songs_source {
+             for song in songs {
                  if final_song_ids.contains(&song.id) {
                      results.push(song.clone());
                  }
@@ -902,20 +912,19 @@ impl LibraryManager {
         let margin_top = match self.view_mode {
             LibraryViewMode::DetailedList => 32.0_f32,
             LibraryViewMode::ThumbnailList => 42.0_f32,
-            LibraryViewMode::Grid => 70.0, // Barra superior + tabs
+            LibraryViewMode::Grid => 0.0, // Barra superior + tabs
             _ => 32.0_f32,
         };
 
         // FAST PATH: use the exact hint coordinates stored during keyboard navigation.
         if let Some((hint_y, hint_h)) = self.selected_item_hint {
-            let is_header = match self.focused_item {
-                Some(LibraryListItem::Artist(_)) | Some(LibraryListItem::Album(_)) => true,
-                _ => false,
-            };
+            let is_artist = matches!(self.focused_item, Some(LibraryListItem::Artist(_)));
             let is_song = matches!(self.focused_item, Some(LibraryListItem::Song(_)));
             let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 0.0 } else { margin_top };
             
-            let effective_margin_top = if is_header { 0.0 } else { current_margin_top };
+            // Solo los artistas (sticky headers) tienen margen 0.
+            // Los álbumes y canciones deben respetar el margen para no quedar ocultos bajo el sticky header del artista.
+            let effective_margin_top = if is_artist { 0.0 } else { current_margin_top };
             let margin_bottom: f32 = 0.0; // Desactivamos el margen dinámico que causaba saltos/espacios vacíos
 
             if force_top {
@@ -971,11 +980,11 @@ impl LibraryManager {
             };
 
             if is_match {
-                let is_header = matches!(item, LibraryListItem::Artist(_) | LibraryListItem::Album(_));
+                let is_artist = matches!(item, LibraryListItem::Artist(_));
                 let is_song = matches!(item, LibraryListItem::Song(_));
                 let current_margin_top = if self.view_mode == LibraryViewMode::Grid && is_song { 0.0 } else { margin_top };
                 
-                let effective_margin_top = if is_header { 0.0 } else { current_margin_top };
+                let effective_margin_top = if is_artist { 0.0 } else { current_margin_top };
                 let margin_bottom: f32 = 0.0;
 
                 let y = bounds.y;
@@ -1235,6 +1244,40 @@ impl LibraryManager {
         } else {
             self.filter_stats = None;
         }
+
+        // 4. Sincronizar canciones expandidas en vista Grid
+        self.refresh_expanded_album_songs();
+    }
+
+    /// Refresca la lista de canciones del álbum expandido en vista Grid basándose en los datos actuales.
+    pub fn refresh_expanded_album_songs(&mut self) {
+        if self.view_mode != LibraryViewMode::Grid { return; }
+        
+        if let Some(album_id) = self.expanded_album.clone() {
+            if let Some(all_songs) = &self.cached_all_songs {
+                if let Some(album_entry) = self.cached_albums.as_ref().and_then(|all| 
+                    all.iter().find(|a| (format!("{}|{}", a.artist, a.id) == album_id) || (a.id == album_id))
+                ) {
+                    let mut alb_songs: Vec<_> = all_songs.iter()
+                        .filter(|s| {
+                            let s_alb = s.album.as_deref().unwrap_or("Desconocido");
+                            let s_art = crate::utils::get_effective_artist(s);
+                            s_alb == album_entry.title && s_art == album_entry.artist
+                        })
+                        .cloned()
+                        .collect();
+                    
+                    if !alb_songs.is_empty() {
+                        self.sort_songs(&mut alb_songs);
+                        self.expanded_album_songs = Some(alb_songs);
+                    } else {
+                        // Si no hay canciones (fueron borradas), cerrar expansión
+                        self.expanded_album = None;
+                        self.expanded_album_songs = None;
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1408,7 +1451,7 @@ pub fn view<'a>(
                 let res_grid = iced::widget::responsive(move |size| {
                     let mut grid_col = column![].spacing(0);
                     
-                    let card_w = 180.0;
+                    let card_w = 187.0; // 182px de ancho de tarjeta + 5px de espaciado
                     let max_cols = if crate::utils::is_low_resource() { 5 } else { 10 };
                     let mut columns_count = (size.width / card_w).floor() as usize;
                     if columns_count < 2 { columns_count = 2; }
@@ -1650,6 +1693,7 @@ pub fn view<'a>(
 
     // --- BARRA INFERIOR (40px) ---
     let search_input = crate::gui::widgets::standard_search_input(
+        Some(LIBRARY_SEARCH_ID.clone()),
         "Buscar...",
         &manager.search_query,
         Message::LibrarySearchQueryChanged,
@@ -1704,47 +1748,54 @@ pub fn view<'a>(
             let dist_sq = dx * dx + dy * dy;
 
             if dist_sq > 9.0 {
-                let x = start.x.min(end.x);
-                // Ajustamos Y para que sea relativo al inicio del área de contenido (restando cabeceras ~72px)
-                let y = (start.y.min(end.y) - 72.0).max(0.0);
-                let w = dx.abs().max(1.0);
-                let h = dy.abs().max(1.0);
+                let scroll_y = manager.scroll_offset.y;
+                let visual_start_y = start.y - scroll_y;
+                let visual_end_y = end.y - scroll_y;
                 
-                let marquee_rect = container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
-                    .width(Length::Fixed(w))
-                    .height(Length::Fixed(h))
-                    .style(move |_t| container::Style {
-                        background: Some(COLOR_ACCENT.scale_alpha(0.35).into()),
-                        border: iced::Border {
-                            color: COLOR_ACCENT,
-                            width: 1.0,
-                            radius: 0.0.into(),
-                        },
-                        ..Default::default()
-                    });
-
-                let positioned_marquee = container(marquee_rect)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .padding(iced::Padding { top: y, left: x, right: 0.0, bottom: 0.0 })
-                    .align_x(iced::alignment::Horizontal::Left)
-                    .align_y(iced::alignment::Vertical::Top);
-
-                content_stack = content_stack.push(positioned_marquee);
+                // Calculamos los límites visuales reales (clamped al viewport del área de contenido)
+                let y_min = visual_start_y.min(visual_end_y);
+                let y_max = visual_start_y.max(visual_end_y);
+                
+                let x = start.x.min(end.x);
+                let y = y_min.max(0.0);
+                let w = dx.abs().max(1.0);
+                let h = (y_max - y).max(0.0);
+                
+                if h > 0.1 && w > 0.1 {
+                    let marquee_rect = container(iced::widget::Space::new().width(Length::Fill).height(Length::Fill))
+                        .width(Length::Fixed(w))
+                        .height(Length::Fixed(h))
+                        .style(move |_t| container::Style {
+                            background: Some(COLOR_ACCENT.scale_alpha(0.3).into()),
+                            border: iced::Border {
+                                color: COLOR_ACCENT,
+                                width: 1.0,
+                                radius: 4.0.into(),
+                            },
+                            ..Default::default()
+                        });
+                    
+                    content_stack = content_stack.push(
+                        container(marquee_rect)
+                            .padding(iced::Padding { top: y, right: 0.0, bottom: 0.0, left: x })
+                    );
+                }
             }
         }
     }
 
-    let final_view = container(column![
-        top_container, 
-        sort_container, 
-        content_stack, 
-        container(bottom_bar).width(Length::Fill).height(Length::Fixed(40.0)).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
-    ])
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .clip(true)
-    .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
+    let final_view = mouse_area(
+        container(column![
+            top_container, 
+            sort_container, 
+            content_stack, 
+            container(bottom_bar).width(Length::Fill).height(Length::Fixed(40.0)).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
+        ])
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .clip(true)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+    ).on_press(Message::LibraryFocus);
 
     final_view.into()
 }

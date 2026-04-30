@@ -160,6 +160,7 @@ pub enum Message {
     ToggleTabDropdown,
     PlaylistSearchChanged(String),
     PlaylistFocus,
+    PlaylistDeselect,
     ToggleLyrics,
     ToggleGroupEnabled(usize, Option<bool>),
     TogglePlaylistFolder(usize),
@@ -183,8 +184,15 @@ pub enum Message {
     SelectArtistHeader(String),
     LibraryKeyNav(crate::gui::library::LibraryNavDir, iced::keyboard::Modifiers),
     LibraryScroll(iced::widget::scrollable::Viewport),
+    LibraryFocus,
     LibraryDeselect,
     LibraryDeleteSelection,
+    LibraryRefresh,
+    InternalLibraryRefreshed(
+        Vec<std::sync::Arc<crate::db::database::SongData>>, 
+        Vec<(String, String, String, String, String, Option<String>)>,
+        (usize, usize, f64, f64, usize) // songs, albums, duration, size, artists
+    ),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     LibraryShowPlaying,
@@ -521,6 +529,28 @@ impl AudoxidyApp {
 
         match message {
             Message::Tick => {
+                // Auto-scroll para selección por marquee
+                if self.library_manager.is_dragging {
+                    if let Some(pos) = self.player_ui_state.mouse_pos {
+                        let win_h = self.window_size.1 as f32;
+                        let threshold_top = 150.0;
+                        let threshold_bottom = win_h - 100.0;
+                        
+                        let mut scroll_delta = 0.0;
+                        if pos.y < threshold_top {
+                            scroll_delta = (pos.y - threshold_top) / 5.0; // Velocidad proporcional
+                        } else if pos.y > threshold_bottom {
+                            scroll_delta = (pos.y - threshold_bottom) / 5.0;
+                        }
+                        
+                        if scroll_delta != 0.0 {
+                            // Ejecutamos el scroll
+                            let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                            return iced::widget::operation::scroll_by(scroll_id, iced::widget::operation::AbsoluteOffset { x: 0.0, y: scroll_delta });
+                        }
+                    }
+                }
+
                 self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
                 
                 if self.player_ui_state.is_active && self.player_ui_state.tick_count > self.player_ui_state.active_until_tick {
@@ -750,6 +780,7 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ClearPlaylist => {
+                self.focus = AppFocus::Playlist;
                 if let Ok(db) = self.database.lock() {
                     let _ = db.clear_playlist(self.playlist_manager.active_playlist_id);
                     self.playlist_manager.groups = Vec::new();
@@ -1045,6 +1076,7 @@ impl AudoxidyApp {
             }
 
             Message::SwitchPlaylist(id, auto_play) => {
+                self.focus = AppFocus::Playlist;
                 // 1. Guardar estado de la lista actual antes de cambiar
                 self.persist_playlist_state();
                 if let Ok(db) = self.database.lock() {
@@ -1232,8 +1264,19 @@ impl AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 Task::none()
             }
+            Message::PlaylistDeselect => {
+                self.focus = AppFocus::Playlist;
+                self.playlist_manager.selected_idxs.clear();
+                self.playlist_manager.focused_idx = None;
+                self.playlist_manager.selection_pivot = None;
+                Task::none()
+            }
             Message::ToggleLyrics => {
                 // Fase 6: abrir módulo de letras
+                Task::none()
+            }
+            Message::LibraryFocus => {
+                self.focus = AppFocus::Library;
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
@@ -1256,11 +1299,13 @@ impl AudoxidyApp {
                 scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::LibrarySourceSelected(source) => {
+                self.focus = AppFocus::Library;
                 self.library_manager.source = source;
                 // En el futuro, disparar recarga desde la fuente elegida
                 Task::none()
             }
             Message::LibrarySortChanged(col) => {
+                self.focus = AppFocus::Library;
                 if self.library_manager.sort_column == Some(col) {
                     if self.library_manager.sort_ascending == Some(true) {
                         self.library_manager.sort_ascending = Some(false);
@@ -1330,9 +1375,6 @@ impl AudoxidyApp {
                     self.library_manager.selected_song_idx = None;
                     self.library_manager.selected_header = None;
                     self.library_manager.selected_album = Some(album_id);
-                    self.playlist_manager.selected_idxs.clear();
-                    self.playlist_manager.focused_idx = None;
-                    self.playlist_manager.selection_pivot = None;
                     self.library_manager.selected_item_hint = None; // Reset para forzar búsqueda por nombre tras cambio estructural
                 } else {
                     // Flecha: toggle expansión Y seleccionar álbum (sincronizado)
@@ -1453,17 +1495,22 @@ impl AudoxidyApp {
                     let pos = self.last_mouse_pos;
                     if pos.x >= 602.0 {
                         let lib_x = (pos.x - 602.0).max(0.0);
-                        let lib_y = pos.y.max(0.0).min(self.window_size.1 as f32);
+                        let scroll_y = self.library_manager.scroll_offset.y;
+                        let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
                         self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
-                        self.library_manager.is_dragging = true;
+                        self.library_manager.marquee_start_pos = Some(pos);
+                        self.library_manager.is_dragging = false;
                     }
-                    Task::none()
+                    Task::batch(vec![
+                        focus(crate::gui::library::LIBRARY_SCROLL_ID.clone()),
+                        Task::none()
+                    ])
                 }
             }
             Message::SelectSong(song_id_opt) => {
                 self.focus = AppFocus::Library;
-                if let Some(song_id) = song_id_opt {
+                let task = if let Some(song_id) = song_id_opt {
                     let songs_opt = if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::Grid {
                         self.library_manager.expanded_album_songs.as_ref()
                     } else {
@@ -1486,18 +1533,25 @@ impl AudoxidyApp {
                     let pos = self.last_mouse_pos;
                     if pos.x >= 602.0 {
                         let lib_x = (pos.x - 602.0).max(0.0);
-                        let lib_y = pos.y.max(0.0).min(self.window_size.1 as f32);
+                        let scroll_y = self.library_manager.scroll_offset.y;
+                        let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
                         self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
-                        self.library_manager.is_dragging = true;
+                        self.library_manager.marquee_start_pos = Some(pos);
+                        self.library_manager.is_dragging = false;
                     }
+                    Task::batch(vec![
+                        focus(crate::gui::library::LIBRARY_SCROLL_ID.clone()),
+                        Task::none()
+                    ])
                 } else {
                     self.library_manager.selected_song_idx = None;
                     self.library_manager.selected_items.clear();
                     self.library_manager.focused_item = None;
                     self.library_manager.selection_pivot = None;
                     self.update_selection_stats();
-                }
+                    Task::none()
+                };
 
                 self.library_manager.selected_header = None;
                 if self.library_manager.is_list_mode() {
@@ -1508,7 +1562,7 @@ impl AudoxidyApp {
                     }
                 }
                 self.update_selection_stats();
-                Task::none()
+                task
             }
             Message::SelectArtistHeader(name) => {
                 self.focus = AppFocus::Library;
@@ -1535,10 +1589,12 @@ impl AudoxidyApp {
                     let pos = self.last_mouse_pos;
                     if pos.x >= 602.0 {
                         let lib_x = (pos.x - 602.0).max(0.0);
-                        let lib_y = pos.y.max(0.0).min(self.window_size.1 as f32);
+                        let scroll_y = self.library_manager.scroll_offset.y;
+                        let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
                         self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
-                        self.library_manager.is_dragging = true;
+                        self.library_manager.marquee_start_pos = Some(pos);
+                        self.library_manager.is_dragging = false;
                     }
                     self.get_library_scroll_task(false)
                 }
@@ -1583,10 +1639,7 @@ impl AudoxidyApp {
 
                 // Navegación Unificada delegada a LibraryManager
                 if let Some((_new_item, _item_y, _item_h)) = self.library_manager.handle_key_nav(dir, modifiers) {
-                    // Limpiar selección de playlist al navegar en biblioteca
-                    self.playlist_manager.selected_idxs.clear();
-                    self.playlist_manager.focused_idx = None;
-                    self.playlist_manager.selection_pivot = None;
+                    // Navegación exitosa en biblioteca
                 }
                 
                 self.library_manager.update_selection_memory();
@@ -1690,12 +1743,6 @@ impl AudoxidyApp {
                     _ => Task::none()
                 }
             }
-            Message::LibraryScroll(viewport) => {
-                let offset = viewport.absolute_offset();
-                self.library_manager.scroll_offset = iced::Vector::new(offset.x, offset.y);
-                self.library_manager.last_viewport = Some(viewport.bounds());
-                Task::none()
-            }
             Message::LibraryMarqueeStart(pos) => {
                 // Si la posición es (0,0), usamos la última posición conocida del mouse
                 let actual_pos = if pos.x == 0.0 && pos.y == 0.0 { self.last_mouse_pos } else { pos };
@@ -1704,16 +1751,19 @@ impl AudoxidyApp {
                 // Sidebar(400) + Filters(202) = 602
                 if actual_pos.x >= 602.0 {
                     let lib_x = (actual_pos.x - 602.0).max(0.0);
-                    let lib_y = actual_pos.y.max(0.0).min(self.window_size.1 as f32);
+                    let scroll_y = self.library_manager.scroll_offset.y;
+                    let lib_y = actual_pos.y - 72.0 + scroll_y;
                     
                     self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
                     self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
-                    self.library_manager.is_dragging = true;
+                    self.library_manager.marquee_start_pos = Some(actual_pos);
+                    self.library_manager.is_dragging = false;
                     self.focus = AppFocus::Library;
                 }
                 Task::none()
             }
             Message::LibraryDeselect => {
+                self.focus = AppFocus::Library;
                 self.library_manager.selected_header = None;
                 self.library_manager.selected_song_idx = None;
                 self.library_manager.selected_album = None;
@@ -1725,73 +1775,13 @@ impl AudoxidyApp {
                 // También iniciamos el marquee al hacer clic en el fondo
                 let pos = self.last_mouse_pos;
                 let lib_x = (pos.x - 602.0).max(0.0);
-                let lib_y = pos.y.max(0.0).min(self.window_size.1 as f32);
+                let scroll_y = self.library_manager.scroll_offset.y;
+                let lib_y = pos.y - 72.0 + scroll_y;
                 self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
                 self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
-                self.library_manager.is_dragging = true;
+                self.library_manager.marquee_start_pos = Some(pos);
+                self.library_manager.is_dragging = false;
                 
-                Task::none()
-            }
-            Message::LibraryDeleteSelection => {
-                enum PendingDelete {
-                    Song(String, String), // album_name, file_path
-                    Album(String),       // album_name
-                }
-                let mut pending = None;
-                
-                // Paso 1: Eliminar del CACHÉ LOCAL inmediatamente para evitar parpadeo visual
-                {
-                    if self.library_manager.is_list_mode() || self.library_manager.selected_song_idx.is_some() {
-                        if let Some(song_idx) = self.library_manager.selected_song_idx {
-                            if let Some(song) = self.library_manager.get_song_by_global_idx(song_idx) {
-                                let path = song.full_file_path.clone();
-                                let al_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
-                                pending = Some(PendingDelete::Song(al_name, path.clone()));
-                                
-                                // Borrar localmente por ruta, no por índice ciego
-                                if let Some(all) = &mut self.library_manager.cached_all_songs {
-                                    all.retain(|s| s.full_file_path != path);
-                                }
-                                if let Some(filt) = &mut self.library_manager.filtered_songs {
-                                    filt.retain(|s| s.full_file_path != path);
-                                }
-                                self.library_manager.selected_song_idx = None;
-                                self.library_manager.apply_filter();
-                            }
-                        }
-                    } else if let Some(album_sample_path) = self.library_manager.selected_album.clone() {
-                        if let Some(albums) = &mut self.library_manager.cached_albums {
-                            albums.retain(|a| a.id != album_sample_path);
-                        }
-                        pending = Some(PendingDelete::Album(album_sample_path));
-                        self.library_manager.selected_album = None;
-                    }
-                }
-
-                // Paso 2: Borrar de la DB y refrescar estadísticas
-                if let Some(p) = pending {
-                    if let Ok(db) = self.database.lock() {
-                        match p {
-                            PendingDelete::Song(_, path) => { let _ = db.delete_song(&path); },
-                            PendingDelete::Album(sample_path) => {
-                                let _ = db.delete_album_group(&sample_path);
-                            },
-                        }
-                        // Actualización inmediata de estadísticas
-                        if let Ok((songs, albums, duration, size, artists)) = db.get_library_stats() {
-                            self.library_manager.total_songs = songs;
-                            self.library_manager.total_albums = albums;
-                            self.library_manager.total_artists = artists;
-                            self.library_manager.total_duration_secs = duration;
-                            self.library_manager.total_size_bytes = size;
-                        }
-                    }
-                    // Forzar recarga de álbumes (sin parpadeo porque ya limpiamos arriba)
-                    self.player_ui_state.tick_count = 0; 
-                    self.update_selection_stats();
-                    return self.update(Message::Tick);
-                }
-
                 Task::none()
             }
             Message::ChangeLibraryViewMode(mode) => {
@@ -1848,6 +1838,7 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::ToggleLibraryViewDropdown => {
+                self.focus = AppFocus::Library;
                 let next = match self.library_manager.view_mode {
                     crate::gui::library::LibraryViewMode::Grid => crate::gui::library::LibraryViewMode::DetailedList,
                     crate::gui::library::LibraryViewMode::DetailedList => crate::gui::library::LibraryViewMode::ThumbnailList,
@@ -1921,6 +1912,7 @@ impl AudoxidyApp {
 
 
             Message::PlaylistContextMenuPlay(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 use crate::gui::playlist::PlaylistItemType;
                 if let Some(item) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
                     let target_song_idx = match item {
@@ -1967,6 +1959,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistAddFiles => {
+                self.focus = AppFocus::Playlist;
                 Task::perform(async move {
                     rfd::FileDialog::new()
                         .add_filter("Audio", &["mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv"])
@@ -1982,6 +1975,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistAddFolder => {
+                self.focus = AppFocus::Playlist;
                 Task::perform(async move {
                     rfd::FileDialog::new().pick_folder()
                 }, |folder| {
@@ -2002,6 +1996,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistShowFileLocation(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 if let Some(song) = self.playlist_manager.get_song_at_linear_index(linear_idx) {
                     let path_str = song.file_path.clone();
                     Task::perform(async move {
@@ -2034,6 +2029,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistShowInLibrary(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 let mut path_opt = None;
                 if let Some(item_info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
                     match item_info {
@@ -2055,8 +2051,126 @@ impl AudoxidyApp {
                 }
                 self.handle_library_reveal(path_opt)
             }
+            Message::LibraryDeleteSelection => {
+                let items = self.library_manager.selected_items.clone();
+                if items.is_empty() { return Task::none(); }
+
+                let filtered_songs = self.library_manager.filtered_songs.clone().unwrap_or_default();
+                let cached_albums = self.library_manager.cached_albums.clone().unwrap_or_default();
+                let mut ids_to_delete = Vec::new();
+                let mut covers_to_check = Vec::new();
+
+                for item in items {
+                    match item {
+                        crate::gui::library::LibraryListItem::Song(id) => {
+                            if filtered_songs.iter().any(|s| s.id == id) {
+                                ids_to_delete.push(id);
+                            }
+                        }
+                        crate::gui::library::LibraryListItem::Album(composite_id) => {
+                            if let Some(parts) = composite_id.split_once('|') {
+                                let target_artist = parts.0;
+                                let target_hash = parts.1;
+                                
+                                for song in &filtered_songs {
+                                    let art = crate::utils::get_effective_artist(song);
+                                    let alb_name = song.album.as_deref().unwrap_or("Desconocido");
+                                    
+                                    if art == target_artist {
+                                        if let Some(album_entry) = cached_albums.iter().find(|a| a.title == alb_name && a.artist == art) {
+                                            if album_entry.id == target_hash {
+                                                ids_to_delete.push(song.id);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        crate::gui::library::LibraryListItem::Artist(name) => {
+                            for song in &filtered_songs {
+                                if crate::utils::get_effective_artist(song) == name {
+                                    ids_to_delete.push(song.id);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if ids_to_delete.is_empty() { return Task::none(); }
+
+                ids_to_delete.sort();
+                ids_to_delete.dedup();
+
+                // Recolectar carátulas antes de borrar para limpieza posterior
+                for id in &ids_to_delete {
+                    if let Some(song) = filtered_songs.iter().find(|s| s.id == *id) {
+                        let art = crate::utils::get_effective_artist(song);
+                        let alb_name = song.album.as_deref().unwrap_or("Desconocido");
+                        if let Some(album) = cached_albums.iter().find(|a| a.title == alb_name && a.artist == art) {
+                            covers_to_check.push(album.id.clone());
+                        }
+                        if let Some(ovr) = &song.cover_override {
+                            covers_to_check.push(ovr.clone());
+                        }
+                    }
+                }
+                covers_to_check.sort();
+                covers_to_check.dedup();
+
+                let db_arc = self.database.clone();
+
+                return Task::perform(async move {
+                    let db = db_arc.lock().unwrap();
+                    let _ = db.begin_transaction();
+                    let _ = db.batch_delete_songs(&ids_to_delete);
+                    let _ = db.cleanup_empty_metadata();
+                    let _ = db.commit_transaction();
+                    
+                    for hash in covers_to_check {
+                        if let Ok(false) = db.is_cover_hash_in_use(&hash) {
+                            let path = format!("cache/covers/{}.avif", hash);
+                            let _ = std::fs::remove_file(path);
+                        }
+                    }
+                    ()
+                }, |_| Message::LibraryRefresh);
+            }
+
+            Message::LibraryRefresh => {
+                self.focus = AppFocus::Library;
+                let db_arc = self.database.clone();
+                return Task::perform(async move {
+                    let db = db_arc.lock().unwrap();
+                    let songs = db.get_all_songs().unwrap_or_default();
+                    let albums = db.get_grid_items_by_artist().unwrap_or_default();
+                    let stats = db.get_library_stats().unwrap_or((0, 0, 0.0, 0.0, 0));
+                    (songs, albums, stats)
+                }, |(songs, albums, stats)| Message::InternalLibraryRefreshed(songs, albums, stats));
+            }
+
+            Message::InternalLibraryRefreshed(songs, albums, stats) => {
+                self.library_manager.cached_all_songs = Some(songs);
+                self.library_manager.cached_albums = Some(albums.into_iter().map(|a| crate::gui::library::AlbumEntry {
+                    id: a.0, title: a.1, artist: a.2, genre: a.3, year: a.4, cover_path: a.5
+                }).collect());
+                
+                // Actualizar estadísticas globales
+                self.library_manager.total_songs = stats.0;
+                self.library_manager.total_albums = stats.1;
+                self.library_manager.total_duration_secs = stats.2;
+                self.library_manager.total_size_bytes = stats.3;
+                self.library_manager.total_artists = stats.4;
+
+                self.library_manager.selected_items.clear();
+                self.library_manager.apply_filter();
+                self.filters_manager.build_filter_index(&self.library_manager);
+                self.update_selection_stats();
+                Task::none()
+            }
+
 
             Message::PlaylistDeleteSelection(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 let db_arc = self.database.clone();
                 let active_playlist_id = self.playlist_manager.active_playlist_id;
                 
@@ -2143,6 +2257,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistSendToNewList(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 self.context_menu = None;
                 let target_songs = if self.playlist_manager.selected_idxs.contains(&linear_idx) {
                     self.playlist_manager.get_selected_song_ids()
@@ -2170,6 +2285,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistSendToList(linear_idx, target_playlist_id) => {
+                self.focus = AppFocus::Playlist;
                 self.context_menu = None;
                 let db_arc = self.database.clone();
                 
@@ -2208,6 +2324,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistToggleAllFolders => {
+                self.focus = AppFocus::Playlist;
                 let any_expanded = self.playlist_manager.groups.iter().any(|g| !self.playlist_manager.collapsed_groups.contains(&g.first_item_id));
                 
                 if any_expanded {
@@ -2223,6 +2340,7 @@ impl AudoxidyApp {
             }
 
             Message::PlaylistToggleEnabled(linear_idx) => {
+                self.focus = AppFocus::Playlist;
                 self.context_menu = None;
                 use crate::gui::playlist::PlaylistItemType;
 
@@ -2269,6 +2387,7 @@ impl AudoxidyApp {
             }
 
             Message::LibraryShowPlaying => {
+                self.focus = AppFocus::Library;
                 let path_opt = self.playlist_manager.playing_song_idx
                     .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
                     .map(|s| s.file_path.clone());
@@ -2534,14 +2653,48 @@ impl AudoxidyApp {
                     self.library_manager.column_widths.insert(col, new_w);
                 }
                 
+                if self.library_manager.marquee_start_pos.is_some() && !self.library_manager.is_dragging {
+                    if let Some(start_pos) = self.library_manager.marquee_start_pos {
+                        let dx = pos.x - start_pos.x;
+                        let dy = pos.y - start_pos.y;
+                        let dist_sq = dx * dx + dy * dy;
+                        
+                        if dist_sq > 9.0 { // Umbral de 3px (3*3=9)
+                            self.library_manager.is_dragging = true;
+                        }
+                    }
+                }
+
                 if self.library_manager.is_dragging {
                     let lib_x = (pos.x - 602.0).max(0.0);
-                    let lib_y = pos.y.max(0.0).min(self.window_size.1 as f32);
+                    let scroll_y = self.library_manager.scroll_offset.y;
+                    let lib_y = pos.y - 72.0 + scroll_y;
                     self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
                 }
 
                 self.player_ui_state.mouse_pos = Some(pos);
                 self.wake_up_controls(true)
+            }
+            Message::LibraryScroll(offset) => {
+                let abs_offset = offset.absolute_offset();
+                self.library_manager.scroll_offset = iced::Vector::new(abs_offset.x, abs_offset.y);
+                self.library_manager.last_viewport = Some(iced::Rectangle {
+                    x: offset.absolute_offset().x,
+                    y: offset.absolute_offset().y,
+                    width: offset.bounds().width,
+                    height: offset.bounds().height,
+                });
+                
+                // Si estamos arrastrando, actualizamos el punto final del marquee basado en la nueva posición de scroll
+                if self.library_manager.is_dragging {
+                    if let Some(pos) = self.player_ui_state.mouse_pos {
+                        let lib_x = (pos.x - 602.0).max(0.0);
+                        let lib_y = pos.y - 72.0 + offset.absolute_offset().y;
+                        self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
+                    }
+                }
+                
+                Task::none()
             }
             Message::PlaylistScrolled(viewport) => {
                 self.playlist_manager.last_viewport = Some(viewport.bounds());
@@ -2564,36 +2717,44 @@ impl AudoxidyApp {
                 }
                 
                 if self.library_manager.is_dragging {
-                    if let (Some(start), Some(end)) = (self.library_manager.marquee_start, self.library_manager.marquee_end) {
-                        let dx = start.x - end.x;
-                        let dy = start.y - end.y;
-                        let dist_sq = dx * dx + dy * dy;
-                        
-                        // Solo procesar como marquee si ha habido un arrastre real (más de 3 píxeles)
-                        if dist_sq > 9.0 {
-                            let scroll_offset = self.library_manager.scroll_offset;
+                    if let Some(start) = self.library_manager.marquee_start {
+                        if let Some(pos) = self.player_ui_state.mouse_pos {
+                            let lib_x = (pos.x - 602.0).max(0.0);
+                            let scroll_y = self.library_manager.scroll_offset.y;
+                            let lib_y = pos.y - 72.0 + scroll_y;
+                            let end = iced::Point::new(lib_x, lib_y);
                             
-                            // El contenido de la biblioteca empieza después de los encabezados (aprox 72px)
-                            let content_start_y = start.y - 72.0 + scroll_offset.y;
-                            let content_end_y = end.y - 72.0 + scroll_offset.y;
+                            let dx = start.x - end.x;
+                            let dy = start.y - end.y;
+                            let dist_sq = dx * dx + dy * dy;
                             
-                            let top_left = iced::Point::new(
-                                start.x.min(end.x),
-                                content_start_y.min(content_end_y)
-                            );
-                            let size = iced::Size::new(
-                                (start.x - end.x).abs().max(1.0),
-                                (content_start_y - content_end_y).abs().max(1.0)
-                            );
-                            
-                            let rect = iced::Rectangle::new(top_left, size);
-                            self.library_manager.select_marquee(rect, self.modifiers);
+                            // Solo procesar como marquee si ha habido un arrastre real (más de 3 píxeles)
+                            if dist_sq > 9.0 {
+                                let rect_x = start.x.min(end.x);
+                                let rect_y = start.y.min(end.y);
+                                let rect_w = (start.x - end.x).abs().max(1.0);
+                                let rect_h = (start.y - end.y).abs().max(1.0);
+                                
+                                let rect = iced::Rectangle {
+                                    x: rect_x,
+                                    y: rect_y,
+                                    width: rect_w,
+                                    height: rect_h,
+                                };
+                                
+                                self.library_manager.select_marquee(rect, self.modifiers);
+                            }
                         }
                     }
                     self.library_manager.is_dragging = false;
                     self.library_manager.marquee_start = None;
                     self.library_manager.marquee_end = None;
+                    self.library_manager.marquee_start_pos = None;
                 }
+                
+                // Aseguramos que marquee_start_pos se limpie incluso si no hubo dragging real
+                self.library_manager.marquee_start_pos = None;
+                self.library_manager.is_dragging = false;
                 
                 Task::none()
             }
@@ -3094,6 +3255,14 @@ impl AudoxidyApp {
             iced::Subscription::none()
         };
 
+        // --- Drag Heartbeat ---
+        // Tick de alta frecuencia (32ms ~30fps) para que el auto-scroll de selección sea fluido
+        let drag_tick = if self.library_manager.is_dragging {
+            iced::time::every(std::time::Duration::from_millis(32)).map(|_| Message::Tick)
+        } else {
+            iced::Subscription::none()
+        };
+
         let win_ids = iced::window::open_events().map(Message::SetWindowId);
         let mouse_evs = iced::event::listen_with(|event, _status, _window_id| {
             if let iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) = event {
@@ -3122,7 +3291,7 @@ impl AudoxidyApp {
                 None
             }
         });
-        iced::Subscription::batch([tick, search_tick, win_ids, mouse_evs])
+        iced::Subscription::batch([tick, search_tick, drag_tick, win_ids, mouse_evs])
     }
 
     fn get_library_scroll_task(&self, force_top: bool) -> Task<Message> {

@@ -435,7 +435,7 @@ impl LibraryManager {
                 
                 let mut albums_info: Vec<(String, String, Vec<i64>)> = Vec::new(); // name, hash, song_ids
                 for song in &group.songs {
-                    let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+                    let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
                     
                     if let Some(last) = albums_info.last_mut() {
                         if last.0 == alb_name {
@@ -1045,7 +1045,7 @@ impl LibraryManager {
             if let Some(songs) = &self.filtered_songs {
                 if let Some(s) = songs.get(song_idx) {
                     let art = crate::utils::get_effective_artist(s).to_string();
-                    let alb_name = s.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+                    let alb_name = s.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
                     
                     // Buscar hash para ID compuesto
                     let alb_hash = if let Some(cache) = &self.cached_albums {
@@ -1074,7 +1074,7 @@ impl LibraryManager {
         if let Some(song_idx) = self.selected_song_idx {
             if let Some(songs) = &self.filtered_songs {
                 if let Some(song) = songs.get(song_idx) {
-                    let artist = song.artist.clone().or(song.album_artist.clone()).unwrap_or_else(|| "Artista Desconocido".to_string());
+                    let artist = song.artist.clone().or(song.album_artist.clone()).unwrap_or_else(|| "Artista Desconocido".to_string().into());
                     self.artist_last_selection.insert(artist, song_idx);
                 }
             }

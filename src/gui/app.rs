@@ -397,7 +397,7 @@ impl AudoxidyApp {
             
             let active_id = playlist_manager.active_playlist_id;
             if let Ok(groups) = db_lock.get_playlist_songs_grouped_by_folder(active_id) {
-                playlist_manager.groups = groups;
+                playlist_manager.set_groups(groups);
             }
             
             if let Ok(all_p) = db_lock.get_all_playlists() {
@@ -737,7 +737,7 @@ impl AudoxidyApp {
                 if let Ok(db) = self.database.lock() {
                     let _ = db.add_song_to_playlist(self.playlist_manager.active_playlist_id, song.id);
                     if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(self.playlist_manager.active_playlist_id) {
-                        self.playlist_manager.groups = groups;
+                        self.playlist_manager.set_groups(groups);
                     }
                 }
                 Task::none()
@@ -747,7 +747,7 @@ impl AudoxidyApp {
                     let song_ids: Vec<i64> = songs.iter().map(|s| s.id).collect();
                     let _ = db.add_songs_to_playlist(self.playlist_manager.active_playlist_id, &song_ids);
                     if let Ok(groups) = db.get_playlist_songs_grouped_by_folder(self.playlist_manager.active_playlist_id) {
-                        self.playlist_manager.groups = groups;
+                        self.playlist_manager.set_groups(groups);
                     }
                 }
                 Task::none()
@@ -783,7 +783,7 @@ impl AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 if let Ok(db) = self.database.lock() {
                     let _ = db.clear_playlist(self.playlist_manager.active_playlist_id);
-                    self.playlist_manager.groups = Vec::new();
+                    self.playlist_manager.clear_groups();
                     self.playlist_manager.playing_song_idx = None;
                     self.audio_manager.stop();
                     self.persist_playlist_state();
@@ -819,8 +819,10 @@ impl AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 let mut folder_to_update = None;
                 use crate::gui::playlist::PlaylistItemType;
-                if let Some(PlaylistItemType::Separator(path, _)) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
-                    folder_to_update = Some(path);
+                if let Some(PlaylistItemType::Separator(g_idx, _)) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
+                    if let Some(group) = self.playlist_manager.active_groups().get(g_idx) {
+                        folder_to_update = Some(group.folder_path.clone());
+                    }
                 }
 
                 if let Some(state) = force_state {
@@ -1036,8 +1038,8 @@ impl AudoxidyApp {
                     } else { vec![] };
 
                     let p_name = if let Ok(db_lock) = db.lock() {
-                        db_lock.get_playlist_by_id(id).ok().flatten().map(|p| p.name).unwrap_or_else(|| "Playlist_Exportada".to_string())
-                    } else { "Playlist_Exportada".to_string() };
+                        db_lock.get_playlist_by_id(id).ok().flatten().map(|p| p.name).unwrap_or_else(|| "Playlist_Exportada".to_string().into())
+                    } else { "Playlist_Exportada".into() };
 
                     let is_portable = mode == ExportMode::PortableFolder;
                     let mut m3u_content = String::from("#EXTM3U\n");
@@ -1054,7 +1056,7 @@ impl AudoxidyApp {
                             let full_target_path = full_target_dir.join(song_file.as_ref());
 
                             let _ = std::fs::create_dir_all(&full_target_dir);
-                            let _ = std::fs::copy(&song.file_path, &full_target_path);
+                            let _ = std::fs::copy(&*song.file_path, &full_target_path);
                             relative_path
                         } else {
                             song.file_path.clone()
@@ -1112,7 +1114,7 @@ impl AudoxidyApp {
                 }
 
                 if let Some(groups) = groups_opt {
-                    self.playlist_manager.groups = groups;
+                    self.playlist_manager.set_groups(groups);
                 }
 
                 let mut was_restored = false;
@@ -2049,7 +2051,7 @@ impl AudoxidyApp {
                         }
                     }
                 }
-                self.handle_library_reveal(path_opt)
+                self.handle_library_reveal(path_opt.into())
             }
             Message::LibraryDeleteSelection => {
                 let items = self.library_manager.selected_items.clone();
@@ -2110,7 +2112,7 @@ impl AudoxidyApp {
                             covers_to_check.push(album.id.clone());
                         }
                         if let Some(ovr) = &song.cover_override {
-                            covers_to_check.push(ovr.clone());
+                            covers_to_check.push(ovr.into());
                         }
                     }
                 }
@@ -2182,9 +2184,9 @@ impl AudoxidyApp {
                     let mut ids = Vec::new();
                     if let Some(item_info) = self.playlist_manager.get_item_info_at_linear_index(linear_idx) {
                         match item_info {
-                            crate::gui::playlist::PlaylistItemType::Song(folder_path, _, anchor) => {
-                                if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.first_item_id == anchor) {
-                                    if let Some(song_ref) = group.songs.iter().find(|s| s.file_path.contains(&folder_path)) {
+                            crate::gui::playlist::PlaylistItemType::Song(g_idx, s_idx, _) => {
+                                if let Some(group) = self.playlist_manager.active_groups().get(g_idx) {
+                                    if let Some(song_ref) = group.songs.get(s_idx) {
                                         ids.push(song_ref.song_id);
                                     }
                                 }
@@ -3434,7 +3436,7 @@ impl AudoxidyApp {
                             }
 
                             if let Some(filtered) = &self.library_manager.filtered_songs {
-                                if let Some(pos) = filtered.iter().position(|s| s.full_file_path == path) {
+                                 if let Some(pos) = filtered.iter().position(|s| s.full_file_path == path) {
                                     let song_id = filtered[pos].id;
                                     self.library_manager.selected_song_idx = Some(pos);
                                     self.library_manager.selected_header = None;

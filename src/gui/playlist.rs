@@ -23,8 +23,8 @@ pub static PLAYLIST_SEARCH_ID: std::sync::LazyLock<iced::widget::Id> = std::sync
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum PlaylistItemType {
-    Separator(String, i64), // folder_path, first_item_id
-    Song(String, usize, i64), // folder_path, index local dentro del grupo, first_item_id
+    Separator(usize, i64), // group_idx, first_item_id
+    Song(usize, usize, i64), // group_idx, song_local_idx, first_item_id
 }
 
 // ============================================================
@@ -82,6 +82,9 @@ pub struct PlaylistManager {
 
     /// Guardar el último viewport de la barra de pestañas
     pub tabs_viewport: Option<iced::Rectangle>,
+
+    /// Caché de ítems visibles (aplanados y filtrados por colapso)
+    pub cached_visible_items: Option<Vec<(PlaylistItemType, usize)>>,
 }
 
 impl Default for PlaylistManager {
@@ -105,6 +108,7 @@ impl Default for PlaylistManager {
             last_click_info: None,
             last_viewport: None,
             tabs_viewport: None,
+            cached_visible_items: None,
         }
     }
 }
@@ -128,29 +132,36 @@ impl PlaylistManager {
             return;
         }
 
+        use rayon::prelude::*;
+
         let query = self.search_query.to_lowercase();
-        let mut filtered: Vec<PlaylistFolderGroup> = Vec::new();
+        
+        let filtered: Vec<PlaylistFolderGroup> = self.groups.par_iter()
+            .filter_map(|group| {
+                let matching_songs: Vec<PlaylistSongRef> = group.songs.iter()
+                    .filter(|s| {
+                        // Búsqueda insensible a mayúsculas
+                        s.title.to_lowercase().contains(&query)
+                            || s.artist_name.to_lowercase().contains(&query)
+                            || s.album_artist_name.to_lowercase().contains(&query)
+                            || s.album_title.to_lowercase().contains(&query)
+                    })
+                    .cloned()
+                    .collect();
 
-        for group in &self.groups {
-            let matching_songs: Vec<PlaylistSongRef> = group.songs.iter()
-                .filter(|s| {
-                    s.title.to_lowercase().contains(&query)
-                        || s.artist_name.to_lowercase().contains(&query)
-                        || s.album_artist_name.to_lowercase().contains(&query)
-                        || s.album_title.to_lowercase().contains(&query)
-                })
-                .cloned()
-                .collect();
-
-            if !matching_songs.is_empty() {
-                let mut g = group.clone();
-                g.songs = matching_songs;
-                g.total_duration = g.songs.iter().map(|s| s.duration).sum();
-                filtered.push(g);
-            }
-        }
+                if !matching_songs.is_empty() {
+                    let mut g = group.clone();
+                    g.songs = matching_songs;
+                    g.total_duration = g.songs.iter().map(|s| s.duration).sum();
+                    Some(g)
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         self.filtered_groups = if filtered.is_empty() { None } else { Some(filtered) };
+        self.invalidate_cache();
     }
 
     /// Obtiene la siguiente canción para precarga de carátulas (basado en lógica secuencial)
@@ -180,6 +191,19 @@ impl PlaylistManager {
         self.filtered_groups.as_ref().unwrap_or(&self.groups)
     }
 
+    /// Establece los grupos de la playlist e invalida el caché
+    pub fn set_groups(&mut self, groups: Vec<PlaylistFolderGroup>) {
+        self.groups = groups;
+        self.invalidate_cache();
+    }
+
+    /// Limpia los grupos e invalida el caché
+    pub fn clear_groups(&mut self) {
+        self.groups.clear();
+        self.filtered_groups = None;
+        self.invalidate_cache();
+    }
+
     /// Obtener la canción en un índice lineal
     pub fn get_song_at_linear_index(&self, linear_idx: usize) -> Option<&PlaylistSongRef> {
         let groups = self.active_groups();
@@ -197,29 +221,61 @@ impl PlaylistManager {
         None
     }
 
+    /// Invalida el caché de ítems visibles
+    pub fn invalidate_cache(&mut self) {
+        self.cached_visible_items = None;
+    }
+
     /// Obtener los ítems que son actualmente visibles (no están dentro de grupos plegados)
     /// Retorna (Tipo, GlobalLinearIndex)
     pub fn get_visible_items(&self) -> Vec<(PlaylistItemType, usize)> {
+        if let Some(cached) = &self.cached_visible_items {
+            return cached.clone();
+        }
+
         let groups = self.active_groups();
         let mut visible = Vec::new();
         let mut global_idx = 0;
 
-        for group in groups {
+        for (group_idx, group) in groups.iter().enumerate() {
             // El separador siempre es visible
-            visible.push((PlaylistItemType::Separator(group.folder_path.clone(), group.first_item_id), global_idx));
+            visible.push((PlaylistItemType::Separator(group_idx, group.first_item_id), global_idx));
             
             let is_collapsed = self.collapsed_groups.contains(&group.first_item_id);
             let songs_len = group.songs.len();
             
             if !is_collapsed {
                 for song_i in 0..songs_len {
-                    visible.push((PlaylistItemType::Song(group.folder_path.clone(), song_i, group.first_item_id), global_idx + 1 + song_i));
+                    visible.push((PlaylistItemType::Song(group_idx, song_i, group.first_item_id), global_idx + 1 + song_i));
                 }
             }
             
             global_idx += 1 + songs_len;
         }
         visible
+    }
+
+    /// Versión mutable que actualiza el caché si es necesario
+    pub fn get_visible_items_mut(&mut self) -> &[(PlaylistItemType, usize)] {
+        if self.cached_visible_items.is_none() {
+            let groups = self.active_groups();
+            let mut visible = Vec::new();
+            let mut global_idx = 0;
+
+            for (group_idx, group) in groups.iter().enumerate() {
+                visible.push((PlaylistItemType::Separator(group_idx, group.first_item_id), global_idx));
+                let is_collapsed = self.collapsed_groups.contains(&group.first_item_id);
+                let songs_len = group.songs.len();
+                if !is_collapsed {
+                    for song_i in 0..songs_len {
+                        visible.push((PlaylistItemType::Song(group_idx, song_i, group.first_item_id), global_idx + 1 + song_i));
+                    }
+                }
+                global_idx += 1 + songs_len;
+            }
+            self.cached_visible_items = Some(visible);
+        }
+        self.cached_visible_items.as_ref().unwrap()
     }
 
     /// Alternar expansion de grupo
@@ -229,19 +285,20 @@ impl PlaylistManager {
         } else {
             self.collapsed_groups.insert(anchor);
         }
+        self.invalidate_cache();
     }
 
     /// Obtiene información de un item en base a su índice lineal (Canónico)
     pub fn get_item_info_at_linear_index(&self, linear_idx: usize) -> Option<PlaylistItemType> {
         let groups = self.active_groups();
         let mut count = 0;
-        for group in groups {
+        for (group_idx, group) in groups.iter().enumerate() {
             if linear_idx == count {
-                return Some(PlaylistItemType::Separator(group.folder_path.clone(), group.first_item_id));
+                return Some(PlaylistItemType::Separator(group_idx, group.first_item_id));
             }
             let song_local_idx = linear_idx - count - 1;
             if song_local_idx < group.songs.len() {
-                return Some(PlaylistItemType::Song(group.folder_path.clone(), song_local_idx, group.first_item_id));
+                return Some(PlaylistItemType::Song(group_idx, song_local_idx, group.first_item_id));
             }
             count += 1 + group.songs.len();
         }
@@ -881,45 +938,8 @@ const FOLDER_SEPARATOR_HEIGHT: f32 = 46.0;
 
 fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let groups = manager.active_groups();
-
-    let mut songs_col = column![].spacing(0).padding(Padding { top: 0.0, right: 9.0, bottom: 0.0, left: 0.0 });
-
-    let mut linear_idx = 0;
-
-    for (_gi, group) in groups.iter().enumerate() {
-        // Separador de carpeta
-        let is_folder_selected = manager.selected_idxs.contains(&linear_idx);
-        let is_group_selected = is_folder_selected;
-        let any_song_enabled = group.songs.iter().any(|s| s.enabled);
-        
-        let song_count = group.songs.len();
-        let total_dur = format_duration(group.total_duration);
-        let folder_sep = build_folder_separator(&group.folder_name, song_count, total_dur, linear_idx, is_folder_selected, any_song_enabled);
-        songs_col = songs_col.push(folder_sep);
-        
-        let is_collapsed = manager.collapsed_groups.contains(&group.first_item_id);
-        linear_idx += 1;
-
-        if !is_collapsed {
-            // Canciones del grupo
-            for song in group.songs.iter() {
-                let is_playing = manager.playing_song_idx == Some(linear_idx);
-                let is_selected = manager.selected_idxs.contains(&linear_idx);
-                let song_row = build_song_row(song, linear_idx, is_playing, is_selected, is_group_selected);
-                songs_col = songs_col.push(song_row);
-                linear_idx += 1;
-            }
-        } else {
-            // Aún si está colapsado, debemos avanzar el linear_idx para que los siguientes 
-            // folder separators mantengan su índice global correcto si es que se usan como IDs.
-            // Pero si usamos get_visible_items para navegación, la consistencia de linear_idx global 
-            // sigue siendo útil para ToggleGroupEnabled.
-            linear_idx += group.songs.len();
-        }
-    }
-
     if groups.is_empty() {
-        songs_col = songs_col.push(
+        return mouse_area(
             container(
                 text("No hay canciones en esta lista")
                     .size(16)
@@ -927,8 +947,93 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                     .font(FONT_INTER_SANS_MEDIUM)
             )
             .width(Length::Fill)
+            .height(Length::Fill)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
             .padding(15)
-        );
+        )
+        .on_enter(Message::PlaylistMouseOver(true))
+        .on_exit(Message::PlaylistMouseOver(false))
+        .on_press(Message::PlaylistDeselect)
+        .on_right_press(Message::RequestContextMenu(get_empty_playlist_context_menu_entries()))
+        .into();
+    }
+
+    // 1. Obtener ítems expandidos (visibles en la estructura lógica)
+    let visible_items = manager.get_visible_items();
+    let total_items = visible_items.len();
+    
+    // 2. Parámetros de virtualización
+    let viewport = manager.last_viewport.unwrap_or(iced::Rectangle { x: 0.0, y: 0.0, width: 800.0, height: 800.0 });
+    let view_min = viewport.y;
+    let view_max = view_min + viewport.height;
+    
+    // Margen de renderizado para evitar parpadeos al hacer scroll
+    let margin = 400.0;
+    let render_min = (view_min - margin).max(0.0);
+    let render_max = view_max + margin;
+
+    let item_h = SONG_ROW_HEIGHT; // Ambas son 46.0
+
+    // 3. Identificar rango de índices a renderizar
+    let start_idx = (render_min / item_h).floor() as usize;
+    let end_idx = (render_max / item_h).ceil() as usize;
+    
+    let start_idx = start_idx.min(total_items);
+    let end_idx = end_idx.min(total_items);
+
+    let top_space = start_idx as f32 * item_h;
+    let bottom_space = (total_items.saturating_sub(end_idx)) as f32 * item_h;
+
+    let mut songs_col = column![].spacing(0).padding(Padding { top: 0.0, right: 9.0, bottom: 0.0, left: 0.0 });
+
+    // Espaciador superior
+    if top_space > 0.0 {
+        songs_col = songs_col.push(Space::new().height(Length::Fixed(top_space)));
+    }
+
+    // Renderizar solo los ítems en el rango visible
+    for (item_type, linear_idx) in &visible_items[start_idx..end_idx] {
+        match item_type {
+            PlaylistItemType::Separator(g_idx, _) => {
+                let group = &groups[*g_idx];
+                let is_selected = manager.selected_idxs.contains(linear_idx);
+                let any_song_enabled = group.songs.iter().any(|s| s.enabled);
+                let total_dur = format_duration(group.total_duration);
+                
+                songs_col = songs_col.push(build_folder_separator(
+                    &group.folder_name, 
+                    group.songs.len(), 
+                    total_dur, 
+                    *linear_idx, 
+                    is_selected, 
+                    any_song_enabled
+                ));
+            }
+            PlaylistItemType::Song(g_idx, s_idx, _) => {
+                let group = &groups[*g_idx];
+                let song = &group.songs[*s_idx];
+                let is_playing = manager.playing_song_idx == Some(*linear_idx);
+                let is_selected = manager.selected_idxs.contains(linear_idx);
+                
+                // Un ítem de canción se considera "dentro de grupo seleccionado" si el separador del grupo lo está
+                let sep_idx = manager.find_separator_index_for_anchor(group.first_item_id).unwrap_or(0);
+                let is_group_selected = manager.selected_idxs.contains(&sep_idx);
+
+                songs_col = songs_col.push(build_song_row(
+                    song, 
+                    *linear_idx, 
+                    is_playing, 
+                    is_selected, 
+                    is_group_selected
+                ));
+            }
+        }
+    }
+
+    // Espaciador inferior
+    if bottom_space > 0.0 {
+        songs_col = songs_col.push(Space::new().height(Length::Fixed(bottom_space)));
     }
 
     let scroll = standard_scrollable(

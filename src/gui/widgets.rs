@@ -1256,7 +1256,7 @@ where
 
         // Agrupar canciones por álbum preservando el orden
         for song in &group.songs {
-            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
             
             if let Some(last_alb) = albums.last_mut() {
                 if last_alb.album_name == alb_name {
@@ -1550,7 +1550,7 @@ where
         let mut albums_map: Vec<AlbumGroup> = Vec::new();
         // Agrupar preserving order en O(N)
         for song in &group.songs {
-            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
             
             if let Some(last_alb) = albums_map.last_mut() {
                 if last_alb.album_name == alb_name {

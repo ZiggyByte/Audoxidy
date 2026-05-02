@@ -5,7 +5,7 @@ use iced::{
 use crate::audio::AudioManager;
 use crate::gui::app::Message;
 use crate::gui::theme::*;
-use crate::gui::widgets::{VolumeScrollArea, action_icon_button, apply_marquee};
+use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
 use crate::utils::format_duration;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,6 +37,14 @@ pub struct PlayerUiState {
     pub active_until_tick: u64,
     pub is_active: bool,
     pub volume_clearing: bool,
+
+    // Caché para marquesinas optimizadas
+    pub last_title: String,
+    pub last_artist: String,
+    pub title_chars: Vec<char>,
+    pub artist_chars: Vec<char>,
+    pub display_title: String,
+    pub display_artist: String,
 }
 
 impl Default for PlayerUiState {
@@ -55,6 +63,12 @@ impl Default for PlayerUiState {
             active_until_tick: 0,
             is_active: false,
             volume_clearing: false,
+            last_title: String::new(),
+            last_artist: String::new(),
+            title_chars: Vec::new(),
+            artist_chars: Vec::new(),
+            display_title: String::new(),
+            display_artist: String::new(),
         }
     }
 }
@@ -97,7 +111,7 @@ pub fn view<'a>(
     let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
 
     let title_el = container(
-        text(apply_marquee(&state.title, 39, ui_state.tick_count)).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        text(&ui_state.display_title).size(18).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
         .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(35.0)).center_y(Length::Fill).width(Length::Fill);
 
@@ -106,7 +120,7 @@ pub fn view<'a>(
     } else { title_el.into() };
 
     let artist_el = container(
-        text(apply_marquee(&state.artist, 40, ui_state.tick_count)).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
+        text(&ui_state.display_artist).size(15).color(Color::WHITE).font(FONT_INTER_SANS_NORMAL)
         .shaping(iced::widget::text::Shaping::Advanced).wrapping(iced::widget::text::Wrapping::None)
     ).padding([0, 2]).height(Length::Fixed(30.0)).center_y(Length::Fill).width(Length::Fill);
 

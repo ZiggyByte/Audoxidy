@@ -90,6 +90,8 @@ pub struct PlaylistSongRef {
     pub track_number: Option<String>,
     pub duration: f64,
     pub file_path: String,
+    pub folder_path: String,
+    pub folder_name: String,
     pub cover_path: Option<String>,
     pub cover_override: Option<String>,
 }
@@ -928,9 +930,16 @@ impl Database {
 
     pub fn cleanup_empty_metadata(&self) -> Result<()> {
         // Eliminar álbumes sin canciones
-        self.conn.execute("DELETE FROM ALBUMS WHERE id NOT IN (SELECT DISTINCT album_id FROM SONGS)", [])?;
+        self.conn.execute(
+            "DELETE FROM ALBUMS WHERE NOT EXISTS (SELECT 1 FROM SONGS WHERE album_id = ALBUMS.id)", 
+            []
+        )?;
         // Eliminar artistas sin álbumes ni canciones
-        self.conn.execute("DELETE FROM ARTISTS WHERE id NOT IN (SELECT DISTINCT artist_id FROM ALBUMS) AND id NOT IN (SELECT DISTINCT artist_id FROM SONGS)", [])?;
+        self.conn.execute(
+            "DELETE FROM ARTISTS WHERE NOT EXISTS (SELECT 1 FROM ALBUMS WHERE artist_id = ARTISTS.id) 
+             AND NOT EXISTS (SELECT 1 FROM SONGS WHERE artist_id = ARTISTS.id)", 
+            []
+        )?;
         Ok(())
     }
 
@@ -1109,12 +1118,14 @@ impl Database {
 
     /// Agrega múltiples canciones a una playlist en orden secuencial.
     /// Retorna la cantidad de canciones agregadas exitosamente.
-    pub fn add_songs_to_playlist(&self, playlist_id: i64, song_ids: &[i64]) -> Result<usize> {
+    pub fn add_songs_to_playlist(&mut self, playlist_id: i64, song_ids: &[i64]) -> Result<usize> {
         if song_ids.is_empty() {
             return Ok(0);
         }
 
-        let max_seq: Option<f64> = self.conn.query_row(
+        let tx = self.conn.transaction()?;
+        
+        let max_seq: Option<f64> = tx.query_row(
             "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
             [playlist_id],
             |r| r.get(0)
@@ -1123,17 +1134,21 @@ impl Database {
         let mut next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
         let mut count = 0;
 
-        for &song_id in song_ids {
-            let result = self.conn.execute(
-                "INSERT OR IGNORE INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)",
-                params![playlist_id, song_id, next_seq],
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)"
             )?;
-            if result > 0 {
-                count += 1;
-                next_seq += 1.0;
+
+            for &song_id in song_ids {
+                let result = stmt.execute(params![playlist_id, song_id, next_seq])?;
+                if result > 0 {
+                    count += 1;
+                    next_seq += 1.0;
+                }
             }
         }
 
+        tx.commit()?;
         Ok(count)
     }
 
@@ -1144,6 +1159,20 @@ impl Database {
             params![playlist_id, song_id],
         )?;
         Ok(changed > 0)
+    }
+
+    /// Remueve múltiples canciones de una playlist de forma eficiente.
+    pub fn batch_remove_songs_from_playlist(&mut self, playlist_id: i64, song_ids: &[i64]) -> Result<()> {
+        if song_ids.is_empty() { return Ok(()); }
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2")?;
+            for &song_id in song_ids {
+                stmt.execute(params![playlist_id, song_id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Remueve todas las canciones de una playlist (vaciar playlist).
@@ -1256,18 +1285,31 @@ impl Database {
         Ok(())
     }
 
-    /// Mueve una canción de una playlist a otra.
-    pub fn move_song_between_playlists(&self, from_playlist_id: i64, to_playlist_id: i64, song_id: i64, target_sequence: f64) -> Result<bool> {
-        // Remover de la playlist origen
-        self.remove_song_from_playlist(from_playlist_id, song_id)?;
+    /// Mueve múltiples canciones de una playlist a otra de forma eficiente.
+    pub fn batch_move_songs_between_playlists(&mut self, from_playlist_id: i64, to_playlist_id: i64, song_ids: &[i64]) -> Result<()> {
+        if song_ids.is_empty() { return Ok(()); }
+        let tx = self.conn.transaction()?;
+        
+        let max_seq: Option<f64> = tx.query_row(
+            "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
+            [to_playlist_id],
+            |r| r.get(0)
+        ).ok().flatten();
+        let mut next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
 
-        // Agregar a la playlist destino con la secuencia especificada
-        let result = self.conn.execute(
-            "INSERT INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)",
-            params![to_playlist_id, song_id, target_sequence],
-        )?;
+        {
+            let mut stmt_del = tx.prepare_cached("DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2")?;
+            let mut stmt_ins = tx.prepare_cached("INSERT INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)")?;
 
-        Ok(result > 0)
+            for &song_id in song_ids {
+                stmt_del.execute(params![from_playlist_id, song_id])?;
+                stmt_ins.execute(params![to_playlist_id, song_id, next_seq])?;
+                next_seq += 1.0;
+            }
+        }
+        
+        tx.commit()?;
+        Ok(())
     }
 
     // ============================================================
@@ -1281,12 +1323,14 @@ impl Database {
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
-                   al.cover_path, s.cover_override
+                   al.cover_path, s.cover_override,
+                   f.path, f.name
             FROM PLAYLIST_ITEMS pi
             JOIN SONGS s ON s.id = pi.song_id
             JOIN ALBUMS al ON al.id = s.album_id
             JOIN ARTISTS ar ON ar.id = s.artist_id
             JOIN ARTISTS al_ar ON al_ar.id = al.artist_id
+            JOIN FOLDERS f ON f.id = s.folder_id
             WHERE pi.playlist_id = ?1
             ORDER BY pi.sequence_order ASC
         ")?;
@@ -1312,6 +1356,8 @@ impl Database {
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
+                folder_path: r.get(15)?,
+                folder_name: r.get(16)?,
             })
         })?;
 
@@ -1329,12 +1375,14 @@ impl Database {
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
-                   al.cover_path, s.cover_override
+                   al.cover_path, s.cover_override,
+                   f.path, f.name
             FROM PLAYLIST_ITEMS pi
             JOIN SONGS s ON s.id = pi.song_id
             JOIN ALBUMS al ON al.id = s.album_id
             JOIN ARTISTS ar ON ar.id = s.artist_id
             JOIN ARTISTS al_ar ON al_ar.id = al.artist_id
+            JOIN FOLDERS f ON f.id = s.folder_id
             WHERE pi.playlist_id = ?1
             ORDER BY pi.sequence_order ASC
             LIMIT ?2 OFFSET ?3
@@ -1361,6 +1409,8 @@ impl Database {
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
+                folder_path: r.get(15)?,
+                folder_name: r.get(16)?,
             })
         })?;
 
@@ -1383,27 +1433,12 @@ impl Database {
     /// Obtiene canciones de una playlist agrupadas por folder_path.
     /// Retorna grupos con nombre de carpeta, canciones y estadísticas.
     pub fn get_playlist_songs_grouped_by_folder(&self, playlist_id: i64) -> Result<Vec<PlaylistFolderGroup>> {
-        // Primero obtener todas las canciones ordenadas
         let songs = self.get_playlist_songs(playlist_id)?;
-
-        // Agrupar por folder_path
         let mut groups: Vec<PlaylistFolderGroup> = Vec::new();
 
         for song in songs {
-            let folder_path = std::path::Path::new(&song.file_path)
-                .parent()
-                .and_then(|p| p.to_str())
-                .unwrap_or("")
-                .to_string();
-
-            let folder_name = std::path::Path::new(&folder_path)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("Desconocida")
-                .to_string();
-
-            // Encontrar o crear el grupo (solo si es el último grupo para mantener el orden de inserción)
-            let is_same_folder = groups.last().map(|g| g.folder_path == folder_path).unwrap_or(false);
+            // Encontrar o crear el grupo (solo si es el último grupo para mantener el orden de la lista)
+            let is_same_folder = groups.last().map(|g| g.folder_path == song.folder_path).unwrap_or(false);
             
             if is_same_folder {
                 if let Some(group) = groups.last_mut() {
@@ -1412,17 +1447,17 @@ impl Database {
                 }
             } else {
                 let first_item_id = song.item_id;
+                let folder_path = song.folder_path.clone();
+                let folder_name = song.folder_name.clone();
+                let duration = song.duration;
+                
                 groups.push(PlaylistFolderGroup {
-                    folder_path: folder_path.clone(),
+                    folder_path,
                     folder_name,
-                    songs: vec![song],
-                    total_duration: 0.0,
+                    total_duration: duration,
                     first_item_id,
+                    songs: vec![song],
                 });
-                // Recalcular duración total del grupo
-                if let Some(last) = groups.last_mut() {
-                    last.total_duration = last.songs.iter().map(|s| s.duration).sum();
-                }
             }
         }
 
@@ -1466,12 +1501,14 @@ impl Database {
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
-                   al.cover_path, s.cover_override
+                   al.cover_path, s.cover_override,
+                   f.path, f.name
             FROM PLAYLIST_ITEMS pi
             JOIN SONGS s ON s.id = pi.song_id
             JOIN ALBUMS al ON al.id = s.album_id
             JOIN ARTISTS ar ON ar.id = s.artist_id
             JOIN ARTISTS al_ar ON al_ar.id = al.artist_id
+            JOIN FOLDERS f ON f.id = s.folder_id
             WHERE pi.playlist_id = ?1
               AND (
                   LOWER(s.title) LIKE LOWER(?2)
@@ -1502,6 +1539,8 @@ impl Database {
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
+                folder_path: r.get(15)?,
+                folder_name: r.get(16)?,
             })
         })?;
 
@@ -1545,36 +1584,39 @@ impl Database {
 
     /// Guarda una sesión de shuffle completa en la base de datos.
     /// Esto persiste el orden aleatorio y el historial para navegación backward.
-    pub fn save_shuffle_session(&self, playlist_id: i64, session: &ShuffleSession) -> Result<()> {
+    pub fn save_shuffle_session(&mut self, playlist_id: i64, session: &ShuffleSession) -> Result<()> {
+        let tx = self.conn.transaction()?;
+
         // Limpiar sesión previa del mismo playlist (si existe)
-        self.conn.execute(
+        tx.execute(
             "DELETE FROM PLAYLIST_SHUFFLE_HISTORY WHERE playlist_id = ?1",
             [playlist_id],
         )?;
 
-        // Insertar shuffle_order (canciones pendientes)
-        for (i, &song_id) in session.shuffle_order.iter().enumerate() {
-            // play_order negativo para diferenciar de history
-            self.conn.execute(
-                "INSERT INTO PLAYLIST_SHUFFLE_HISTORY (playlist_id, session_id, song_id, play_order) VALUES (?1, ?2, ?3, ?4)",
-                params![playlist_id, session.session_id, song_id, -(i as i64)],
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO PLAYLIST_SHUFFLE_HISTORY (playlist_id, session_id, song_id, play_order) VALUES (?1, ?2, ?3, ?4)"
             )?;
-        }
 
-        // Insertar history (canciones ya reproducidas)
-        for (i, &song_id) in session.history.iter().enumerate() {
-            self.conn.execute(
-                "INSERT INTO PLAYLIST_SHUFFLE_HISTORY (playlist_id, session_id, song_id, play_order) VALUES (?1, ?2, ?3, ?4)",
-                params![playlist_id, session.session_id, song_id, i as i64],
-            )?;
+            // Insertar shuffle_order (canciones pendientes)
+            for (i, &song_id) in session.shuffle_order.iter().enumerate() {
+                // play_order negativo para diferenciar de history
+                stmt.execute(params![playlist_id, session.session_id, song_id, -(i as i64)])?;
+            }
+
+            // Insertar history (canciones ya reproducidas)
+            for (i, &song_id) in session.history.iter().enumerate() {
+                stmt.execute(params![playlist_id, session.session_id, song_id, i as i64])?;
+            }
         }
 
         // Actualizar también en la tabla PLAYLISTS
-        self.conn.execute(
+        tx.execute(
             "UPDATE PLAYLISTS SET shuffle_pos = ?1, shuffle_id = ?2 WHERE id = ?3",
             params![session.current_position as i64, session.session_id, playlist_id],
         )?;
 
+        tx.commit()?;
         Ok(())
     }
 

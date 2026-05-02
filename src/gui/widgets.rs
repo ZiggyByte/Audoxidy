@@ -505,6 +505,11 @@ pub fn standard_scrollbar() -> iced::widget::scrollable::Scrollbar {
 /// Aplica un efecto de rotación tipo "Marquesina" sobre una cadena de texto dada una longitud límite.
 /// Devuelve el string recortado o rotado en función de un "tick" temporal global.
 pub fn apply_marquee(text_str: &str, limit: usize, tick: u64) -> String {
+    // Optimización rápida: si es corto, no procesar nada
+    if text_str.len() <= limit && text_str.is_ascii() {
+        return text_str.to_string();
+    }
+    
     let chars: Vec<char> = text_str.chars().collect();
     if chars.len() <= limit {
         return text_str.to_string();
@@ -1208,12 +1213,11 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
 
 
 /// Permite construir una lista universalizada que agrupa canciones por artistas,
-/// gestiona el scroll, la virtualización, y las cabeceras pegajosas de forma global,
-/// delegando la representación visual de la "fila" a un renderizador externo.
+/// gestiona el scroll, la virtualización, y las cabeceras pegajosas de forma global.
 pub fn universal_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
-    row_height: f32, // Altura estimada para virtualización
+    _row_height: f32, 
     playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
@@ -1225,184 +1229,10 @@ where
             .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
     }
 
-    let header_h: f32 = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
-    let album_header_h: f32 = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
+    let header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 }; 
+    let album_header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
 
-    let view_min_raw = manager.scroll_offset.y;
-    let viewport_h = manager.last_viewport.as_ref().map(|v| v.height).unwrap_or(800.0);
-
-    struct AlbumGroup<'a> {
-        album_name: String,
-        album_hash: String,
-        songs: Vec<(&'a std::sync::Arc<crate::db::database::SongData>, usize)>,
-        duration_secs: f64,
-    }
-
-    struct ArtistBlock<'a> {
-        group: &'a crate::gui::library::ArtistGroup,
-        albums: Vec<AlbumGroup<'a>>,
-        is_collapsed: bool,
-        top_y: f32,
-        height: f32,
-    }
-
-    let mut artist_blocks = Vec::new();
-    let mut total_content_h = 0.0;
-    let mut global_song_idx = 0;
-
-    for group in groups {
-        let is_artist_collapsed = manager.collapsed_artists.contains(&group.name);
-        let mut albums: Vec<AlbumGroup> = Vec::new();
-
-        // Agrupar canciones por álbum preservando el orden
-        for song in &group.songs {
-            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
-            
-            if let Some(last_alb) = albums.last_mut() {
-                if last_alb.album_name == alb_name {
-                    last_alb.duration_secs += song.duration_secs.unwrap_or(0.0);
-                    last_alb.songs.push((song, global_song_idx));
-                    global_song_idx += 1;
-                    continue;
-                }
-            }
-
-            // Buscar hash en caché si existe
-            let album_hash = if let Some(albums_cache) = &manager.cached_albums {
-                albums_cache.iter()
-                    .find(|a| a.title == alb_name && a.artist == group.name)
-                    .map(|a| a.id.clone())
-                    .unwrap_or_else(|| alb_name.clone())
-            } else {
-                alb_name.clone()
-            };
-
-            albums.push(AlbumGroup {
-                album_name: alb_name,
-                album_hash,
-                songs: vec![(song, global_song_idx)],
-                duration_secs: song.duration_secs.unwrap_or(0.0),
-            });
-            global_song_idx += 1;
-        }
-
-        let mut block_h = header_h;
-        if !is_artist_collapsed {
-            for alb in &albums {
-                let composite_id = format!("{}|{}", group.name, alb.album_hash);
-                let is_album_collapsed = manager.collapsed_albums.contains(composite_id.as_str());
-                block_h += album_header_h;
-                if !is_album_collapsed {
-                    block_h += alb.songs.len() as f32 * row_height;
-                }
-            }
-        }
-
-        artist_blocks.push(ArtistBlock {
-            group,
-            albums,
-            is_collapsed: is_artist_collapsed,
-            top_y: total_content_h,
-            height: block_h,
-        });
-        total_content_h += block_h;
-    }
-
-    // 2. Virtualización
-    let max_scroll = (total_content_h - viewport_h).max(0.0);
-    let view_min = view_min_raw.min(max_scroll);
-    let view_max = view_min + viewport_h;
-    
-    let render_min = view_min - 300.0;
-    let render_max = view_max + 300.0;
-
-    let mut top_space = 0.0;
-    let mut bottom_space = 0.0;
-    
-    enum VirtualRow<'a> {
-        ArtistHeader(&'a crate::gui::library::ArtistGroup, bool),
-        AlbumHeader(String, String, String, usize, f64, bool, bool), // name, hash, artist, count, duration, is_expanded, is_playing
-        SongRow(&'a std::sync::Arc<crate::db::database::SongData>, usize),
-    }
-
-    let mut visible_elements = Vec::new();
-    let mut sticky_artist_info = None;
-
-    for ab in artist_blocks {
-        let block_end = ab.top_y + ab.height;
-
-        // Sticky Header: umbral +31px
-        if ab.top_y <= view_min + 31.0 {
-            sticky_artist_info = Some((ab.group, ab.is_collapsed));
-        }
-
-        if block_end < render_min {
-            top_space += ab.height;
-        } else if ab.top_y > render_max {
-            bottom_space += ab.height;
-        } else {
-            // Artist Header
-            if ab.top_y + header_h >= render_min && ab.top_y <= render_max {
-                visible_elements.push(VirtualRow::ArtistHeader(ab.group, ab.is_collapsed));
-            } else if ab.top_y + header_h < render_min {
-                top_space += header_h;
-            } else {
-                bottom_space += header_h;
-            }
-
-            if !ab.is_collapsed {
-                let mut current_y = ab.top_y + header_h;
-                for alb in ab.albums {
-                    let composite_id = format!("{}|{}", ab.group.name, alb.album_hash);
-                    let is_album_expanded = !manager.collapsed_albums.contains(&composite_id);
-                    let alb_songs_h = if is_album_expanded { alb.songs.len() as f32 * row_height } else { 0.0 };
-                    let alb_total_h = album_header_h + alb_songs_h;
-                    let alb_end = current_y + alb_total_h;
-
-                    if alb_end >= render_min && current_y <= render_max {
-                        // Album Header
-                        if current_y + album_header_h >= render_min && current_y <= render_max {
-                            let is_album_playing = alb.songs.iter().any(|(s, _)| s.full_file_path == playing_path);
-                            visible_elements.push(VirtualRow::AlbumHeader(
-                                alb.album_name.clone(), 
-                                alb.album_hash.clone(), 
-                                ab.group.name.clone(),
-                                alb.songs.len(), 
-                                alb.duration_secs, 
-                                is_album_expanded,
-                                is_album_playing
-                            ));
-                        } else if current_y + album_header_h < render_min {
-                            top_space += album_header_h;
-                        } else {
-                            bottom_space += album_header_h;
-                        }
-
-                        // Songs
-                        if is_album_expanded {
-                            let mut song_y = current_y + album_header_h;
-                            for (song, song_i) in alb.songs {
-                                let s_end = song_y + row_height;
-                                if s_end >= render_min && song_y <= render_max {
-                                    visible_elements.push(VirtualRow::SongRow(song, song_i));
-                                } else if s_end < render_min {
-                                    top_space += row_height;
-                                } else {
-                                    bottom_space += row_height;
-                                }
-                                song_y += row_height;
-                            }
-                        }
-                    } else if alb_end < render_min {
-                        top_space += alb_total_h;
-                    } else {
-                        bottom_space += alb_total_h;
-                    }
-                    current_y += alb_total_h;
-                }
-            }
-        }
-    }
+    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) = manager.get_visible_elements();
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
@@ -1414,31 +1244,36 @@ where
 
     for element in visible_elements {
         match element {
-            VirtualRow::ArtistHeader(group, is_collapsed) => {
-                let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(group.name.clone()));
-                let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
+            crate::gui::library::LibraryVirtualRow::ArtistHeader { name, is_collapsed, albums_count, songs_count, duration_secs } => {
+                let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
+                
+                let is_artist_playing = manager.artist_groups.iter()
+                    .find(|g| g.name == *name)
+                    .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+                    .unwrap_or(false);
                 
                 list_col = list_col.push(artist_header_widget(
-                    group.name.clone(), is_collapsed, is_header_selected, is_artist_playing,
-                    group.albums_count, group.songs_count, group.duration_secs, header_h,
-                    crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
-                    crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
+                    name.clone(), is_collapsed, is_header_selected, is_artist_playing,
+                    albums_count, songs_count, duration_secs, header_h,
+                    crate::gui::app::Message::SelectArtistHeader(name.clone()),
+                    crate::gui::app::Message::ToggleArtistExpansion(name.clone()),
                 ));
             }
-            VirtualRow::AlbumHeader(name, hash, artist, count, duration, is_expanded, is_playing) => {
-                let composite_id = format!("{}|{}", artist, hash);
+            crate::gui::library::LibraryVirtualRow::AlbumBlock { album_name, album_hash, artist_name, is_expanded, songs_count, duration_secs, .. } => {
+                let composite_id = format!("{}|{}", artist_name, album_hash);
                 let is_album_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
-
+                
+                // En este modo, el header del álbum se renderiza como una fila
                 list_col = list_col.push(album_header_widget(
-                    name, count, duration, is_expanded, is_album_selected, is_playing,
+                    album_name.clone(), songs_count, duration_secs, is_expanded, is_album_selected, false,
                     album_header_h,
                     crate::gui::app::Message::SelectAlbum(composite_id.clone()),
                     crate::gui::app::Message::ToggleAlbumExpansion(composite_id),
                 ));
             }
-            VirtualRow::SongRow(song, song_i) => {
+            crate::gui::library::LibraryVirtualRow::SimpleSong { song, global_idx } => {
                 let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
-                list_col = list_col.push(row_builder(song, song_i, is_song_selected, playing_path));
+                list_col = list_col.push(row_builder(&song, global_idx, is_song_selected, playing_path));
             }
         }
     }
@@ -1462,23 +1297,20 @@ where
     .height(Length::Fill)
     .on_scroll(crate::gui::app::Message::LibraryScroll);
 
-    let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
-        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_group.name.clone()));
+    let content: Element<'a, crate::gui::app::Message> = if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) = sticky_artist_info {
+        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_name.clone()));
         
-        let is_artist_playing = st_group.songs.iter().any(|s| s.full_file_path == playing_path);
+        let is_artist_playing = manager.artist_groups.iter()
+            .find(|g| g.name == *st_name)
+            .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+            .unwrap_or(false);
 
         let sticky_overlay = container(
             artist_header_widget(
-                st_group.name.clone(),
-                is_collapsed,
-                is_header_selected,
-                is_artist_playing,
-                st_group.albums_count,
-                st_group.songs_count,
-                st_group.duration_secs,
-                header_h,
-                crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
-                crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
+                st_name.clone(), st_collapsed, is_header_selected, is_artist_playing,
+                st_albums, st_songs, st_duration, header_h,
+                crate::gui::app::Message::SelectArtistHeader(st_name.clone()),
+                crate::gui::app::Message::ToggleArtistExpansion(st_name.clone()),
             )
         )
         .width(Length::Fill)
@@ -1502,7 +1334,7 @@ where
 pub fn detailed_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
-    row_height: f32, // 32.0
+    _row_height: f32, 
     playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
@@ -1514,173 +1346,11 @@ where
             .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
     }
 
-    let header_h = 32.0; // Artist header
+    let _header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
     let album_header_h = 32.0;
-
-    // La tarjeta es estricta a 250px como lo definió la columna
     let card_w = 250.0;
 
-    let view_min_raw = manager.scroll_offset.y;
-    let viewport_h = manager.last_viewport.as_ref().map(|v| v.height).unwrap_or(800.0);
-
-    let mut total_content_h = 0.0;
-    
-    // Estructura para agrupar canciones por álbum mantieniendo el orden de las canciones
-    struct AlbumGroup<'a> {
-        album_name: String,
-        album_hash: String,
-        songs: Vec<(&'a std::sync::Arc<crate::db::database::SongData>, usize)>, // (song, global_idx)
-        duration_secs: f64,
-    }
-
-    struct VirtualArtist<'a> {
-        group: &'a crate::gui::library::ArtistGroup,
-        is_collapsed: bool,
-        top_y: f32,
-        height: f32,
-        albums: Vec<AlbumGroup<'a>>,
-    }
-
-    let mut v_artists = Vec::new();
-    let mut global_song_idx = 0;
-
-    for group in groups {
-        let is_artist_collapsed = manager.collapsed_artists.contains(&group.name);
-        
-        let mut albums_map: Vec<AlbumGroup> = Vec::new();
-        // Agrupar preserving order en O(N)
-        for song in &group.songs {
-            let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
-            
-            if let Some(last_alb) = albums_map.last_mut() {
-                if last_alb.album_name == alb_name {
-                    last_alb.duration_secs += song.duration_secs.unwrap_or(0.0);
-                    last_alb.songs.push((song, global_song_idx));
-                    global_song_idx += 1;
-                    continue;
-                }
-            }
-            
-            // Buscar hash en caché si existe
-            let album_hash = if let Some(albums_cache) = &manager.cached_albums {
-                albums_cache.iter()
-                    .find(|a| a.title == alb_name && a.artist == group.name)
-                    .map(|a| a.id.clone())
-                    .unwrap_or_else(|| alb_name.clone())
-            } else {
-                alb_name.clone()
-            };
-
-            albums_map.push(AlbumGroup {
-                album_name: alb_name,
-                album_hash,
-                songs: vec![(song, global_song_idx)],
-                duration_secs: song.duration_secs.unwrap_or(0.0),
-            });
-            global_song_idx += 1;
-        }
-
-        let mut artist_h = header_h;
-        if !is_artist_collapsed {
-            for alb in &albums_map {
-                let composite_id = format!("{}|{}", group.name, alb.album_hash);
-                let is_album_expanded = !manager.collapsed_albums.contains(&composite_id);
-                let card_h: f32 = if is_album_expanded { 323.0 } else { 0.0 };
-                let right_h = if is_album_expanded {
-                    album_header_h + alb.songs.len() as f32 * row_height
-                } else {
-                    album_header_h
-                };
-                let block_h = card_h.max(right_h) + 10.0; // padding inferior
-                artist_h += block_h;
-            }
-        }
-
-        v_artists.push(VirtualArtist {
-            group,
-            is_collapsed: is_artist_collapsed,
-            top_y: total_content_h,
-            height: artist_h,
-            albums: albums_map,
-        });
-        
-        total_content_h += artist_h;
-    }
-
-    let max_scroll = (total_content_h - viewport_h).max(0.0);
-    let view_min = view_min_raw.min(max_scroll);
-    let view_max = view_min + viewport_h;
-    
-    let render_min = view_min - 300.0;
-    let render_max = view_max + 300.0;
-
-    let mut top_space = 0.0;
-    let mut bottom_space = 0.0;
-    
-    if top_space > 0.0 {
-        // No añadimos espacio clicable aquí por ahora ya que el Sticky Header lo cubre
-    }
-
-    enum VirtualRow<'a> {
-        ArtistHeader(&'a crate::gui::library::ArtistGroup, bool),
-        AlbumBlock(AlbumGroup<'a>, bool, String, String, String), // (group, is_expanded, artist, genre, year)
-    }
-
-    let mut visible_elements = Vec::new();
-    let mut sticky_artist_info = None;
-
-    for va in v_artists {
-        let a_end = va.top_y + va.height;
-
-        // Sticky Header: umbral +31px
-        if va.top_y <= view_min + 31.0 {
-            sticky_artist_info = Some((va.group, va.is_collapsed));
-        }
-
-        if a_end < render_min {
-            top_space += va.height;
-        } else if va.top_y > render_max {
-            bottom_space += va.height;
-        } else {
-            // Header
-            let ah_end = va.top_y + header_h;
-            if ah_end >= render_min && va.top_y <= render_max {
-                visible_elements.push(VirtualRow::ArtistHeader(va.group, va.is_collapsed));
-            } else if ah_end < render_min {
-                top_space += header_h;
-            } else {
-                bottom_space += header_h;
-            }
-
-            if !va.is_collapsed {
-                let mut current_y = va.top_y + header_h;
-                for alb in va.albums {
-                    let composite_id = format!("{}|{}", va.group.name, alb.album_hash);
-                    let is_album_expanded = !manager.collapsed_albums.contains(&composite_id);
-                    let card_h: f32 = if is_album_expanded { 323.0 } else { 0.0 }; 
-                    let right_h = if is_album_expanded {
-                        album_header_h + alb.songs.len() as f32 * row_height
-                    } else {
-                        album_header_h
-                    };
-                    let block_h = card_h.max(right_h) + 10.0; // padding inferior - must match pre-accumulator
-                    let block_end = current_y + block_h;
-
-                    if block_end >= render_min && current_y <= render_max {
-                        let artist_name = &va.group.name;
-                        let genre = alb.songs.first().and_then(|(s,_)| s.genre.clone()).unwrap_or_default();
-                        let year = alb.songs.first().and_then(|(s,_)| s.release_year.clone()).unwrap_or_default();
-                        visible_elements.push(VirtualRow::AlbumBlock(alb, is_album_expanded, artist_name.clone(), genre, year));
-                    } else if block_end < render_min {
-                        top_space += block_h;
-                    } else {
-                        bottom_space += block_h;
-                    }
-                    current_y += block_h;
-                }
-            }
-        }
-    }
+    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) = manager.get_visible_elements();
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
@@ -1692,62 +1362,50 @@ where
 
     for element in visible_elements {
         match element {
-            VirtualRow::ArtistHeader(group, is_collapsed) => {
-                let is_artist_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(group.name.clone()));
-                let is_artist_playing = group.songs.iter().any(|s| s.full_file_path == playing_path);
+            crate::gui::library::LibraryVirtualRow::ArtistHeader { name, is_collapsed, albums_count, songs_count, duration_secs } => {
+                let is_artist_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
+                
+                let is_artist_playing = manager.artist_groups.iter()
+                    .find(|g| g.name == *name)
+                    .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+                    .unwrap_or(false);
+
                 let header = artist_header_widget(
-                    group.name.clone(),
-                    is_collapsed,
-                    is_artist_explicitly_selected,
-                    is_artist_playing,
-                    group.albums_count,
-                    group.songs_count,
-                    group.duration_secs,
-                    32.0, // DetailedList always uses 32px headers
-                    crate::gui::app::Message::SelectArtistHeader(group.name.clone()),
-                    crate::gui::app::Message::ToggleArtistExpansion(group.name.clone()),
+                    name.clone(), is_collapsed, is_artist_explicitly_selected, is_artist_playing,
+                    albums_count, songs_count, duration_secs, 32.0,
+                    crate::gui::app::Message::SelectArtistHeader(name.clone()),
+                    crate::gui::app::Message::ToggleArtistExpansion(name.clone()),
                 );
                 list_col = list_col.push(header);
             }
-            VirtualRow::AlbumBlock(alb, is_expanded, artist_name, genre, year) => {
-                // Buscamos el álbum en cached_albums usando el título para obtener su hash_id y cover_path
-                let (album_hash, cover_path) = if let Some(albums) = &manager.cached_albums {
-                    let match_alb = albums.iter().find(|a| a.title == alb.album_name && a.artist == artist_name);
-                    (
-                        alb.album_hash.clone(),
-                        match_alb.and_then(|a| a.cover_path.clone())
-                    )
+            crate::gui::library::LibraryVirtualRow::AlbumBlock { album_name, album_hash, artist_name, genre, year, is_expanded, songs, songs_count, duration_secs } => {
+                let cover_path = if let Some(albums) = &manager.cached_albums {
+                    albums.iter().find(|a| a.title == *album_name && a.artist == *artist_name).and_then(|a| a.cover_path.clone())
                 } else {
-                    (alb.album_hash.clone(), None)
+                    None
                 };
 
                 let card_wrapper = album_art_widget(
-                    cover_path.as_ref(), // AVIF Path
-                    None,                // RAW Data
-                    None,                // Preloaded Handle
-                    PlaceholderStyle::Large,
-                    Length::Fixed(card_w - 30.0),
-                    8.0,
+                    cover_path.as_ref(), None, None, PlaceholderStyle::Large, Length::Fixed(card_w - 30.0), 8.0,
                 );
 
                 let info_col = column![
                     smart_truncate_text(artist_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
-                    smart_truncate_text(alb.album_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
+                    smart_truncate_text(album_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
                     smart_truncate_text(genre.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
                     text(year.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
                 ].spacing(2).width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);
                 let is_album_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
-                let is_song_selected_in_album = alb.songs.iter().any(|(s, _)| manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(s.id)));
+                let is_song_selected_in_album = songs.iter().any(|(s, _)| manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(s.id)));
                 let is_album_card_highlighted = is_album_explicitly_selected || is_song_selected_in_album;
 
                 let card_col = column![card_wrapper, info_col].spacing(5).width(Length::Fixed(card_w - 30.0));
                 
                 let card_container = mouse_area(
                     container(card_col)
-                        .width(Length::Fixed(card_w))
-                        .height(Length::Fixed(323.0))
+                        .width(Length::Fixed(card_w)).height(Length::Fixed(323.0))
                         .padding(iced::Padding { top: 15.0, bottom: 15.0, left: 15.0, right: 15.0 })
                         .style(move |_t: &Theme| {
                             if is_album_card_highlighted {
@@ -1761,20 +1419,12 @@ where
                 .on_press(crate::gui::app::Message::SelectAlbum(composite_id.clone()))
                 .interaction(iced::mouse::Interaction::Pointer);
 
-                // Lado Derecho (Album Header + Canciones)
-                let right_h = if is_expanded {
-                    album_header_h + alb.songs.len() as f32 * row_height
-                } else {
-                    album_header_h
-                };
-                let _block_h = (card_w + 30.0).max(right_h);
-                
-                let is_album_playing = alb.songs.iter().any(|(s, _)| s.full_file_path == playing_path);
+                let is_album_playing = songs.iter().any(|(s, _)| s.full_file_path == playing_path);
                 
                 let alb_header = album_header_widget(
-                    alb.album_name.clone(),
-                    alb.songs.len(),
-                    alb.duration_secs,
+                    album_name.clone(),
+                    songs_count,
+                    duration_secs,
                     is_expanded,
                     is_album_explicitly_selected,
                     is_album_playing,
@@ -1786,9 +1436,9 @@ where
                 let mut right_col = column![alb_header].spacing(0).width(Length::Fill);
 
                 if is_expanded {
-                    for (song, song_i) in alb.songs {
+                    for (song, song_i) in &songs {
                         let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
-                        let song_row = row_builder(song, song_i, is_song_selected, playing_path);
+                        let song_row = row_builder(song, *song_i, is_song_selected, playing_path);
                         right_col = right_col.push(song_row);
                     }
                 }
@@ -1810,6 +1460,7 @@ where
                     column![content_row, Space::new().height(Length::Fixed(10.0))]
                 );
             }
+            _ => {}
         }
     }
 
@@ -1832,36 +1483,27 @@ where
     .height(Length::Fill)
     .on_scroll(crate::gui::app::Message::LibraryScroll);
 
-    let content: Element<'a, crate::gui::app::Message> = if let Some((st_group, is_collapsed)) = sticky_artist_info {
-        let is_header_explicitly_selected = manager.selected_header.as_ref() == Some(&st_group.name)
-            && manager.selected_album.is_none()
-            && manager.selected_song_idx.is_none();
+    let content: Element<'a, crate::gui::app::Message> = if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) = sticky_artist_info {
+        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_name.clone()));
         
-        let is_artist_playing = st_group.songs.iter().any(|s| s.full_file_path == playing_path);
+        let is_artist_playing = manager.artist_groups.iter()
+            .find(|g| g.name == *st_name)
+            .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+            .unwrap_or(false);
         
         let sticky_overlay = container(
             artist_header_widget(
-                st_group.name.clone(),
-                is_collapsed,
-                is_header_explicitly_selected,
-                is_artist_playing,
-                st_group.albums_count,
-                st_group.songs_count,
-                st_group.duration_secs,
-                32.0, // DetailedList always uses 32px headers
-                crate::gui::app::Message::SelectArtistHeader(st_group.name.clone()),
-                crate::gui::app::Message::ToggleArtistExpansion(st_group.name.clone()),
+                st_name.clone(), st_collapsed, is_header_selected, is_artist_playing,
+                st_albums, st_songs, st_duration, 32.0,
+                crate::gui::app::Message::SelectArtistHeader(st_name.clone()),
+                crate::gui::app::Message::ToggleArtistExpansion(st_name.clone()),
             )
         )
-        .width(Length::Fill)
-        .height(Length::Fixed(32.0))
+        .width(Length::Fill).height(Length::Fixed(32.0))
         .padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 })
         .align_y(iced::alignment::Vertical::Top);
 
-        iced::widget::stack![
-            main_scroll,
-            sticky_overlay
-        ].into()
+        iced::widget::stack![main_scroll, sticky_overlay].into()
     } else {
         main_scroll.into()
     };

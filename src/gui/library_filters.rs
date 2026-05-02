@@ -31,7 +31,7 @@ impl FilterType {
 #[derive(Debug, Clone)]
 pub struct TreeNode {
     pub label: String,
-    pub id: String, // format: "FilterType|L1|L2|...". e.g. "Genre|Rock|Nirvana|Nevermind"
+    pub id: String, // format: "FilterType|L1|L2|...". e.g. "Genre|Rock|Queen|Innuendo"
     pub children: Vec<TreeNode>,
 }
 
@@ -41,6 +41,14 @@ struct FilterIndex {
     trees: HashMap<FilterType, Vec<TreeNode>>,
     /// Letras del abecedario disponibles por cada FilterType
     subfilters: HashMap<FilterType, Vec<String>>,
+}
+
+pub struct VisibleTreeItem {
+    pub label: String,
+    pub id: String,
+    pub depth: usize,
+    pub has_children: bool,
+    pub is_expanded: bool,
 }
 
 pub struct LibraryFiltersManager {
@@ -57,7 +65,14 @@ pub struct LibraryFiltersManager {
     pub active_subfilters: Vec<String>, // available characters e.g. ["#", "·", "A", "C", "R"]
     pub tree_data: Vec<TreeNode>,
     pub selected_tree_node: Option<String>,
+    
+    // Virtualización
+    pub scroll_offset: iced::Vector,
+    pub last_viewport: Option<iced::Rectangle>,
+    pub cached_flattened_tree: Option<Vec<VisibleTreeItem>>,
 }
+
+pub static FILTERS_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
 
 impl Default for LibraryFiltersManager {
     fn default() -> Self {
@@ -71,6 +86,9 @@ impl Default for LibraryFiltersManager {
             active_subfilters: Vec::new(),
             tree_data: Vec::new(),
             selected_tree_node: None,
+            scroll_offset: iced::Vector::new(0.0, 0.0),
+            last_viewport: None,
+            cached_flattened_tree: None,
         }
     }
 }
@@ -212,6 +230,69 @@ impl LibraryFiltersManager {
         self.apply_view();
     }
 
+    pub fn refresh_flattened_tree(&mut self) {
+        let mut flattened = Vec::new();
+        for node in &self.tree_data {
+            Self::flatten_tree_node(node, 0, &self.expanded_nodes, &mut flattened);
+        }
+        self.cached_flattened_tree = Some(flattened);
+    }
+
+    fn flatten_tree_node(node: &TreeNode, depth: usize, expanded: &HashSet<String>, result: &mut Vec<VisibleTreeItem>) {
+        let is_expanded = expanded.contains(&node.id);
+        let has_children = !node.children.is_empty();
+        
+        result.push(VisibleTreeItem {
+            label: node.label.clone(),
+            id: node.id.clone(),
+            depth,
+            has_children,
+            is_expanded,
+        });
+        
+        if is_expanded && has_children {
+            for child in &node.children {
+                Self::flatten_tree_node(child, depth + 1, expanded, result);
+            }
+        }
+    }
+
+    pub fn get_visible_tree_items(&self) -> (f32, f32, Vec<VisibleTreeItem>) {
+        let flattened = match &self.cached_flattened_tree {
+            Some(f) => f,
+            None => return (0.0, 0.0, Vec::new()),
+        };
+        
+        let item_height = 32.0;
+        let total_items = flattened.len();
+        
+        let viewport_height = self.last_viewport.map(|v| v.height).unwrap_or(800.0);
+        let scroll_y = self.scroll_offset.y;
+        
+        let start_index = (scroll_y / item_height).floor() as usize;
+        // Margen de seguridad para evitar parpadeos
+        let margin = 5;
+        let start_index = start_index.saturating_sub(margin);
+        
+        let visible_count = (viewport_height / item_height).ceil() as usize + (margin * 2);
+        
+        let end_index = (start_index + visible_count).min(total_items);
+        let start_index = start_index.min(total_items);
+        
+        let top_space = start_index as f32 * item_height;
+        let bottom_space = (total_items.saturating_sub(end_index)) as f32 * item_height;
+        
+        let visible_items = flattened[start_index..end_index].iter().map(|item| VisibleTreeItem {
+            label: item.label.clone(),
+            id: item.id.clone(),
+            depth: item.depth,
+            has_children: item.has_children,
+            is_expanded: item.is_expanded,
+        }).collect();
+        
+        (top_space, bottom_space, visible_items)
+    }
+
     /// Actualiza tree_data y active_subfilters desde el índice pre-calculado.
     /// Operación instantánea (<1ms). Llamar al cambiar filtro general, subfiltro o búsqueda.
     pub fn apply_view(&mut self) {
@@ -220,7 +301,10 @@ impl LibraryFiltersManager {
 
         let index = match &self.filter_index {
             Some(idx) => idx,
-            None => return,
+            None => {
+                self.refresh_flattened_tree();
+                return;
+            }
         };
 
         // 1. Subfilters (letras del abecedario) - directo de la caché
@@ -233,26 +317,27 @@ impl LibraryFiltersManager {
             let has_search = !self.search_query.is_empty();
             let query_lower = self.search_query.to_lowercase();
 
-            for node in full_tree {
-                // Filtro por subfiltro (letra del abecedario)
-                if let Some(ref sub) = self.selected_subfilter {
-                    let group = Self::get_group_char(&node.label);
-                    if &group != sub {
-                        continue;
+            use rayon::prelude::*;
+            self.tree_data = full_tree.par_iter()
+                .filter_map(|node| {
+                    // Filtro por subfiltro (letra del abecedario)
+                    if let Some(ref sub) = self.selected_subfilter {
+                        let group = Self::get_group_char(&node.label);
+                        if &group != sub {
+                            return None;
+                        }
                     }
-                }
 
-                // Filtro por búsqueda de texto
-                if has_search {
-                    let filtered = Self::filter_node_by_search(node, &query_lower);
-                    if let Some(filtered_node) = filtered {
-                        self.tree_data.push(filtered_node);
+                    // Filtro por búsqueda de texto
+                    if has_search {
+                        Self::filter_node_by_search(node, &query_lower)
+                    } else {
+                        Some(node.clone())
                     }
-                } else {
-                    self.tree_data.push(node.clone());
-                }
-            }
+                })
+                .collect();
         }
+        self.refresh_flattened_tree();
     }
 
     /// Filtra recursivamente un nodo del árbol por búsqueda de texto.
@@ -260,8 +345,9 @@ impl LibraryFiltersManager {
     fn filter_node_by_search(node: &TreeNode, query: &str) -> Option<TreeNode> {
         let self_matches = node.label.to_lowercase().contains(query);
 
-        // Filtrar hijos recursivamente
-        let filtered_children: Vec<TreeNode> = node.children.iter()
+        use rayon::prelude::*;
+        // Filtrar hijos recursivamente en paralelo
+        let filtered_children: Vec<TreeNode> = node.children.par_iter()
             .filter_map(|child| Self::filter_node_by_search(child, query))
             .collect();
 
@@ -500,76 +586,69 @@ pub fn view<'a>(
         
     }
     
-    let mut tree_col_content: Element<'a, Message> = column![].into();
+    let mut tree_col_content = column![].spacing(0);
 
     if !manager.active_subfilters.is_empty() {
-        // Tree Recursive Rendering
-        fn render_tree<'a>(nodes: &'a [TreeNode], expanded: &'a HashSet<String>, depth: usize, manager: &'a LibraryFiltersManager) -> Element<'a, Message> {
-            let mut col = column![].spacing(0);
-            for node in nodes {
-                let is_expanded = expanded.contains(&node.id);
-                let has_children = !node.children.is_empty();
-                
-                let icon = if node.id.contains("FilterType::Folder") {
-                    if is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" }
-                } else {
-                    if is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" }
-                };
+        let (top, bottom, visible_items) = manager.get_visible_tree_items();
 
-                let padding_left = 0.0 + (depth as f32 * 12.0); // Indentation
-                let t_label = crate::gui::widgets::smart_truncate_text(node.label.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_SECONDARY);
-                
-                let row_content = if has_children {
-                    row![
-                        chevron_btn(icon, Message::ToggleTreeNode(node.id.clone()), 22.0, 22.0),
-                        Space::new().width(0.0),
-                        t_label,
-                    ]
-                } else {
-                    row![
-                        Space::new().width(16.0),
-                        Space::new().width(0.0),
-                        t_label,
-                    ]
-                };
-
-                let is_active = manager.selected_tree_node.as_deref() == Some(node.id.as_str());
-
-                let interactable = button(
-                    container(row_content.align_y(Alignment::Center))
-                        .padding(iced::Padding { top: 0.0, bottom: 0.0, left: padding_left, right: 15.0 })
-                        .height(Length::Fixed(32.0))
-                        .center_y(Length::Fill)
-                )
-                .width(Length::Fill)
-                .style(move |_t: &Theme, _s: button::Status| {
-                    let mut st = button::Style::default();
-                    if is_active || _s == button::Status::Hovered {
-                        st.background = Some(iced::Background::Color(COLOR_CONTRAST));
-                    } else {
-                        st.background = Some(iced::Background::Color(Color::TRANSPARENT));
-                    }
-                    st
-                })
-                .on_press(Message::SelectTreeNode(node.id.clone()));
-
-                col = col.push(interactable);
-
-                if is_expanded && has_children {
-                    col = col.push(render_tree(&node.children, expanded, depth + 1, manager));
-                }
-            }
-            col.into()
+        if top > 0.0 {
+            tree_col_content = tree_col_content.push(Space::new().height(Length::Fixed(top)));
         }
 
-        tree_col_content = render_tree(&manager.tree_data, &manager.expanded_nodes, 0, manager);
+        for item in visible_items {
+            let icon = if item.is_expanded { "arrow-down-chevron.svg" } else { "arrow-right-chevron.svg" };
+            let padding_left = item.depth as f32 * 12.0;
+            
+            let t_label = crate::gui::widgets::smart_truncate_text(item.label, 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_SECONDARY);
+            
+            let row_content = if item.has_children {
+                row![
+                    chevron_btn(icon, Message::ToggleTreeNode(item.id.clone()), 22.0, 22.0),
+                    Space::new().width(0.0),
+                    t_label,
+                ]
+            } else {
+                row![
+                    Space::new().width(16.0),
+                    Space::new().width(0.0),
+                    t_label,
+                ]
+            };
+
+            let is_active = manager.selected_tree_node.as_deref() == Some(item.id.as_str());
+
+            let interactable = button(
+                container(row_content.align_y(Alignment::Center))
+                    .padding(iced::Padding { top: 0.0, bottom: 0.0, left: padding_left, right: 15.0 })
+                    .height(Length::Fixed(32.0))
+                    .center_y(Length::Fill)
+            )
+            .width(Length::Fill)
+            .style(move |_t: &Theme, _s: button::Status| {
+                let mut st = button::Style::default();
+                if is_active || _s == button::Status::Hovered {
+                    st.background = Some(iced::Background::Color(COLOR_CONTRAST));
+                } else {
+                    st.background = Some(iced::Background::Color(Color::TRANSPARENT));
+                }
+                st
+            })
+            .on_press(Message::SelectTreeNode(item.id.clone()));
+
+            tree_col_content = tree_col_content.push(interactable);
+        }
+
+        if bottom > 0.0 {
+            tree_col_content = tree_col_content.push(Space::new().height(Length::Fixed(bottom)));
+        }
     }
 
     let scrollable_tree = standard_scrollable(
-        iced::widget::Id::unique(),
+        FILTERS_SCROLL_ID.clone(),
         tree_col_content,
         iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
-    );
+    )
+    .on_scroll(Message::FilterScroll);
 
 
 

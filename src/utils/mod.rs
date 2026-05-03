@@ -1,5 +1,6 @@
 // Utilidades comunes y funciones matemáticas de formateo
 pub mod covers;
+pub mod interner;
 use crate::db::database::SongData;
 
 pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
@@ -63,18 +64,18 @@ impl SortColumn {
 /// Extrae el valor de texto correspondiente a la columna dada desde un SongData.
 pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
     match col {
-        SortColumn::TrackNumber => song.track_number.clone().unwrap_or_else(|| "-".to_string().into()),
-        SortColumn::Title => song.title.clone().unwrap_or_else(|| "Desconocido".to_string().into()),
-        SortColumn::Artist => song.artist.clone().unwrap_or_else(|| "Desconocido".to_string().into()),
-        SortColumn::AlbumArtist => song.album_artist.clone().unwrap_or_else(|| "Desconocido".to_string().into()),
-        SortColumn::Album => song.album.clone().unwrap_or_else(|| "Desconocido".to_string().into()),
-        SortColumn::Genre => song.genre.clone().unwrap_or_else(|| "Desconocido".to_string().into()),
-        SortColumn::Year => song.release_year.clone().unwrap_or_else(|| "-".to_string().into()),
+        SortColumn::TrackNumber => song.track_number.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
+        SortColumn::Title => song.title.clone().unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::Artist => song.artist.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::AlbumArtist => song.album_artist.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::Album => song.album.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::Genre => song.genre.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::Year => song.release_year.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
         SortColumn::Duration => {
             let dur_secs = song.duration_secs.unwrap_or(0.0);
             format_duration(dur_secs)
         }
-        SortColumn::Format => song.format.clone().unwrap_or_else(|| "-".to_string().into()),
+        SortColumn::Format => song.format.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
         SortColumn::SampleRate => song.sample_rate.map_or("-".to_string(), |r| format!("{:.1} kHz", r as f64 / 1000.0)),
         SortColumn::Channels => song.channels.map_or("-".to_string(), |c| {
             match c {

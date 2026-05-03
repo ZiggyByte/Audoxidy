@@ -327,7 +327,7 @@ impl LibraryManager {
 
             // Agrupar canciones por álbum conservando el orden O(N)
             for song in &group.songs {
-                let alb_name = song.album.clone().unwrap_or_else(|| "Desconocido".to_string());
+                let alb_name = song.album.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string());
                 
                 if let Some(last_alb) = albums_map.last_mut() {
                     if last_alb.album_name == alb_name {
@@ -508,8 +508,8 @@ impl LibraryManager {
                                 }
                             } else {
                                 // Modo Detallado: El bloque completo se renderiza (es mejor así por el layout de tarjeta)
-                                let genre = alb.songs.first().and_then(|(s,_)| s.genre.clone()).unwrap_or_default();
-                                let year = alb.songs.first().and_then(|(s,_)| s.release_year.clone()).unwrap_or_default();
+                                let genre = alb.songs.first().and_then(|(s,_)| s.genre.as_ref().map(|s| s.to_string())).unwrap_or_default();
+                                let year = alb.songs.first().and_then(|(s,_)| s.release_year.as_ref().map(|s| s.to_string())).unwrap_or_default();
                                 visible_elements.push(LibraryVirtualRow::AlbumBlock { 
                                     album_name: alb.album_name.clone(), 
                                     album_hash: alb.album_hash.clone(), 
@@ -1562,7 +1562,7 @@ impl LibraryManager {
         } else if let Some(song_idx) = self.selected_song_idx {
             self.filtered_songs.as_ref()
                 .and_then(|songs| songs.get(song_idx))
-                .and_then(|s| s.artist.clone().or(s.album_artist.clone()))
+                .and_then(|s| s.artist.as_ref().map(|s| s.to_string()).or_else(|| s.album_artist.as_ref().map(|s| s.to_string())))
         } else {
             None
         };
@@ -1583,7 +1583,7 @@ impl LibraryManager {
             if let Some(songs) = &self.filtered_songs {
                 if let Some(s) = songs.get(song_idx) {
                     let art = crate::utils::get_effective_artist(s).to_string();
-                    let alb_name = s.album.clone().unwrap_or_else(|| "Desconocido".to_string().into());
+                    let alb_name = s.album.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string());
                     
                     // Buscar hash para ID compuesto
                     let alb_hash = if let Some(cache) = &self.cached_albums {
@@ -1612,7 +1612,7 @@ impl LibraryManager {
         if let Some(song_idx) = self.selected_song_idx {
             if let Some(songs) = &self.filtered_songs {
                 if let Some(song) = songs.get(song_idx) {
-                    let artist = song.artist.clone().or(song.album_artist.clone()).unwrap_or_else(|| "Artista Desconocido".to_string().into());
+                    let artist = song.artist.as_ref().map(|s| s.to_string()).or_else(|| song.album_artist.as_ref().map(|s| s.to_string())).unwrap_or_else(|| "Artista Desconocido".to_string());
                     self.artist_last_selection.insert(artist, song_idx);
                 }
             }
@@ -1739,8 +1739,8 @@ impl LibraryManager {
                                 
                                 // Buscar el AlbumEntry original para conservar el cover_path y el ID (hash)
                                 // Intentamos coincidencia por título y artista del grupo
-                                if let Some(entry) = all_albums.iter().find(|a| a.title == *alb_title && a.artist == group.name)
-                                    .or_else(|| all_albums.iter().find(|a| a.title == *alb_title)) // Fallback por título
+                                if let Some(entry) = all_albums.iter().find(|a| a.title.as_str() == &**alb_title && a.artist == group.name)
+                                    .or_else(|| all_albums.iter().find(|a| a.title.as_str() == &**alb_title)) // Fallback por título
                                 {
                                     let mut unified_entry = entry.clone();
                                     unified_entry.artist = group.name.clone(); // Garantizar que el artista del Grid sea idéntico al de la Lista

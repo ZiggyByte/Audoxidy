@@ -9,18 +9,26 @@ use crate::db::database::{Database, SongData, SongMetadataExtended};
 pub struct Scanner {
     _db: Arc<Mutex<Database>>,
     pub db_dirty: Arc<AtomicBool>,
+    pub is_scanning: Arc<AtomicBool>,
 }
 
 impl Scanner {
     pub fn new(db: Arc<Mutex<Database>>) -> Self {
-        Self { _db: db, db_dirty: Arc::new(AtomicBool::new(false)) }
+        Self { 
+            _db: db, 
+            db_dirty: Arc::new(AtomicBool::new(false)),
+            is_scanning: Arc::new(AtomicBool::new(false)),
+        }
     }
     
     pub fn scan_folder_async(&self, folder_path: String) {
         let db_arc = Arc::clone(&self._db);
         let dirty_flag = Arc::clone(&self.db_dirty);
+        let is_scanning_flag = Arc::clone(&self.is_scanning);
         std::thread::spawn(move || {
+            is_scanning_flag.store(true, Ordering::SeqCst);
             Self::scan_folder(&db_arc, &folder_path, &dirty_flag);
+            is_scanning_flag.store(false, Ordering::SeqCst);
         });
     }
 
@@ -80,7 +88,7 @@ impl Scanner {
         song.full_file_path = path.to_string_lossy().to_string();
         
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-            song.format = Some(ext.to_uppercase());
+            song.format = crate::utils::interner::intern_string_opt(Some(ext.to_uppercase().as_str()));
         }
         
         if let Ok(metadata) = std::fs::metadata(path) {
@@ -157,17 +165,17 @@ impl Scanner {
                 let get_fused = |key: ItemKey| fused_map.get(&key).map(|(_, v)| v.clone());
 
                 song.title = get_fused(ItemKey::TrackTitle);
-                song.artist = get_fused(ItemKey::TrackArtist);
-                song.album = get_fused(ItemKey::AlbumTitle);
-                song.genre = get_fused(ItemKey::Genre);
-                song.track_number = get_fused(ItemKey::TrackNumber);
-                song.album_artist = get_fused(ItemKey::AlbumArtist);
+                song.artist = crate::utils::interner::intern_string_opt(get_fused(ItemKey::TrackArtist).as_deref());
+                song.album = crate::utils::interner::intern_string_opt(get_fused(ItemKey::AlbumTitle).as_deref());
+                song.genre = crate::utils::interner::intern_string_opt(get_fused(ItemKey::Genre).as_deref());
+                song.track_number = crate::utils::interner::intern_string_opt(get_fused(ItemKey::TrackNumber).as_deref());
+                song.album_artist = crate::utils::interner::intern_string_opt(get_fused(ItemKey::AlbumArtist).as_deref());
                 
                 // Año con lógica de fallback robusta pero preservando formato
-                song.release_year = get_fused(ItemKey::Year)
+                song.release_year = crate::utils::interner::intern_string_opt(get_fused(ItemKey::Year)
                     .or_else(|| get_fused(ItemKey::RecordingDate))
                     .or_else(|| get_fused(ItemKey::OriginalReleaseDate))
-                    .map(|d| d.chars().filter(|c| c.is_digit(10)).take(4).collect::<String>());
+                    .map(|d| d.chars().filter(|c| c.is_digit(10)).take(4).collect::<String>()).as_deref());
 
                 extended.lyrics = get_fused(ItemKey::UnsyncLyrics).or_else(|| get_fused(ItemKey::Lyrics));
                 extended.comments = get_fused(ItemKey::Comment);

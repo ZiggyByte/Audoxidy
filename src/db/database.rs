@@ -17,14 +17,14 @@ pub struct SongData {
     pub album_id: i64,
     pub full_file_path: String,
     pub title: Option<String>,
-    pub artist: Option<String>,
-    pub album: Option<String>,
-    pub album_artist: Option<String>,
-    pub genre: Option<String>,
-    pub release_year: Option<String>,
-    pub track_number: Option<String>,
+    pub artist: Option<std::sync::Arc<str>>,
+    pub album: Option<std::sync::Arc<str>>,
+    pub album_artist: Option<std::sync::Arc<str>>,
+    pub genre: Option<std::sync::Arc<str>>,
+    pub release_year: Option<std::sync::Arc<str>>,
+    pub track_number: Option<std::sync::Arc<str>>,
     pub duration_secs: Option<f64>,
-    pub format: Option<String>,
+    pub format: Option<std::sync::Arc<str>>,
     pub bit_depth: Option<i64>,
     pub sample_rate: Option<i64>,
     pub size: Option<i64>,
@@ -82,16 +82,16 @@ pub struct PlaylistSongRef {
 
     // Metadata JOIN de SONGS + ALBUMS + ARTISTS
     pub title: String,
-    pub artist_name: String,
-    pub album_title: String,
-    pub album_artist_name: String,
-    pub year: Option<String>,
-    pub genre: Option<String>,
-    pub track_number: Option<String>,
+    pub artist_name: std::sync::Arc<str>,
+    pub album_title: std::sync::Arc<str>,
+    pub album_artist_name: std::sync::Arc<str>,
+    pub year: Option<std::sync::Arc<str>>,
+    pub genre: Option<std::sync::Arc<str>>,
+    pub track_number: Option<std::sync::Arc<str>>,
     pub duration: f64,
     pub file_path: String,
     pub folder_path: String,
-    pub folder_name: String,
+    pub folder_name: std::sync::Arc<str>,
     pub cover_path: Option<String>,
     pub cover_override: Option<String>,
 }
@@ -100,7 +100,7 @@ pub struct PlaylistSongRef {
 #[derive(Debug, Clone)]
 pub struct PlaylistFolderGroup {
     pub folder_path: String,
-    pub folder_name: String,
+    pub folder_name: std::sync::Arc<str>,
     pub songs: Vec<PlaylistSongRef>,
     pub total_duration: f64,
     pub first_item_id: i64,
@@ -125,6 +125,7 @@ impl Database {
     pub fn new() -> Result<Self> {
         let db_path = "library.db";
         let conn = Connection::open(db_path)?;
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         Self::create_schema(&conn)?;
         Ok(Self { conn })
     }
@@ -631,23 +632,23 @@ impl Database {
             song.id = row.get(0)?;
             song.full_file_path = row.get(1)?;
             song.title = row.get(2)?;
-            song.artist = row.get(3)?;
-            song.album = row.get(4)?;
+            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
+            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
             song.album_id = 0; // WIP: Si se necesita el ID real se puede añadir al SELECT
             song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
             song.duration_secs = row.get(6)?;
-            song.format = row.get(7)?;
+            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
             song.size = row.get(8)?;
-            song.track_number = row.get(9)?; // TEXT -> Option<String>
+            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref()); // TEXT -> Option<Arc<str>>
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
             song.cover_override = row.get(14)?;
             song.import_order = row.get(15)?;
-            song.genre = row.get(16)?;
-            song.release_year = row.get(17)?;
-            song.album_artist = row.get(18)?;
+            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
+            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
+            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
             Ok(Arc::new(song))
         })?;
 
@@ -1346,18 +1347,18 @@ impl Database {
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
                 title: title_val.unwrap_or_else(|| "Sin título".to_string()),
-                artist_name: artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
-                album_title: album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
-                album_artist_name: r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string()),
-                year: r.get(8)?,
-                genre: r.get(9)?,
-                track_number: r.get(10)?,
+                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
+                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
+                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
+                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
+                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
+                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
                 folder_path: r.get(15)?,
-                folder_name: r.get(16)?,
+                folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;
 
@@ -1399,18 +1400,18 @@ impl Database {
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
                 title: title_val.unwrap_or_else(|| "Sin título".to_string()),
-                artist_name: artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
-                album_title: album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
-                album_artist_name: r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string()),
-                year: r.get(8)?,
-                genre: r.get(9)?,
-                track_number: r.get(10)?,
+                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
+                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
+                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
+                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
+                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
+                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
                 folder_path: r.get(15)?,
-                folder_name: r.get(16)?,
+                folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;
 
@@ -1529,18 +1530,18 @@ impl Database {
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
                 title: title_val.unwrap_or_else(|| "Sin título".to_string()),
-                artist_name: artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
-                album_title: album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
-                album_artist_name: r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string()),
-                year: r.get(8)?,
-                genre: r.get(9)?,
-                track_number: r.get(10)?,
+                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
+                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
+                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
+                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
+                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
+                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: r.get(12)?,
                 cover_path: r.get(13)?,
                 cover_override: r.get(14)?,
                 folder_path: r.get(15)?,
-                folder_name: r.get(16)?,
+                folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;
 

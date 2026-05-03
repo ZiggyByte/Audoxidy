@@ -374,7 +374,8 @@ impl AudoxidyApp {
         library_manager.update_data(initial_songs, initial_albums);
 
         let database_arc = Arc::new(Mutex::new(db));
-        let scanner_arc = Arc::new(Scanner::new(Arc::clone(&database_arc)));
+        let db_scanner = Database::new().expect("Error al inicializar la base de datos del escáner.");
+        let scanner_arc = Arc::new(Scanner::new(Arc::new(Mutex::new(db_scanner))));
 
         let media_controls = SystemMediaControls::new(audio_manager.clone())
             .expect("Error al inicializar controles multimedia del sistema");
@@ -560,25 +561,17 @@ impl AudoxidyApp {
                 // 2. Actualizar BD SOLO cuando el escáner marca cambios
                 if self.db_needs_refresh {
                     self.db_needs_refresh = false;
-                    if let Ok(db) = self.database.lock() {
-                        let songs = db.get_all_songs().unwrap_or_default();
-                        let albums_raw = db.get_grid_items_by_artist().unwrap_or_default();
-                        
-                        let albums = albums_raw.into_iter().map(|a| crate::gui::library::AlbumEntry {
-                            id: a.0, title: a.1, artist: a.2, genre: a.3, year: a.4, cover_path: a.5
-                        }).collect();
-                        
-                        self.library_manager.update_data(songs, albums);
-                        self.filters_manager.build_filter_index(&self.library_manager);
-                        
-                        if let Ok((songs, albums, duration, size, total_artists)) = db.get_library_stats() {
-                            self.library_manager.total_songs = songs;
-                            self.library_manager.total_albums = albums;
-                            self.library_manager.total_artists = total_artists;
-                            self.library_manager.total_duration_secs = duration;
-                            self.library_manager.total_size_bytes = size;
+                    let db_arc = self.database.clone();
+                    return Task::perform(async move {
+                        if let Ok(db) = db_arc.lock() {
+                            let songs = db.get_all_songs().unwrap_or_default();
+                            let albums = db.get_grid_items_by_artist().unwrap_or_default();
+                            let stats = db.get_library_stats().unwrap_or((0, 0, 0.0, 0.0, 0));
+                            (songs, albums, stats)
+                        } else {
+                            (Vec::new(), Vec::new(), (0, 0, 0.0, 0.0, 0))
                         }
-                    }
+                    }, |(songs, albums, stats)| Message::InternalLibraryRefreshed(songs, albums, stats));
                 }
                 
                 // 3. Sincronización de carátulas solo si hay reproducción activa
@@ -3375,7 +3368,8 @@ impl AudoxidyApp {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         // 1. Tick Standard (Progreso): 500ms
         // 2. Tick Idle (Scanner/Pausa): 5000ms
-        let tick_interval = if self.audio_manager.get_state().is_playing {
+        let is_scanning = self.scanner.is_scanning.load(std::sync::atomic::Ordering::Relaxed);
+        let tick_interval = if self.audio_manager.get_state().is_playing || is_scanning {
             std::time::Duration::from_millis(500)
         } else {
             std::time::Duration::from_millis(5000)
@@ -3566,7 +3560,7 @@ impl AudoxidyApp {
                             
                             if self.library_manager.view_mode == crate::gui::library::LibraryViewMode::DetailedList {
                                 if let Some(album_name) = &lib_song.album {
-                                    self.library_manager.collapsed_albums.remove(album_name);
+                                    self.library_manager.collapsed_albums.remove(album_name.as_ref());
                                 }
                             }
 

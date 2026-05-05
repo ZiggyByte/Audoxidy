@@ -1,6 +1,8 @@
 // Utilidades comunes y funciones matemáticas de formateo
 pub mod covers;
 pub mod interner;
+pub mod memory_manager;
+pub mod memory_tests;
 use crate::db::database::SongData;
 
 pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
@@ -65,7 +67,7 @@ impl SortColumn {
 pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
     match col {
         SortColumn::TrackNumber => song.track_number.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "-".to_string()),
-        SortColumn::Title => song.title.clone().unwrap_or_else(|| "Desconocido".to_string()),
+        SortColumn::Title => song.title.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
         SortColumn::Artist => song.artist.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
         SortColumn::AlbumArtist => song.album_artist.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),
         SortColumn::Album => song.album.as_ref().map(|s| s.to_string()).unwrap_or_else(|| "Desconocido".to_string()),

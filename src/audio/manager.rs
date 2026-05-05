@@ -59,8 +59,8 @@ impl AudioManager {
         self.engine.state.write().eof_reached = false;
     }
 
-    pub fn load_file(&self, path: &str) -> Result<(), String> {
-        self.engine.decode_file(path)
+    pub fn load_file(&self, path: &str, title: impl Into<String>, artist: impl Into<String>) -> Result<(), String> {
+        self.engine.decode_file(path, title.into(), artist.into())
     }
 
     pub fn set_volume(&self, volume: f32) {
@@ -136,6 +136,10 @@ impl AudioManager {
 
     pub fn apply_audio_settings(&self, settings: crate::audio::engine::AudioSettings) -> Result<(), String> {
         self.engine.apply_settings(settings)
+    }
+
+    pub fn purge_buffers(&self) -> Result<(), String> {
+        self.engine.purge_buffers()
     }
 
     // --- Reverb Controls ---

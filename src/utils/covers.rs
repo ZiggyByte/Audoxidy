@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap, VecDeque};
 use std::sync::OnceLock;
 use parking_lot::Mutex;
 use sha2::{Sha256, Digest};
@@ -18,14 +18,30 @@ static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = 
 /// Almacena rutas de archivos que fallaron o no existen (evita reintentos)
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
+/// Estructura de caché LRU manual para retener Handles y prevenir OOM en Iced
+pub struct CoverCache {
+    pub map: HashMap<String, iced::widget::image::Handle>,
+    pub order: VecDeque<String>,
+}
+
+pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
+const MAX_COVERS_CACHE: usize = 64;
+
+pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
+    LRU_COVER_CACHE.get_or_init(|| Mutex::new(CoverCache {
+        map: HashMap::with_capacity(MAX_COVERS_CACHE),
+        order: VecDeque::with_capacity(MAX_COVERS_CACHE),
+    }))
+}
+
 pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     COVER_POOL.get_or_init(|| {
         let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        // Low-resource: máx 2 hilos. Normal: mitad de los procesadores
+        // Low-resource: máx 1 hilo. Normal: 1/3 de los procesadores (para evitar sobrecalentamiento)
         let pool_size = if crate::utils::is_low_resource() {
-            (cores / 2).clamp(1, 2)
+            (cores / 3).clamp(1, 1)
         } else {
-            (cores / 2).max(1)
+            (cores / 3).max(1)
         };
 
         ThreadPoolBuilder::new()
@@ -144,9 +160,47 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
         return None;
     }
 
-    // 2. Delegar la carga completa a Iced — cero RAM en nuestro lado
-    // NOTA: No hacemos exists() síncrono aquí porque bloquea el hilo de la GUI en bucles de renderizado (Grid)
-    Some(iced::widget::image::Handle::from_path(path))
+    // 2. Revisar la Caché LRU en memoria
+    let cache_mtx = get_lru_cache();
+    let mut cache = cache_mtx.lock();
+    
+    let handle_opt = cache.map.get(path).cloned();
+    if let Some(handle) = handle_opt {
+        // Actualizar el orden del LRU (remover de la posición actual y poner al frente)
+        if let Some(idx) = cache.order.iter().position(|x| x == path) {
+            cache.order.remove(idx);
+            cache.order.push_back(path.to_string());
+        }
+        return Some(handle);
+    }
+
+    // 3. Crear nuevo Handle y guardar en caché
+    let handle = iced::widget::image::Handle::from_path(path);
+    cache.map.insert(path.to_string(), handle.clone());
+    cache.order.push_back(path.to_string());
+    
+    // 4. Limitar el tamaño a MAX_COVERS_CACHE (150)
+    while cache.order.len() > MAX_COVERS_CACHE {
+        if let Some(oldest_path) = cache.order.pop_front() {
+            cache.map.remove(&oldest_path);
+        }
+    }
+    
+    Some(handle)
+}
+
+/// Purga las carátulas más viejas de la caché. 
+/// Usado por el Garbage Collector cuando la app está inactiva.
+pub fn purge_old_covers(count: usize) {
+    let cache_mtx = get_lru_cache();
+    let mut cache = cache_mtx.lock();
+    let to_remove = count.min(cache.order.len());
+    
+    for _ in 0..to_remove {
+        if let Some(oldest_path) = cache.order.pop_front() {
+            cache.map.remove(&oldest_path);
+        }
+    }
 }
 
 /// Carga una imagen desde bytes crudos (fallback del reproductor).

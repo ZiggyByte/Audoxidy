@@ -205,6 +205,7 @@ pub struct LibraryManager {
     // Caché de virtualización (Interior Mutability para permitir actualización en view)
     pub cached_detailed_view: std::cell::RefCell<Option<(f32, Vec<LibraryVirtualArtist>)>>,
     pub cached_visible_elements: std::cell::RefCell<Option<(f32, f32, f32, Vec<LibraryVirtualRow>, Option<(String, bool, usize, usize, f64)>)>>, // (top_space, bottom_space, total_h, rows, sticky_info)
+    pub data_unloaded: bool,
 }
 
 impl Default for LibraryManager {
@@ -284,11 +285,35 @@ impl Default for LibraryManager {
             scroll_offset: iced::Vector::new(0.0, 0.0),
             cached_detailed_view: std::cell::RefCell::new(None),
             cached_visible_elements: std::cell::RefCell::new(None),
+            data_unloaded: false,
         }
     }
 }
 
+pub const UNLOAD_SAFETY_LIMIT: usize = 60;
+
 impl LibraryManager {
+    /// Descarga los datos pesados de la RAM por inactividad, conservando un margen de seguridad
+    /// Descarga los datos pesados de la RAM si no se están usando
+    pub fn unload(&mut self, is_focused: bool) {
+        if is_focused {
+            // Si está enfocada, no descargamos los datos base para evitar que desaparezcan visualmente,
+            // pero invalidamos la caché de virtualización para liberar algo de RAM (se regenerará al hacer scroll)
+            self.invalidate_cache();
+            return;
+        }
+
+        if self.cached_all_songs.is_some() || self.cached_albums.is_some() {
+            println!("Audoxidy GC: Unloading inactive Library data.");
+            self.cached_all_songs = None;
+            self.filtered_songs = None;
+            self.cached_albums = None;
+            self.filtered_albums = None;
+            self.invalidate_cache();
+            self.data_unloaded = true;
+        }
+    }
+
     pub fn invalidate_cache(&mut self) {
         self.cached_detailed_view.replace(None);
         self.cached_visible_elements.replace(None);
@@ -2027,7 +2052,7 @@ pub fn view<'a>(
                                     let is_selected = manager.selected_items.contains(&LibraryListItem::Album(composite_id.clone()));
 
                                     let album_art = crate::gui::widgets::album_art_widget(
-                                        cover_path.as_ref(),
+                                        cover_path.as_deref(),
                                         None,
                                         None,
                                         crate::gui::widgets::PlaceholderStyle::Large,

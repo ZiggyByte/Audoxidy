@@ -30,13 +30,13 @@ use std::collections::HashMap;
 /// 
 /// Ejemplo: smart_truncate_text(song_title, 14.0, FONT, COLOR)
 pub fn smart_truncate_text<'a, Message: Clone + 'a>(
-    content: String,
-    size: f32,
+    content: impl Into<String>,
+    font_size: f32,
     font: iced::Font,
     color: Color,
 ) -> Element<'a, Message> {
     smart_truncate_text_advanced(
-        content, size, font, color, 
+        content.into(), font_size, font, color, 
         iced::widget::text::Wrapping::None, 
         None,
         Alignment::Start,
@@ -302,7 +302,7 @@ pub enum PlaceholderStyle {
 /// Widget global para mostrar carátulas de álbumes de forma eficiente y consistente.
 /// Soporta: Caché AVIF (Prioridad 1) -> Datos binarios crudos (Prioridad 2) -> Placeholder Automático.
 pub fn album_art_widget<'a, Message: 'a>(
-    avif_path: Option<&String>,
+    avif_path: Option<&str>,
     raw_data: Option<&Vec<u8>>,
     preloaded_handle: Option<iced::widget::image::Handle>,
     style: PlaceholderStyle,
@@ -1110,7 +1110,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     show_thumbnail: bool,
 ) -> Element<'a, Message> {
     let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
-    let is_playing = song.full_file_path == playing_path;
+    let is_playing = song.full_file_path.as_ref() == playing_path;
 
     let get_col = |col: SortColumn| -> Element<'a, Message> {
         let w = *column_widths.get(&col).unwrap_or(&100) as f32;
@@ -1140,7 +1140,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     // 1. Agregar Miniatura si se solicita
     if show_thumbnail {
         let thumb_img = album_art_widget(
-            song.compressed_cached_cover_root.as_ref(),
+            song.compressed_cached_cover_root.as_deref(),
             None,
             None,
             PlaceholderStyle::Small,
@@ -1249,7 +1249,7 @@ where
                 
                 let is_artist_playing = manager.artist_groups.iter()
                     .find(|g| g.name == *name)
-                    .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+                    .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
                     .unwrap_or(false);
                 
                 list_col = list_col.push(artist_header_widget(
@@ -1302,7 +1302,7 @@ where
         
         let is_artist_playing = manager.artist_groups.iter()
             .find(|g| g.name == *st_name)
-            .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+            .map(|g| g.songs.iter().any(|s| s.full_file_path .as_ref() == playing_path))
             .unwrap_or(false);
 
         let sticky_overlay = container(
@@ -1367,7 +1367,7 @@ where
                 
                 let is_artist_playing = manager.artist_groups.iter()
                     .find(|g| g.name == *name)
-                    .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+                    .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
                     .unwrap_or(false);
 
                 let header = artist_header_widget(
@@ -1386,7 +1386,7 @@ where
                 };
 
                 let card_wrapper = album_art_widget(
-                    cover_path.as_ref(), None, None, PlaceholderStyle::Large, Length::Fixed(card_w - 30.0), 8.0,
+                    cover_path.as_deref(), None, None, PlaceholderStyle::Large, Length::Fixed(card_w - 30.0), 8.0,
                 );
 
                 let info_col = column![
@@ -1419,7 +1419,7 @@ where
                 .on_press(crate::gui::app::Message::SelectAlbum(composite_id.clone()))
                 .interaction(iced::mouse::Interaction::Pointer);
 
-                let is_album_playing = songs.iter().any(|(s, _)| s.full_file_path == playing_path);
+                let is_album_playing = songs.iter().any(|(s, _)| s.full_file_path.as_ref() == playing_path);
                 
                 let alb_header = album_header_widget(
                     album_name.clone(),
@@ -1488,7 +1488,7 @@ where
         
         let is_artist_playing = manager.artist_groups.iter()
             .find(|g| g.name == *st_name)
-            .map(|g| g.songs.iter().any(|s| s.full_file_path == playing_path))
+            .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
             .unwrap_or(false);
         
         let sticky_overlay = container(

@@ -85,7 +85,7 @@ impl Scanner {
         let mut extended = SongMetadataExtended::default();
         
         song.import_order = import_order;
-        song.full_file_path = path.to_string_lossy().to_string();
+        song.full_file_path = crate::utils::interner::intern_string(&path.to_string_lossy());
         
         if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
             song.format = crate::utils::interner::intern_string_opt(Some(ext.to_uppercase().as_str()));
@@ -164,7 +164,7 @@ impl Scanner {
                 // 2. Poblar SongData con los valores fusionados (Alta Fidelidad)
                 let get_fused = |key: ItemKey| fused_map.get(&key).map(|(_, v)| v.clone());
 
-                song.title = get_fused(ItemKey::TrackTitle);
+                song.title = crate::utils::interner::intern_string_opt(get_fused(ItemKey::TrackTitle).as_deref());
                 song.artist = crate::utils::interner::intern_string_opt(get_fused(ItemKey::TrackArtist).as_deref());
                 song.album = crate::utils::interner::intern_string_opt(get_fused(ItemKey::AlbumTitle).as_deref());
                 song.genre = crate::utils::interner::intern_string_opt(get_fused(ItemKey::Genre).as_deref());

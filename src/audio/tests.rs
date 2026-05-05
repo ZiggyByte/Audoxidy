@@ -24,7 +24,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = AudioEngine::mix_channels_planar(&input, frames, in_channels, out_channels, &map);
+        let result = AudioEngine::mix_channels_planar(&input, frames, in_channels, out_channels, &map, (1.0, 1.0, 1.0, 1.0));
 
         assert_eq!(result.len(), frames * out_channels);
         // Interleaved result expected: L, R, L, R...
@@ -58,7 +58,7 @@ mod tests {
         // struct ChannelMap { fl: Option<usize>, ... } 
         // implies "Target channel index for Source FL".
         
-        let result = AudioEngine::mix_channels_planar(&input, frames, in_channels, out_channels, &map);
+        let result = AudioEngine::mix_channels_planar(&input, frames, in_channels, out_channels, &map, (1.0, 1.0, 1.0, 1.0));
         
         assert_eq!(result.len(), frames * out_channels);
         

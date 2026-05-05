@@ -144,6 +144,7 @@ pub enum Message {
     UITick,
     DragTick,
     SearchPulse,
+    GlobalMemoryPurge,
     PlayPause,
     NextTrack,
     PreviousTrack,
@@ -330,10 +331,15 @@ pub struct AudoxidyApp {
     pub context_menu: Option<(iced::Point, Vec<crate::gui::widgets::ContextMenuEntry<Message>>)>,
     pub window_size: (u32, u32),
     pub modifiers: iced::keyboard::Modifiers,
+    pub was_scanning: bool,
+    pub scan_finished_at: Option<u64>,
 }
 
 impl AudoxidyApp {
     pub fn new(audio_manager: Arc<AudioManager>) -> (Self, Task<Message>) {
+        // Inicializar temporizadores de memoria (Ciclo de 2 minutos)
+        crate::utils::memory_manager::MemoryManager::init();
+
         let db = Database::new().expect("Error crítico al crear/iniciar la base de datos.");
         let mut library_manager = LibraryManager::default();
 
@@ -441,8 +447,11 @@ impl AudoxidyApp {
                     if let Some(l_idx) = playlist_manager.get_linear_index_by_song_id(song_id) {
                         if let Some(song) = playlist_manager.get_song_at_linear_index(l_idx) {
                              let path = song.file_path.clone();
+                             let title = song.title.clone();
+                             let artist = song.artist_name.to_string();
+                             
                              playlist_manager.playing_song_idx = Some(l_idx);
-                             let _ = audio_manager.load_file(&path);
+                             let _ = audio_manager.load_file(&path, title.to_string(), artist.to_string());
                              audio_manager.seek(p_data.last_pos_sec);
                              audio_manager.set_playing(p_data.is_playing);
                         }
@@ -474,8 +483,10 @@ impl AudoxidyApp {
                 last_mouse_pos: iced::Point::ORIGIN,
                 dialog_pos: None,
                 context_menu: None,
-                window_size: (1280, 720), // Default inicial
+                window_size: (1360, 880),
                 modifiers: iced::keyboard::Modifiers::default(),
+                was_scanning: false,
+                scan_finished_at: None,
             },
             Task::perform(
                 async { tokio::time::sleep(std::time::Duration::from_millis(1000)).await; },
@@ -551,6 +562,34 @@ impl AudoxidyApp {
         let state = self.audio_manager.get_state();
         self.media_controls.update(&state);
 
+        // Registro de actividad global y por sección
+        match &message {
+            // Actividad de Playlist
+            Message::PlaylistFocus | Message::SwitchPlaylist(..) | Message::PlaylistSearchChanged(..) | 
+            Message::PlaylistScrolled(..) | Message::PlaylistTabsScrolled(..) | Message::PlaylistDeselect |
+            Message::AddSongToPlaylist(..) | Message::ToggleSongEnabled(..) | Message::ToggleGroupEnabled(..) |
+            Message::TogglePlaylistFolder(..) | Message::PlaySongIndex(..) => {
+                crate::utils::memory_manager::MemoryManager::register_playlist_activity();
+            }
+            // Actividad de Biblioteca
+            Message::LibraryFocus | Message::LibraryScroll(..) | Message::LibraryKeyNav(..) | 
+            Message::LibrarySearchQueryChanged(..) | Message::ChangeGeneralFilter(..) | Message::SelectSubfilter(..) |
+            Message::SelectTreeNode(..) | Message::SelectAlbum(..) | Message::SelectArtistHeader(..) |
+            Message::SelectSong(..) | Message::LibraryRefresh | Message::LibrarySourceSelected(..) |
+            Message::FilterSearchChanged(..) | Message::FilterScroll(..) | Message::SelectFolder(..) => {
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+            }
+            // Actividad Global (Interacciones directas del usuario)
+            Message::GlobalClick | Message::GlobalKeyDown(..) | Message::GlobalMouseRelease | 
+            Message::PlayerMouseMoved(..) | Message::PlayerScroll(..) | Message::WindowResized(..) |
+            Message::OpenFolderPicker | Message::OpenPlaylistFilePicker | Message::ToggleMenu | 
+            Message::ToggleAudioCenter | Message::ToggleLyrics => {
+                crate::utils::memory_manager::MemoryManager::register_activity();
+            }
+            // Los demás mensajes (Tick, NoOp, Mensajes internos del Player, etc.) NO cuentan como actividad
+            _ => {}
+        }
+
         match message {
             Message::Tick => {
                 // 1. Consultar al scanner si hay datos nuevos en la BD
@@ -585,7 +624,7 @@ impl AudoxidyApp {
                         if remaining <= 30.0 && remaining > 29.5 {
                             if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
                                 if let Some(ref cover_path) = next_song.cover_path {
-                                    if self.player_ui_state.current_cover_path != *cover_path {
+                                    if self.player_ui_state.current_cover_path != cover_path.as_ref() {
                                         self.player_ui_state.prefetched_next_handle = 
                                             crate::utils::covers::load_cover_handle(cover_path);
                                     }
@@ -638,6 +677,70 @@ impl AudoxidyApp {
                     self.persist_playlist_state();
                 }
 
+                // 5. Sistema de Purga Automática (Ciclo fijo de 2 minutos)
+                if crate::utils::memory_manager::MemoryManager::should_run_global_purge(2) {
+                    return Task::done(Message::GlobalMemoryPurge);
+                }
+
+                // Detección de fin de escáner para liberar memoria 30s después
+                let is_scanning_now = self.scanner.is_scanning.load(std::sync::atomic::Ordering::Relaxed);
+                if self.was_scanning && !is_scanning_now {
+                    self.scan_finished_at = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+                }
+                self.was_scanning = is_scanning_now;
+
+                if let Some(finished_at) = self.scan_finished_at {
+                    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                    // Liberar memoria 15s después del escaneo
+                    if now.saturating_sub(finished_at) >= 15 {
+                        self.scan_finished_at = None;
+                        println!("Audoxidy GC: Scanner finished, purging memory");
+                        crate::utils::covers::purge_old_covers(32); // Vaciar caché de covers generado por escáner
+                        return Task::done(Message::GlobalMemoryPurge);
+                    }
+                }
+
+                Task::none()
+            }
+            Message::GlobalMemoryPurge => {
+                println!("Audoxidy GC: Purging Memory (Ghost Mode)");
+                
+                // 1. Unload de recursos pesados con márgenes de seguridad
+                let is_library_focused = self.focus == AppFocus::Library;
+                let is_playlist_focused = self.focus == AppFocus::Playlist;
+                let is_playing = self.audio_manager.is_playing();
+                let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
+                
+                // Descargar listas inactivas
+                self.playlist_manager.unload(is_playlist_focused, is_playing || is_loaded_in_player);
+                
+                // Descargar biblioteca inactiva
+                self.library_manager.unload(is_library_focused);
+                
+                // 2. Limpieza de cachés de virtualización UI (Siempre se limpian para liberar RAM, se regeneran al vuelo)
+                self.library_manager.invalidate_cache();
+                self.library_manager.invalidate_visible_cache();
+                self.playlist_manager.invalidate_cache();
+                
+                // Solo limpiar filtros si no estamos en la biblioteca para evitar que desaparezcan visualmente
+                if !is_library_focused {
+                    self.filters_manager.invalidate_cache();
+                }
+                
+                // 3. Limpiar caché global de strings (Interner)
+                crate::utils::interner::clear_interner();
+                
+                // 4. Purgar carátulas LRU (Purga suave de 16 elementos)
+                crate::utils::covers::purge_old_covers(16);
+                
+                // 5. Purga de buffers de audio solo si no hay música sonando
+                if !is_playing {
+                    let _ = self.audio_manager.purge_buffers();
+                }
+                
+                // 6. FINAL: Reclamar memoria física al SO (Linux)
+                crate::utils::memory_manager::MemoryManager::force_free_to_os();
+                
                 Task::none()
             }
             Message::SearchPulse => Task::none(),
@@ -723,6 +826,13 @@ impl AudoxidyApp {
             }
             Message::PlayPause => {
                 let _ = self.audio_manager.toggle_play_pause();
+                
+                // Si acabamos de pausar (no está reproduciendo), purgamos buffers para liberar RAM
+                if !self.audio_manager.is_playing() {
+                    println!("Audoxidy Audio: Cleaning buffers on pause (Memory Recovery).");
+                    let _ = self.audio_manager.purge_buffers();
+                }
+
                 self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
@@ -774,6 +884,7 @@ impl AudoxidyApp {
             }
             Message::Stop => {
                 self.audio_manager.stop();
+                let _ = self.audio_manager.purge_buffers(); // Purga profunda al detener
                 Task::none()
             }
             Message::VolumeChanged(vol) => {
@@ -811,7 +922,7 @@ impl AudoxidyApp {
                 let db_arc = self.database.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
                 return Task::perform(async move {
-                    if let Ok(mut db) = db_arc.lock() {
+                    if let Ok(db) = db_arc.lock() {
                         let _ = db.add_song_to_playlist(active_id, song.id);
                     }
                     active_id
@@ -840,20 +951,27 @@ impl AudoxidyApp {
                 self.last_playlist_click = Some((idx, now));
                 self.playlist_manager.handle_click(idx, self.modifiers);
 
+                let focus_task = focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone());
+
                 if is_double_click {
                     if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
                         let path = song.file_path.clone();
+                        let title = song.title.clone();
+                        let artist = song.artist_name.to_string();
+                        let s_id = song.song_id;
+
                         self.sync_player_art();
-                        if let Err(e) = self.audio_manager.load_file(&path) {
+                        if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
                             tracing::error!("Error reproduciendo archivo: {}", e);
                         } else {
                             self.audio_manager.play();
                             self.playlist_manager.playing_song_idx = Some(idx);
+                            self.playlist_manager.notify_manual_play(s_id);
                             self.persist_playlist_state();
                         }
                     }
                 }
-                Task::none()
+                focus_task
             }
             Message::ClearPlaylist => {
                 self.focus = AppFocus::Playlist;
@@ -863,6 +981,13 @@ impl AudoxidyApp {
                     self.playlist_manager.playing_song_idx = None;
                     self.audio_manager.stop();
                     self.persist_playlist_state();
+                    
+                    // Liberar RAM al SO tras vaciado masivo
+                    #[cfg(target_os = "linux")]
+                    unsafe {
+                        unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
+                        malloc_trim(0);
+                    }
                 }
                 Task::none()
             }
@@ -889,7 +1014,8 @@ impl AudoxidyApp {
                     }
                 }
                 
-                Task::none()
+                self.playlist_manager.invalidate_cache();
+                focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
             Message::ToggleGroupEnabled(linear_idx, force_state) => {
                 self.focus = AppFocus::Playlist;
@@ -1127,7 +1253,7 @@ impl AudoxidyApp {
                         let path_to_write = if is_portable {
                             let artist_dir = sanitize_name(&song.artist_name);
                             let album_dir = sanitize_name(&song.album_title);
-                            let song_file = std::path::Path::new(&song.file_path).file_name().unwrap_or_default().to_string_lossy();
+                            let song_file = std::path::Path::new(song.file_path.as_ref()).file_name().unwrap_or_default().to_string_lossy();
                             
                             let relative_path = format!("{}/{}/{}", artist_dir, album_dir, song_file);
                             let full_target_dir = base_target_path.join(&artist_dir).join(&album_dir);
@@ -1137,7 +1263,7 @@ impl AudoxidyApp {
                             let _ = std::fs::copy(&*song.file_path, &full_target_path);
                             relative_path
                         } else {
-                            song.file_path.clone()
+                            song.file_path.to_string()
                         };
 
                         m3u_content.push_str(&format!("#EXTINF:{},{}\n{}\n", song.duration as i32, song.title, path_to_write));
@@ -1221,6 +1347,9 @@ impl AudoxidyApp {
                         if let Some(l_idx) = self.playlist_manager.get_linear_index_by_song_id(song_id) {
                             if let Some(song) = self.playlist_manager.get_song_at_linear_index(l_idx) {
                                 let path = song.file_path.clone();
+                                let title = song.title.clone();
+                                let artist = song.artist_name.to_string();
+
                                 let is_playing_needed = if auto_play { true } else { p_data.is_playing };
                                 let last_pos = if auto_play { 0.0 } else { p_data.last_pos_sec };
                                 
@@ -1230,7 +1359,7 @@ impl AudoxidyApp {
                                 self.playlist_manager.selected_idxs.insert(l_idx);
                                 self.playlist_manager.selection_pivot = Some(l_idx);
 
-                                let _ = self.audio_manager.load_file(&path);
+                                let _ = self.audio_manager.load_file(&path, title.to_string(), artist.to_string());
                                 self.audio_manager.seek(last_pos);
                                 self.audio_manager.set_playing(is_playing_needed);
                                 self.sync_player_art();
@@ -1351,18 +1480,24 @@ impl AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 self.playlist_manager.search_query = q;
                 self.playlist_manager.apply_filter();
-                Task::none()
+                scroll_to(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 })
             }
             Message::PlaylistFocus => {
                 self.focus = AppFocus::Playlist;
-                Task::none()
+                crate::utils::memory_manager::MemoryManager::register_playlist_activity();
+                if self.playlist_manager.data_unloaded {
+                    self.playlist_manager.data_unloaded = false;
+                    let id = self.playlist_manager.active_playlist_id;
+                    return self.update(Message::SwitchPlaylist(id, false));
+                }
+                focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
             Message::PlaylistDeselect => {
                 self.focus = AppFocus::Playlist;
                 self.playlist_manager.selected_idxs.clear();
                 self.playlist_manager.focused_idx = None;
                 self.playlist_manager.selection_pivot = None;
-                Task::none()
+                focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
             Message::ToggleLyrics => {
                 // Fase 6: abrir módulo de letras
@@ -1370,6 +1505,11 @@ impl AudoxidyApp {
             }
             Message::LibraryFocus => {
                 self.focus = AppFocus::Library;
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                if self.library_manager.data_unloaded {
+                    self.library_manager.data_unloaded = false;
+                    return self.update(Message::LibraryRefresh);
+                }
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
@@ -1386,6 +1526,12 @@ impl AudoxidyApp {
             }
             Message::LibrarySearchQueryChanged(q) => {
                 self.focus = AppFocus::Library;
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                if self.library_manager.data_unloaded {
+                    self.library_manager.data_unloaded = false;
+                    self.library_manager.search_query = q;
+                    return self.update(Message::LibraryRefresh);
+                }
                 self.library_manager.search_query = q;
                 self.library_manager.apply_filter();
                 self.library_manager.last_viewport = None;
@@ -1696,6 +1842,11 @@ impl AudoxidyApp {
             }
             Message::LibraryKeyNav(dir, modifiers) => {
                 self.focus = AppFocus::Library;
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                if self.library_manager.data_unloaded {
+                    self.library_manager.data_unloaded = false;
+                    return self.update(Message::LibraryRefresh);
+                }
                 use crate::gui::library::LibraryNavDir;
 
                 if self.library_manager.is_list_mode() {
@@ -1800,8 +1951,11 @@ impl AudoxidyApp {
                             if let Some(idx) = self.playlist_manager.focused_idx {
                                 if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
                                     let path = song.file_path.clone();
+                                    let title = song.title.clone();
+                                    let artist = song.artist_name.to_string();
+
                                     self.sync_player_art();
-                                    if let Err(e) = self.audio_manager.load_file(&path) {
+                                    if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
                                         tracing::error!("Error reproducidendo archivo con Enter: {}", e);
                                     } else {
                                         self.audio_manager.set_playing(true);
@@ -1889,7 +2043,7 @@ impl AudoxidyApp {
                 if mode == crate::gui::library::LibraryViewMode::Grid {
                     // Al cambiar a Grid: asegurar que cached_albums esté cargado
                     if self.library_manager.cached_albums.is_none() {
-                        if let Ok(mut db) = self.database.lock() {
+                        if let Ok(db) = self.database.lock() {
                             if let Ok(albums) = db.get_grid_items_by_artist() {
                                 self.library_manager.cached_albums = Some(albums.into_iter().map(|a| crate::gui::library::AlbumEntry {
                                     id: a.0, title: a.1, artist: a.2, genre: a.3, year: a.4, cover_path: a.5
@@ -1900,7 +2054,7 @@ impl AudoxidyApp {
                 } else {
                     // Al cambiar a cualquier vista de lista: asegurar que las canciones estén cargadas
                     if self.library_manager.cached_all_songs.is_none() {
-                        if let Ok(mut db) = self.database.lock() {
+                        if let Ok(db) = self.database.lock() {
                             if let Ok(mut songs) = db.get_all_songs() {
                                 if self.library_manager.sort_column.is_some() {
                                     self.library_manager.sort_songs(&mut songs);
@@ -1953,9 +2107,12 @@ impl AudoxidyApp {
                 if let Some(idx) = self.playlist_manager.focused_idx {
                     if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
                         let path = song.file_path.clone();
+                        let title = song.title.clone();
+                        let artist = song.artist_name.to_string();
                         let s_id = song.song_id;
+
                         self.sync_player_art();
-                        if let Err(e) = self.audio_manager.load_file(&path) {
+                        if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
                             tracing::error!("Error reproduciendo archivo de playlist: {}", e);
                         } else {
                             self.audio_manager.play();
@@ -2036,8 +2193,11 @@ impl AudoxidyApp {
                     if let Some(idx) = target_song_idx {
                         if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
                             let path = song.file_path.clone();
+                            let title = song.title.clone();
+                            let artist = song.artist_name.to_string();
+
                             self.sync_player_art();
-                            if let Err(e) = self.audio_manager.load_file(&path) {
+                            if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist) {
                                 tracing::error!("Error reproduciendo archivo: {}", e);
                             } else {
                                 self.audio_manager.play();
@@ -2096,7 +2256,7 @@ impl AudoxidyApp {
                 if let Some(song) = self.playlist_manager.get_song_at_linear_index(linear_idx) {
                     let path_str = song.file_path.clone();
                     Task::perform(async move {
-                        let path = std::path::Path::new(&path_str);
+                        let path = std::path::Path::new(path_str.as_ref());
                         if let Some(parent) = path.parent() {
                             #[cfg(target_os = "linux")]
                             {
@@ -2145,7 +2305,7 @@ impl AudoxidyApp {
                         }
                     }
                 }
-                self.handle_library_reveal(path_opt.into())
+                self.handle_library_reveal(path_opt.map(|s| s.to_string()))
             }
             Message::LibraryDeleteSelection => {
                 let items = self.library_manager.selected_items.clone();
@@ -2229,7 +2389,7 @@ impl AudoxidyApp {
                                     covers_to_check.push(album_id.clone());
                                 }
                                 if let Some(ovr) = &song.cover_override {
-                                    covers_to_check.push(ovr.clone());
+                                    covers_to_check.push(ovr.to_string());
                                 }
                             }
                         }
@@ -2255,6 +2415,8 @@ impl AudoxidyApp {
 
             Message::LibraryRefresh => {
                 self.focus = AppFocus::Library;
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                self.library_manager.data_unloaded = false;
                 let db_arc = self.database.clone();
                 return Task::perform(async move {
                     let db = db_arc.lock().unwrap();
@@ -2317,14 +2479,17 @@ impl AudoxidyApp {
                 };
 
                 if !target_songs.is_empty() {
-                    return Task::perform(async move {
-                        if let Ok(mut db) = db_arc.lock() {
-                            let _ = db.batch_remove_songs_from_playlist(active_playlist_id, &target_songs);
-                        }
-                        Some(active_playlist_id)
-                    }, Message::RefreshPlaylists);
+                    return Task::batch(vec![
+                        Task::perform(async move {
+                            if let Ok(mut db) = db_arc.lock() {
+                                let _ = db.batch_remove_songs_from_playlist(active_playlist_id, &target_songs);
+                            }
+                            Some(active_playlist_id)
+                        }, Message::RefreshPlaylists),
+                        focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
+                    ]);
                 }
-                Task::none()
+                focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
 
             Message::PlaylistRequestSubMenu(linear_idx) => {
@@ -2470,11 +2635,9 @@ impl AudoxidyApp {
                 for &idx in &targets {
                     if let Some(info) = self.playlist_manager.get_item_info_at_linear_index(idx) {
                         match info {
-                            PlaylistItemType::Song(_folder, local_idx, anchor) => {
-                                if let Some(group) = self.playlist_manager.groups.iter().find(|g| g.first_item_id == anchor) {
-                                    if let Some(song) = group.songs.get(local_idx) {
-                                        if !song.enabled { any_disabled = true; break; }
-                                    }
+                            PlaylistItemType::Song(..) => {
+                                if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
+                                    if !song.enabled { any_disabled = true; break; }
                                 }
                             }
                             PlaylistItemType::Separator(_folder, anchor) => {
@@ -2497,7 +2660,10 @@ impl AudoxidyApp {
                         }
                     }
                 }
-                Task::batch(tasks)
+                Task::batch(vec![
+                    Task::batch(tasks),
+                    focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
+                ])
             }
 
             Message::LibraryShowPlaying => {
@@ -2505,7 +2671,7 @@ impl AudoxidyApp {
                 let path_opt = self.playlist_manager.playing_song_idx
                     .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
                     .map(|s| s.file_path.clone());
-                self.handle_library_reveal(path_opt)
+                self.handle_library_reveal(path_opt.map(|s| s.to_string()))
             }
 
             Message::ImportPlaylistFile(path) => {
@@ -2547,6 +2713,12 @@ impl AudoxidyApp {
             }
             Message::ChangeGeneralFilter(ft) => {
                 self.focus = AppFocus::Library;
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                if self.library_manager.data_unloaded {
+                    self.library_manager.data_unloaded = false;
+                    self.filters_manager.current_filter = ft;
+                    return self.update(Message::LibraryRefresh);
+                }
                 self.filters_manager.current_filter = ft;
                 self.filters_manager.selected_subfilter = None;
                 self.filters_manager.selected_tree_node = None;
@@ -2802,6 +2974,12 @@ impl AudoxidyApp {
                 self.wake_up_controls(true)
             }
             Message::LibraryScroll(offset) => {
+                crate::utils::memory_manager::MemoryManager::register_library_activity();
+                if self.library_manager.data_unloaded {
+                    self.library_manager.data_unloaded = false;
+                    return self.update(Message::LibraryRefresh);
+                }
+
                 let abs_offset = offset.absolute_offset();
                 self.library_manager.scroll_offset = iced::Vector::new(abs_offset.x, abs_offset.y);
                 self.library_manager.last_viewport = Some(iced::Rectangle {
@@ -2997,9 +3175,9 @@ impl AudoxidyApp {
         let mut new_cover_path = String::new();
         if let Some(idx) = self.playlist_manager.playing_song_idx {
             if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
-                if song.file_path == audio_state.path {
+                if song.file_path.as_ref() == audio_state.path {
                     if let Some(ref cp) = song.cover_path {
-                        new_cover_path = cp.clone();
+                        new_cover_path = cp.to_string();
                     }
                 }
             }
@@ -3031,16 +3209,10 @@ impl AudoxidyApp {
             }
         }
 
-        // 6. Fallback RAW (datos embebidos del archivo de audio)
-        if let Some(ref art) = audio_state.album_art {
-             self.player_ui_state.cached_art_handle = Some(iced::widget::image::Handle::from_bytes(art.clone()));
-             self.player_ui_state.current_art_id = audio_state.path.clone();
-             self.player_ui_state.current_cover_path.clear();
-        } else {
-             self.player_ui_state.cached_art_handle = None;
-             self.player_ui_state.current_art_id = audio_state.path.clone();
-             self.player_ui_state.current_cover_path.clear();
-        }
+        // 6. Fallback final (Sin carátula)
+        self.player_ui_state.cached_art_handle = None;
+        self.player_ui_state.current_art_id = audio_state.path.clone();
+        self.player_ui_state.current_cover_path.clear();
     }
 
     fn persist_playlist_state(&self) {
@@ -3395,6 +3567,14 @@ impl AudoxidyApp {
         }
 
         let mouse_evs = iced::event::listen_with(|event, _status, window_id| {
+            // Registrar actividad global (Modo Fantasma / Garbage Collector)
+            match event {
+                iced::Event::Mouse(_) | iced::Event::Keyboard(_) | iced::Event::Touch(_) => {
+                    crate::utils::memory_manager::MemoryManager::register_activity();
+                }
+                _ => {}
+            }
+
             // Capturar el ID de la ventana si aún no lo tenemos
             if let iced::Event::Window(iced::window::Event::Opened { .. }) = event {
                 return Some(Message::SetWindowId(window_id));
@@ -3436,12 +3616,12 @@ impl AudoxidyApp {
     fn handle_library_reveal(&mut self, path_opt: Option<String>) -> Task<Message> {
         if let Some(path) = path_opt {
             if let Some(all_songs) = &self.library_manager.cached_all_songs {
-                if let Some(lib_song) = all_songs.iter().find(|s| s.full_file_path == path).cloned() {
+                if let Some(lib_song) = all_songs.iter().find(|s| s.full_file_path .as_ref() == path).cloned() {
                     self.focus = crate::gui::app::AppFocus::Library;
 
                     // 1. Determinar si necesitamos limpiar filtros (si la canción no es visible actualmente)
                     let is_visible = self.library_manager.filtered_songs.as_ref()
-                        .map(|songs| songs.iter().any(|s| s.full_file_path == path))
+                        .map(|songs| songs.iter().any(|s| s.full_file_path .as_ref() == path))
                         .unwrap_or(true); // Si no hay filtros, todas son visibles
 
                     if !is_visible {
@@ -3523,7 +3703,7 @@ impl AudoxidyApp {
                                                  for (idx, s) in expanded.iter().enumerate() {
                                                      let matches = search_query.is_empty() || crate::utils::song_matches_search(s, search_query);
                                                      if matches {
-                                                         if s.full_file_path == path {
+                                                         if s.full_file_path .as_ref() == path {
                                                              self.library_manager.selected_song_idx = Some(idx);
                                                              self.library_manager.selected_album = Some(composite_id.clone());
                                                              
@@ -3565,7 +3745,7 @@ impl AudoxidyApp {
                             }
 
                             if let Some(filtered) = &self.library_manager.filtered_songs {
-                                 if let Some(pos) = filtered.iter().position(|s| s.full_file_path == path) {
+                                 if let Some(pos) = filtered.iter().position(|s| s.full_file_path .as_ref() == path) {
                                     let song_id = filtered[pos].id;
                                     self.library_manager.selected_song_idx = Some(pos);
                                     self.library_manager.selected_header = None;

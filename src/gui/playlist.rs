@@ -8,6 +8,7 @@ use crate::gui::app::Message;
 use crate::gui::theme::*;
 use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
 use crate::utils::{format_duration};
+use std::sync::Arc;
 
 // ============================================================
 // Constantes y IDs
@@ -83,8 +84,11 @@ pub struct PlaylistManager {
     /// Guardar el último viewport de la barra de pestañas
     pub tabs_viewport: Option<iced::Rectangle>,
 
-    /// Caché de ítems visibles (aplanados y filtrados por colapso)
-    pub cached_visible_items: Option<Vec<(PlaylistItemType, usize)>>,
+    /// Caché de ítems visibles (aplanados y filtrados por colapso) compartida vía Arc
+    pub cached_visible_items: std::cell::RefCell<Option<Arc<Vec<(PlaylistItemType, usize)>>>>,
+
+    /// Indica si los datos pesados han sido descargados de RAM por inactividad
+    pub data_unloaded: bool,
 }
 
 impl Default for PlaylistManager {
@@ -108,7 +112,8 @@ impl Default for PlaylistManager {
             last_click_info: None,
             last_viewport: None,
             tabs_viewport: None,
-            cached_visible_items: None,
+            cached_visible_items: std::cell::RefCell::new(None),
+            data_unloaded: false,
         }
     }
 }
@@ -204,6 +209,22 @@ impl PlaylistManager {
         self.invalidate_cache();
     }
 
+    /// Descarga los datos pesados de la RAM si no se están usando
+    pub fn unload(&mut self, is_focused: bool, is_playing: bool) {
+        if is_focused || is_playing {
+            return;
+        }
+        
+        if !self.groups.is_empty() {
+            println!("Audoxidy GC: Unloading inactive Playlist data.");
+            self.groups.clear();
+            self.groups.shrink_to_fit();
+            self.filtered_groups = None;
+            self.cached_visible_items.borrow_mut().take();
+            self.data_unloaded = true;
+        }
+    }
+
     /// Obtener la canción en un índice lineal
     pub fn get_song_at_linear_index(&self, linear_idx: usize) -> Option<&PlaylistSongRef> {
         let groups = self.active_groups();
@@ -223,41 +244,14 @@ impl PlaylistManager {
 
     /// Invalida el caché de ítems visibles
     pub fn invalidate_cache(&mut self) {
-        self.cached_visible_items = None;
+        self.cached_visible_items.replace(None);
     }
 
     /// Obtener los ítems que son actualmente visibles (no están dentro de grupos plegados)
-    /// Retorna (Tipo, GlobalLinearIndex)
-    pub fn get_visible_items(&self) -> Vec<(PlaylistItemType, usize)> {
-        if let Some(cached) = &self.cached_visible_items {
-            return cached.clone();
-        }
-
-        let groups = self.active_groups();
-        let mut visible = Vec::new();
-        let mut global_idx = 0;
-
-        for (group_idx, group) in groups.iter().enumerate() {
-            // El separador siempre es visible
-            visible.push((PlaylistItemType::Separator(group_idx, group.first_item_id), global_idx));
-            
-            let is_collapsed = self.collapsed_groups.contains(&group.first_item_id);
-            let songs_len = group.songs.len();
-            
-            if !is_collapsed {
-                for song_i in 0..songs_len {
-                    visible.push((PlaylistItemType::Song(group_idx, song_i, group.first_item_id), global_idx + 1 + song_i));
-                }
-            }
-            
-            global_idx += 1 + songs_len;
-        }
-        visible
-    }
-
-    /// Versión mutable que actualiza el caché si es necesario
-    pub fn get_visible_items_mut(&mut self) -> &[(PlaylistItemType, usize)] {
-        if self.cached_visible_items.is_none() {
+    /// Retorna una copia compartida (Arc) de los ítems visibles (Tipo, GlobalLinearIndex)
+    /// Es O(1) y evita clonar el vector completo.
+    pub fn get_visible_items(&self) -> Arc<Vec<(PlaylistItemType, usize)>> {
+        if self.cached_visible_items.borrow().is_none() {
             let groups = self.active_groups();
             let mut visible = Vec::new();
             let mut global_idx = 0;
@@ -266,6 +260,7 @@ impl PlaylistManager {
                 visible.push((PlaylistItemType::Separator(group_idx, group.first_item_id), global_idx));
                 let is_collapsed = self.collapsed_groups.contains(&group.first_item_id);
                 let songs_len = group.songs.len();
+                
                 if !is_collapsed {
                     for song_i in 0..songs_len {
                         visible.push((PlaylistItemType::Song(group_idx, song_i, group.first_item_id), global_idx + 1 + song_i));
@@ -273,9 +268,10 @@ impl PlaylistManager {
                 }
                 global_idx += 1 + songs_len;
             }
-            self.cached_visible_items = Some(visible);
+            self.cached_visible_items.replace(Some(Arc::new(visible)));
         }
-        self.cached_visible_items.as_ref().unwrap()
+
+        self.cached_visible_items.borrow().as_ref().unwrap().clone()
     }
 
     /// Alternar expansion de grupo
@@ -408,8 +404,8 @@ impl PlaylistManager {
     pub fn select_all(&mut self) {
         let visible_items = self.get_visible_items();
         self.selected_idxs.clear();
-        for (_, g_idx) in visible_items {
-            self.selected_idxs.insert(g_idx);
+        for (_, g_idx) in visible_items.iter() {
+            self.selected_idxs.insert(*g_idx);
         }
         self.selection_pivot = None;
     }
@@ -448,9 +444,9 @@ impl PlaylistManager {
         let mut start_v = None;
         let mut end_v = None;
 
-        for (i, (_, g_idx)) in visible_items.iter().enumerate() {
-            if *g_idx == start_idx { start_v = Some(i); }
-            if *g_idx == end_idx { end_v = Some(i); }
+        for (v_idx, (_, g_idx)) in visible_items.iter().enumerate() {
+            if *g_idx == start_idx { start_v = Some(v_idx); }
+            if *g_idx == end_idx { end_v = Some(v_idx); }
         }
 
         if let (Some(s), Some(e)) = (start_v, end_v) {
@@ -504,22 +500,52 @@ impl PlaylistManager {
 
     /// Toggle enabled de una canción por índice lineal
     pub fn toggle_song_enabled_at_linear_index(&mut self, linear_idx: usize) -> Option<bool> {
+        let mut song_id = None;
+        let mut new_state = None;
+
         if let Some(song) = self.get_song_at_linear_index_mut(linear_idx) {
             song.enabled = !song.enabled;
-            Some(song.enabled)
-        } else {
-            None
+            song_id = Some(song.song_id);
+            new_state = Some(song.enabled);
         }
+
+        if let (Some(sid), Some(enabled), true) = (song_id, new_state, self.filtered_groups.is_some()) {
+            for group in &mut self.groups {
+                for song in &mut group.songs {
+                    if song.song_id == sid {
+                        song.enabled = enabled;
+                        break;
+                    }
+                }
+            }
+        }
+        new_state
     }
 
     pub fn set_song_enabled_at_linear_index(&mut self, linear_idx: usize, enabled: bool) {
+        let mut song_id = None;
         if let Some(song) = self.get_song_at_linear_index_mut(linear_idx) {
             song.enabled = enabled;
+            song_id = Some(song.song_id);
+        }
+
+        if let (Some(sid), true) = (song_id, self.filtered_groups.is_some()) {
+            for group in &mut self.groups {
+                for song in &mut group.songs {
+                    if song.song_id == sid {
+                        song.enabled = enabled;
+                        break;
+                    }
+                }
+            }
         }
     }
 
     /// Toggle habilitado de todo un grupo
     pub fn toggle_group_enabled_at_linear_index(&mut self, linear_idx: usize) {
+        let mut anchor = None;
+        let mut new_state = None;
+
         if let Some((gi, is_folder)) = self.get_group_info_at_linear_index(linear_idx) {
             if !is_folder { return; }
 
@@ -530,17 +556,28 @@ impl PlaylistManager {
             };
 
             if let Some(group) = groups.get_mut(gi) {
-                // Si alguna está habilitada, deshabilitamos todas. Si no, habilitamos todas.
                 let any_enabled = group.songs.iter().any(|s| s.enabled);
-                let new_state = !any_enabled;
+                let state = !any_enabled;
                 for song in &mut group.songs {
-                    song.enabled = new_state;
+                    song.enabled = state;
+                }
+                anchor = Some(group.first_item_id);
+                new_state = Some(state);
+            }
+        }
+
+        if let (Some(a), Some(enabled), true) = (anchor, new_state, self.filtered_groups.is_some()) {
+            if let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a) {
+                for song in &mut group.songs {
+                    song.enabled = enabled;
                 }
             }
         }
     }
 
     pub fn set_group_enabled_at_linear_index(&mut self, linear_idx: usize, enabled: bool) {
+        let mut anchor = None;
+
         if let Some((gi, is_folder)) = self.get_group_info_at_linear_index(linear_idx) {
             if !is_folder { return; }
 
@@ -551,6 +588,15 @@ impl PlaylistManager {
             };
 
             if let Some(group) = groups.get_mut(gi) {
+                for song in &mut group.songs {
+                    song.enabled = enabled;
+                }
+                anchor = Some(group.first_item_id);
+            }
+        }
+
+        if let (Some(a), true) = (anchor, self.filtered_groups.is_some()) {
+            if let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a) {
                 for song in &mut group.songs {
                     song.enabled = enabled;
                 }
@@ -1161,7 +1207,7 @@ fn build_song_row<'a>(
     .width(Length::Fixed(prefix_width))
     .align_x(Alignment::End);
 
-    let title_text = crate::gui::widgets::smart_truncate_text(song.title.clone(), 13.0, FONT_INTER_SANS_MEDIUM, text_color);
+    let title_text = crate::gui::widgets::smart_truncate_text(song.title.to_string(), 13.0, FONT_INTER_SANS_MEDIUM, text_color);
 
     let duration_text = text(format_duration(song.duration))
         .size(13)
@@ -1418,7 +1464,7 @@ impl PlaylistManager {
             // Repeat one
             if let Some(idx) = self.playing_song_idx {
                 if let Some(song) = self.get_song_at_linear_index(idx) {
-                    let _ = audio_manager.load_file(&song.file_path);
+                    let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
                     audio_manager.play();
                 }
             }
@@ -1438,7 +1484,7 @@ impl PlaylistManager {
                     if let Some(l_idx) = self.get_linear_index_by_song_id(song_id) {
                         if let Some(song) = self.get_song_at_linear_index(l_idx) {
                             if song.enabled {
-                                found_next = Some((song_id, l_idx, song.file_path.clone(), pos));
+                                found_next = Some((song_id, l_idx, song.file_path.clone(), song.title.to_string(), song.artist_name.to_string(), pos));
                                 break;
                             }
                         }
@@ -1447,14 +1493,14 @@ impl PlaylistManager {
             }
 
             // Segunda pasada: Si encontramos una canción, actualizamos el estado mutando la sesión
-            if let Some((song_id, l_idx, path, new_pos)) = found_next {
+            if let Some((song_id, l_idx, path, title, artist, new_pos)) = found_next {
                 if let Some(session) = &mut self.shuffle_session {
                     session.history.push(song_id);
                     session.current_position = new_pos;
                 }
                 
                 self.playing_song_idx = Some(l_idx);
-                let _ = audio_manager.load_file(&path);
+                let _ = audio_manager.load_file(&path, title, artist);
                 audio_manager.play();
                 return;
             } else if self.shuffle_active && self.repeat_mode == 1 {
@@ -1472,9 +1518,8 @@ impl PlaylistManager {
         let current = self.playing_song_idx.unwrap_or(usize::MAX);
         if let Some(next_idx) = self.find_next_enabled_song_internal(current) {
             if let Some(song) = self.get_song_at_linear_index(next_idx) {
-                let path = song.file_path.clone();
+                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
                 self.playing_song_idx = Some(next_idx);
-                let _ = audio_manager.load_file(&path);
                 audio_manager.play();
             }
         }
@@ -1483,26 +1528,27 @@ impl PlaylistManager {
     /// Retrocede a la canción anterior.
     pub fn play_prev(&mut self, audio_manager: &AudioManager) {
         if self.shuffle_active {
-            let prev_song_id = if let Some(session) = &mut self.shuffle_session {
+            let prev_song_data = if let Some(session) = &mut self.shuffle_session {
                 if session.history.len() > 1 {
                     session.history.pop(); // Quitar la actual
                     if session.current_position > 0 {
                         session.current_position -= 1;
                     }
-                    session.history.last().cloned()
+                    if let Some(prev_id) = session.history.last().cloned() {
+                        if let Some(l_idx) = self.get_linear_index_by_song_id(prev_id) {
+                            if let Some(song) = self.get_song_at_linear_index(l_idx) {
+                                Some((l_idx, song.file_path.clone(), song.title.to_string(), song.artist_name.to_string()))
+                            } else { None }
+                        } else { None }
+                    } else { None }
                 } else { None }
             } else { None };
 
-            if let Some(prev_id) = prev_song_id {
-                if let Some(l_idx) = self.get_linear_index_by_song_id(prev_id) {
-                    if let Some(song) = self.get_song_at_linear_index(l_idx) {
-                        let path = song.file_path.clone();
-                        self.playing_song_idx = Some(l_idx);
-                        let _ = audio_manager.load_file(&path);
-                        audio_manager.play();
-                        return;
-                    }
-                }
+            if let Some((l_idx, path, title, artist)) = prev_song_data {
+                self.playing_song_idx = Some(l_idx);
+                let _ = audio_manager.load_file(&path, title, artist);
+                audio_manager.play();
+                return;
             }
         }
 
@@ -1529,9 +1575,8 @@ impl PlaylistManager {
 
         if let Some(idx) = prev_idx {
             if let Some(song) = self.get_song_at_linear_index(idx) {
-                let path = song.file_path.clone();
+                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
                 self.playing_song_idx = Some(idx);
-                let _ = audio_manager.load_file(&path);
                 audio_manager.play();
             }
         }

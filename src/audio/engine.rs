@@ -5,14 +5,12 @@ use parking_lot::{RwLock, Mutex};
 use symphonia::core::io::MediaSourceStream;
 use symphonia::core::probe::Hint;
 use symphonia::core::formats::FormatOptions;
-use symphonia::core::meta::MetadataOptions;
+use symphonia::core::meta::{MetadataOptions, Limit};
 use symphonia::core::codecs::DecoderOptions;
 use ringbuf::{HeapRb, traits::{Split, Consumer, Producer, Observer}};
 use ringbuf::wrap::caching::Caching;
 use symphonia::core::audio::Signal as SymphoniaSignal;
 use crossbeam::channel::{Sender, Receiver, unbounded};
-use lofty::file::TaggedFileExt;
-use lofty::tag::Accessor;
 use rubato::{Resampler, Fft, FixedSync};
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use crate::audio::dsp::DspChain;
@@ -43,7 +41,7 @@ pub enum AudioCommand {
 // I should make multiple small edits or one precise edit.
 // I'll make multiple edits.
 
-    Load(String),
+    Load { path: String, title: String, artist: String },
     Seek(f64),
     Stop,
 }
@@ -115,7 +113,6 @@ pub struct AudioState {
     pub total_duration_sec: f64,
     pub title: String,
     pub artist: String,
-    pub album_art: Option<Vec<u8>>,
     pub path: String,
     pub eof_reached: bool,
 
@@ -146,7 +143,6 @@ impl Default for AudioState {
             total_duration_sec: 0.0,
             title: "Sin título".to_string(),
             artist: "Artista desconocido".to_string(),
-            album_art: None,
             path: String::new(),
             eof_reached: false,
 
@@ -370,6 +366,21 @@ impl AudioEngine {
         }
     }
 
+    /// Realiza una purga profunda de los buffers y reinicia el stream con la configuración actual.
+    /// Útil para liberar memoria RAM cuando la reproducción se detiene o pausa.
+    pub fn purge_buffers(&self) -> Result<(), String> {
+        println!("Audoxidy Audio: Purging hardware buffers (Zeroing RAM pools).");
+        let (host, device, config, format) = {
+            let mut out_lock = self.output.write();
+            // Extraemos los valores actuales (esto libera el stream anterior y sus buffers de hardware)
+            let out = out_lock.take().ok_or("No hay una salida de audio activa para purgar")?;
+            (out.host, out.device, out.stream_config, out.sample_format)
+        };
+        
+        // Reconfigura el motor (recrea el RingBuffer) y arranca un stream fresco con los mismos parámetros
+        self.configure_and_start_stream(host, device, config, format)
+    }
+
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), String> {
         {
             let mut out = self.output.write();
@@ -533,8 +544,12 @@ impl AudioEngine {
         Ok(())
     }
 
-    pub fn decode_file(&self, path: &str) -> Result<(), String> {
-        let _ = self.command_tx.send(AudioCommand::Load(path.to_string()));
+    pub fn decode_file(&self, path: &str, title: String, artist: String) -> Result<(), String> {
+        let _ = self.command_tx.send(AudioCommand::Load { 
+            path: path.to_string(),
+            title,
+            artist,
+        });
         Ok(())
     }
 
@@ -565,14 +580,24 @@ impl AudioEngine {
 
             if let Ok(cmd) = cmd_result {
                 match cmd {
-                    AudioCommand::Load(path) => {
-                         Self::update_metadata(&path, &state);
+                    AudioCommand::Load { path, title, artist } => {
+                         {
+                             let mut s = state.write();
+                             s.title = title;
+                             s.artist = artist;
+                             s.path = path.clone();
+                         }
                          
                          match File::open(&path) {
                              Ok(file) => {
                                  let mss = MediaSourceStream::new(Box::new(file), Default::default());
                                  let hint = Hint::new();
-                                 if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default()) {
+                                 let metadata_opts = MetadataOptions {
+                                     limit_metadata_bytes: Limit::Maximum(0), // No cargar metadatos, ya los tenemos en la DB
+                                     limit_visual_bytes: Limit::Maximum(0),
+                                 };
+                                 
+                                 if let Ok(probed) = symphonia::default::get_probe().format(&hint, mss, &FormatOptions::default(), &metadata_opts) {
                                      let track = probed.format.default_track().unwrap();
                                      track_id = track.id;
                                      let sr = track.codec_params.sample_rate.unwrap_or(44100);
@@ -996,25 +1021,5 @@ impl AudioEngine {
     }
     pub fn set_volume(&self, volume: f32) {
         self.state.write().volume = volume.clamp(0.0, 1.0);
-    }
-    
-    fn update_metadata(path: &str, state: &Arc<RwLock<AudioState>>) {
-        let mut title = "Sin título".to_string();
-        let mut artist = "Artista desconocido".to_string();
-        let mut album_art = None;
-        if let Ok(tagged_file) = lofty::read_from_path(path) {
-            if let Some(tag) = tagged_file.primary_tag().or_else(|| tagged_file.first_tag()) {
-                title = tag.title().as_deref().unwrap_or("Sin título").to_string();
-                artist = tag.artist().as_deref().unwrap_or("Artista desconocido").to_string();
-                 if let Some(picture) = tag.pictures().first() {
-                    album_art = Some(picture.data().to_vec());
-                }
-            }
-        }
-        let mut s = state.write();
-        s.title = title;
-        s.artist = artist;
-        s.album_art = album_art;
-        s.path = path.to_string();
     }
 }

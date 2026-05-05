@@ -2,6 +2,7 @@ use iced::{
     widget::{button, column, container, mouse_area, row, text, Space},
     Alignment, Color, Element, Length, Theme,
 };
+use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use crate::gui::app::Message;
 use crate::gui::theme::*;
@@ -69,7 +70,7 @@ pub struct LibraryFiltersManager {
     // Virtualización
     pub scroll_offset: iced::Vector,
     pub last_viewport: Option<iced::Rectangle>,
-    pub cached_flattened_tree: Option<Vec<VisibleTreeItem>>,
+    pub cached_flattened_tree: RefCell<Option<Vec<VisibleTreeItem>>>,
 }
 
 pub static FILTERS_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> = std::sync::LazyLock::new(iced::widget::Id::unique);
@@ -88,12 +89,17 @@ impl Default for LibraryFiltersManager {
             selected_tree_node: None,
             scroll_offset: iced::Vector::new(0.0, 0.0),
             last_viewport: None,
-            cached_flattened_tree: None,
+            cached_flattened_tree: RefCell::new(None),
         }
     }
 }
 
 impl LibraryFiltersManager {
+    /// Invalida el caché del árbol aplanado para liberar memoria
+    pub fn invalidate_cache(&mut self) {
+        *self.cached_flattened_tree.borrow_mut() = None;
+    }
+
     /// Obtiene el grupo inicial ("#", "•", o letra mayúscula) a partir del texto
     fn get_group_char(s: &str) -> String {
         let first = s.chars().next().unwrap_or('?').to_uppercase().next().unwrap_or('?');
@@ -230,12 +236,12 @@ impl LibraryFiltersManager {
         self.apply_view();
     }
 
-    pub fn refresh_flattened_tree(&mut self) {
+    pub fn refresh_flattened_tree(&self) {
         let mut flattened = Vec::new();
         for node in &self.tree_data {
             Self::flatten_tree_node(node, 0, &self.expanded_nodes, &mut flattened);
         }
-        self.cached_flattened_tree = Some(flattened);
+        *self.cached_flattened_tree.borrow_mut() = Some(flattened);
     }
 
     fn flatten_tree_node(node: &TreeNode, depth: usize, expanded: &HashSet<String>, result: &mut Vec<VisibleTreeItem>) {
@@ -258,10 +264,12 @@ impl LibraryFiltersManager {
     }
 
     pub fn get_visible_tree_items(&self) -> (f32, f32, Vec<VisibleTreeItem>) {
-        let flattened = match &self.cached_flattened_tree {
-            Some(f) => f,
-            None => return (0.0, 0.0, Vec::new()),
-        };
+        if self.cached_flattened_tree.borrow().is_none() {
+            self.refresh_flattened_tree();
+        }
+
+        let flattened_borrow = self.cached_flattened_tree.borrow();
+        let flattened = flattened_borrow.as_ref().unwrap();
         
         let item_height = 32.0;
         let total_items = flattened.len();

@@ -15,8 +15,8 @@ pub struct SongData {
     pub folder_id: i64,
     pub artist_id: i64,
     pub album_id: i64,
-    pub full_file_path: String,
-    pub title: Option<String>,
+    pub full_file_path: std::sync::Arc<str>,
+    pub title: Option<std::sync::Arc<str>>,
     pub artist: Option<std::sync::Arc<str>>,
     pub album: Option<std::sync::Arc<str>>,
     pub album_artist: Option<std::sync::Arc<str>>,
@@ -30,8 +30,8 @@ pub struct SongData {
     pub size: Option<i64>,
     pub channels: Option<i64>,
     pub embedded_cover: bool,
-    pub compressed_cached_cover_root: Option<String>,
-    pub cover_override: Option<String>, // Hash de carátula específica si difiere del álbum
+    pub compressed_cached_cover_root: Option<std::sync::Arc<str>>,
+    pub cover_override: Option<std::sync::Arc<str>>, // Hash de carátula específica si difiere del álbum
     pub import_order: i64,
 }
 
@@ -81,7 +81,7 @@ pub struct PlaylistSongRef {
     pub enabled: bool,
 
     // Metadata JOIN de SONGS + ALBUMS + ARTISTS
-    pub title: String,
+    pub title: std::sync::Arc<str>,
     pub artist_name: std::sync::Arc<str>,
     pub album_title: std::sync::Arc<str>,
     pub album_artist_name: std::sync::Arc<str>,
@@ -89,17 +89,17 @@ pub struct PlaylistSongRef {
     pub genre: Option<std::sync::Arc<str>>,
     pub track_number: Option<std::sync::Arc<str>>,
     pub duration: f64,
-    pub file_path: String,
-    pub folder_path: String,
+    pub file_path: std::sync::Arc<str>,
+    pub folder_path: std::sync::Arc<str>,
     pub folder_name: std::sync::Arc<str>,
-    pub cover_path: Option<String>,
-    pub cover_override: Option<String>,
+    pub cover_path: Option<std::sync::Arc<str>>,
+    pub cover_override: Option<std::sync::Arc<str>>,
 }
 
 /// Grupo de canciones de playlist agrupadas por carpeta/álbum.
 #[derive(Debug, Clone)]
 pub struct PlaylistFolderGroup {
-    pub folder_path: String,
+    pub folder_path: std::sync::Arc<str>,
     pub folder_name: std::sync::Arc<str>,
     pub songs: Vec<PlaylistSongRef>,
     pub total_duration: f64,
@@ -134,8 +134,8 @@ impl Database {
         // Configuraciones de rendimiento
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.pragma_update(None, "cache_size", -64000)?; 
-        conn.pragma_update(None, "mmap_size", 268435456)?;
+        conn.pragma_update(None, "cache_size", -8000)?; 
+        conn.pragma_update(None, "mmap_size", 16777216)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
         // 1. CARPETAS (Identidad física)
@@ -381,36 +381,39 @@ impl Database {
     // --- Métodos de Inserción Relacional ---
 
     pub fn upsert_folder(&self, path: &str) -> Result<i64> {
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO FOLDERS (path, name) VALUES (?1, ?2)
-             ON CONFLICT(path) DO NOTHING",
+             ON CONFLICT(path) DO NOTHING"
+        )?.execute(
             params![path, std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or("Música")],
         )?;
-        self.conn.query_row("SELECT id FROM FOLDERS WHERE path = ?1", [path], |row| row.get(0))
+        self.conn.prepare_cached("SELECT id FROM FOLDERS WHERE path = ?1")?.query_row([path], |row| row.get(0))
     }
 
     pub fn upsert_artist(&self, name: &str) -> Result<i64> {
         let normalized_name = name.trim();
         let hash_id = Self::generate_hash(&normalized_name.to_lowercase());
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO ARTISTS (name, hash_id) VALUES (?1, ?2)
-             ON CONFLICT(hash_id) DO NOTHING",
+             ON CONFLICT(hash_id) DO NOTHING"
+        )?.execute(
             params![normalized_name, hash_id],
         )?;
-        self.conn.query_row("SELECT id FROM ARTISTS WHERE hash_id = ?1", [hash_id], |row| row.get(0))
+        self.conn.prepare_cached("SELECT id FROM ARTISTS WHERE hash_id = ?1")?.query_row([hash_id], |row| row.get(0))
     }
 
     pub fn upsert_album(&self, title: &str, artist_id: i64, folder_id: i64, folder_path: &str, year: Option<&str>, genre: Option<&str>) -> Result<i64> {
         let hash_id = Self::generate_hash(&format!("{}{}{}", title, artist_id, folder_path));
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 year = COALESCE(year, excluded.year),
-                genre = COALESCE(genre, excluded.genre)",
+                genre = COALESCE(genre, excluded.genre)"
+        )?.execute(
             params![title, artist_id, folder_id, hash_id, year, genre],
         )?;
-        self.conn.query_row("SELECT id FROM ALBUMS WHERE hash_id = ?1", [hash_id], |row| row.get(0))
+        self.conn.prepare_cached("SELECT id FROM ALBUMS WHERE hash_id = ?1")?.query_row([hash_id], |row| row.get(0))
     }
 
     pub fn insert_song_full(
@@ -421,7 +424,7 @@ impl Database {
         raw_tags: Vec<(String, String, String)>, // (tag_type, item_key, raw_value)
         is_external: bool
     ) -> Result<(String, bool)> {
-        let folder_path = std::path::Path::new(&song.full_file_path).parent().and_then(|p| p.to_str()).unwrap_or("");
+        let folder_path = std::path::Path::new(song.full_file_path.as_ref()).parent().and_then(|p| p.to_str()).unwrap_or("");
         
         let folder_id = self.upsert_folder(folder_path)?;
         
@@ -436,18 +439,20 @@ impl Database {
         let album_hash_id = Self::generate_hash(&format!("{}{}{}", album_title, album_artist_id, folder_path));
 
         // 1. Resolver o crear álbum (Aseguramos que el álbum pertenezca al artista del álbum)
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 artist_id = excluded.artist_id,
                 year = COALESCE(year, excluded.year),
-                genre = COALESCE(genre, excluded.genre)",
+                genre = COALESCE(genre, excluded.genre)"
+        )?.execute(
             params![album_title, album_artist_id, folder_id, album_hash_id, song.release_year.as_deref(), song.genre.as_deref()],
         )?;
 
-        let (_, _): (Option<String>, Option<String>) = self.conn.query_row(
-            "SELECT cover_path, cover_hash FROM ALBUMS WHERE hash_id = ?1",
+        let (_, _): (Option<String>, Option<String>) = self.conn.prepare_cached(
+            "SELECT cover_path, cover_hash FROM ALBUMS WHERE hash_id = ?1"
+        )?.query_row(
             [&album_hash_id],
             |row| Ok((row.get(0)?, row.get(1)?))
         )?;
@@ -458,8 +463,9 @@ impl Database {
 
         if let Some(current_pic_hash) = pic_bytes_hash {
             // Verificar si el álbum ya tiene carátula
-            let album_has_cover: bool = self.conn.query_row(
-                "SELECT cover_hash IS NOT NULL FROM ALBUMS WHERE hash_id = ?1",
+            let album_has_cover: bool = self.conn.prepare_cached(
+                "SELECT cover_hash IS NOT NULL FROM ALBUMS WHERE hash_id = ?1"
+            )?.query_row(
                 [&album_hash_id],
                 |row| row.get(0)
             )?;
@@ -468,14 +474,16 @@ impl Database {
                 // Es la primera carátula del álbum, la asignamos como principal
                 let path = format!("cache/covers/{}.avif", album_hash_id);
                 
-                self.conn.execute(
-                    "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3",
+                self.conn.prepare_cached(
+                    "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3"
+                )?.execute(
                     params![current_pic_hash, path, album_hash_id],
                 )?;
                 needs_processing = true;
             } else {
-                let album_cover_hash: Option<String> = self.conn.query_row(
-                    "SELECT cover_hash FROM ALBUMS WHERE hash_id = ?1",
+                let album_cover_hash: Option<String> = self.conn.prepare_cached(
+                    "SELECT cover_hash FROM ALBUMS WHERE hash_id = ?1"
+                )?.query_row(
                     [&album_hash_id],
                     |row| row.get(0)
                 )?;
@@ -491,7 +499,7 @@ impl Database {
         }
 
         // 2. Inserción de la canción (Con su propio artista de pista)
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO SONGS (
                 album_id, artist_id, folder_id, file_path, title, track_num, duration, format, 
                 bit_depth, sample_rate, channels, size, embedded_cover, cover_override, import_order, is_external
@@ -499,7 +507,8 @@ impl Database {
                 (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
             ) ON CONFLICT(file_path) DO UPDATE SET 
                 title = excluded.title, track_num = excluded.track_num, duration = excluded.duration,
-                artist_id = excluded.artist_id, cover_override = excluded.cover_override, is_external = excluded.is_external",
+                artist_id = excluded.artist_id, cover_override = excluded.cover_override, is_external = excluded.is_external"
+        )?.execute(
             params![
                 album_hash_id, track_artist_id, folder_id, song.full_file_path, song.title, 
                 song.track_number,
@@ -509,25 +518,27 @@ impl Database {
             ],
         )?;
 
-        let song_id: i64 = self.conn.query_row("SELECT id FROM SONGS WHERE file_path = ?1", [&song.full_file_path], |row| row.get(0))?;
+        let song_id: i64 = self.conn.prepare_cached("SELECT id FROM SONGS WHERE file_path = ?1")?.query_row([&song.full_file_path], |row| row.get(0))?;
 
         // 3. Guardar metadatos técnicos crudos de todos los formatos presentes
-        self.conn.execute("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1", [song_id])?;
+        self.conn.prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?.execute([song_id])?;
         for (tag_type, key, value) in raw_tags {
-            self.conn.execute(
+            self.conn.prepare_cached(
                 "INSERT OR REPLACE INTO SONG_TAG_ITEMS (song_id, tag_type, item_key, raw_value) 
-                 VALUES (?1, ?2, ?3, ?4)",
+                 VALUES (?1, ?2, ?3, ?4)"
+            )?.execute(
                 params![song_id, tag_type, key, value],
             )?;
         }
 
         // 4. Metadatos extendidos (Vista unificada)
-        self.conn.execute(
+        self.conn.prepare_cached(
             "INSERT INTO SONG_METADATA (
                 song_id, lyrics, comments, composer, lyricist, publisher, url, copyright, 
                 encoded_by, catalog, isrc, key, bpm, track_gain, album_gain
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
-            ON CONFLICT(song_id) DO UPDATE SET lyrics = excluded.lyrics, comments = excluded.comments",
+            ON CONFLICT(song_id) DO UPDATE SET lyrics = excluded.lyrics, comments = excluded.comments"
+        )?.execute(
             params![
                 song_id, extended.lyrics, extended.comments, extended.composer, extended.lyricist, 
                 extended.publisher, extended.url, extended.copyright, extended.encoded_by, 
@@ -585,24 +596,24 @@ impl Database {
         let rows = stmt.query_map([format!("{}*", query)], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
-            song.full_file_path = row.get(1)?;
-            song.title = row.get(2)?;
-            song.artist = row.get(3)?;
-            song.album = row.get(4)?;
-            song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
+            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
+            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
+            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
+            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
             song.duration_secs = row.get(6)?;
-            song.format = row.get(7)?;
+            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
             song.size = row.get(8)?;
-            song.track_number = row.get(9)?; // TEXT -> Option<String>
+            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref()); // TEXT -> Option<Arc<str>>
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = row.get(14)?;
+            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
             song.import_order = row.get(15)?;
-            song.genre = row.get(16)?;
-            song.release_year = row.get(17)?;
-            song.album_artist = row.get(18)?;
+            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
+            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
+            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
             Ok(Arc::new(song))
         })?;
 
@@ -630,12 +641,12 @@ impl Database {
         let rows = stmt.query_map([], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
-            song.full_file_path = row.get(1)?;
-            song.title = row.get(2)?;
+            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
+            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
             song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
             song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
             song.album_id = 0; // WIP: Si se necesita el ID real se puede añadir al SELECT
-            song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
             song.duration_secs = row.get(6)?;
             song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
             song.size = row.get(8)?;
@@ -644,7 +655,7 @@ impl Database {
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = row.get(14)?;
+            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
             song.import_order = row.get(15)?;
             song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
             song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
@@ -776,24 +787,24 @@ impl Database {
         let rows = stmt.query_map([album_hash_id], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
-            song.full_file_path = row.get(1)?;
-            song.title = row.get(2)?;
-            song.artist = row.get(3)?;
-            song.album = row.get(4)?;
-            song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
+            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
+            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
+            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
+            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
             song.duration_secs = row.get(6)?;
-            song.format = row.get(7)?;
+            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
             song.size = row.get(8)?;
-            song.track_number = row.get(9)?; // TEXT -> Option<String>
+            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref());
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = row.get(14)?;
+            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
             song.import_order = row.get(15)?;
-            song.genre = row.get(16)?;
-            song.release_year = row.get(17)?;
-            song.album_artist = row.get(18)?;
+            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
+            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
+            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
             Ok(Arc::new(song))
         })?;
 
@@ -821,24 +832,24 @@ impl Database {
         let rows = stmt.query_map([album_hash_id, artist_name], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
-            song.full_file_path = row.get(1)?;
-            song.title = row.get(2)?;
-            song.artist = row.get(3)?;
-            song.album = row.get(4)?;
-            song.compressed_cached_cover_root = row.get::<_, Option<String>>(5)?; 
+            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
+            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
+            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
+            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
             song.duration_secs = row.get(6)?;
-            song.format = row.get(7)?;
+            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
             song.size = row.get(8)?;
-            song.track_number = row.get(9)?; // TEXT -> Option<String>
+            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref());
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = row.get(14)?;
+            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
             song.import_order = row.get(15)?;
-            song.genre = row.get(16)?;
-            song.release_year = row.get(17)?;
-            song.album_artist = row.get(18)?;
+            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
+            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
+            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
             Ok(Arc::new(song))
         })?;
 
@@ -1346,7 +1357,7 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: title_val.unwrap_or_else(|| "Sin título".to_string()),
+                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
                 artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
                 album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
                 album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
@@ -1354,10 +1365,10 @@ impl Database {
                 genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
                 track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                file_path: r.get(12)?,
-                cover_path: r.get(13)?,
-                cover_override: r.get(14)?,
-                folder_path: r.get(15)?,
+                file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
+                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
+                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;
@@ -1399,7 +1410,7 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: title_val.unwrap_or_else(|| "Sin título".to_string()),
+                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
                 artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
                 album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
                 album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
@@ -1407,10 +1418,10 @@ impl Database {
                 genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
                 track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                file_path: r.get(12)?,
-                cover_path: r.get(13)?,
-                cover_override: r.get(14)?,
-                folder_path: r.get(15)?,
+                file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
+                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
+                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;
@@ -1529,7 +1540,7 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: title_val.unwrap_or_else(|| "Sin título".to_string()),
+                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
                 artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
                 album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
                 album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
@@ -1537,10 +1548,10 @@ impl Database {
                 genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
                 track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
-                file_path: r.get(12)?,
-                cover_path: r.get(13)?,
-                cover_override: r.get(14)?,
-                folder_path: r.get(15)?,
+                file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
+                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
+                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
         })?;

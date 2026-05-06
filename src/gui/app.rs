@@ -678,12 +678,12 @@ impl AudoxidyApp {
                 }
 
                 // 5. Sistema de Purga Automática (Ciclo fijo de 2 minutos)
-                if crate::utils::memory_manager::MemoryManager::should_run_global_purge(2) {
+                let is_scanning_now = self.scanner.is_scanning.load(std::sync::atomic::Ordering::Relaxed);
+                if crate::utils::memory_manager::MemoryManager::should_run_global_purge(2, is_scanning_now) {
                     return Task::done(Message::GlobalMemoryPurge);
                 }
 
                 // Detección de fin de escáner para liberar memoria 30s después
-                let is_scanning_now = self.scanner.is_scanning.load(std::sync::atomic::Ordering::Relaxed);
                 if self.was_scanning && !is_scanning_now {
                     self.scan_finished_at = Some(std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
                 }
@@ -691,11 +691,15 @@ impl AudoxidyApp {
 
                 if let Some(finished_at) = self.scan_finished_at {
                     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                    // Liberar memoria 15s después del escaneo
-                    if now.saturating_sub(finished_at) >= 15 {
+                    // Liberar memoria 30s después del escaneo
+                    if now.saturating_sub(finished_at) >= 30 {
                         self.scan_finished_at = None;
-                        println!("Audoxidy GC: Scanner finished, purging memory");
+                        println!("Audoxidy GC: Scan complete, clearing memory");
                         crate::utils::covers::purge_old_covers(32); // Vaciar caché de covers generado por escáner
+                        
+                        // Reiniciar el temporizador global para que no haga otra purga en 2 mins
+                        crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();
+                        
                         return Task::done(Message::GlobalMemoryPurge);
                     }
                 }
@@ -982,12 +986,7 @@ impl AudoxidyApp {
                     self.audio_manager.stop();
                     self.persist_playlist_state();
                     
-                    // Liberar RAM al SO tras vaciado masivo
-                    #[cfg(target_os = "linux")]
-                    unsafe {
-                        unsafe extern "C" { fn malloc_trim(pad: usize) -> i32; }
-                        malloc_trim(0);
-                    }
+                    return Task::done(Message::GlobalMemoryPurge);
                 }
                 Task::none()
             }
@@ -2486,7 +2485,9 @@ impl AudoxidyApp {
                             }
                             Some(active_playlist_id)
                         }, Message::RefreshPlaylists),
-                        focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
+                        focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone()),
+                        // Purga inmediata de memoria tras eliminación masiva
+                        Task::done(Message::GlobalMemoryPurge)
                     ]);
                 }
                 focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
@@ -2615,6 +2616,7 @@ impl AudoxidyApp {
                     // Desplegar TODO
                     self.playlist_manager.collapsed_groups.clear();
                 }
+                self.playlist_manager.invalidate_cache();
                 Task::none()
             }
 

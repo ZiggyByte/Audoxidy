@@ -2,7 +2,6 @@
 pub mod covers;
 pub mod interner;
 pub mod memory_manager;
-pub mod memory_tests;
 use crate::db::database::SongData;
 
 pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {

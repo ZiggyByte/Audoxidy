@@ -297,18 +297,47 @@ impl LibraryManager {
     /// Descarga los datos pesados de la RAM si no se están usando
     pub fn unload(&mut self, is_focused: bool) {
         if is_focused {
-            // Si está enfocada, no descargamos los datos base para evitar que desaparezcan visualmente,
-            // pero invalidamos la caché de virtualización para liberar algo de RAM (se regenerará al hacer scroll)
+            // Si está enfocada, mantenemos los datos base (all_songs, albums) para que no desaparezca nada.
+            // Solo invalidamos la caché de virtualización de la vista para liberar algo de RAM (se regenera al instante al mover el mouse/scroll)
             self.invalidate_cache();
             return;
         }
 
-        if self.cached_all_songs.is_some() || self.cached_albums.is_some() {
-            println!("Audoxidy GC: Unloading inactive Library data.");
-            self.cached_all_songs = None;
-            self.filtered_songs = None;
-            self.cached_albums = None;
-            self.filtered_albums = None;
+        // Condición inteligente: No descargar si la biblioteca es pequeña (menos de 250 álbumes y 2000 canciones)
+        // Esto mantiene el reproductor "snappy" para usuarios con colecciones medianas/pequeñas.
+        let song_count = self.cached_all_songs.as_ref().map(|s| s.len()).unwrap_or(0);
+        let album_count = self.cached_albums.as_ref().map(|a| a.len()).unwrap_or(0);
+
+        // Condición de protección: No descargar nada si la biblioteca es pequeña
+        // (menos de 150 álbumes o menos de 700 canciones)
+        if album_count < 150 || song_count < 700 {
+            return;
+        }
+
+        // Si la biblioteca es grande y no está enfocada, realizamos una DESCARGA PARCIAL
+        // En lugar de poner None, truncamos a un margen de seguridad (100 álbumes / 500 canciones)
+        // Esto evita que la interfaz se vea vacía si el usuario vuelve rápido, pero libera la mayoría de la RAM.
+        let mut cleared = false;
+        
+        if let Some(albums) = &mut self.cached_albums {
+            if albums.len() > 100 {
+                println!("Audoxidy GC: Cleaning inactive albums from the library");
+                albums.truncate(100);
+                self.filtered_albums = None;
+                cleared = true;
+            }
+        }
+        
+        if let Some(songs) = &mut self.cached_all_songs {
+            if songs.len() > 500 {
+                println!("Audoxidy GC: Cleaning inactive songs from the library");
+                songs.truncate(500);
+                self.filtered_songs = None;
+                cleared = true;
+            }
+        }
+
+        if cleared {
             self.invalidate_cache();
             self.data_unloaded = true;
         }

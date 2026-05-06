@@ -369,7 +369,7 @@ impl AudioEngine {
     /// Realiza una purga profunda de los buffers y reinicia el stream con la configuración actual.
     /// Útil para liberar memoria RAM cuando la reproducción se detiene o pausa.
     pub fn purge_buffers(&self) -> Result<(), String> {
-        println!("Audoxidy Audio: Purging hardware buffers (Zeroing RAM pools).");
+        println!("Audoxidy Audio: Cleaning Audio Engine Buffers");
         let (host, device, config, format) = {
             let mut out_lock = self.output.write();
             // Extraemos los valores actuales (esto libera el stream anterior y sus buffers de hardware)

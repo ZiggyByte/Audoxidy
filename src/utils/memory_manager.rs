@@ -16,16 +16,22 @@ impl MemoryManager {
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
 
-    /// Registra actividad global (mantenido por compatibilidad si es necesario, pero ya no bloquea la purga)
-    pub fn register_activity() {
-        // No hace nada por ahora, la purga es fija por tiempo
-    }
-
+    pub fn register_activity() {}
     pub fn register_playlist_activity() {}
     pub fn register_library_activity() {}
 
+    /// Reinicia el temporizador de la purga global (útil tras escaneos o acciones masivas)
+    pub fn reset_global_purge_timer() {
+        let now = Self::get_now_secs();
+        LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
+    }
+
     /// Verifica si han pasado X minutos desde la última purga global
-    pub fn should_run_global_purge(interval_mins: u64) -> bool {
+    pub fn should_run_global_purge(interval_mins: u64, is_scanning: bool) -> bool {
+        if is_scanning {
+            return false;
+        }
+
         let now = Self::get_now_secs();
         let last = LAST_GLOBAL_PURGE.load(Ordering::Relaxed);
         

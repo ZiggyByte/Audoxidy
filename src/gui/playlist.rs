@@ -134,6 +134,7 @@ impl PlaylistManager {
     pub fn apply_filter(&mut self) {
         if self.search_query.is_empty() {
             self.filtered_groups = None;
+            self.invalidate_cache();
             return;
         }
 
@@ -1042,37 +1043,40 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     for (item_type, linear_idx) in &visible_items[start_idx..end_idx] {
         match item_type {
             PlaylistItemType::Separator(g_idx, _) => {
-                let group = &groups[*g_idx];
-                let is_selected = manager.selected_idxs.contains(linear_idx);
-                let any_song_enabled = group.songs.iter().any(|s| s.enabled);
-                let total_dur = format_duration(group.total_duration);
-                
-                songs_col = songs_col.push(build_folder_separator(
-                    &group.folder_name, 
-                    group.songs.len(), 
-                    total_dur, 
-                    *linear_idx, 
-                    is_selected, 
-                    any_song_enabled
-                ));
+                if let Some(group) = groups.get(*g_idx) {
+                    let is_selected = manager.selected_idxs.contains(linear_idx);
+                    let any_song_enabled = group.songs.iter().any(|s| s.enabled);
+                    let total_dur = format_duration(group.total_duration);
+                    
+                    songs_col = songs_col.push(build_folder_separator(
+                        &group.folder_name, 
+                        group.songs.len(), 
+                        total_dur, 
+                        *linear_idx, 
+                        is_selected, 
+                        any_song_enabled
+                    ));
+                }
             }
             PlaylistItemType::Song(g_idx, s_idx, _) => {
-                let group = &groups[*g_idx];
-                let song = &group.songs[*s_idx];
-                let is_playing = manager.playing_song_idx == Some(*linear_idx);
-                let is_selected = manager.selected_idxs.contains(linear_idx);
-                
-                // Un ítem de canción se considera "dentro de grupo seleccionado" si el separador del grupo lo está
-                let sep_idx = manager.find_separator_index_for_anchor(group.first_item_id).unwrap_or(0);
-                let is_group_selected = manager.selected_idxs.contains(&sep_idx);
+                if let Some(group) = groups.get(*g_idx) {
+                    if let Some(song) = group.songs.get(*s_idx) {
+                        let is_playing = manager.playing_song_idx == Some(*linear_idx);
+                        let is_selected = manager.selected_idxs.contains(linear_idx);
+                        
+                        // Un ítem de canción se considera "dentro de grupo seleccionado" si el separador del grupo lo está
+                        let sep_idx = manager.find_separator_index_for_anchor(group.first_item_id).unwrap_or(0);
+                        let is_group_selected = manager.selected_idxs.contains(&sep_idx);
 
-                songs_col = songs_col.push(build_song_row(
-                    song, 
-                    *linear_idx, 
-                    is_playing, 
-                    is_selected, 
-                    is_group_selected
-                ));
+                        songs_col = songs_col.push(build_song_row(
+                            song, 
+                            *linear_idx, 
+                            is_playing, 
+                            is_selected, 
+                            is_group_selected
+                        ));
+                    }
+                }
             }
         }
     }

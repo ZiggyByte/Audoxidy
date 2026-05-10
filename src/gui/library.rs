@@ -206,6 +206,7 @@ pub struct LibraryManager {
     pub cached_detailed_view: std::cell::RefCell<Option<(f32, Vec<LibraryVirtualArtist>)>>,
     pub cached_visible_elements: std::cell::RefCell<Option<(f32, f32, f32, Vec<LibraryVirtualRow>, Option<(String, bool, usize, usize, f64)>)>>, // (top_space, bottom_space, total_h, rows, sticky_info)
     pub data_unloaded: bool,
+    pub pending_reveal_path: Option<String>,
 }
 
 impl Default for LibraryManager {
@@ -286,6 +287,7 @@ impl Default for LibraryManager {
             cached_detailed_view: std::cell::RefCell::new(None),
             cached_visible_elements: std::cell::RefCell::new(None),
             data_unloaded: false,
+            pending_reveal_path: None,
         }
     }
 }
@@ -794,39 +796,26 @@ impl LibraryManager {
             songs.sort_by(|a, b| {
                 let res = match col_ref {
                     SortColumn::TrackNumber => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
-                        match (tn_a, tn_b) {
-                            (Some(na), Some(nb)) => na.cmp(&nb),
-                            _ => a.track_number.cmp(&b.track_number),
-                        }
+                        crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref())
                     },
                     SortColumn::Title => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        crate::utils::compare_strings_ignore_case(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or("")).then(tn_a.cmp(&tn_b))
+                        crate::utils::compare_strings_ignore_case(a.title.as_deref().unwrap_or(""), b.title.as_deref().unwrap_or(""))
+                            .then(crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
                     },
                     SortColumn::Artist | SortColumn::AlbumArtist => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
                         crate::utils::compare_strings_ignore_case(art_a, art_b)
                             .then(crate::utils::compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or("")))
                             .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
-                            .then(tn_a.cmp(&tn_b))
+                            .then(crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
                     },
                     SortColumn::Album => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
                         crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or(""))
                             .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
-                            .then(match (tn_a, tn_b) {
-                                (Some(na), Some(nb)) => na.cmp(&nb),
-                                _ => a.track_number.cmp(&b.track_number),
-                            })
+                            .then(crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
                     },
                     SortColumn::Format => {
                         crate::utils::compare_strings_ignore_case(a.format.as_deref().unwrap_or(""), b.format.as_deref().unwrap_or(""))
@@ -846,24 +835,20 @@ impl LibraryManager {
                         bit_a.partial_cmp(&bit_b).unwrap_or(std::cmp::Ordering::Equal)
                     },
                     SortColumn::Genre => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
                         crate::utils::compare_strings_ignore_case(a.genre.as_deref().unwrap_or(""), b.genre.as_deref().unwrap_or(""))
                             .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
                             .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
-                            .then(tn_a.cmp(&tn_b))
+                            .then(crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
                     },
                     SortColumn::Year => {
-                        let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
-                        let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok()).unwrap_or(0);
                         let art_a = crate::utils::get_effective_artist(a);
                         let art_b = crate::utils::get_effective_artist(b);
                         crate::utils::compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or(""))
                             .then(crate::utils::compare_strings_ignore_case(art_a, art_b))
                             .then(crate::utils::compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
-                            .then(tn_a.cmp(&tn_b))
+                            .then(crate::utils::compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
                     },
                     SortColumn::Duration => {
                         let dur_a = a.duration_secs.unwrap_or(0.0);
@@ -944,12 +929,9 @@ impl LibraryManager {
         songs: Vec<std::sync::Arc<crate::db::database::SongData>>, 
         albums: Vec<AlbumEntry>
     ) {
-        self.cached_all_songs = Some(songs);
+        self.cached_all_songs = Some(songs.clone());
         self.cached_albums = Some(albums);
-        
-        self.sort_all_data();
-        self.apply_filter();
-        self.invalidate_cache();
+        self.update_processed_data(songs);
     }
 
 
@@ -1630,6 +1612,75 @@ impl LibraryManager {
         None
     }
 
+    /// Obtiene listas de álbumes y artistas a contraer/expandir en bloque.
+    pub fn get_bulk_toggles(&self, dir: LibraryNavDir) -> (Vec<String>, Vec<String>) {
+        let mut albums_to_toggle = std::collections::HashSet::new();
+        let mut artists_to_toggle = std::collections::HashSet::new();
+
+        let mut items_to_process = Vec::new();
+        if !self.selected_items.is_empty() {
+            items_to_process.extend(self.selected_items.iter().cloned());
+        } else if let Some(focused) = &self.focused_item {
+            items_to_process.push(focused.clone());
+        }
+
+        for item in items_to_process {
+            match item {
+                LibraryListItem::Artist(name) => {
+                    let is_collapsed = self.collapsed_artists.contains(&name);
+                    if (dir == LibraryNavDir::Left && !is_collapsed) || (dir == LibraryNavDir::Right && is_collapsed) {
+                        artists_to_toggle.insert(name);
+                    }
+                }
+                LibraryListItem::Album(id) => {
+                    let is_collapsed = self.collapsed_albums.contains(&id);
+                    if (dir == LibraryNavDir::Left && !is_collapsed) || (dir == LibraryNavDir::Right && is_collapsed) {
+                        albums_to_toggle.insert(id);
+                    }
+                }
+                LibraryListItem::Song(id) => {
+                    // Buscar la canción para saber a qué álbum pertenece. 
+                    // Primero en filtered_songs, luego en artist_groups (robusto para vistas de lista)
+                    let mut found_song = None;
+                    if let Some(songs) = &self.filtered_songs {
+                        found_song = songs.iter().find(|s| s.id == id).cloned();
+                    }
+                    
+                    if found_song.is_none() {
+                        for group in &self.artist_groups {
+                            if let Some(s) = group.songs.iter().find(|s| s.id == id) {
+                                found_song = Some(s.clone());
+                                break;
+                            }
+                        }
+                    }
+
+                    if let Some(song) = found_song {
+                        let art = crate::utils::get_effective_artist(&song).to_string();
+                        let alb_name = song.album.as_deref().unwrap_or("Desconocido");
+                        
+                        // Buscar ID compuesto del álbum
+                        let alb_id = if let Some(cache) = &self.cached_albums {
+                            cache.iter().find(|a| a.title == alb_name && a.artist == art)
+                                .map(|a| a.id.clone())
+                                .unwrap_or_else(|| alb_name.to_string())
+                        } else {
+                            alb_name.to_string()
+                        };
+                        let composite_id = format!("{}|{}", art, alb_id);
+
+                        let is_collapsed = self.collapsed_albums.contains(&composite_id);
+                        if (dir == LibraryNavDir::Left && !is_collapsed) || (dir == LibraryNavDir::Right && is_collapsed) {
+                            albums_to_toggle.insert(composite_id);
+                        }
+                    }
+                }
+            }
+        }
+
+        (albums_to_toggle.into_iter().collect(), artists_to_toggle.into_iter().collect())
+    }
+
     pub fn get_album_to_toggle(&self, dir: LibraryNavDir) -> Option<String> {
         let album_id = if let Some(alb) = &self.selected_album {
             Some(alb.clone())
@@ -1677,107 +1728,66 @@ impl LibraryManager {
         self.selected_song_idx = idx;
     }
 
+    /// Genera los parámetros de búsqueda basados en el estado actual de los filtros.
+    pub fn get_search_params(&self) -> crate::db::database::LibrarySearchParams {
+        crate::db::database::LibrarySearchParams {
+            query: if self.search_query.is_empty() { None } else { Some(self.search_query.clone()) },
+            artist: self.filter_artist.clone(),
+            album: self.filter_album.clone(),
+            genre: self.filter_genre.clone(),
+            year: self.filter_year.clone(),
+            folder_id: self.filter_folder_id,
+        }
+    }
+
+    /// Prepara el estado para un nuevo filtrado. En el nuevo modelo Stateless,
+    /// esto ya no filtra en RAM, sino que indica que se requiere una consulta a la DB.
     pub fn apply_filter(&mut self) {
         self.invalidate_cache();
         self.artist_last_selection.clear();
         self.search_nonce = self.search_nonce.wrapping_add(1);
         
-        let query_lower = self.search_query.to_lowercase();
-        let is_empty = query_lower.is_empty();
-        let has_any_filter = !is_empty || self.filter_artist.is_some() || self.filter_album.is_some() || 
+        // El filtrado real ahora ocurre de forma asíncrona en App vía SQL.
+        // Aquí solo podríamos activar un estado de "loading" si fuera necesario.
+    }
+    /// Procesa el nuevo vector de canciones filtradas (vía SQL) para reconstruir grupos y grid.
+    pub fn update_processed_data(&mut self, songs: Vec<std::sync::Arc<crate::db::database::SongData>>) {
+        self.invalidate_cache();
+        let has_any_filter = !self.search_query.is_empty() || self.filter_artist.is_some() || self.filter_album.is_some() || 
                            self.filter_genre.is_some() || self.filter_year.is_some() || self.filter_folder_id.is_some();
 
-        // 1. Filtrado de Canciones y Grupos (Base de la Biblioteca)
-        let mut albums_matching_songs = std::collections::HashSet::new();
-        if let Some(songs) = &self.cached_all_songs {
-            use rayon::prelude::*;
-            let mut filtered_songs: Vec<_> = songs.par_iter()
-                .filter(|s| {
-                    // A. Filtro de búsqueda rápida
-                    let matches_search = is_empty || crate::utils::song_matches_search(s, &query_lower);
-                    if !matches_search { return false; }
-
-                    // B. Filtros específicos (Carpeta, Artista, Álbum, etc.)
-                    if let Some(f_art) = &self.filter_artist {
-                        let art_a = s.artist.as_deref().unwrap_or("");
-                        let art_b = s.album_artist.as_deref().unwrap_or("");
-                        if !art_a.eq_ignore_ascii_case(f_art) && !art_b.eq_ignore_ascii_case(f_art) { return false; }
-                    }
-                    if let Some(f_alb) = &self.filter_album {
-                        let alb = s.album.as_deref().unwrap_or("");
-                        if !alb.eq_ignore_ascii_case(f_alb) { return false; }
-                    }
-                    if let Some(f_gen) = &self.filter_genre {
-                        let genre_val = s.genre.as_deref().unwrap_or("");
-                        if !genre_val.eq_ignore_ascii_case(f_gen) { return false; }
-                    }
-                    if let Some(f_year) = &self.filter_year {
-                        let year = s.release_year.as_deref().unwrap_or("");
-                        if !year.eq_ignore_ascii_case(f_year) { return false; }
-                    }
-                    if let Some(f_id) = self.filter_folder_id {
-                        if s.folder_id != f_id { return false; }
-                    }
-
-                    true
-                })
-                .cloned()
-                .collect();
+        // 1. Agrupación por Artistas
+        let mut groups_map: std::collections::BTreeMap<String, ArtistGroup> = std::collections::BTreeMap::new();
+        for song in &songs {
+            let artist_name = crate::utils::get_effective_artist(song);
+            let key = artist_name.to_lowercase();
             
-            // Coleccionar pares únicos Artista + Álbum para sincronizar el Grid
-            for s in &filtered_songs {
-                if let Some(alb) = &s.album {
-                    let art = crate::utils::get_effective_artist(s);
-                    albums_matching_songs.insert((art.to_lowercase(), alb.trim().to_lowercase()));
-                }
-            }
+            let group = groups_map.entry(key).or_insert(ArtistGroup {
+                name: artist_name.to_string(),
+                albums_count: 0,
+                songs_count: 0,
+                songs: Vec::new(),
+                duration_secs: 0.0,
+            });
             
-            // Unificado: Usar el motor de ordenamiento centralizado
-            self.sort_songs(&mut filtered_songs);
-            
-            let mut groups_map: std::collections::BTreeMap<String, ArtistGroup> = std::collections::BTreeMap::new();
-            for song in &filtered_songs {
-                let artist_name = crate::utils::get_effective_artist(song);
-                let key = artist_name.to_lowercase();
-                
-                let group = groups_map.entry(key).or_insert(ArtistGroup {
-                    name: artist_name.to_string(), // Preserve cases from first encountered song
-                    albums_count: 0,
-                    songs_count: 0,
-                    songs: Vec::new(),
-                    duration_secs: 0.0,
-                });
-                
-                group.duration_secs += song.duration_secs.unwrap_or(0.0);
-                group.songs.push(song.clone());
-            }
-            
-            for g in groups_map.values_mut() {
-                let mut unique_albums = std::collections::HashSet::new();
-                for s in &g.songs {
-                    if let Some(a) = &s.album { unique_albums.insert(a.clone()); }
-                }
-                g.albums_count = unique_albums.len();
-                g.songs_count = g.songs.len();
-            }
-            
-            let groups: Vec<ArtistGroup> = groups_map.into_values().collect();
-            
-            let mut flattened_filtered = Vec::with_capacity(filtered_songs.len());
-            for group in &groups {
-                for song in &group.songs {
-                    flattened_filtered.push(song.clone());
-                }
-            }
-            
-            self.artist_groups = groups;
-            self.filtered_songs = Some(flattened_filtered);
-        } else {
-            self.filtered_songs = None;
-            self.artist_groups = Vec::new();
+            group.duration_secs += song.duration_secs.unwrap_or(0.0);
+            group.songs.push(song.clone());
         }
+        
+        for g in groups_map.values_mut() {
+            let mut unique_albums = std::collections::HashSet::new();
+            for s in &g.songs {
+                if let Some(a) = &s.album { unique_albums.insert(a.clone()); }
+            }
+            g.albums_count = unique_albums.len();
+            g.songs_count = g.songs.len();
+        }
+        
+        let groups: Vec<ArtistGroup> = groups_map.into_values().collect();
+        self.artist_groups = groups;
+        self.filtered_songs = Some(songs);
 
-        // 2. Filtrado de Álbumes (Grid) - Unificado: Derivado directamente de los grupos para sincronización total
+        // 2. Sincronización del Grid (Álbumes)
         if has_any_filter {
             let mut grid_filtered = Vec::new();
             let mut seen_albums = std::collections::HashSet::new();
@@ -1786,18 +1796,15 @@ impl LibraryManager {
                 for group in &self.artist_groups {
                     for song in &group.songs {
                         if let Some(alb_title) = &song.album {
-                            // Usamos el nombre del grupo y el título del álbum como clave única
                             let key = (group.name.to_lowercase(), alb_title.trim().to_lowercase());
                             if !seen_albums.contains(&key) {
                                 seen_albums.insert(key);
                                 
-                                // Buscar el AlbumEntry original para conservar el cover_path y el ID (hash)
-                                // Intentamos coincidencia por título y artista del grupo
                                 if let Some(entry) = all_albums.iter().find(|a| a.title.as_str() == &**alb_title && a.artist == group.name)
-                                    .or_else(|| all_albums.iter().find(|a| a.title.as_str() == &**alb_title)) // Fallback por título
+                                    .or_else(|| all_albums.iter().find(|a| a.title.as_str() == &**alb_title))
                                 {
                                     let mut unified_entry = entry.clone();
-                                    unified_entry.artist = group.name.clone(); // Garantizar que el artista del Grid sea idéntico al de la Lista
+                                    unified_entry.artist = group.name.clone();
                                     grid_filtered.push(unified_entry);
                                 }
                             }
@@ -1805,41 +1812,33 @@ impl LibraryManager {
                     }
                 }
             }
-            
             self.sort_albums(&mut grid_filtered);
             self.filtered_albums = Some(grid_filtered);
         } else {
             self.filtered_albums = None;
         }
 
-        // 3. Calcular estadísticas del filtro activo
-        if has_any_filter {
-            if let Some(songs) = &self.filtered_songs {
-                let total_dur: f64 = songs.iter().map(|s| s.duration_secs.unwrap_or(0.0)).sum();
-                let total_size: f64 = songs.iter().map(|s| s.size.unwrap_or(0) as f64).sum();
-                let mut unique_albums: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-                let mut unique_artists = std::collections::HashSet::new();
-                for s in songs {
-                    let art = crate::utils::get_effective_artist(s);
-                    let alb = s.album.as_deref().unwrap_or("Desconocido");
-                    unique_albums.insert((art.to_string(), alb.to_string()));
-                    unique_artists.insert(art.to_string());
-                }
-                self.filter_stats = Some(LibraryStats {
-                    songs: songs.len() as u64,
-                    albums: unique_albums.len() as u64,
-                    artists: unique_artists.len() as u64,
-                    duration_secs: total_dur,
-                    size_bytes: total_size,
-                });
-            } else {
-                self.filter_stats = None;
+        // 3. Estadísticas
+        if let Some(songs) = &self.filtered_songs {
+            let total_dur: f64 = songs.iter().map(|s| s.duration_secs.unwrap_or(0.0)).sum();
+            let total_size: f64 = songs.iter().map(|s| s.size.unwrap_or(0) as f64).sum();
+            let mut unique_albums: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
+            let mut unique_artists = std::collections::HashSet::new();
+            for s in songs {
+                let art = crate::utils::get_effective_artist(s);
+                let alb = s.album.as_deref().unwrap_or("Desconocido");
+                unique_albums.insert((art.to_string(), alb.to_string()));
+                unique_artists.insert(art.to_string());
             }
-        } else {
-            self.filter_stats = None;
+            self.filter_stats = Some(LibraryStats {
+                songs: songs.len() as u64,
+                albums: unique_albums.len() as u64,
+                artists: unique_artists.len() as u64,
+                duration_secs: total_dur,
+                size_bytes: total_size,
+            });
         }
 
-        // 4. Sincronizar canciones expandidas en vista Grid
         self.refresh_expanded_album_songs();
     }
 
@@ -1848,11 +1847,13 @@ impl LibraryManager {
         if self.view_mode != LibraryViewMode::Grid { return; }
         
         if let Some(album_id) = self.expanded_album.clone() {
-            if let Some(all_songs) = &self.cached_all_songs {
+            // Ahora buscamos en filtered_songs o disparamos consulta específica si fuera necesario.
+            // Para simplicidad por ahora, si las canciones están en filtered_songs las usamos.
+            if let Some(songs) = &self.filtered_songs {
                 if let Some(album_entry) = self.cached_albums.as_ref().and_then(|all| 
                     all.iter().find(|a| (format!("{}|{}", a.artist, a.id) == album_id) || (a.id == album_id))
                 ) {
-                    let mut alb_songs: Vec<_> = all_songs.iter()
+                    let mut alb_songs: Vec<_> = songs.iter()
                         .filter(|s| {
                             let s_alb = s.album.as_deref().unwrap_or("Desconocido");
                             let s_art = crate::utils::get_effective_artist(s);
@@ -1865,7 +1866,6 @@ impl LibraryManager {
                         self.sort_songs(&mut alb_songs);
                         self.expanded_album_songs = Some(alb_songs);
                     } else {
-                        // Si no hay canciones (fueron borradas), cerrar expansión
                         self.expanded_album = None;
                         self.expanded_album_songs = None;
                     }

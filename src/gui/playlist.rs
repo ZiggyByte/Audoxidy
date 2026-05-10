@@ -365,37 +365,62 @@ impl PlaylistManager {
                 }
             }
             crate::gui::library::LibraryNavDir::Left => {
-                if let Some(sel) = self.focused_idx {
+                let mut anchors_to_collapse = std::collections::HashSet::new();
+                
+                // Recopilar todos los grupos afectados por la selección actual
+                for &sel in &self.selected_idxs {
                     if let Some(info) = self.get_item_info_at_linear_index(sel) {
                         match info {
                             PlaylistItemType::Separator(_, anchor) => {
-                                self.collapsed_groups.insert(anchor);
+                                anchors_to_collapse.insert(anchor);
                             }
                             PlaylistItemType::Song(_, _, anchor) => {
-                                self.collapsed_groups.insert(anchor);
-                                self.focused_idx = self.find_separator_index_for_anchor(anchor);
-                                if let Some(new_sel) = self.focused_idx {
-                                    self.selected_idxs.clear();
-                                    self.selected_idxs.insert(new_sel);
-                                    self.selection_pivot = Some(new_sel);
-                                }
+                                anchors_to_collapse.insert(anchor);
                             }
                         }
                     }
                 }
-            }
-            crate::gui::library::LibraryNavDir::Right => {
-                if let Some(sel) = self.focused_idx {
-                    if let Some(info) = self.get_item_info_at_linear_index(sel) {
-                        match info {
-                            PlaylistItemType::Separator(_, anchor) => {
-                                self.collapsed_groups.remove(&anchor);
-                            }
-                            PlaylistItemType::Song(_, _, anchor) => {
-                                self.collapsed_groups.remove(&anchor);
+
+                if !anchors_to_collapse.is_empty() {
+                    for anchor in anchors_to_collapse {
+                        self.collapsed_groups.insert(anchor);
+                    }
+
+                    // Si el foco estaba en una canción, moverlo al separador del grupo
+                    if let Some(sel) = self.focused_idx {
+                        if let Some(PlaylistItemType::Song(_, _, anchor)) = self.get_item_info_at_linear_index(sel) {
+                            if let Some(new_sel) = self.find_separator_index_for_anchor(anchor) {
+                                self.focused_idx = Some(new_sel);
+                                self.selected_idxs.clear();
+                                self.selected_idxs.insert(new_sel);
+                                self.selection_pivot = Some(new_sel);
                             }
                         }
                     }
+                    self.invalidate_cache();
+                }
+            }
+            crate::gui::library::LibraryNavDir::Right => {
+                let mut anchors_to_expand = std::collections::HashSet::new();
+                
+                for &sel in &self.selected_idxs {
+                    if let Some(info) = self.get_item_info_at_linear_index(sel) {
+                        match info {
+                            PlaylistItemType::Separator(_, anchor) => {
+                                anchors_to_expand.insert(anchor);
+                            }
+                            PlaylistItemType::Song(_, _, anchor) => {
+                                anchors_to_expand.insert(anchor);
+                            }
+                        }
+                    }
+                }
+
+                if !anchors_to_expand.is_empty() {
+                    for anchor in anchors_to_expand {
+                        self.collapsed_groups.remove(&anchor);
+                    }
+                    self.invalidate_cache();
                 }
             }
             _ => {}

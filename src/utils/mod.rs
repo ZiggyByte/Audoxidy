@@ -246,14 +246,38 @@ pub fn compare_songs_for_listing(a: &SongData, b: &SongData) -> std::cmp::Orderi
     compare_strings_ignore_case(art_a, art_b)
         .then(compare_strings_ignore_case(a.release_year.as_deref().unwrap_or(""), b.release_year.as_deref().unwrap_or("")))
         .then(compare_strings_ignore_case(a.album.as_deref().unwrap_or(""), b.album.as_deref().unwrap_or("")))
-        .then({
-            let tn_a = a.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
-            let tn_b = b.track_number.as_ref().and_then(|t| t.parse::<u32>().ok());
-            match (tn_a, tn_b) {
-                (Some(na), Some(nb)) => na.cmp(&nb),
-                _ => a.track_number.cmp(&b.track_number),
+        .then(compare_track_numbers(a.track_number.as_deref(), b.track_number.as_deref()))
+}
+
+/// Compara dos números de pista de forma natural (Alfanumérica).
+/// Maneja casos como "1", "10", "2", "A1", "B2", "1/10", etc.
+pub fn compare_track_numbers(a: Option<&str>, b: Option<&str>) -> std::cmp::Ordering {
+    let a_str = a.unwrap_or("");
+    let b_str = b.unwrap_or("");
+
+    if a_str == b_str { return std::cmp::Ordering::Equal; }
+    if a_str.is_empty() { return std::cmp::Ordering::Greater; }
+    if b_str.is_empty() { return std::cmp::Ordering::Less; }
+
+    // Intentar parseo numérico puro (99% de los casos)
+    let a_num = a_str.parse::<u32>();
+    let b_num = b_str.parse::<u32>();
+
+    match (a_num, b_num) {
+        (Ok(n1), Ok(n2)) => n1.cmp(&n2),
+        // Fallback para alfanuméricos (A1, B2, 1/10)
+        _ => {
+            // Extraer solo la parte numérica si existe
+            let get_num = |s: &str| s.chars().filter(|c| c.is_numeric()).collect::<String>().parse::<u32>().ok();
+            let n1 = get_num(a_str);
+            let n2 = get_num(b_str);
+            
+            match (n1, n2) {
+                (Some(v1), Some(v2)) if v1 != v2 => v1.cmp(&v2),
+                _ => a_str.to_lowercase().cmp(&b_str.to_lowercase()),
             }
-        })
+        }
+    }
 }
 
 /// Función central de ordenamiento para álbumes (Grid/Listas): Artista -> Año -> Título.

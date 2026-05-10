@@ -138,96 +138,82 @@ impl LibraryFiltersManager {
     }
 
     /// Construye el índice de filtros UNA sola vez. Llamar al cargar canciones o cuando el escáner detecta cambios.
-    pub fn build_filter_index(&mut self, library_manager: &crate::gui::library::LibraryManager) {
-        let songs = match &library_manager.cached_all_songs {
-            Some(s) => s,
-            None => {
-                self.filter_index = None;
-                self.tree_data.clear();
-                self.active_subfilters.clear();
-                return;
-            }
-        };
-
+    pub fn build_filter_index(&mut self, db_m: &std::sync::Arc<std::sync::Mutex<crate::db::database::Database>>) {
         let all_types = [FilterType::Genre, FilterType::Artist, FilterType::Album, FilterType::Year, FilterType::Folder];
 
-        // Estructura intermedia con HashMap para O(1) lookup de hijos
-        // L1_label -> HashMap<L2_label, HashSet<L3_label>>
-        let mut indices: HashMap<FilterType, BTreeMap<String, HashMap<String, HashSet<String>>>> = HashMap::new();
-        let mut char_sets: HashMap<FilterType, HashSet<String>> = HashMap::new();
-
-        for ft in &all_types {
-            indices.insert(*ft, BTreeMap::new());
-            char_sets.insert(*ft, HashSet::new());
-        }
-
-        // UNA sola iteración sobre todas las canciones
-        for song in songs {
-            let artist_val = crate::utils::get_effective_artist(song);
-            let album_val = song.album.as_deref().unwrap_or("Desconocido");
-            let genre_val = song.genre.as_deref().unwrap_or("Desconocido");
-            let year_val = song.release_year.as_deref().unwrap_or("Desconocido");
-
-            // Para cada FilterType, extraer (L1, L2, L3)
-            let mappings: [(FilterType, &str, &str, Option<&str>); 5] = [
-                (FilterType::Genre,  genre_val,  artist_val, Some(album_val)),
-                (FilterType::Artist, artist_val, album_val,  None),
-                (FilterType::Album,  album_val,  artist_val, None),
-                (FilterType::Year,   year_val,   artist_val, Some(album_val)),
-                (FilterType::Folder, "Raiz",     artist_val, None),
-            ];
-
-            for (ft, l1, l2, l3) in &mappings {
-                // Registrar la letra del abecedario
-                char_sets.get_mut(ft).unwrap().insert(Self::get_group_char(l1));
-
-                // Insertar en el índice (ahora tratamos cada variante de mayúsculas como única)
-                let l1_map = indices.get_mut(ft).unwrap();
-                let l2_map = l1_map.entry(l1.to_string()).or_insert_with(HashMap::new);
-                let l3_set = l2_map.entry(l2.to_string()).or_insert_with(HashSet::new);
-                
-                if let Some(l3_val) = l3 {
-                    l3_set.insert(l3_val.to_string());
-                }
-            }
-        }
-
-        // Convertir índices a TreeNodes
         let mut trees: HashMap<FilterType, Vec<TreeNode>> = HashMap::new();
         let mut subfilters: HashMap<FilterType, Vec<String>> = HashMap::new();
 
-        for ft in &all_types {
-            let ft_label = format!("{:?}", ft);
-            let l1_map = indices.remove(ft).unwrap();
-            let mut tree: Vec<TreeNode> = Vec::with_capacity(l1_map.len());
+        if let Ok(db) = db_m.lock() {
+            for ft in &all_types {
+                let ft_label = format!("{:?}", ft);
+                let filter_str = match ft {
+                    FilterType::Genre => "Genre",
+                    FilterType::Artist => "Artist",
+                    FilterType::Album => "Album",
+                    FilterType::Year => "Year",
+                    FilterType::Folder => "Folder",
+                };
 
-            for (l1_label, l2_map) in l1_map {
-                let id1 = format!("{}|{}", ft_label, l1_label);
-                let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
+                if let Ok(hierarchy) = db.get_filter_hierarchy(filter_str) {
+                    // Estructura intermedia: L1 -> L2 -> Set<L3>
+                    let mut indices: BTreeMap<String, HashMap<String, HashSet<String>>> = BTreeMap::new();
+                    let mut char_sets: HashSet<String> = HashSet::new();
 
-                for (l2_label, l3_set) in l2_map {
-                    let id2 = format!("{}|{}", id1, l2_label);
-                    let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
-
-                    for l3_val in l3_set {
-                        let id3 = format!("{}|{}", id2, l3_val);
-                        children2.push(TreeNode { label: l3_val, id: id3, children: Vec::new() });
+                    for (l1, l2, l3_opt) in hierarchy {
+                        char_sets.insert(Self::get_group_char(&l1));
+                        
+                        let l2_map = indices.entry(l1.to_string()).or_insert_with(HashMap::new);
+                        let l3_set = l2_map.entry(l2.to_string()).or_insert_with(HashSet::new);
+                        
+                        if let Some(l3) = l3_opt {
+                            l3_set.insert(l3.to_string());
+                        }
                     }
 
-                    Self::sort_tree(&mut children2);
-                    children1.push(TreeNode { label: l2_label, id: id2, children: children2 });
+                    // Convertir a TreeNodes
+                    let mut tree: Vec<TreeNode> = Vec::with_capacity(indices.len());
+                    for (l1_label, l2_map) in indices {
+                        let id1 = format!("{}|{}", ft_label, l1_label);
+                        let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
+
+                        for (l2_label, l3_set) in l2_map {
+                            let id2 = format!("{}|{}", id1, l2_label);
+                            let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
+
+                            for l3_val in l3_set {
+                                let id3 = format!("{}|{}", id2, l3_val);
+                                children2.push(TreeNode { 
+                                    label: l3_val, 
+                                    id: id3, 
+                                    children: Vec::new() 
+                                });
+                            }
+
+                            Self::sort_tree(&mut children2);
+                            children1.push(TreeNode { 
+                                label: l2_label, 
+                                id: id2, 
+                                children: children2 
+                            });
+                        }
+
+                        Self::sort_tree(&mut children1);
+                        tree.push(TreeNode { 
+                            label: l1_label, 
+                            id: id1, 
+                            children: children1 
+                        });
+                    }
+
+                    Self::sort_tree(&mut tree);
+                    trees.insert(*ft, tree);
+
+                    let mut chars: Vec<String> = char_sets.into_iter().collect();
+                    Self::sort_subfilters(&mut chars);
+                    subfilters.insert(*ft, chars);
                 }
-
-                Self::sort_tree(&mut children1);
-                tree.push(TreeNode { label: l1_label, id: id1, children: children1 });
             }
-
-            Self::sort_tree(&mut tree);
-            trees.insert(*ft, tree);
-
-            let mut chars: Vec<String> = char_sets.remove(ft).unwrap().into_iter().collect();
-            Self::sort_subfilters(&mut chars);
-            subfilters.insert(*ft, chars);
         }
 
         self.filter_index = Some(FilterIndex { trees, subfilters });

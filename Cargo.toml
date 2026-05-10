@@ -60,6 +60,7 @@ hex = "0.4.3"
 sysinfo = "0.38.4"
 fast_image_resize = "6.0.0"
 iced_aw = { version = "0.13.1", features = ["full"] }
+lru = "0.18.0"
 
 [profile.release]
 opt-level = 3

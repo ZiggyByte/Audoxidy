@@ -348,6 +348,8 @@ impl LibraryManager {
     pub fn invalidate_cache(&mut self) {
         self.cached_detailed_view.replace(None);
         self.cached_visible_elements.replace(None);
+        // Al invalidar caché por cambio de estructura, el hint de scroll ya no es válido
+        self.selected_item_hint = None;
     }
 
     pub fn invalidate_visible_cache(&mut self) {
@@ -447,6 +449,60 @@ impl LibraryManager {
 
         self.cached_detailed_view.replace(Some((total_content_h, v_artists.clone())));
         (total_content_h, v_artists)
+    }
+
+    /// Busca el ID compuesto de un álbum (Artist|AlbumID) para una canción dada,
+    /// garantizando consistencia absoluta con la estructura visual actual.
+    pub fn find_album_id_for_song(&self, song_id: i64) -> Option<String> {
+        let (_, v_artists) = self.get_view_structure();
+        for va in v_artists {
+            for alb in va.albums {
+                if alb.songs.iter().any(|(s, _)| s.id == song_id) {
+                    return Some(format!("{}|{}", va.artist_name, alb.album_hash));
+                }
+            }
+        }
+        None
+    }
+
+    /// Cambia el estado de expansión de un álbum y actualiza el foco/selección.
+    pub fn set_album_collapsed(&mut self, album_id: String, collapsed: bool) {
+        if collapsed {
+            self.collapsed_albums.insert(album_id.clone());
+        } else {
+            self.collapsed_albums.remove(&album_id);
+        }
+        
+        // Sincronizar foco y selección
+        let item = LibraryListItem::Album(album_id.clone());
+        self.selected_items.clear();
+        self.selected_items.insert(item.clone());
+        self.focused_item = Some(item);
+        
+        self.selected_song_idx = None;
+        self.selected_header = None;
+        self.selected_album = Some(album_id);
+        self.invalidate_cache();
+    }
+
+    /// Cambia el estado de expansión de un artista y actualiza el foco/selección.
+    pub fn set_artist_collapsed(&mut self, artist_name: String, collapsed: bool) {
+        if collapsed {
+            self.collapsed_artists.insert(artist_name.clone());
+        } else {
+            self.collapsed_artists.remove(&artist_name);
+        }
+
+        // Sincronizar foco y selección
+        let item = LibraryListItem::Artist(artist_name.clone());
+        self.selected_items.clear();
+        self.selected_items.insert(item.clone());
+        self.focused_item = Some(item);
+
+        self.selected_song_idx = None;
+        self.selected_album = None;
+        self.selected_header = Some(artist_name);
+        self.invalidate_cache();
     }
 
     /// Obtiene los elementos visibles según el viewport actual (Virtualización)
@@ -1639,36 +1695,7 @@ impl LibraryManager {
                     }
                 }
                 LibraryListItem::Song(id) => {
-                    // Buscar la canción para saber a qué álbum pertenece. 
-                    // Primero en filtered_songs, luego en artist_groups (robusto para vistas de lista)
-                    let mut found_song = None;
-                    if let Some(songs) = &self.filtered_songs {
-                        found_song = songs.iter().find(|s| s.id == id).cloned();
-                    }
-                    
-                    if found_song.is_none() {
-                        for group in &self.artist_groups {
-                            if let Some(s) = group.songs.iter().find(|s| s.id == id) {
-                                found_song = Some(s.clone());
-                                break;
-                            }
-                        }
-                    }
-
-                    if let Some(song) = found_song {
-                        let art = crate::utils::get_effective_artist(&song).to_string();
-                        let alb_name = song.album.as_deref().unwrap_or("Desconocido");
-                        
-                        // Buscar ID compuesto del álbum
-                        let alb_id = if let Some(cache) = &self.cached_albums {
-                            cache.iter().find(|a| a.title == alb_name && a.artist == art)
-                                .map(|a| a.id.clone())
-                                .unwrap_or_else(|| alb_name.to_string())
-                        } else {
-                            alb_name.to_string()
-                        };
-                        let composite_id = format!("{}|{}", art, alb_id);
-
+                    if let Some(composite_id) = self.find_album_id_for_song(id) {
                         let is_collapsed = self.collapsed_albums.contains(&composite_id);
                         if (dir == LibraryNavDir::Left && !is_collapsed) || (dir == LibraryNavDir::Right && is_collapsed) {
                             albums_to_toggle.insert(composite_id);

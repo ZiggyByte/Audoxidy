@@ -1609,16 +1609,8 @@ impl AudoxidyApp {
             Message::ToggleAlbumExpansion(album_id) => {
                 self.focus = AppFocus::Library;
                 if self.library_manager.is_list_mode() {
-                    if self.library_manager.collapsed_albums.contains(&album_id) {
-                        self.library_manager.collapsed_albums.remove(&album_id);
-                    } else {
-                        self.library_manager.collapsed_albums.insert(album_id.clone());
-                    }
-                    // Limpiar selección de canción para evitar saltos, pero mantener el álbum enfocado
-                    self.library_manager.selected_song_idx = None;
-                    self.library_manager.selected_header = None;
-                    self.library_manager.selected_album = Some(album_id);
-                    self.library_manager.selected_item_hint = None; // Reset para forzar búsqueda por nombre tras cambio estructural
+                    let is_collapsed = self.library_manager.collapsed_albums.contains(&album_id);
+                    self.library_manager.set_album_collapsed(album_id, !is_collapsed);
                 } else {
                     // Flecha: toggle expansión Y seleccionar álbum (sincronizado)
                     if self.library_manager.expanded_album.as_deref() == Some(album_id.as_str()) {
@@ -1671,43 +1663,10 @@ impl AudoxidyApp {
             }
             Message::ToggleArtistExpansion(name) => {
                 self.focus = AppFocus::Library;
-                let is_collapsing = !self.library_manager.collapsed_artists.contains(&name);
-                
-                if is_collapsing {
-                    self.library_manager.collapsed_artists.insert(name.clone());
-                    
-                    // Forzar foco ÚNICAMENTE en la cabecera del artista que colapsa
-                    self.library_manager.selected_header = Some(name.clone());
-                    self.library_manager.selected_song_idx = None;
-                    self.library_manager.selected_album = None;
-                    self.library_manager.selected_item_hint = None; // Reset hint tras colapso de artista
-                    
-                    // Aseguramos que el estado de 'last_artist_header_click' se limpie para evitar dobles clics accidentales inmediatos
-                    self.last_artist_header_click = None;
-                } else {
-                    self.library_manager.collapsed_artists.remove(&name);
-                    
-                    // Al expandir, mantenemos el comportamiento de ir a la canción recordada o a la primera
-                    self.library_manager.selected_header = None;
-                    if let Some(last_song_idx) = self.library_manager.artist_last_selection.get(&name) {
-                        self.library_manager.selected_song_idx = Some(*last_song_idx);
-                    } else {
-                        // Ir a la primera canción del grupo
-                        let mut start_idx = 0;
-                        for g in &self.library_manager.artist_groups {
-                            if g.name == name {
-                                if !g.songs.is_empty() {
-                                    self.library_manager.selected_song_idx = Some(start_idx);
-                                }
-                                break;
-                            }
-                            start_idx += g.songs.len();
-                        }
-                    }
-                }
-                self.library_manager.invalidate_cache();
+                let is_collapsed = self.library_manager.collapsed_artists.contains(&name);
+                self.library_manager.set_artist_collapsed(name, !is_collapsed);
                 self.update_selection_stats();
-                self.get_library_scroll_task(is_collapsing)
+                Task::none()
             }
             Message::LibraryAllSongsLoaded(songs) => {
                 self.library_manager.cached_all_songs = Some(songs);
@@ -1859,47 +1818,16 @@ impl AudoxidyApp {
                         let (albums, artists) = self.library_manager.get_bulk_toggles(dir);
                         
                         if !albums.is_empty() || !artists.is_empty() {
-                            let mut last_item = None;
-                            let mut is_collapsing = false;
-
                             for alb_id in albums {
-                                if dir == LibraryNavDir::Left {
-                                    self.library_manager.collapsed_albums.insert(alb_id.clone());
-                                    is_collapsing = true;
-                                    
-                                    // Mover foco al álbum si estábamos en una canción o en el mismo álbum
-                                    let item = crate::gui::library::LibraryListItem::Album(alb_id.clone());
-                                    last_item = Some((item, None, Some(alb_id)));
-                                } else {
-                                    self.library_manager.collapsed_albums.remove(&alb_id);
-                                }
+                                let collapsed = dir == LibraryNavDir::Left;
+                                self.library_manager.set_album_collapsed(alb_id, collapsed);
                             }
                             for art_name in artists {
-                                if dir == LibraryNavDir::Left {
-                                    self.library_manager.collapsed_artists.insert(art_name.clone());
-                                    is_collapsing = true;
-                                    
-                                    let item = crate::gui::library::LibraryListItem::Artist(art_name.clone());
-                                    last_item = Some((item, Some(art_name), None));
-                                } else {
-                                    self.library_manager.collapsed_artists.remove(&art_name);
-                                }
+                                let collapsed = dir == LibraryNavDir::Left;
+                                self.library_manager.set_artist_collapsed(art_name, collapsed);
                             }
 
-                            if let Some((item, art_opt, alb_opt)) = last_item {
-                                self.library_manager.selected_items.clear();
-                                self.library_manager.selected_items.insert(item.clone());
-                                self.library_manager.focused_item = Some(item);
-                                self.library_manager.selected_song_idx = None;
-                                if let Some(art) = art_opt { self.library_manager.selected_header = Some(art); }
-                                if let Some(alb) = alb_opt { self.library_manager.selected_album = Some(alb); }
-                            }
-                            
-                            self.library_manager.invalidate_cache();
                             self.update_selection_stats();
-                            
-                            // Usamos force_top = false para evitar desplazamientos bruscos.
-                            // get_scroll_task usará el fallback get_visible_items ya que la caché está invalidada.
                             return self.library_manager.get_scroll_task(false);
                         }
                         return Task::none();

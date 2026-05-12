@@ -1493,7 +1493,7 @@ impl PlaylistManager {
             // Repeat one
             if let Some(idx) = self.playing_song_idx {
                 if let Some(song) = self.get_song_at_linear_index(idx) {
-                    let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
+                    let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string(), None, None);
                     audio_manager.play();
                 }
             }
@@ -1529,7 +1529,7 @@ impl PlaylistManager {
                 }
                 
                 self.playing_song_idx = Some(l_idx);
-                let _ = audio_manager.load_file(&path, title, artist);
+                let _ = audio_manager.load_file(&path, title, artist, None, None);
                 audio_manager.play();
                 return;
             } else if self.shuffle_active && self.repeat_mode == 1 {
@@ -1547,7 +1547,7 @@ impl PlaylistManager {
         let current = self.playing_song_idx.unwrap_or(usize::MAX);
         if let Some(next_idx) = self.find_next_enabled_song_internal(current) {
             if let Some(song) = self.get_song_at_linear_index(next_idx) {
-                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
+                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string(), None, None);
                 self.playing_song_idx = Some(next_idx);
                 audio_manager.play();
             }
@@ -1575,7 +1575,7 @@ impl PlaylistManager {
 
             if let Some((l_idx, path, title, artist)) = prev_song_data {
                 self.playing_song_idx = Some(l_idx);
-                let _ = audio_manager.load_file(&path, title, artist);
+                let _ = audio_manager.load_file(&path, title, artist, None, None);
                 audio_manager.play();
                 return;
             }
@@ -1604,7 +1604,7 @@ impl PlaylistManager {
 
         if let Some(idx) = prev_idx {
             if let Some(song) = self.get_song_at_linear_index(idx) {
-                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string());
+                let _ = audio_manager.load_file(&song.file_path, song.title.to_string(), song.artist_name.to_string(), None, None);
                 self.playing_song_idx = Some(idx);
                 audio_manager.play();
             }

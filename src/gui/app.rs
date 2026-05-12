@@ -382,6 +382,7 @@ impl AudoxidyApp {
         library_manager.update_data(initial_songs, initial_albums);
 
         let database_arc = Arc::new(Mutex::new(db));
+        audio_manager.set_database(database_arc.clone());
         let db_scanner = Database::new().expect("Error al inicializar la base de datos del escáner.");
         let scanner_arc = Arc::new(Scanner::new(Arc::new(Mutex::new(db_scanner))));
 
@@ -453,7 +454,8 @@ impl AudoxidyApp {
                              let artist = song.artist_name.to_string();
                              
                              playlist_manager.playing_song_idx = Some(l_idx);
-                             let _ = audio_manager.load_file(&path, title.to_string(), artist.to_string());
+                             let (tg, ag) = db_lock.get_replay_gain_by_path(&path).unwrap_or((None, None));
+                             let _ = audio_manager.load_file(&path, title.to_string(), artist.to_string(), tg, ag);
                              audio_manager.seek(p_data.last_pos_sec);
                              audio_manager.set_playing(p_data.is_playing);
                         }
@@ -533,6 +535,28 @@ impl AudoxidyApp {
         } else {
             Task::batch(tasks)
         }
+    }
+
+    /// Helper centralizado que carga un archivo de audio con sus valores de ReplayGain.
+    /// Busca track_gain y album_gain en la base de datos por ruta y los pasa al motor.
+    fn load_file_with_gains(&self, path: &str, title: impl Into<String>, artist: impl Into<String>) -> Result<(), String> {
+        let (track_gain, album_gain) = if let Ok(db) = self.database.lock() {
+            match db.get_replay_gain_by_path(path) {
+                Ok(gains) => gains,
+                Err(e) => {
+                    tracing::error!("Error consultando ReplayGain en BD: {}", e);
+                    (None, None)
+                }
+            }
+        } else {
+            (None, None)
+        };
+        
+        if track_gain.is_none() && album_gain.is_none() {
+            tracing::debug!("DB: No se encontró ReplayGain para la ruta: {}", path);
+        }
+
+        self.audio_manager.load_file(path, title, artist, track_gain, album_gain)
     }
 
     fn execute_playlist_autoscroll(&self, target_idx: usize) -> Task<Message> {
@@ -967,7 +991,7 @@ impl AudoxidyApp {
                         let s_id = song.song_id;
 
                         self.sync_player_art();
-                        if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
+                        if let Err(e) = self.load_file_with_gains(&path, title.to_string(), artist.to_string()) {
                             tracing::error!("Error reproduciendo archivo: {}", e);
                         } else {
                             self.audio_manager.play();
@@ -1360,7 +1384,7 @@ impl AudoxidyApp {
                                 self.playlist_manager.selected_idxs.insert(l_idx);
                                 self.playlist_manager.selection_pivot = Some(l_idx);
 
-                                let _ = self.audio_manager.load_file(&path, title.to_string(), artist.to_string());
+                                let _ = self.load_file_with_gains(&path, title.to_string(), artist.to_string());
                                 self.audio_manager.seek(last_pos);
                                 self.audio_manager.set_playing(is_playing_needed);
                                 self.sync_player_art();
@@ -1636,25 +1660,51 @@ impl AudoxidyApp {
                         self.library_manager.selected_items.insert(item.clone());
                         self.library_manager.focused_item = Some(item);
 
-                        // Unificado: En lugar de ir a la DB, filtramos de los datos cargados en memoria
-                        // Esto garantiza que veamos EXACTAMENTE lo mismo que en las listas
-                        if let Some(all_songs) = &self.library_manager.cached_all_songs {
-                            if let Some(album_entry) = self.library_manager.cached_albums.as_ref().and_then(|all| 
-                                all.iter().find(|a| (format!("{}|{}", a.artist, a.id) == album_id) || (a.id == album_id))
-                            ) {
-                                let mut alb_songs: Vec<_> = all_songs.iter()
-                                    .filter(|s| {
-                                        let s_alb = s.album.as_deref().unwrap_or("Desconocido");
-                                        let s_art = crate::utils::get_effective_artist(s);
-                                        s_alb == album_entry.title && s_art == album_entry.artist
-                                    })
-                                    .cloned()
-                                    .collect();
-                                
-                                self.library_manager.sort_songs(&mut alb_songs);
-                                self.library_manager.expanded_album_songs = Some(alb_songs);
+                        // Unificado: En lugar de ir a la DB, intentamos filtrar de los datos en RAM.
+                        // Pero si los datos fueron descargados por el GC (data_unloaded), forzamos carga desde DB.
+                        let mut alb_songs = Vec::new();
+                        let mut found_in_cache = false;
+
+                        if !self.library_manager.data_unloaded {
+                            if let Some(all_songs) = &self.library_manager.cached_all_songs {
+                                if let Some(album_entry) = self.library_manager.cached_albums.as_ref().and_then(|all| 
+                                    all.iter().find(|a| (format!("{}|{}", a.artist, a.id) == album_id) || (a.id == album_id))
+                                ) {
+                                    alb_songs = all_songs.iter()
+                                        .filter(|s| {
+                                            let s_alb = s.album.as_deref().unwrap_or("Desconocido");
+                                            let s_art = crate::utils::get_effective_artist(s);
+                                            s_alb == album_entry.title && s_art == album_entry.artist
+                                        })
+                                        .cloned()
+                                        .collect();
+                                    
+                                    if !alb_songs.is_empty() {
+                                        found_in_cache = true;
+                                    }
+                                }
                             }
                         }
+
+                        // Fallback a Base de Datos: Si no está en caché o el GC limpió la RAM
+                        if !found_in_cache {
+                            if let Some(pos) = album_id.find('|') {
+                                let artist = &album_id[..pos];
+                                let hash = &album_id[pos+1..];
+                                if let Ok(db) = self.database.lock() {
+                                    if let Ok(songs) = db.get_songs_by_album_and_artist(hash, artist) {
+                                        alb_songs = songs;
+                                    }
+                                }
+                            } else if let Ok(db) = self.database.lock() {
+                                if let Ok(songs) = db.get_songs_by_album(album_id.as_str()) {
+                                    alb_songs = songs;
+                                }
+                            }
+                        }
+                        
+                        self.library_manager.sort_songs(&mut alb_songs);
+                        self.library_manager.expanded_album_songs = Some(alb_songs);
                     }
                 }
                 self.library_manager.invalidate_cache();
@@ -1925,7 +1975,7 @@ impl AudoxidyApp {
                                     let artist = song.artist_name.to_string();
 
                                     self.sync_player_art();
-                                    if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
+                                    if let Err(e) = self.load_file_with_gains(&path, title.to_string(), artist.to_string()) {
                                         tracing::error!("Error reproducidendo archivo con Enter: {}", e);
                                     } else {
                                         self.audio_manager.set_playing(true);
@@ -2088,7 +2138,7 @@ impl AudoxidyApp {
                         let s_id = song.song_id;
 
                         self.sync_player_art();
-                        if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist.to_string()) {
+                        if let Err(e) = self.load_file_with_gains(&path, title.to_string(), artist.to_string()) {
                             tracing::error!("Error reproduciendo archivo de playlist: {}", e);
                         } else {
                             self.audio_manager.play();
@@ -2173,7 +2223,7 @@ impl AudoxidyApp {
                             let artist = song.artist_name.to_string();
 
                             self.sync_player_art();
-                            if let Err(e) = self.audio_manager.load_file(&path, title.to_string(), artist) {
+                            if let Err(e) = self.load_file_with_gains(&path, title.to_string(), artist) {
                                 tracing::error!("Error reproduciendo archivo: {}", e);
                             } else {
                                 self.audio_manager.play();

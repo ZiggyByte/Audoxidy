@@ -15,7 +15,6 @@ audioadapter-sample = "2.0.0"
 audioadapter-buffers = "2.0.0"
 rustfft = "6.4.1"
 hrtf = "0.8.1"
-dasp = { version = "0.11.0", features = ["signal", "interpolate", "interpolate-linear", "ring_buffer"] }
 ringbuf = "0.4.8"
 souvlaki = "0.7.3" # Media Controls (MPRIS/SMTC)
 

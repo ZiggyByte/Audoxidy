@@ -4,6 +4,7 @@ use parking_lot::RwLock;
 
 pub struct AudioManager {
     engine: AudioEngine,
+    database: Arc<parking_lot::Mutex<Option<Arc<std::sync::Mutex<crate::db::Database>>>>>,
 }
 
 #[allow(dead_code)]
@@ -14,7 +15,12 @@ impl AudioManager {
         
         Ok(Self {
             engine,
+            database: Arc::new(parking_lot::Mutex::new(None)),
         })
+    }
+
+    pub fn set_database(&self, db: Arc<std::sync::Mutex<crate::db::Database>>) {
+        *self.database.lock() = Some(db);
     }
 
     pub fn state(&self) -> Arc<RwLock<AudioState>> {
@@ -59,8 +65,23 @@ impl AudioManager {
         self.engine.state.write().eof_reached = false;
     }
 
-    pub fn load_file(&self, path: &str, title: impl Into<String>, artist: impl Into<String>) -> Result<(), String> {
-        self.engine.decode_file(path, title.into(), artist.into())
+    pub fn load_file(&self, path: &str, title: impl Into<String>, artist: impl Into<String>, track_gain: Option<f64>, album_gain: Option<f64>) -> Result<(), String> {
+        let (mut tg, mut ag) = (track_gain, album_gain);
+        
+        // Si no se pasaron ganancias (ej. desde el módulo Playlist), intentamos buscarlas nosotros en la BD
+        if tg.is_none() && ag.is_none() {
+            if let Some(db_arc) = &*self.database.lock() {
+                // Usamos try_lock para evitar Deadlocks si el llamador ya tiene la BD bloqueada (ej. en el inicio de la App)
+                if let Ok(db) = db_arc.try_lock() {
+                    if let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path) {
+                        tg = db_tg;
+                        ag = db_ag;
+                    }
+                }
+            }
+        }
+
+        self.engine.decode_file(path, title.into(), artist.into(), tg, ag)
     }
 
     pub fn set_volume(&self, volume: f32) {

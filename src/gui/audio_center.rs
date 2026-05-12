@@ -23,6 +23,7 @@ pub enum AudioCenterMessage {
     ApplySettings,
     RestartService,
     Close,
+    AutoUpsampleToggled(bool),
     EqToggleSelected(bool),
     EqBandsSelected(bool), // true = 31, false = 20
     EqPreampChanged(f32),
@@ -100,6 +101,7 @@ pub struct AudioCenterManager {
     pub selected_preset: Option<crate::audio::preset::EqPreset>,
     
     pub first_open: bool,
+    pub auto_upsample: bool,
 }
 
 impl Default for AudioCenterManager {
@@ -129,6 +131,7 @@ impl Default for AudioCenterManager {
             selected_preset: None,
             
             first_open: true,
+            auto_upsample: false,
         }
     }
 }
@@ -144,6 +147,7 @@ impl AudioCenterManager {
         self.selected_sample_rate = Some(state_read.sample_rate);
         self.selected_buffer_size = if state_read.buffer_size > 0 { Some(state_read.buffer_size) } else { None };
         self.selected_channels_manual = state_read.channels;
+        self.auto_upsample = state_read.auto_upsample;
         
         // Eq Sync
         // Presets are now initialized in default(), but we might want to select one if active
@@ -246,6 +250,7 @@ impl AudioCenterManager {
                     bit_depth: Some(self.selected_bit_depth.clone()),
                     channels: ChannelConfig::Manual(self.selected_channels_manual),
                     buffer_size: self.selected_buffer_size,
+                    auto_upsample: self.auto_upsample,
                 };
                 let _ = audio_manager.apply_audio_settings(settings);
                 self.apply_enabled = false;
@@ -260,6 +265,10 @@ impl AudioCenterManager {
             }
             AudioCenterMessage::Close => {
                 self.open = false;
+            }
+            AudioCenterMessage::AutoUpsampleToggled(enabled) => {
+                self.auto_upsample = enabled;
+                self.apply_enabled = true;
             }
             AudioCenterMessage::EqToggleSelected(b) => {
                 self.equalizer_enabled = b;
@@ -471,6 +480,11 @@ fn view_audio_config<'a>(
         row![container(text("Profundidad de Bits:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), bit_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Canales de Salida:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), ch_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Quantum (Buffer):").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), buffer_dropdown].align_y(Alignment::Center).spacing(10),
+        row![
+            container(text("Upsampling Automático:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)),
+            checkbox(manager.auto_upsample).on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b))),
+            text("Alta fidelidad (reconstrucción FFT)").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
+        ].align_y(Alignment::Center).spacing(10),
     ].spacing(20);
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente

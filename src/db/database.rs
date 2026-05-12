@@ -569,6 +569,19 @@ impl Database {
         ).optional()
     }
 
+    /// Obtiene los valores de ReplayGain (track_gain, album_gain) por ruta de archivo.
+    /// Consulta eficiente con JOIN directo (evita dos queries separadas).
+    pub fn get_replay_gain_by_path(&self, path: &str) -> Result<(Option<f64>, Option<f64>)> {
+        self.conn.prepare_cached(
+            "SELECT m.track_gain, m.album_gain
+             FROM SONGS s
+             JOIN SONG_METADATA m ON m.song_id = s.id
+             WHERE s.file_path = ?1"
+        )?.query_row([path], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        }).optional().map(|opt| opt.unwrap_or((None, None)))
+    }
+
     // --- Métodos de Transacción ---
 
     pub fn begin_transaction(&self) -> Result<()> {

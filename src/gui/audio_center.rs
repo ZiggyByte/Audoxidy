@@ -769,7 +769,7 @@ fn view_audio_effects<'a>(
     ].spacing(15).width(Length::FillPortion(1));
 
     let col2 = column![
-        view_effect("Refuerzo de Graves", "Nivel (dB)", mid_bass_gain, -4.0..=18.0, mid_bass_enabled, 0.0,
+        view_effect("Refuerzo de Graves", "Nivel (dB)", mid_bass_gain, -4.0..=15.0, mid_bass_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::MidBass, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::MidBass, v)),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::MidBass, 0.0))),
@@ -795,7 +795,7 @@ fn view_audio_effects<'a>(
     ].spacing(15).width(Length::FillPortion(1));
 
     let col3 = column![
-        view_effect("Refuerzo de Voces", "Nivel (dB)", voice_boost_gain, -4.0..=15.0, voice_boost_enabled, 0.0,
+        view_effect("Refuerzo de Voces", "Nivel (dB)", voice_boost_gain, -4.0..=13.0, voice_boost_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::VoiceBoost, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, v)),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, 0.0))),

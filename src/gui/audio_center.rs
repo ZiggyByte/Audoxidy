@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, text, Space},
+    widget::{button, checkbox, column, container, pick_list, row, slider, text, toggler, Space},
     Alignment, Color, Element, Length, Rectangle, Theme,
 };
 use std::sync::Arc;
@@ -35,6 +35,7 @@ pub enum AudioCenterMessage {
     DspValueChanged(DspEffect, f32),
     AudioStateToggle(AudioStateToggle, bool),
     AudioStateValueChanged(AudioStateToggle, f32),
+    StereoExpanderModeToggled(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -355,6 +356,15 @@ impl AudioCenterManager {
                     AudioStateToggle::DownmixSurround => state.downmix_surround = val,
                 }
             }
+            AudioCenterMessage::StereoExpanderModeToggled(is_surround) => {
+                audio_manager.with_dsp_mut(|dsp| {
+                    dsp.stereo_expander.mode = if is_surround { 
+                        crate::audio::dsp::ExpanderMode::Surround 
+                    } else { 
+                        crate::audio::dsp::ExpanderMode::Hybrid 
+                    };
+                });
+            }
         }
     }
 }
@@ -669,6 +679,7 @@ fn view_audio_effects<'a>(
         on_toggle: impl Fn(bool) -> crate::gui::app::Message + 'a,
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
         on_reset: crate::gui::app::Message,
+        extra_widget: Option<Element<'a, crate::gui::app::Message>>,
     ) -> Element<'a, crate::gui::app::Message> {
         
         let stroke_color = if enabled { COLOR_ACCENT } else { COLOR_CONTRAST };
@@ -676,6 +687,8 @@ fn view_audio_effects<'a>(
         // Cabecera con Checkbox Custom (Mock por nativo por ahora)
         let top_row = row![
             text(title).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(10.0)),
+            if let Some(w) = extra_widget { w } else { Space::new().into() },
             Space::new().width(Length::Fill),
             checkbox(enabled).on_toggle(on_toggle)
         ].align_y(Alignment::Center);
@@ -724,6 +737,7 @@ fn view_audio_effects<'a>(
         compressor_enabled, compressor_threshold,
         limiter_enabled, limiter_ceiling,
         reverb_enabled, reverb_wet,
+        stereo_expander_mode,
     ) = audio_manager.with_dsp(|dsp| {
         (
             dsp.sub_bass.enabled, dsp.sub_bass.gain,
@@ -735,6 +749,7 @@ fn view_audio_effects<'a>(
             dsp.compressor.enabled, dsp.compressor.threshold,
             dsp.limiter.enabled, dsp.limiter.ceiling,
             dsp.reverb.enabled, dsp.reverb.wet,
+            dsp.stereo_expander.mode,
         )
     });
     
@@ -746,17 +761,20 @@ fn view_audio_effects<'a>(
         view_effect("Refuerzo de Sub-Graves", "Nivel (dB)", sub_bass_gain, -4.0..=24.0, sub_bass_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::SubBass, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::SubBass, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::SubBass, 0.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::SubBass, 0.0)),
+            None),
             
         view_effect("Reducción de Ruido", "Umbral (dB)", noise_gate_threshold, -85.0..=-10.0, noise_gate_enabled, -60.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::NoiseGate, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::NoiseGate, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::NoiseGate, -60.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::NoiseGate, -60.0)),
+            None),
             
         view_effect("Compresor", "Umbral (dB)", compressor_threshold, -40.0..=0.0, compressor_enabled, -10.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::Compressor, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Compressor, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Compressor, -10.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Compressor, -10.0)),
+            None),
             
         container(Space::new().height(Length::Fixed(15.0))),
         text("Volumen Canal Central").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
@@ -764,7 +782,8 @@ fn view_audio_effects<'a>(
         view_effect("Canal Central", "Nivel (%)", audio_s.downmix_center, 0.0..=2.0, audio_s.downmix_center_enabled, 0.81,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixCenter, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixCenter, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixCenter, 0.81)))
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixCenter, 0.81)),
+            None)
         
     ].spacing(15).width(Length::FillPortion(1));
 
@@ -772,17 +791,26 @@ fn view_audio_effects<'a>(
         view_effect("Refuerzo de Graves", "Nivel (dB)", mid_bass_gain, -4.0..=15.0, mid_bass_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::MidBass, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::MidBass, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::MidBass, 0.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::MidBass, 0.0)),
+            None),
             
         view_effect("Expansor Estéreo", "Ancho (%)", stereo_expander_width * 100.0, 0.0..=260.0, stereo_expander_enabled, 100.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::StereoExpander, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoExpander, v / 100.0)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoExpander, 1.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoExpander, 1.0)),
+            Some(row![
+                text("Híbrido").size(10).color(COLOR_TEXT_SECONDARY),
+                toggler(stereo_expander_mode == crate::audio::dsp::ExpanderMode::Surround)
+                    .size(14)
+                    .on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::StereoExpanderModeToggled(b))),
+                text("Surround").size(10).color(COLOR_TEXT_SECONDARY),
+            ].spacing(5).align_y(Alignment::Center).into())),
             
         view_effect("Limitador", "Techo (dB)", limiter_ceiling, -12.0..=0.0, limiter_enabled, -6.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::Limiter, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Limiter, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Limiter, -6.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Limiter, -6.0)),
+            None),
 
         container(Space::new().height(Length::Fixed(15.0))),
         text("Volumen Subwoofer (Mezcla > 5.1)").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
@@ -790,7 +818,8 @@ fn view_audio_effects<'a>(
         view_effect("Canal de Subwoofer", "Nivel (%)", audio_s.downmix_lfe, 0.0..=2.0, audio_s.downmix_lfe_enabled, 0.66,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixLfe, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixLfe, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixLfe, 0.66)))
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixLfe, 0.66)),
+            None)
             
     ].spacing(15).width(Length::FillPortion(1));
 
@@ -798,17 +827,20 @@ fn view_audio_effects<'a>(
         view_effect("Refuerzo de Voces", "Nivel (dB)", voice_boost_gain, -4.0..=13.0, voice_boost_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::VoiceBoost, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, 0.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, 0.0)),
+            None),
             
         view_effect("Balance Estéreo", "L/R", stereo_balance_balance, -1.0..=1.0, stereo_balance_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::StereoBalance, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoBalance, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoBalance, 0.0))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoBalance, 0.0)),
+            None),
             
         view_effect("Reverberación", "Nivel / Wet", reverb_wet, 0.0..=1.0, reverb_enabled, 0.5,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::Reverb, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, 0.5))),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, 0.5)),
+            None),
             
         container(Space::new().height(Length::Fixed(15.0))),
         text("Volumen Surround (SL/SR SBL/SBR)").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
@@ -816,7 +848,8 @@ fn view_audio_effects<'a>(
         view_effect("Canales Surround", "Nivel (%)", audio_s.downmix_surround, 0.0..=2.0, audio_s.downmix_surround_enabled, 0.73,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixSurround, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixSurround, v)),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixSurround, 0.73)))
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixSurround, 0.73)),
+            None)
             
     ].spacing(15).width(Length::FillPortion(1));
 

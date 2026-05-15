@@ -932,10 +932,51 @@ impl VoiceBoost {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpanderMode {
+    Hybrid,
+    Surround,
+}
+
 #[derive(Clone)]
-pub struct MultiBandStereoExpander { 
-    pub enabled: bool, 
-    pub width: f32,
+pub struct StereoExpanderHybrid {
+    // Crossover 1: 250Hz (Low vs MidHigh)
+    low_lp1: BiquadFilter, low_lp2: BiquadFilter,
+    low_hp1: BiquadFilter, low_hp2: BiquadFilter,
+    // Crossover 2: 5000Hz (Mid vs High)
+    mid_lp1: BiquadFilter, mid_lp2: BiquadFilter,
+    mid_hp1: BiquadFilter, mid_hp2: BiquadFilter,
+    // Air Boost for Side Channel
+    high_shelf_side: BiquadFilter,
+    // Decorrelators for High Side channel (Natural texture)
+    side_ap1: AllPassFilter,
+    side_ap2: AllPassFilter,
+    sample_rate: f32,
+}
+
+impl StereoExpanderHybrid {
+    pub fn new() -> Self {
+        let sr = 44100.0;
+        let q = 0.7071; // Butterworth Q for LR4 stages
+        Self {
+            low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
+            low_lp2: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
+            low_hp1: BiquadFilter::new(BiquadFilterType::HighPass, 250.0, 0.0, q),
+            low_hp2: BiquadFilter::new(BiquadFilterType::HighPass, 250.0, 0.0, q),
+            mid_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 5000.0, 0.0, q),
+            mid_lp2: BiquadFilter::new(BiquadFilterType::LowPass, 5000.0, 0.0, q),
+            mid_hp1: BiquadFilter::new(BiquadFilterType::HighPass, 5000.0, 0.0, q),
+            mid_hp2: BiquadFilter::new(BiquadFilterType::HighPass, 5000.0, 0.0, q),
+            high_shelf_side: BiquadFilter::new(BiquadFilterType::HighShelf, 8000.0, 0.0, 0.5), // Frecuencia más alta para "Aire" puro
+            side_ap1: AllPassFilter::new(225), // Delay corto para textura
+            side_ap2: AllPassFilter::new(556), // Delay medio para profundidad
+            sample_rate: sr,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct StereoExpanderSurround {
     // Crossover 1: 250Hz (Low vs MidHigh)
     low_lp1: BiquadFilter, low_lp2: BiquadFilter,
     low_hp1: BiquadFilter, low_hp2: BiquadFilter,
@@ -950,17 +991,15 @@ pub struct MultiBandStereoExpander {
     // Decorrelators for High Side channel (Natural texture/Air)
     side_ap1: AllPassFilter,
     side_ap2: AllPassFilter,
-    side_ap3: AllPassFilter, // Tercera etapa para mayor suavidad
+    side_ap3: AllPassFilter, 
     sample_rate: f32,
 }
 
-impl Default for MultiBandStereoExpander { 
-    fn default() -> Self { 
+impl StereoExpanderSurround {
+    pub fn new() -> Self {
         let sr = 44100.0;
-        let q = 0.7071; // Butterworth Q for LR4 stages
-        Self { 
-            enabled: false, 
-            width: 1.0,
+        let q = 0.7071;
+        Self {
             low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
             low_lp2: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
             low_hp1: BiquadFilter::new(BiquadFilterType::HighPass, 250.0, 0.0, q),
@@ -976,32 +1015,66 @@ impl Default for MultiBandStereoExpander {
             side_ap2: AllPassFilter::new(337),
             side_ap3: AllPassFilter::new(557),
             sample_rate: sr,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct MultiBandStereoExpander { 
+    pub enabled: bool, 
+    pub width: f32,
+    pub mode: ExpanderMode,
+    hybrid: StereoExpanderHybrid,
+    surround: StereoExpanderSurround,
+}
+
+impl Default for MultiBandStereoExpander { 
+    fn default() -> Self { 
+        Self { 
+            enabled: false, 
+            width: 1.0,
+            mode: ExpanderMode::Hybrid,
+            hybrid: StereoExpanderHybrid::new(),
+            surround: StereoExpanderSurround::new(),
         } 
     } 
 }
 
 impl MultiBandStereoExpander {
     pub fn set_sample_rate(&mut self, rate: f32) {
-        self.sample_rate = rate;
-        self.low_lp1.set_sample_rate(rate); self.low_lp2.set_sample_rate(rate);
-        self.low_hp1.set_sample_rate(rate); self.low_hp2.set_sample_rate(rate);
-        self.mid_lp1.set_sample_rate(rate); self.mid_lp2.set_sample_rate(rate);
-        self.mid_hp1.set_sample_rate(rate); self.mid_hp2.set_sample_rate(rate);
-        self.high_shelf_side.set_sample_rate(rate);
+        self.hybrid.sample_rate = rate;
+        self.hybrid.low_lp1.set_sample_rate(rate); self.hybrid.low_lp2.set_sample_rate(rate);
+        self.hybrid.low_hp1.set_sample_rate(rate); self.hybrid.low_hp2.set_sample_rate(rate);
+        self.hybrid.mid_lp1.set_sample_rate(rate); self.hybrid.mid_lp2.set_sample_rate(rate);
+        self.hybrid.mid_hp1.set_sample_rate(rate); self.hybrid.mid_hp2.set_sample_rate(rate);
+        self.hybrid.high_shelf_side.set_sample_rate(rate);
         // Los AllPass ya se ajustan internamente o tienen tamaños fijos pequeños para textura
+        self.surround.sample_rate = rate;
+        self.surround.low_lp1.set_sample_rate(rate); self.surround.low_lp2.set_sample_rate(rate);
+        self.surround.low_hp1.set_sample_rate(rate); self.surround.low_hp2.set_sample_rate(rate);
+        self.surround.mid_lp1.set_sample_rate(rate); self.surround.mid_lp2.set_sample_rate(rate);
+        self.surround.mid_hp1.set_sample_rate(rate); self.surround.mid_hp2.set_sample_rate(rate);
+        self.surround.high_shelf_side.set_sample_rate(rate);
     }
 
     pub fn process(&mut self, frame: &mut [f64]) {
         if frame.len() != 2 || self.width == 1.0 { return; }
         
+        match self.mode {
+            ExpanderMode::Hybrid => self.process_hybrid(frame),
+            ExpanderMode::Surround => self.process_surround(frame),
+        }
+    }
+
+    fn process_hybrid(&mut self, frame: &mut [f64]) {
         let mut low_band = [frame[0], frame[1]];
         let mut mid_high_band = [frame[0], frame[1]];
         
         // 1. Separar Low (< 250Hz)
-        self.low_lp1.process_frame(&mut low_band);
-        self.low_lp2.process_frame(&mut low_band);
-        self.low_hp1.process_frame(&mut mid_high_band);
-        self.low_hp2.process_frame(&mut mid_high_band);
+        self.hybrid.low_lp1.process_frame(&mut low_band);
+        self.hybrid.low_lp2.process_frame(&mut low_band);
+        self.hybrid.low_hp1.process_frame(&mut mid_high_band);
+        self.hybrid.low_hp2.process_frame(&mut mid_high_band);
         
         // El Low se fuerza a Mono para mantener el punch
         // Compensamos con un ligero boost (+1.0dB) para recuperar presencia
@@ -1013,22 +1086,13 @@ impl MultiBandStereoExpander {
         let mut mid_band = [mid_high_band[0], mid_high_band[1]];
         let mut high_band = [mid_high_band[0], mid_high_band[1]];
         
-        self.mid_lp1.process_frame(&mut mid_band);
-        self.mid_lp2.process_frame(&mut mid_band);
-        self.mid_hp1.process_frame(&mut high_band);
-        self.mid_hp2.process_frame(&mut high_band);
+        self.hybrid.mid_lp1.process_frame(&mut mid_band);
+        self.hybrid.mid_lp2.process_frame(&mut mid_band);
+        self.hybrid.mid_hp1.process_frame(&mut high_band);
+        self.hybrid.mid_hp2.process_frame(&mut high_band);
         
+        // 3. Procesar Mid Band (Expansión moderada)
         self.expand_band(&mut mid_band, self.width as f64);
-        
-        // Aplicar Inmersión a la banda Media (Side channel only)
-        let m_mid = (mid_band[0] + mid_band[1]) * 0.5;
-        let mut m_side = (mid_band[0] - mid_band[1]) * 0.5;
-        
-        m_side = self.mid_ap1.process(m_side);
-        m_side = self.mid_ap2.process(m_side);
-        
-        mid_band[0] = m_mid + m_side;
-        mid_band[1] = m_mid - m_side;
         
         // 4. Procesar High Band (Expansión suave + Air Boost)
         let high_width = (self.width as f64 - 1.0) * 0.8 + 1.0; // Reducida agresividad para mayor naturalidad
@@ -1037,27 +1101,88 @@ impl MultiBandStereoExpander {
         // Aplicar Air Boost y Decorrelación solo al canal Side de la banda alta
         let h_mid = (high_band[0] + high_band[1]) * 0.5;
         let mut h_side_val = (high_band[0] - high_band[1]) * 0.5;
-        
-        // 1. Decorrelación de fase multinivel (Inmersión cristalina)
-        h_side_val = self.side_ap1.process(h_side_val);
-        h_side_val = self.side_ap2.process(h_side_val);
-        h_side_val = self.side_ap3.process(h_side_val);
+
+        // 1. Decorrelación de fase (textura orgánica)
+        h_side_val = self.hybrid.side_ap1.process(h_side_val);
+        h_side_val = self.hybrid.side_ap2.process(h_side_val);
         
         let mut h_side_buf = [h_side_val, 0.0];
         
         let air_gain = ((self.width - 1.0) * 1.5).clamp(0.0, 2.0); // 2db de air boost (Refinado)
         if air_gain > 0.0 {
-            self.high_shelf_side.gain = air_gain;
-            self.high_shelf_side.update_coefficients(self.sample_rate);
-            self.high_shelf_side.process_frame(&mut h_side_buf);
+            // Solo actualizamos coeficientes si la ganancia cambió, para evitar zumbidos (Zipper Noise)
+            if (self.hybrid.high_shelf_side.gain - air_gain).abs() > 0.001 {
+                self.hybrid.high_shelf_side.gain = air_gain;
+                self.hybrid.high_shelf_side.update_coefficients(self.hybrid.sample_rate);
+            }
+            self.hybrid.high_shelf_side.process_frame(&mut h_side_buf);
         }
         
         high_band[0] = h_mid + h_side_buf[0];
         high_band[1] = h_mid - h_side_buf[0];
         
+        frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90; 
+        frame[1] = low_band[1] + mid_band[1] + high_band[1] * 0.90;
+    }
+
+    fn process_surround(&mut self, frame: &mut [f64]) {
+        let mut low_band = [frame[0], frame[1]];
+        let mut mid_high_band = [frame[0], frame[1]];
+
+        self.surround.low_lp1.process_frame(&mut low_band);
+        self.surround.low_lp2.process_frame(&mut low_band);
+        self.surround.low_hp1.process_frame(&mut mid_high_band);
+        self.surround.low_hp2.process_frame(&mut mid_high_band);
+
+        let low_mono = (low_band[0] + low_band[1]) * 0.5 * 1.0_f64;
+        low_band[0] = low_mono;
+        low_band[1] = low_mono;
+
+        let mut mid_band = [mid_high_band[0], mid_high_band[1]];
+        let mut high_band = [mid_high_band[0], mid_high_band[1]];
+
+        self.surround.mid_lp1.process_frame(&mut mid_band);
+        self.surround.mid_lp2.process_frame(&mut mid_band);
+        self.surround.mid_hp1.process_frame(&mut high_band);
+        self.surround.mid_hp2.process_frame(&mut high_band);
+
+        self.expand_band(&mut mid_band, self.width as f64);
+
+        let m_mid = (mid_band[0] + mid_band[1]) * 0.5;
+        let mut m_side = (mid_band[0] - mid_band[1]) * 0.5;
+        m_side = self.surround.mid_ap1.process(m_side);
+        m_side = self.surround.mid_ap2.process(m_side);
+        mid_band[0] = m_mid + m_side;
+        mid_band[1] = m_mid - m_side;
+
+        let high_width = (self.width as f64 - 1.0) * 0.8 + 1.0; 
+        self.expand_band(&mut high_band, high_width);
+
+        let h_mid = (high_band[0] + high_band[1]) * 0.5;
+        let mut h_side_val = (high_band[0] - high_band[1]) * 0.5;
+
+        h_side_val = self.surround.side_ap1.process(h_side_val);
+        h_side_val = self.surround.side_ap2.process(h_side_val);
+        h_side_val = self.surround.side_ap3.process(h_side_val);
+
+        let mut h_side_buf = [h_side_val, 0.0];
+
+        let air_gain = ((self.width - 1.0) * 1.5).clamp(0.0, 2.0); 
+        if air_gain > 0.0 {
+            // Solo actualizamos coeficientes si la ganancia cambió, para evitar zumbidos (Zipper Noise)
+            if (self.surround.high_shelf_side.gain - air_gain).abs() > 0.001 {
+                self.surround.high_shelf_side.gain = air_gain;
+                self.surround.high_shelf_side.update_coefficients(self.surround.sample_rate);
+            }
+            self.surround.high_shelf_side.process_frame(&mut h_side_buf);
+        }
+
+        high_band[0] = h_mid + h_side_buf[0];
+        high_band[1] = h_mid - h_side_buf[0];
+        
         // 5. Recombinar todas las bandas con equilibrio tonal optimizado
         // Aplicamos una ligerísima atenuación en agudos para que se sientan "dentro" de la escena
-        frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90; 
+        frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90;
         frame[1] = low_band[1] + mid_band[1] + high_band[1] * 0.90;
     }
 
@@ -1069,16 +1194,24 @@ impl MultiBandStereoExpander {
     }
 
     pub fn reset_state(&mut self) { 
-        self.low_lp1.reset_state(); self.low_lp2.reset_state();
-        self.low_hp1.reset_state(); self.low_hp2.reset_state();
-        self.mid_lp1.reset_state(); self.mid_lp2.reset_state();
-        self.mid_hp1.reset_state(); self.mid_hp2.reset_state();
-        self.high_shelf_side.reset_state();
-        self.mid_ap1.reset();
-        self.mid_ap2.reset();
-        self.side_ap1.reset();
-        self.side_ap2.reset();
-        self.side_ap3.reset();
+        self.hybrid.low_lp1.reset_state(); self.hybrid.low_lp2.reset_state();
+        self.hybrid.low_hp1.reset_state(); self.hybrid.low_hp2.reset_state();
+        self.hybrid.mid_lp1.reset_state(); self.hybrid.mid_lp2.reset_state();
+        self.hybrid.mid_hp1.reset_state(); self.hybrid.mid_hp2.reset_state();
+        self.hybrid.high_shelf_side.reset_state();
+        self.hybrid.side_ap1.reset();
+        self.hybrid.side_ap2.reset();
+
+        self.surround.low_lp1.reset_state(); self.surround.low_lp2.reset_state();
+        self.surround.low_hp1.reset_state(); self.surround.low_hp2.reset_state();
+        self.surround.mid_lp1.reset_state(); self.surround.mid_lp2.reset_state();
+        self.surround.mid_hp1.reset_state(); self.surround.mid_hp2.reset_state();
+        self.surround.high_shelf_side.reset_state();
+        self.surround.mid_ap1.reset();
+        self.surround.mid_ap2.reset();
+        self.surround.side_ap1.reset();
+        self.surround.side_ap2.reset();
+        self.surround.side_ap3.reset();
     }
 }
 

@@ -231,7 +231,7 @@ pub enum Message {
     FilterScroll(iced::widget::scrollable::Viewport),
 
     // Audio Center
-    ToggleAudioCenter,
+    ToggleAudioCenter(Option<usize>),
     AudioCenterMsg(AudioCenterMessage),
 
     // Player Módulo 1
@@ -409,6 +409,39 @@ impl AudoxidyApp {
 
         let mut playlist_manager = PlaylistManager::default();
         if let Ok(db_lock) = database_arc.lock() {
+            // 0. Cargar persistencia de ajustes de audio del reproductor
+            let host_id = db_lock.get_setting("audio_host").filter(|s| !s.is_empty());
+            let device_name = db_lock.get_setting("audio_device").filter(|s| !s.is_empty());
+            let sample_rate = db_lock.get_setting("audio_sample_rate")
+                .and_then(|s| if s == "auto" { None } else { s.parse::<u32>().ok() });
+            let bit_depth = db_lock.get_setting("audio_bit_depth")
+                .and_then(|s| match s.as_str() {
+                    "16" => Some(crate::audio::engine::BitDepth::Bits16),
+                    "24" => Some(crate::audio::engine::BitDepth::Bits24),
+                    "32" => Some(crate::audio::engine::BitDepth::Bits32Float),
+                    _ => None,
+                });
+            let channels_val = db_lock.get_setting("audio_channels")
+                .and_then(|s| s.parse::<u16>().ok());
+            let buffer_size = db_lock.get_setting("audio_buffer_size")
+                .and_then(|s| if s == "auto" { None } else { s.parse::<u32>().ok() });
+            let auto_upsample = db_lock.get_setting("audio_auto_upsample")
+                .map(|s| s == "true")
+                .unwrap_or(false);
+
+            if host_id.is_some() || device_name.is_some() || sample_rate.is_some() || bit_depth.is_some() || buffer_size.is_some() || auto_upsample {
+                let settings = crate::audio::engine::AudioSettings {
+                    host_id,
+                    device_name,
+                    sample_rate,
+                    bit_depth,
+                    channels: crate::audio::engine::ChannelConfig::Manual(channels_val.unwrap_or(2)),
+                    buffer_size,
+                    auto_upsample,
+                };
+                let _ = audio_manager.apply_audio_settings(settings);
+            }
+
             // 1. Cargar última playlist activa
             if let Some(last_id_str) = db_lock.get_setting("last_active_playlist_id") {
                 if let Ok(last_id) = last_id_str.parse::<i64>() {
@@ -609,7 +642,7 @@ impl AudoxidyApp {
             Message::GlobalClick | Message::GlobalKeyDown(..) | Message::GlobalMouseRelease | 
             Message::PlayerMouseMoved(..) | Message::PlayerScroll(..) | Message::WindowResized(..) |
             Message::OpenFolderPicker | Message::OpenPlaylistFilePicker | Message::ToggleMenu | 
-            Message::ToggleAudioCenter | Message::ToggleLyrics => {
+            Message::ToggleAudioCenter(..) | Message::ToggleLyrics => {
                 crate::utils::memory_manager::MemoryManager::register_activity();
             }
             // Los demás mensajes (Tick, NoOp, Mensajes internos del Player, etc.) NO cuentan como actividad
@@ -2926,15 +2959,42 @@ impl AudoxidyApp {
                 self.filters_manager.scroll_offset = iced::Vector::new(0.0, 0.0);
                 scroll_to(crate::gui::library_filters::FILTERS_SCROLL_ID.clone(), iced::widget::operation::AbsoluteOffset { x: 0.0, y: 0.0 })
             }
-            Message::ToggleAudioCenter => {
-                self.audio_center_manager.open = !self.audio_center_manager.open;
-                if self.audio_center_manager.open && self.audio_center_manager.first_open {
-                    self.audio_center_manager.sync_from_engine(&self.audio_manager);
-                    self.audio_center_manager.first_open = false;
+            Message::ToggleAudioCenter(opt_tab) => {
+                if let Some(tab_idx) = opt_tab {
+                    if self.audio_center_manager.open && self.audio_center_manager.selected_tab == tab_idx {
+                        // Si ya está abierto en la misma pestaña, lo cerramos
+                        self.audio_center_manager.open = false;
+                        self.audio_center_manager.window_pos = None;
+                    } else {
+                        // Si está cerrado o en otra pestaña, lo abrimos/cambiamos a esa pestaña
+                        if !self.audio_center_manager.open {
+                            self.audio_center_manager.open = true;
+                            self.audio_center_manager.window_pos = None;
+                        }
+                        self.audio_center_manager.selected_tab = tab_idx;
+                        if self.audio_center_manager.first_open {
+                            self.audio_center_manager.sync_from_engine(&self.audio_manager);
+                            self.audio_center_manager.first_open = false;
+                        }
+                    }
+                } else {
+                    // Alternancia genérica (comportamiento anterior)
+                    self.audio_center_manager.open = !self.audio_center_manager.open;
+                    if self.audio_center_manager.open {
+                        self.audio_center_manager.window_pos = None;
+                        if self.audio_center_manager.first_open {
+                            self.audio_center_manager.sync_from_engine(&self.audio_manager);
+                            self.audio_center_manager.first_open = false;
+                        }
+                    }
                 }
                 Task::none()
             }
             Message::AudioCenterMsg(ac_msg) => {
+                if let crate::gui::audio_center::AudioCenterMessage::DragStart = ac_msg {
+                    self.audio_center_manager.drag_start = Some(self.last_mouse_pos);
+                    self.audio_center_manager.is_dragging = true;
+                }
                 self.audio_center_manager.update(ac_msg, &self.audio_manager);
                 Task::none()
             }
@@ -3030,6 +3090,27 @@ impl AudoxidyApp {
                     let scroll_y = self.library_manager.scroll_offset.y;
                     let lib_y = pos.y - 72.0 + scroll_y;
                     self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
+                }
+
+                if self.audio_center_manager.is_dragging {
+                    if let Some(start_pos) = self.audio_center_manager.drag_start {
+                        let delta_x = pos.x - start_pos.x;
+                        let delta_y = pos.y - start_pos.y;
+                        
+                        let current_pos = self.audio_center_manager.window_pos.unwrap_or_else(|| {
+                            let win_w = 940.0;
+                            let win_h = 474.0;
+                            let x = (self.window_size.0 as f32 - win_w) / 2.0;
+                            let y = (self.window_size.1 as f32 - win_h) / 2.0;
+                            iced::Point::new(x.max(0.0), y.max(0.0))
+                        });
+                        
+                        let new_x = (current_pos.x + delta_x).clamp(0.0, (self.window_size.0 as f32 - 100.0).max(0.0));
+                        let new_y = (current_pos.y + delta_y).clamp(0.0, (self.window_size.1 as f32 - 40.0).max(0.0));
+                        
+                        self.audio_center_manager.window_pos = Some(iced::Point::new(new_x, new_y));
+                        self.audio_center_manager.drag_start = Some(pos);
+                    }
                 }
 
                 self.player_ui_state.mouse_pos = Some(pos);
@@ -3131,6 +3212,11 @@ impl AudoxidyApp {
                     self.library_manager.marquee_start_pos = None;
                 }
                 
+                if self.audio_center_manager.is_dragging {
+                    self.audio_center_manager.is_dragging = false;
+                    self.audio_center_manager.drag_start = None;
+                }
+
                 // Aseguramos que marquee_start_pos se limpie incluso si no hubo dragging real
                 self.library_manager.marquee_start_pos = None;
                 self.library_manager.is_dragging = false;
@@ -3319,31 +3405,37 @@ impl AudoxidyApp {
             .height(iced::Length::Fill)
             .align_y(iced::Alignment::Start);
 
-        let final_content: Element<'_, Message> = if self.audio_center_manager.open {
-            let ac_view = crate::gui::audio_center::view(&self.audio_center_manager, &self.audio_manager);
-            
-            // Falso modal: fondo transparente para bloqueo de clics
-            let modal_bg = iced::widget::mouse_area(
-                iced::widget::container(iced::widget::Space::new().width(iced::Length::Fill).height(iced::Length::Fill))
-                .style(|_t: &iced::Theme| iced::widget::container::Style::default().background(iced::Color::TRANSPARENT))
-            );
-
-            // Contenedor centrado para el Control Center
-            let centered_modal = iced::widget::container(ac_view)
-                .width(iced::Length::Fill)
-                .height(iced::Length::Fill)
-                .center_x(iced::Fill)
-                .center_y(iced::Fill);
-
-            // Apilamos Interfaz Principal, luego el fondo oscuro, luego el contenido centrado
-            let stack = iced::widget::Stack::new()
-                .push(main_row)
-                .push(modal_bg)
-                .push(centered_modal);
+        let final_content: Element<'_, Message> = {
+            let mut stack = iced::widget::Stack::new()
+                .push(main_row);
                 
+            if self.audio_center_manager.open {
+                let ac_view = crate::gui::audio_center::view(&self.audio_center_manager, &self.audio_manager);
+                
+                // Contenedor posicionado o centrado para el Control Center
+                let positioned_modal = if let Some(pos) = self.audio_center_manager.window_pos {
+                    iced::widget::container(ac_view)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                        .align_x(iced::Alignment::Start)
+                        .align_y(iced::Alignment::Start)
+                        .padding(iced::Padding {
+                            top: pos.y,
+                            right: 0.0,
+                            bottom: 0.0,
+                            left: pos.x,
+                        })
+                } else {
+                    iced::widget::container(ac_view)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                        .center_x(iced::Fill)
+                        .center_y(iced::Fill)
+                };
+
+                stack = stack.push(positioned_modal);
+            }
             stack.width(iced::Length::Fill).height(iced::Length::Fill).into()
-        } else {
-            main_row.into()
         };
 
         let app_underlay = iced::widget::mouse_area(

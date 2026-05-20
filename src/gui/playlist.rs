@@ -1427,7 +1427,7 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         Length::Fixed(180.0),
     );
 
-    let eq_btn = icon_button("equalizer-straight.svg", false, Message::ToggleAudioCenter);
+    let eq_btn = icon_button("equalizer-straight.svg", false, Message::ToggleAudioCenter(Some(1)));
     let shuffle_btn = icon_button("shuffle-straight.svg", manager.shuffle_active, Message::ToggleShuffle);
     let (repeat_icon, repeat_active) = if manager.repeat_mode == 2 {
         ("repeat-one-straight-outlined.svg", true)

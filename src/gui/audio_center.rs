@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, slider, text, toggler, Space},
+    widget::{button, checkbox, column, container, pick_list, row, slider, text, toggler, Space, svg, mouse_area, opaque},
     Alignment, Color, Element, Length, Rectangle, Theme,
 };
 use std::sync::Arc;
@@ -12,6 +12,7 @@ use crate::gui::theme::*;
 #[derive(Debug, Clone)]
 pub enum AudioCenterMessage {
     TabSelected(usize),
+    DragStart,
     // Tab 1: Config
     HostSelected(String),
     DeviceSelected(String),
@@ -19,6 +20,8 @@ pub enum AudioCenterMessage {
     BitDepthSelected(BitDepth),
     ChannelsManualSelected(u16),
     BufferSizeSelected(Option<u32>),
+    SystemRateSelected(SystemSelection<u32>),
+    SystemQuantumSelected(SystemSelection<u32>),
     ResetToDefaults,
     ApplySettings,
     RestartService,
@@ -75,9 +78,21 @@ impl<T> std::fmt::Display for OptionWrapper<T> {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SystemSelection<Val> {
+    Default,
+    Automatic,
+    Fixed(Val),
+}
+
 pub struct AudioCenterManager {
     pub open: bool,
     pub selected_tab: usize,
+    
+    // Dragging state
+    pub drag_start: Option<iced::Point>,
+    pub window_pos: Option<iced::Point>,
+    pub is_dragging: bool,
     
     // Caché para panel 1
     pub cached_hosts: Vec<String>,
@@ -103,6 +118,10 @@ pub struct AudioCenterManager {
     
     pub first_open: bool,
     pub auto_upsample: bool,
+
+    // Configuración del servidor de audio de sistema (Pipewire / PulseAudio)
+    pub system_rate: SystemSelection<u32>,
+    pub system_quantum: SystemSelection<u32>,
 }
 
 impl Default for AudioCenterManager {
@@ -111,6 +130,10 @@ impl Default for AudioCenterManager {
             open: false,
             selected_tab: 0,
             
+            drag_start: None,
+            window_pos: None,
+            is_dragging: false,
+            
             cached_hosts: Vec::new(),
             cached_devices: Vec::new(),
             
@@ -118,7 +141,7 @@ impl Default for AudioCenterManager {
             selected_device: None,
             selected_sample_rate: None,
             selected_bit_depth: BitDepth::Bits32Float,
-            selected_buffer_size: Some(1024),
+            selected_buffer_size: None,
             selected_channels_manual: 2,
             apply_enabled: false,
             
@@ -133,20 +156,82 @@ impl Default for AudioCenterManager {
             
             first_open: true,
             auto_upsample: false,
+
+            system_rate: SystemSelection::Default,
+            system_quantum: SystemSelection::Default,
         }
     }
 }
 
 impl AudioCenterManager {
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
+        if let Some(db_arc) = audio_manager.get_database() {
+            if let Ok(db) = db_arc.try_lock() {
+                if self.selected_host.is_none() {
+                    self.selected_host = db.get_setting("audio_host").filter(|s| !s.is_empty());
+                }
+                if self.selected_device.is_none() {
+                    self.selected_device = db.get_setting("audio_device").filter(|s| !s.is_empty());
+                }
+                if let Some(bd_str) = db.get_setting("audio_bit_depth") {
+                    if let Some(bd) = match bd_str.as_str() {
+                        "16" => Some(BitDepth::Bits16),
+                        "24" => Some(BitDepth::Bits24),
+                        "32" => Some(BitDepth::Bits32Float),
+                        _ => None,
+                    } {
+                        self.selected_bit_depth = bd;
+                    }
+                }
+                if self.system_rate == SystemSelection::Default {
+                    if let Some(sr_str) = db.get_setting("audio_system_rate") {
+                        self.system_rate = match sr_str.as_str() {
+                            "default" => SystemSelection::Default,
+                            "auto" => SystemSelection::Automatic,
+                            s if s.starts_with("fixed:") => {
+                                if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
+                                    SystemSelection::Fixed(val)
+                                } else {
+                                    SystemSelection::Default
+                                }
+                            }
+                            _ => SystemSelection::Default,
+                        };
+                    }
+                }
+                if self.system_quantum == SystemSelection::Default {
+                    if let Some(sq_str) = db.get_setting("audio_system_quantum") {
+                        self.system_quantum = match sq_str.as_str() {
+                            "default" => SystemSelection::Default,
+                            "auto" => SystemSelection::Automatic,
+                            s if s.starts_with("fixed:") => {
+                                if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
+                                    SystemSelection::Fixed(val)
+                                } else {
+                                    SystemSelection::Default
+                                }
+                            }
+                            _ => SystemSelection::Default,
+                        };
+                    }
+                }
+                if let Some(buf_str) = db.get_setting("audio_buffer_size") {
+                    self.selected_buffer_size = if buf_str == "auto" {
+                        None
+                    } else {
+                        buf_str.parse::<u32>().ok()
+                    };
+                }
+            }
+        }
+
         let state = audio_manager.state();
         let state_read = state.read();
         
         self.cached_hosts = audio_manager.get_available_hosts();
         self.cached_devices = audio_manager.get_devices();
 
-        self.selected_sample_rate = Some(state_read.sample_rate);
-        self.selected_buffer_size = if state_read.buffer_size > 0 { Some(state_read.buffer_size) } else { None };
+        self.selected_sample_rate = Some(state_read.device_sample_rate);
         self.selected_channels_manual = state_read.channels;
         self.auto_upsample = state_read.auto_upsample;
         
@@ -195,6 +280,7 @@ impl AudioCenterManager {
             AudioCenterMessage::TabSelected(tab) => {
                 self.selected_tab = tab;
             }
+            AudioCenterMessage::DragStart => {}
             AudioCenterMessage::HostSelected(host) => {
                 self.selected_host = Some(host);
                 self.apply_enabled = true;
@@ -219,11 +305,21 @@ impl AudioCenterManager {
                 self.selected_buffer_size = size;
                 self.apply_enabled = true;
             }
+            AudioCenterMessage::SystemRateSelected(rate) => {
+                self.system_rate = rate;
+                self.apply_enabled = true;
+            }
+            AudioCenterMessage::SystemQuantumSelected(quantum) => {
+                self.system_quantum = quantum;
+                self.apply_enabled = true;
+            }
             AudioCenterMessage::ResetToDefaults => {
                 self.selected_sample_rate = Some(48000);
                 self.selected_bit_depth = BitDepth::Bits32Float;
                 self.selected_buffer_size = None;
                 self.selected_channels_manual = 2;
+                self.system_rate = SystemSelection::Default;
+                self.system_quantum = SystemSelection::Default;
                 
                 if self.cached_hosts.contains(&"ALSA".to_string()) {
                     self.selected_host = Some("ALSA".to_string());
@@ -244,6 +340,7 @@ impl AudioCenterManager {
                 self.apply_enabled = true;
             }
             AudioCenterMessage::ApplySettings => {
+                // 1. Primero aplicamos la configuración del reproductor
                 let settings = AudioSettings {
                     host_id: self.selected_host.clone(),
                     device_name: self.selected_device.clone(),
@@ -254,6 +351,191 @@ impl AudioCenterManager {
                     auto_upsample: self.auto_upsample,
                 };
                 let _ = audio_manager.apply_audio_settings(settings);
+
+                // Guardar los ajustes en la base de datos para la persistencia
+                if let Some(db_arc) = audio_manager.get_database() {
+                    if let Ok(db) = db_arc.lock() {
+                        let _ = db.set_setting("audio_host", self.selected_host.as_deref().unwrap_or(""));
+                        let _ = db.set_setting("audio_device", self.selected_device.as_deref().unwrap_or(""));
+                        let _ = db.set_setting("audio_sample_rate", &self.selected_sample_rate.map(|s| s.to_string()).unwrap_or_else(|| "auto".to_string()));
+                        let _ = db.set_setting("audio_bit_depth", match self.selected_bit_depth {
+                            BitDepth::Bits16 => "16",
+                            BitDepth::Bits24 => "24",
+                            BitDepth::Bits32Float => "32",
+                        });
+                        let _ = db.set_setting("audio_channels", &self.selected_channels_manual.to_string());
+                        let _ = db.set_setting("audio_buffer_size", &self.selected_buffer_size.map(|b| b.to_string()).unwrap_or_else(|| "auto".to_string()));
+                        let _ = db.set_setting("audio_auto_upsample", if self.auto_upsample { "true" } else { "false" });
+                        
+                        let sys_rate_str = match self.system_rate {
+                            SystemSelection::Default => "default".to_string(),
+                            SystemSelection::Automatic => "auto".to_string(),
+                            SystemSelection::Fixed(r) => format!("fixed:{}", r),
+                        };
+                        let _ = db.set_setting("audio_system_rate", &sys_rate_str);
+
+                        let sys_quantum_str = match self.system_quantum {
+                            SystemSelection::Default => "default".to_string(),
+                            SystemSelection::Automatic => "auto".to_string(),
+                            SystemSelection::Fixed(q) => format!("fixed:{}", q),
+                        };
+                        let _ = db.set_setting("audio_system_quantum", &sys_quantum_str);
+                    }
+                }
+                
+                // 2. Clonamos variables necesarias para el hilo secundario
+                let state_clone = audio_manager.state();
+                let system_rate = self.system_rate;
+                let system_quantum = self.system_quantum;
+                let selected_sample_rate = self.selected_sample_rate;
+                let selected_buffer_size = self.selected_buffer_size;
+
+                // 3. Deferimos el ajuste de Pipewire / PulseAudio al hilo secundario para esperar a que el stream se inicialice
+                std::thread::spawn(move || {
+                    // Esperar/Hacer polling hasta que el motor de audio inicialice el nuevo flujo
+                    // y obtenga el quantum negociado de forma real (máximo 200ms, comprobando cada 10ms)
+                    let mut active_state = state_clone.read().clone();
+                    for _ in 0..20 {
+                        if active_state.buffer_size > 0 {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                        active_state = state_clone.read().clone();
+                    }
+
+                    let auto_rate = selected_sample_rate.unwrap_or(active_state.sample_rate);
+                    let auto_quantum = if let Some(q) = selected_buffer_size {
+                        q
+                    } else if active_state.buffer_size > 0 {
+                        active_state.buffer_size
+                    } else {
+                        // Fallback de seguridad si no hay reproducción activa en absoluto
+                        let base_latency_ms = 10.0;
+                        let calculated_frames = (auto_rate as f64 * base_latency_ms / 1000.0) as u32;
+                        if calculated_frames < 256 { 256 }
+                        else if calculated_frames < 512 { 512 }
+                        else if calculated_frames < 1024 { 1024 }
+                        else if calculated_frames < 2048 { 2048 }
+                        else if calculated_frames < 4096 { 4096 }
+                        else { 8192 }
+                    };
+
+                    // Determinar si estamos usando Pipewire
+                    let check_pw = std::process::Command::new("systemctl")
+                        .args(["--user", "is-active", "pipewire"])
+                        .output();
+                    
+                    let has_pw = match check_pw {
+                        Ok(out) => String::from_utf8_lossy(&out.stdout).trim() == "active",
+                        Err(_) => false,
+                    };
+
+                    if has_pw {
+                        if let Ok(home) = std::env::var("HOME") {
+                            let dir_path = format!("{}/.config/pipewire/pipewire.conf.d", home);
+                            let file_path = format!("{}/audoxidy.conf", dir_path);
+                            
+                            let rate_val = match system_rate {
+                                SystemSelection::Default => None,
+                                SystemSelection::Automatic => Some(auto_rate),
+                                SystemSelection::Fixed(r) => Some(r),
+                            };
+                            let quantum_val = match system_quantum {
+                                SystemSelection::Default => None,
+                                SystemSelection::Automatic => Some(auto_quantum),
+                                SystemSelection::Fixed(q) => Some(q),
+                            };
+
+                            if system_rate == SystemSelection::Default && system_quantum == SystemSelection::Default {
+                                let _ = std::fs::remove_file(&file_path);
+                            } else {
+                                let _ = std::fs::create_dir_all(&dir_path);
+                                
+                                let mut content = String::new();
+                                content.push_str("context.properties = {\n");
+                                if let Some(r) = rate_val {
+                                    content.push_str(&format!("    default.clock.rate = {}\n", r));
+                                    content.push_str(&format!("    default.clock.allowed-rates = [ {} ]\n", r));
+                                }
+                                if let Some(q) = quantum_val {
+                                    content.push_str(&format!("    default.clock.quantum = {}\n", q));
+                                }
+                                content.push_str("}\n");
+                                
+                                let _ = std::fs::write(&file_path, content);
+                            }
+
+                            // Aplicar en tiempo real a Pipewire
+                            let rate_str = match rate_val {
+                                Some(r) => r.to_string(),
+                                None => "0".to_string(), // 0 libera/resetea la frecuencia
+                            };
+                            let quantum_str = match quantum_val {
+                                Some(q) => q.to_string(),
+                                None => "0".to_string(), // 0 libera/resetea el quantum
+                            };
+                            
+                            let _ = std::process::Command::new("pw-metadata")
+                                .args(["-n", "settings", "0", "clock.force-rate", &rate_str])
+                                .status();
+                            let _ = std::process::Command::new("pw-metadata")
+                                .args(["-n", "settings", "0", "clock.force-quantum", &quantum_str])
+                                .status();
+                        }
+                    } else {
+                        if let Ok(home) = std::env::var("HOME") {
+                            let dir_path = format!("{}/.config/pulse", home);
+                            let file_path = format!("{}/daemon.conf", dir_path);
+                            
+                            let mut lines = Vec::new();
+                            if std::path::Path::new(&file_path).exists() {
+                                if let Ok(file_content) = std::fs::read_to_string(&file_path) {
+                                    for line in file_content.lines() {
+                                        let trimmed = line.trim();
+                                        if trimmed.starts_with("default-sample-rate")
+                                            || trimmed.starts_with("alternate-sample-rate")
+                                            || trimmed.starts_with("default-fragments")
+                                            || trimmed.starts_with("default-fragment-size-msec")
+                                            || trimmed.starts_with("; Generated by Audoxidy") {
+                                            continue;
+                                        }
+                                        lines.push(line.to_string());
+                                    }
+                                }
+                            } else {
+                                let _ = std::fs::create_dir_all(&dir_path);
+                            }
+                            
+                            let rate_val = match system_rate {
+                                SystemSelection::Default => None,
+                                SystemSelection::Automatic => Some(auto_rate),
+                                SystemSelection::Fixed(r) => Some(r),
+                            };
+                            let quantum_val = match system_quantum {
+                                SystemSelection::Default => None,
+                                SystemSelection::Automatic => Some(auto_quantum),
+                                SystemSelection::Fixed(q) => Some(q),
+                            };
+                            
+                            if rate_val.is_some() || quantum_val.is_some() {
+                                lines.push("; Generated by Audoxidy".to_string());
+                                if let Some(r) = rate_val {
+                                    lines.push(format!("default-sample-rate = {}", r));
+                                    lines.push(format!("alternate-sample-rate = {}", r));
+                                }
+                                if let Some(q) = quantum_val {
+                                    let r = rate_val.unwrap_or(48000);
+                                    let msec = ((q as f64 / r as f64) * 1000.0 / 2.0).max(1.0) as u32;
+                                    lines.push("default-fragments = 2".to_string());
+                                    lines.push(format!("default-fragment-size-msec = {}", msec));
+                                }
+                            }
+                            
+                            let _ = std::fs::write(&file_path, lines.join("\n") + "\n");
+                        }
+                    }
+                });
+                
                 self.apply_enabled = false;
             }
             AudioCenterMessage::RestartService => {
@@ -266,6 +548,7 @@ impl AudioCenterManager {
             }
             AudioCenterMessage::Close => {
                 self.open = false;
+                self.window_pos = None;
             }
             AudioCenterMessage::AutoUpsampleToggled(enabled) => {
                 self.auto_upsample = enabled;
@@ -374,27 +657,131 @@ pub fn view<'a>(
     manager: &'a AudioCenterManager,
     audio_manager: &'a Arc<AudioManager>
 ) -> Element<'a, crate::gui::app::Message> {
-    
-    let tabs = row![
-        button(text("Configuración de Audio").size(16).font(FONT_INTER_SANS_MEDIUM))
-            .style(if manager.selected_tab == 0 { button::primary } else { button::secondary })
-            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(0))),
-        button(text("Ecualizador").size(16).font(FONT_INTER_SANS_MEDIUM))
-            .style(if manager.selected_tab == 1 { button::primary } else { button::secondary })
-            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(1))),
-        button(text("Efectos de Audio").size(16).font(FONT_INTER_SANS_MEDIUM))
-            .style(if manager.selected_tab == 2 { button::primary } else { button::secondary })
-            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(2))),
-    ].spacing(10);
-    
-    let top_bar = row![
-        tabs,
-        Space::new().width(Length::Fill),
-        button(text("X").size(20).color(Color::WHITE))
-            .style(button::danger)
-            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::Close))
-    ].align_y(Alignment::Center);
+    // 1. Logotipo de marca estilizado con la tipografía "Stage Wander" a 18px
+    let logo = row![
+        text("A").color(COLOR_ACCENT).font(FONT_STAGE_WANDER).size(18),
+        text("uD").color(COLOR_TEXT_PRIMARY).font(FONT_STAGE_WANDER).size(18),
+        text("o").color(COLOR_ACCENT).font(FONT_STAGE_WANDER).size(18),
+        text("xiD").color(COLOR_TEXT_PRIMARY).font(FONT_STAGE_WANDER).size(18),
+        text("Y").color(COLOR_ACCENT).font(FONT_STAGE_WANDER).size(18),
+    ].spacing(0);
 
+    // 2. Botón de cerrar con icono SVG "close-big.svg" de 24px
+    let close_icon = svg(iced::widget::svg::Handle::from_path("assets/icons/close-big.svg"))
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0))
+        .style(|_t: &Theme, status| {
+            if status == iced::widget::svg::Status::Hovered {
+                iced::widget::svg::Style { color: Some(COLOR_ACCENT) }
+            } else {
+                iced::widget::svg::Style { color: Some(COLOR_TEXT_PRIMARY) }
+            }
+        });
+
+    let close_btn = button(close_icon)
+        .padding(4)
+        .style(|_t: &Theme, _status| button::Style {
+            background: Some(Color::TRANSPARENT.into()),
+            border: iced::Border::default(),
+            ..Default::default()
+        })
+        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::Close));
+
+    // 3. Contenido de la cabecera con espacio y alineación vertical centrada
+    let header_content = row![
+        logo,
+        Space::new().width(Length::Fill),
+        close_btn,
+    ].align_y(Alignment::Center).padding([0, 15]);
+
+    let centered_title = container(
+        text("Centro de Audio Avanzado")
+            .size(16)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .color(COLOR_TEXT_PRIMARY)
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .center_x(iced::Fill)
+    .center_y(iced::Fill);
+
+    // Cabecera con 34px de altura, con esquinas superiores redondeadas (4px) para acoplarse al contenedor principal
+    let header = container(
+        iced::widget::Stack::new()
+            .push(centered_title)
+            .push(header_content)
+    )
+    .height(Length::Fixed(34.0))
+    .width(Length::Fill)
+    .style(|_t: &Theme| container::Style::default()
+        .background(COLOR_BG)
+        .border(iced::Border {
+            radius: iced::border::Radius {
+                top_left: 4.0,
+                top_right: 4.0,
+                bottom_left: 0.0,
+                bottom_right: 0.0,
+            },
+            width: 0.0,
+            color: Color::TRANSPARENT,
+        })
+    );
+
+    // Barra de título arrastrable
+    let header_block = mouse_area(header)
+        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DragStart));
+
+    // 4. Barra de pestañas (Tab Bar)
+    let tab_names = ["Configuración de Audio", "Ecualizador", "Efectos de Audio"];
+    let mut tab_row = row![].spacing(10);
+    
+    for (i, name) in tab_names.iter().enumerate() {
+        let is_selected = manager.selected_tab == i;
+        
+        let tab_btn = button(
+            text(*name)
+                .size(14)
+                .font(FONT_INTER_SANS_MEDIUM)
+        )
+        .padding([5, 15])
+        .style(move |_t: &Theme, status| {
+            let is_hovered = matches!(status, button::Status::Hovered);
+            button::Style {
+                background: if is_selected {
+                    Some(COLOR_ACCENT.into())
+                } else {
+                    Some(Color::TRANSPARENT.into())
+                },
+                text_color: if is_selected {
+                    COLOR_TEXT_PRIMARY
+                } else if is_hovered {
+                    COLOR_TEXT_PRIMARY
+                } else {
+                    COLOR_TEXT_SECONDARY
+                },
+                border: iced::Border {
+                    radius: iced::border::Radius {
+                        top_left: 2.0,
+                        top_right: 2.0,
+                        bottom_left: 0.0,
+                        bottom_right: 0.0,
+                    },
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::TabSelected(i)));
+        
+        tab_row = tab_row.push(tab_btn);
+    }
+
+    // Divisor
+    let divider = container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // 5. Contenido de pestaña activa
     let content: Element<'a, crate::gui::app::Message> = match manager.selected_tab {
         0 => view_audio_config(manager, audio_manager),
         1 => view_equalizer(manager, audio_manager),
@@ -402,17 +789,49 @@ pub fn view<'a>(
         _ => Space::new().into(),
     };
 
-    container(
-        column![
-            top_bar,
-            Space::new().height(Length::Fixed(20.0)),
-            content,
-        ].width(Length::Fixed(900.0)).height(Length::Fixed(500.0)).padding(30)
+    // Contenido interno con padding de 15px en laterales y fondo, y 0px de espacio con la cabecera (top)
+    let inner_content = column![
+        tab_row,
+        divider,
+        Space::new().height(Length::Fixed(15.0)),
+        content,
+    ]
+    .padding(iced::Padding {
+        top: 0.0,
+        right: 15.0,
+        bottom: 15.0,
+        left: 15.0,
+    })
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    // Contenedor principal de la ventana
+    let window_layout = column![
+        header_block,
+        inner_content,
+    ]
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    // Evitamos el traspaso de clics capturando todo en un mouse_area con NoOp
+    let non_pass_through_window = mouse_area(
+        container(window_layout)
+            .width(Length::Fixed(940.0))
+            .height(Length::Fixed(474.0))
+            .padding(2.0) // Inset de 2px para que el borde del contenedor principal no sea tapado por los hijos
+            .style(|_t: &Theme| container::Style::default()
+                .background(COLOR_BG)
+                .border(iced::Border {
+                    color: COLOR_ACCENT,
+                    width: 2.0,
+                    radius: 4.0.into(),
+                })
+            )
     )
-    .width(Length::Fixed(900.0))
-    .height(Length::Fixed(500.0))
-    .style(|_t: &Theme| container::Style::default().background(COLOR_BG).border(iced::Border::default().rounded(10.0).width(2.0).color(COLOR_ACCENT)))
-    .into()
+    .on_press(crate::gui::app::Message::NoOp);
+
+    // Envolvemos con opaque para que no se traspase el "focus" / "hover" del puntero a la interfaz de abajo en esta área
+    opaque(non_pass_through_window).into()
 }
 
 fn view_audio_config<'a>(
@@ -440,17 +859,17 @@ fn view_audio_config<'a>(
     let bits = [BitDepth::Bits16, BitDepth::Bits24, BitDepth::Bits32Float];
     let bit_options: Vec<_> = bits.iter().map(|b| {
         let label = match b {
-            BitDepth::Bits16 => "16-bit Int",
-            BitDepth::Bits24 => "24-bit Int",
-            BitDepth::Bits32Float => "32-bit Float",
+            BitDepth::Bits16 => "16 bits Int",
+            BitDepth::Bits24 => "24 bits Int",
+            BitDepth::Bits32Float => "32 bits Float",
         };
         OptionWrapper::new(label, b.clone())
     }).collect();
     let selected_bit_opt = {
         let label = match manager.selected_bit_depth {
-            BitDepth::Bits16 => "16-bit Int",
-            BitDepth::Bits24 => "24-bit Int",
-            BitDepth::Bits32Float => "32-bit Float",
+            BitDepth::Bits16 => "16 bits Int",
+            BitDepth::Bits24 => "24 bits Int",
+            BitDepth::Bits32Float => "32 bits Float",
         };
         Some(OptionWrapper::new(label, manager.selected_bit_depth.clone()))
     };
@@ -476,29 +895,121 @@ fn view_audio_config<'a>(
         Some(OptionWrapper::new("Automático", None))
     };
 
-    let host_dropdown = pick_list(host_options, selected_host_opt, |o: OptionWrapper<String>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::HostSelected(o.value))).width(Length::Fixed(150.0));
-    let device_dropdown = pick_list(device_options, selected_dev_opt, |o: OptionWrapper<String>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DeviceSelected(o.value))).width(Length::Fixed(250.0));
-    let rate_dropdown = pick_list(rate_options, selected_rate_opt, |o: OptionWrapper<Option<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SampleRateSelected(o.value))).width(Length::Fixed(150.0));
-    let bit_dropdown = pick_list(bit_options, selected_bit_opt, |o: OptionWrapper<BitDepth>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BitDepthSelected(o.value))).width(Length::Fixed(150.0));
-    let ch_dropdown = pick_list(channels_options, selected_ch_opt, |o: OptionWrapper<u16>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ChannelsManualSelected(o.value))).width(Length::Fixed(150.0));
-    let buffer_dropdown = pick_list(buffer_options, selected_buf_opt, |o: OptionWrapper<Option<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BufferSizeSelected(o.value))).width(Length::Fixed(150.0));
+    let host_dropdown = crate::gui::widgets::standard_pick_list(host_options, selected_host_opt, |o: OptionWrapper<String>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::HostSelected(o.value)), Length::Fixed(125.0));
+    let device_dropdown = crate::gui::widgets::standard_pick_list(device_options, selected_dev_opt, |o: OptionWrapper<String>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DeviceSelected(o.value)), Length::Fixed(260.0));
+    let rate_dropdown = crate::gui::widgets::standard_pick_list(rate_options, selected_rate_opt, |o: OptionWrapper<Option<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SampleRateSelected(o.value)), Length::Fixed(125.0));
+    let bit_dropdown = crate::gui::widgets::standard_pick_list(bit_options, selected_bit_opt, |o: OptionWrapper<BitDepth>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BitDepthSelected(o.value)), Length::Fixed(125.0));
+    let ch_dropdown = crate::gui::widgets::standard_pick_list(channels_options, selected_ch_opt, |o: OptionWrapper<u16>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ChannelsManualSelected(o.value)), Length::Fixed(125.0));
+    let buffer_dropdown = crate::gui::widgets::standard_pick_list(buffer_options, selected_buf_opt, |o: OptionWrapper<Option<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BufferSizeSelected(o.value)), Length::Fixed(125.0));
+
+    // --- PICKLISTS DE SISTEMA OPERATIVO (Pipewire | PulseAudio) ---
+    let mut system_rate_options = vec![
+        OptionWrapper::new("Default", SystemSelection::Default),
+        OptionWrapper::new("Automatico", SystemSelection::Automatic),
+    ];
+    let sys_rates = [44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000];
+    for &r in &sys_rates {
+        system_rate_options.push(OptionWrapper::new(format!("{} Hz", r), SystemSelection::Fixed(r)));
+    }
+    let selected_sys_rate_opt = Some(OptionWrapper::new(
+        match manager.system_rate {
+            SystemSelection::Default => "Default".to_string(),
+            SystemSelection::Automatic => "Automatico".to_string(),
+            SystemSelection::Fixed(r) => format!("{} Hz", r),
+        },
+        manager.system_rate
+    ));
+
+    let mut system_quantum_options = vec![
+        OptionWrapper::new("Default", SystemSelection::Default),
+        OptionWrapper::new("Automatico", SystemSelection::Automatic),
+    ];
+    let sys_quantums = [256, 512, 1024, 2048, 4096, 8192];
+    for &q in &sys_quantums {
+        system_quantum_options.push(OptionWrapper::new(format!("{}", q), SystemSelection::Fixed(q)));
+    }
+    let selected_sys_quantum_opt = Some(OptionWrapper::new(
+        match manager.system_quantum {
+            SystemSelection::Default => "Default".to_string(),
+            SystemSelection::Automatic => "Automatico".to_string(),
+            SystemSelection::Fixed(q) => format!("{}", q),
+        },
+        manager.system_quantum
+    ));
+
+    let system_rate_dropdown = crate::gui::widgets::standard_pick_list(
+        system_rate_options,
+        selected_sys_rate_opt,
+        |o: OptionWrapper<SystemSelection<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SystemRateSelected(o.value)),
+        Length::Fixed(125.0)
+    );
+
+    let system_quantum_dropdown = crate::gui::widgets::standard_pick_list(
+        system_quantum_options,
+        selected_sys_quantum_opt,
+        |o: OptionWrapper<SystemSelection<u32>>| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SystemQuantumSelected(o.value)),
+        Length::Fixed(125.0)
+    );
+
+    let system_config_label = column![
+        text("Pipewire | PulseAudio").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM),
+        text("Frecuencia | Quantum").color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM),
+    ].spacing(2);
+
+    let upsampling_switch = toggler(manager.auto_upsample)
+        .size(16)
+        .on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b)))
+        .style(|_theme: &Theme, _status| {
+            let is_active = manager.auto_upsample;
+            let (bg, border_color, border_width, fg) = if is_active {
+                (
+                    COLOR_ACCENT.into(),
+                    COLOR_ACCENT,
+                    1.0,
+                    COLOR_TEXT_PRIMARY.into()
+                )
+            } else {
+                (
+                    Color::TRANSPARENT.into(),
+                    COLOR_TEXT_SECONDARY,
+                    1.0,
+                    COLOR_TEXT_SECONDARY.into()
+                )
+            };
+
+            iced::widget::toggler::Style {
+                background: bg,
+                background_border_width: border_width,
+                background_border_color: border_color,
+                foreground: fg,
+                foreground_border_width: 0.0,
+                foreground_border_color: Color::TRANSPARENT,
+                text_color: None,
+                border_radius: None,
+                padding_ratio: 0.2,
+            }
+        });
 
     let left_col = column![
-        row![container(text("Servidor de Audio:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), host_dropdown].align_y(Alignment::Center).spacing(10),
+        row![container(text("Núcleo de Audio:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), host_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Dispositivo de Salida:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), device_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Frecuencia de Muestreo:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), rate_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Profundidad de Bits:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), bit_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Canales de Salida:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), ch_dropdown].align_y(Alignment::Center).spacing(10),
         row![container(text("Quantum (Buffer):").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), buffer_dropdown].align_y(Alignment::Center).spacing(10),
         row![
-            container(text("Upsampling Automático:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)),
-            checkbox(manager.auto_upsample).on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b))),
-            text("Alta fidelidad (reconstrucción FFT)").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
+            container(text("Frecuencia Automática:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)),
+            upsampling_switch,
+            text("Alta Fidelidad (Frecuencia Máxima del Dispositivo)").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
         ].align_y(Alignment::Center).spacing(10),
-    ].spacing(20);
+        row![
+            container(system_config_label).width(Length::Fixed(180.0)),
+            row![system_rate_dropdown, system_quantum_dropdown].spacing(10)
+        ].align_y(Alignment::Center).spacing(10),
+    ].spacing(15);
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente
-    let (sample_rate, channels, bit_depth_display, buffer_size) = {
+    let (sample_rate, channels, bit_depth_display, buffer_size, current_song_title, current_path, device_sample_rate) = {
         let state_arc = audio_manager.state();
         let state_read = state_arc.read();
         (
@@ -506,37 +1017,383 @@ fn view_audio_config<'a>(
             state_read.channels,
             state_read.bit_depth_display.clone(),
             state_read.buffer_size,
+            state_read.title.clone(),
+            state_read.path.clone(),
+            state_read.device_sample_rate,
         )
     };
 
+    let check_pw = std::process::Command::new("systemctl")
+        .args(["--user", "is-active", "pipewire"])
+        .output();
+    
+    let has_pw = match check_pw {
+        Ok(out) => String::from_utf8_lossy(&out.stdout).trim() == "active",
+        Err(_) => false,
+    };
+
+    let audio_server = manager.selected_host.as_deref().unwrap_or("ALSA").to_string();
+
+    let db_opt = audio_manager.get_database();
+    
+    let mut file_sample_rate = sample_rate;
+    let mut file_bit_depth = 0;
+    let mut file_channels = 0;
+    let mut track_gain = None;
+    let mut album_gain = None;
+
+    if !current_path.is_empty() {
+        if let Some(ref db_arc) = db_opt {
+            if let Ok(db) = db_arc.try_lock() {
+                if let Ok(Some((sr, bd, ch))) = db.get_song_technical_meta_by_path(&current_path) {
+                    if sr > 0 { file_sample_rate = sr; }
+                    file_bit_depth = bd;
+                    file_channels = ch;
+                }
+                if let Ok((tg, ag)) = db.get_replay_gain_by_path(&current_path) {
+                    track_gain = tg;
+                    album_gain = ag;
+                }
+            }
+        }
+    }
+
+    let file_sr_str = if file_sample_rate > 0 {
+        format!("{} Hz", file_sample_rate)
+    } else {
+        "--".to_string()
+    };
+
+    let file_bd_str = if file_bit_depth > 0 {
+        format!("{} bits", file_bit_depth)
+    } else {
+        "--".to_string()
+    };
+
+    let format_channels = |ch: u16| -> String {
+        match ch {
+            1 => "Mono".to_string(),
+            2 => "Stereo".to_string(),
+            3 => "Stereo + Sub".to_string(),
+            4 => "4.0 Quad".to_string(),
+            6 => "5.1 Surround".to_string(),
+            8 => "7.1 Surround".to_string(),
+            other => format!("{} canales", other),
+        }
+    };
+
+    let file_ch_str = if file_channels > 0 {
+        format_channels(file_channels as u16)
+    } else {
+        "--".to_string()
+    };
+
+    let output_ch_str = if channels > 0 {
+        format_channels(channels)
+    } else {
+        "--".to_string()
+    };
+
+    let bit_depth_display_clean = match bit_depth_display.as_str() {
+        "24/32-bit Int" | "24/32-bits Int" | "24-bit Int" | "24 bits Int" => "24 bits Int".to_string(),
+        other => other.replace("-bit", " bits"),
+    };
+
+    let gain_str = match (album_gain, track_gain) {
+        (Some(ag), Some(tg)) => format!("{:.2} dB | {:.2} dB", ag, tg),
+        (Some(ag), None) => format!("{:.2} dB | --", ag),
+        (None, Some(tg)) => format!("-- | {:.2} dB", tg),
+        (None, None) => "-- | --".to_string(),
+    };
+
+    // Extraemos frecuencia y quantum del servidor de sonido actual
+    let mut sys_rate = None;
+    let mut sys_force_rate = None;
+    let mut sys_quantum = None;
+    let mut sys_force_quantum = None;
+
+    if has_pw {
+        if let Ok(output) = std::process::Command::new("pw-metadata")
+            .args(["-n", "settings"])
+            .output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                let extract_value = |line_str: &str| -> Option<String> {
+                    if let Some(pos) = line_str.find("value:'") {
+                        let start = pos + 7;
+                        if let Some(end) = line_str[start..].find("'") {
+                            return Some(line_str[start..start+end].to_string());
+                        }
+                    }
+                    None
+                };
+
+                if line.contains("clock.rate") {
+                    if let Some(val) = extract_value(line) { sys_rate = Some(val); }
+                } else if line.contains("clock.force-rate") {
+                    if let Some(val) = extract_value(line) { sys_force_rate = Some(val); }
+                } else if line.contains("clock.quantum") {
+                    if let Some(val) = extract_value(line) { sys_quantum = Some(val); }
+                } else if line.contains("clock.force-quantum") {
+                    if let Some(val) = extract_value(line) { sys_force_quantum = Some(val); }
+                }
+            }
+        }
+    }
+
+    let active_sys_rate = if let Some(ref fr) = sys_force_rate {
+        if fr != "0" { Some(fr.clone()) } else { sys_rate.clone() }
+    } else {
+        sys_rate.clone()
+    };
+
+    let active_sys_quantum = if let Some(ref fq) = sys_force_quantum {
+        if fq != "0" { Some(fq.clone()) } else { sys_quantum.clone() }
+    } else {
+        sys_quantum.clone()
+    };
+
+    let (system_sound_status, latency_str) = if has_pw {
+        let status = match (active_sys_rate.clone(), active_sys_quantum.clone()) {
+            (Some(r), Some(q)) => format!("{} Hz | {}", r, q),
+            (Some(r), None) => format!("{} Hz | --", r),
+            (None, Some(q)) => format!("-- | {}", q),
+            _ => "--".to_string(),
+        };
+        let lat = match (active_sys_rate, active_sys_quantum) {
+            (Some(r_str), Some(q_str)) => {
+                if let (Ok(r), Ok(q)) = (r_str.parse::<f64>(), q_str.parse::<f64>()) {
+                    if r > 0.0 {
+                        format!("Latencia: {:.2} ms", (q / r) * 1000.0)
+                    } else {
+                        "Latencia: -- ms".to_string()
+                    }
+                } else {
+                    "Latencia: -- ms".to_string()
+                }
+            }
+            _ => "Latencia: -- ms".to_string(),
+        };
+        (status, lat)
+    } else {
+        let mut pulse_rate = None;
+        if let Ok(output) = std::process::Command::new("pactl")
+            .arg("info")
+            .output() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("Default Sample Specification:") {
+                    let parts = line.split_whitespace().collect::<Vec<_>>();
+                    if let Some(last) = parts.last() {
+                        pulse_rate = Some(last.replace("Hz", ""));
+                    }
+                }
+            }
+        }
+        
+        let mut pulse_quantum = None;
+        if let Ok(home) = std::env::var("HOME") {
+            let file_path = format!("{}/.config/pulse/daemon.conf", home);
+            if let Ok(content) = std::fs::read_to_string(file_path) {
+                for line in content.lines() {
+                    let trimmed = line.trim();
+                    if trimmed.starts_with("default-fragment-size-msec") {
+                        if let Some(val) = trimmed.split('=').nth(1) {
+                            pulse_quantum = Some(val.trim().to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        let status = match (pulse_rate.clone(), pulse_quantum.clone()) {
+            (Some(r), Some(q)) => format!("{} Hz | {} ms", r, q),
+            (Some(r), None) => format!("{} Hz | --", r),
+            (None, Some(q)) => format!("-- | {} ms", q),
+            _ => "--".to_string(),
+        };
+        let lat = if let Some(q) = pulse_quantum {
+            if let Ok(q_f) = q.parse::<f64>() {
+                format!("Latencia: {:.2} ms", q_f)
+            } else {
+                format!("Latencia: {} ms", q)
+            }
+        } else {
+            "Latencia: -- ms".to_string()
+        };
+        (status, lat)
+    };
+
+    let title_el = if current_song_title.is_empty() {
+        text("Sin reproducción").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM).into()
+    } else {
+        crate::gui::widgets::smart_truncate_text(current_song_title, 14.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY)
+    };
+
+    let device_name_str = manager.selected_device.as_deref().unwrap_or("Predeterminado");
+    let device_el = crate::gui::widgets::smart_truncate_text(device_name_str, 14.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY);
+
+    let quantum_repr = if buffer_size > 0 {
+        format!("{}", buffer_size)
+    } else {
+        "Auto".to_string()
+    };
+
+    let labels_col = column![
+        text("").size(12),
+        text("Frecuencia:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text("Profundidad:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text("Canales:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+    ].spacing(5);
+
+    let entrada_col = column![
+        text("Entrada").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+        text(file_sr_str).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text(file_bd_str).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text(file_ch_str).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+    ].spacing(5).align_x(Alignment::Center);
+
+    let vertical_divider = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(80.0)))
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    let salida_col = column![
+        text("Salida").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+        text(format!("{} Hz", device_sample_rate)).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text(bit_depth_display_clean).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text(output_ch_str).size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+    ].spacing(5).align_x(Alignment::Center);
+
+    let table_row = row![
+        container(labels_col).width(Length::Fixed(90.0)),
+        container(entrada_col).width(Length::FillPortion(1)).align_x(Alignment::Center),
+        container(vertical_divider).align_x(Alignment::Center).width(Length::Fixed(20.0)),
+        container(salida_col).width(Length::FillPortion(1)).align_x(Alignment::Center),
+    ].align_y(Alignment::Center);
+
+    let title_container = container(
+        text("Información de Audio")
+            .color(COLOR_TEXT_PRIMARY)
+            .size(16)
+            .font(FONT_INTER_SANS_MEDIUM)
+    )
+    .width(Length::Fill)
+    .align_x(Alignment::Center);
+
     let r_col = column![
-        text("Estado del Audio").color(COLOR_TEXT_PRIMARY).size(18).font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(10.0)),
-        row![text("Backend:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text("Compartido").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
-        row![text("Dispositivo:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text("Sistema").color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
-        row![text("Frecuencia:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(format!("{} Hz", sample_rate)).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
-        row![text("Profundidad:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(bit_depth_display).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
-        row![text("Canales:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(format!("{}", channels)).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
-        row![text("Quantum:").color(COLOR_TEXT_SECONDARY).width(Length::Fixed(100.0)).font(FONT_INTER_SANS_MEDIUM), text(if buffer_size > 0 { format!("{}", buffer_size) } else { "Auto".to_string() }).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)],
+        title_container,
+        
+        row![
+            container(text("Canción:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(100.0)),
+            container(title_el).width(Length::Fill)
+        ].align_y(Alignment::Center),
+        
+        row![
+            container(text("Núcleo:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(100.0)),
+            text(audio_server).color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)
+        ].align_y(Alignment::Center),
+        
+        row![
+            container(text("Dispositivo:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(100.0)),
+            container(device_el).width(Length::Fill)
+        ].align_y(Alignment::Center),
+        
+        table_row,
+        
+        row![
+            container(column![
+                text("Ganancia:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM),
+                text("Album | Cancion").color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM),
+            ].spacing(2)).width(Length::Fixed(170.0)),
+            text(gain_str).color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)
+        ].align_y(Alignment::Center),
+        
+        row![
+            container(text("Quantum de Audoxidy:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(170.0)),
+            text(quantum_repr).color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)
+        ].align_y(Alignment::Center),
+        
+        row![
+            container(column![
+                text("Pipewire | PulseAudio:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM),
+                text("Frecuencia | Quantum").color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM),
+            ].spacing(2)).width(Length::Fixed(170.0)),
+            column![
+                text(system_sound_status).color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM),
+                text(latency_str).color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM),
+            ].spacing(2)
+        ].align_y(Alignment::Center),
     ].spacing(10);
 
+    let restart_btn = button(text("Reiniciar Servicio de Audio").size(15).font(FONT_INTER_SANS_MEDIUM))
+        .padding([8, 12])
+        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::RestartService))
+        .style(|_t: &Theme, status: iced::widget::button::Status| {
+            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+            button::Style {
+                background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
+                text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                ..Default::default()
+            }
+        });
+
+    let reset_btn = button(text("Predeterminado").size(15).font(FONT_INTER_SANS_MEDIUM))
+        .padding([8, 12])
+        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ResetToDefaults))
+        .style(|_t: &Theme, status: iced::widget::button::Status| {
+            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+            button::Style {
+                background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
+                text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                ..Default::default()
+            }
+        });
+
+    let apply_btn = if manager.apply_enabled {
+        button(text("Aplicar").size(15).font(FONT_INTER_SANS_MEDIUM))
+            .padding([8, 12])
+            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ApplySettings))
+            .style(|_t: &Theme, status: iced::widget::button::Status| {
+                let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                button::Style {
+                    background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
+                    text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
+                    border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    ..Default::default()
+                }
+            })
+    } else {
+        button(text("Aplicar").size(15).font(FONT_INTER_SANS_MEDIUM))
+            .padding([8, 12])
+            .style(|_t: &Theme, _status: iced::widget::button::Status| {
+                button::Style {
+                    background: Some(COLOR_CONTRAST.into()),
+                    text_color: COLOR_TEXT_SECONDARY.scale_alpha(0.5),
+                    border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    ..Default::default()
+                }
+            })
+    };
+
+    let main_divider = container(Space::new().width(Length::Fixed(2.0)).height(Length::Fixed(240.0)))
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
     let bottom_actions = row![
-        button(text("Reiniciar servicio de Audio").font(FONT_INTER_SANS_MEDIUM)).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::RestartService)),
-        button(text("Predeterminado").font(FONT_INTER_SANS_MEDIUM)).on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ResetToDefaults)),
-        if manager.apply_enabled {
-            button(text("Aplicar").font(FONT_INTER_SANS_MEDIUM))
-                .style(button::primary)
-                .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::ApplySettings))
-        } else {
-            button(text("Aplicar").font(FONT_INTER_SANS_MEDIUM))
-        }
-    ].spacing(15);
+        restart_btn,
+        reset_btn,
+        apply_btn
+    ].spacing(10);
 
     column![
         row![
-            container(left_col).width(Length::FillPortion(6)), 
-            container(r_col).width(Length::FillPortion(4)).padding(20).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
-        ].height(Length::Fill),
+            container(left_col).width(Length::FillPortion(6)),
+            container(main_divider).width(Length::Fixed(20.0)).align_x(Alignment::Center).align_y(Alignment::Center),
+            container(r_col)
+                .width(Length::FillPortion(4))
+                .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 5.0, right: 1.0 })
+                .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+        ].height(Length::Fill).align_y(Alignment::Center),
         bottom_actions
     ].into()
 }

@@ -582,6 +582,19 @@ impl Database {
         }).optional().map(|opt| opt.unwrap_or((None, None)))
     }
 
+    /// Obtiene las características técnicas de la canción (sample_rate, bit_depth, channels) por ruta.
+    pub fn get_song_technical_meta_by_path(&self, path: &str) -> Result<Option<(u32, u32, u32)>> {
+        self.conn.prepare_cached(
+            "SELECT sample_rate, bit_depth, channels FROM SONGS WHERE file_path = ?1"
+        )?.query_row([path], |row| {
+            Ok((
+                row.get::<_, Option<i32>>(0)?.unwrap_or(0) as u32,
+                row.get::<_, Option<i32>>(1)?.unwrap_or(0) as u32,
+                row.get::<_, Option<i32>>(2)?.unwrap_or(0) as u32,
+            ))
+        }).optional()
+    }
+
     // --- Métodos de Transacción ---
 
     pub fn begin_transaction(&self) -> Result<()> {

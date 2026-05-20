@@ -221,17 +221,8 @@ impl AudioEngine {
         let device = host.default_output_device().ok_or("No audio device found")?;
         let config = device.default_output_config().map_err(|e| e.to_string())?;
         
-        let supported_buffer = config.buffer_size();
-        let supports_1024 = if let cpal::SupportedBufferSize::Range { min, max } = supported_buffer {
-             *min <= 1024 && *max >= 1024
-        } else {
-             false
-        };
-
         let mut stream_config: cpal::StreamConfig = config.clone().into();
-        if supports_1024 {
-             stream_config.buffer_size = cpal::BufferSize::Fixed(1024);
-        }
+        stream_config.buffer_size = cpal::BufferSize::Default;
         stream_config.channels = 2; // Default to Stereo
 
         // Intentar iniciar con defaults
@@ -320,6 +311,23 @@ impl AudioEngine {
 
     fn write_data_impl<T>(output: &mut [T], channels: usize, state: &Arc<RwLock<AudioState>>, consumer_mutex: &Arc<Mutex<Option<HeapConsumer<f32>>>>)
     where T: cpal::Sample + cpal::FromSample<f32> {
+        if channels > 0 {
+            let current_frames = (output.len() / channels) as u32;
+            if current_frames > 0 {
+                let mut needs_update = false;
+                {
+                    let s = state.read();
+                    if s.buffer_size != current_frames {
+                        needs_update = true;
+                    }
+                }
+                if needs_update {
+                    let mut s = state.write();
+                    s.buffer_size = current_frames;
+                }
+            }
+        }
+
         let is_playing = state.read().is_playing;
 
         if !is_playing {

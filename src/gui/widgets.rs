@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space, Responsive},
+    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space, Responsive, pick_list},
     Alignment, Color, Element, Length, Theme, Padding,
 };
 use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
@@ -286,6 +286,75 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
         .on_press(action)
         .interaction(iced::mouse::Interaction::Pointer)
         .into()
+}
+
+/// Desplegable (PickList) global de diseño premium personalizado.
+/// - 24px de alto.
+/// - Fondo en COLOR_CONTRAST.
+/// - Tipografía de 14px y fuente Inter Medium.
+/// - Sin bordes.
+/// - Hover/Focus en COLOR_ACCENT con texto COLOR_TEXT_PRIMARY.
+pub fn standard_pick_list<'a, T, Message>(
+    options: Vec<T>,
+    selected: Option<T>,
+    on_selected: impl Fn(T) -> Message + 'a,
+    width: Length,
+) -> Element<'a, Message>
+where
+    T: Clone + PartialEq + std::fmt::Display + 'a,
+    Message: Clone + 'a,
+{
+    let pick = pick_list(options, selected, on_selected)
+        .width(width)
+        .padding([4, 10]) // Padding vertical mínimo para que tenga 24px de alto con fuente de 14px
+        .font(FONT_INTER_SANS_MEDIUM)
+        .text_size(14)
+        .style(|_theme: &Theme, status| {
+            let is_active_hover = match status {
+                iced::widget::pick_list::Status::Hovered | iced::widget::pick_list::Status::Opened { .. } => true,
+                _ => false,
+            };
+            
+            let bg_color = if is_active_hover {
+                COLOR_ACCENT
+            } else {
+                COLOR_CONTRAST
+            };
+
+            let txt_color = if is_active_hover {
+                COLOR_TEXT_PRIMARY
+            } else {
+                COLOR_TEXT_PRIMARY
+            };
+
+            iced::widget::pick_list::Style {
+                text_color: txt_color,
+                placeholder_color: COLOR_TEXT_PRIMARY,
+                handle_color: txt_color,
+                background: bg_color.into(),
+                border: iced::Border {
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                    radius: 0.0.into(),
+                },
+            }
+        })
+        .menu_style(|_theme: &Theme| {
+            iced::overlay::menu::Style {
+                background: COLOR_CONTRAST.into(),
+                border: iced::Border {
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                    radius: 0.0.into(),
+                },
+                text_color: COLOR_TEXT_PRIMARY,
+                selected_text_color: COLOR_TEXT_PRIMARY,
+                selected_background: COLOR_ACCENT.into(),
+                shadow: iced::Shadow::default(),
+            }
+        });
+
+    pick.into()
 }
 
 /// Estilos de Placeholder para el widget de carátulas

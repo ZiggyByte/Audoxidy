@@ -23,6 +23,10 @@ impl AudioManager {
         *self.database.lock() = Some(db);
     }
 
+    pub fn get_database(&self) -> Option<Arc<std::sync::Mutex<crate::db::Database>>> {
+        self.database.lock().clone()
+    }
+
     pub fn state(&self) -> Arc<RwLock<AudioState>> {
         self.engine.state.clone()
     }

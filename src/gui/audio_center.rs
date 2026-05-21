@@ -956,39 +956,15 @@ fn view_audio_config<'a>(
         text("Frecuencia | Quantum").color(COLOR_TEXT_SECONDARY).size(13).font(FONT_INTER_SANS_MEDIUM),
     ].spacing(2);
 
-    let upsampling_switch = toggler(manager.auto_upsample)
-        .size(16)
-        .on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b)))
-        .style(|_theme: &Theme, _status| {
-            let is_active = manager.auto_upsample;
-            let (bg, border_color, border_width, fg) = if is_active {
-                (
-                    COLOR_ACCENT.into(),
-                    COLOR_ACCENT,
-                    1.0,
-                    COLOR_TEXT_PRIMARY.into()
-                )
-            } else {
-                (
-                    Color::TRANSPARENT.into(),
-                    COLOR_TEXT_SECONDARY,
-                    1.0,
-                    COLOR_TEXT_SECONDARY.into()
-                )
-            };
-
-            iced::widget::toggler::Style {
-                background: bg,
-                background_border_width: border_width,
-                background_border_color: border_color,
-                foreground: fg,
-                foreground_border_width: 0.0,
-                foreground_border_color: Color::TRANSPARENT,
-                text_color: None,
-                border_radius: None,
-                padding_ratio: 0.2,
-            }
-        });
+    let upsampling_switch = crate::gui::widgets::standard_toggler(
+        manager.auto_upsample,
+        |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b)),
+        16.0,
+        COLOR_ACCENT,
+        COLOR_TEXT_SECONDARY,
+        COLOR_TEXT_PRIMARY,
+        COLOR_TEXT_SECONDARY,
+    );
 
     let left_col = column![
         row![container(text("Núcleo de Audio:").color(COLOR_TEXT_PRIMARY).size(14).font(FONT_INTER_SANS_MEDIUM)).width(Length::Fixed(180.0)), host_dropdown].align_y(Alignment::Center).spacing(10),
@@ -1406,17 +1382,33 @@ fn view_equalizer<'a>(
     manager: &'a AudioCenterManager,
     audio_manager: &'a AudioManager,
 ) -> Element<'a, crate::gui::app::Message> {
-    let toggle_eq = column![
-        row![
-            checkbox(manager.equalizer_enabled).on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqToggleSelected(b))),
-            text("Activar Ecualizador").size(14).font(FONT_INTER_SANS_MEDIUM)
-        ].spacing(5)
-    ];
+    let toggle_eq = row![
+        text("Activar Ecualizador").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        crate::gui::widgets::standard_toggler(
+            manager.equalizer_enabled,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqToggleSelected(b)),
+            18.0,
+            COLOR_ACCENT,
+            COLOR_TEXT_SECONDARY,
+            COLOR_TEXT_PRIMARY,
+            COLOR_TEXT_SECONDARY,
+        )
+    ].spacing(10).align_y(Alignment::Center);
         
     let bands_mode = row![
         text("Bandas:").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-        iced::widget::radio("20", false, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14).font(FONT_INTER_SANS_MEDIUM),
-        iced::widget::radio("31", true, Some(manager.equalizer_bands_31), |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))).size(16).text_size(14).font(FONT_INTER_SANS_MEDIUM),
+        crate::gui::widgets::standard_radio(
+            "20",
+            false,
+            Some(manager.equalizer_bands_31),
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))
+        ),
+        crate::gui::widgets::standard_radio(
+            "31",
+            true,
+            Some(manager.equalizer_bands_31),
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))
+        ),
     ].spacing(10).align_y(Alignment::Center);
 
     let preset_selector = row![
@@ -1425,22 +1417,18 @@ fn view_equalizer<'a>(
             manager.equalizer_presets.clone(),
             manager.selected_preset.clone(),
             |p| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(p))
-        ).text_size(12).padding(4).font(FONT_INTER_SANS_MEDIUM)
+        ).text_size(12).padding(4).font(FONT_INTER_SANS_MEDIUM),
+        button(text("Default").size(12).font(FONT_INTER_SANS_MEDIUM)).style(button::secondary)
+            .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(manager.equalizer_presets[0].clone()))),
     ].spacing(10).align_y(Alignment::Center);
-
-    let default_btn = button(text("Default").size(12).font(FONT_INTER_SANS_MEDIUM)).style(button::secondary)
-        .on_press(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(manager.equalizer_presets[0].clone())));
         
     let top_row = row![
-        toggle_eq,
-        Space::new().width(Length::Fill),
-        preset_selector,
-        default_btn,
-        Space::new().width(Length::Fixed(20.0)),
-        bands_mode
-    ].spacing(15).align_y(Alignment::Center);
+        container(toggle_eq).width(Length::FillPortion(1)).align_x(Alignment::Start),
+        container(bands_mode).width(Length::FillPortion(1)).align_x(Alignment::Center),
+        container(preset_selector).width(Length::FillPortion(1)).align_x(Alignment::End),
+    ].align_y(Alignment::Center);
 
-    // Contenedor Prinicpal de Sliders
+    // Contenedor Principal de Sliders
     // Preamp (1) + Eq Bands (20 / 31)
     
     // Custom Canvas Vertical Slider Helper
@@ -1496,8 +1484,8 @@ fn view_equalizer<'a>(
         ));
     }
 
-    let legend = text("* Restablecer a 0 dB haciendo clic derecho sobre el deslizador.")
-        .size(11)
+    let legend = text("*Puede restablecer al valor por defecto haciendo clic derecho sobre un deslizador.")
+        .size(12)
         .color(COLOR_TEXT_SECONDARY)
         .font(FONT_INTER_SANS_MEDIUM);
 

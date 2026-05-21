@@ -1,5 +1,5 @@
 use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space, Responsive, pick_list},
+    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space, Responsive, pick_list, toggler, radio},
     Alignment, Color, Element, Length, Theme, Padding,
 };
 use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
@@ -285,6 +285,92 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
     mouse_area(content)
         .on_press(action)
         .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
+
+/// Interruptor (Toggler) global de diseño premium personalizado.
+/// - Permite personalizar el tamaño y los colores para adaptarse a cualquier sección.
+pub fn standard_toggler<'a, Message>(
+    is_active: bool,
+    on_toggle: impl Fn(bool) -> Message + 'a,
+    size: f32,
+    active_color: Color,
+    inactive_color: Color,
+    thumb_active_color: Color,
+    thumb_inactive_color: Color,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    toggler(is_active)
+        .size(size)
+        .on_toggle(on_toggle)
+        .style(move |_theme: &Theme, _status| {
+            let (bg, border_color, border_width, fg) = if is_active {
+                (
+                    active_color.into(),
+                    active_color,
+                    1.0,
+                    thumb_active_color.into()
+                )
+            } else {
+                (
+                    Color::TRANSPARENT.into(),
+                    inactive_color,
+                    1.0,
+                    thumb_inactive_color.into()
+                )
+            };
+
+            iced::widget::toggler::Style {
+                background: bg,
+                background_border_width: border_width,
+                background_border_color: border_color,
+                foreground: fg,
+                foreground_border_width: 0.0,
+                foreground_border_color: Color::TRANSPARENT,
+                text_color: None,
+                border_radius: None,
+                padding_ratio: 0.2,
+            }
+        })
+        .into()
+}
+
+/// Botón de radio (Radio Button) global de diseño premium personalizado.
+/// - Desactivados: Borde en COLOR_TEXT_PRIMARY y fondo transparente.
+/// - Activados: Borde en COLOR_ACCENT y el círculo (dot) en COLOR_TEXT_SECONDARY.
+pub fn standard_radio<'a, Message, V>(
+    label: impl Into<String>,
+    value: V,
+    selected: Option<V>,
+    on_click: impl Fn(V) -> Message + 'a,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+    V: Copy + Eq + 'a,
+{
+    let is_selected = selected == Some(value);
+
+    radio(label, value, selected, on_click)
+        .size(16)
+        .text_size(14)
+        .font(FONT_INTER_SANS_MEDIUM)
+        .style(move |_theme: &Theme, _status| {
+            let (border_color, dot_color) = if is_selected {
+                (COLOR_ACCENT, COLOR_ACCENT)
+            } else {
+                (COLOR_TEXT_PRIMARY, Color::TRANSPARENT)
+            };
+
+            iced::widget::radio::Style {
+                background: Color::TRANSPARENT.into(),
+                dot_color,
+                border_width: 1.3,
+                border_color,
+                text_color: Some(COLOR_TEXT_PRIMARY),
+            }
+        })
         .into()
 }
 

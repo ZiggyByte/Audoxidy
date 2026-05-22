@@ -834,6 +834,11 @@ pub fn view<'a>(
     opaque(non_pass_through_window).into()
 }
 
+
+// ==========================================
+// VISTA: PESTAÑA 1 - CONFIGURACIÓN DE AUDIO
+// ==========================================
+
 fn view_audio_config<'a>(
     manager: &'a AudioCenterManager,
     audio_manager: &'a Arc<AudioManager>
@@ -1446,14 +1451,14 @@ fn view_equalizer<'a>(
             .show_tooltip(true)
             .tooltip_font_size(12.0)
             .width(Length::Fixed(24.0))
-            .height(Length::Fixed(240.0));
+            .height(Length::Fixed(250.0));
             
         column![
-            text(label_top).size(10).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+            text(label_top).size(10.4).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
             Space::new().height(Length::Fixed(10.0)),
             slider,
             Space::new().height(Length::Fixed(10.0)),
-            text(label_bot).size(10).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+            text(label_bot).size(10.4).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         ].align_x(Alignment::Center).into()
     }
 
@@ -1467,7 +1472,7 @@ fn view_equalizer<'a>(
 
     // Bandas
     let bands_count = if manager.equalizer_bands_31 { 31 } else { 20 };
-    let mut bands_row = row![].spacing(if manager.equalizer_bands_31 { 6 } else { 12 });
+    let mut bands_row = row![].spacing(if manager.equalizer_bands_31 { 3.98 } else { 20.18 });
 
     for i in 0..bands_count {
         let info = audio_manager.get_eq_band_info(i).unwrap_or((0.0, 0.0));
@@ -1494,14 +1499,24 @@ fn view_equalizer<'a>(
         .color(COLOR_TEXT_SECONDARY)
         .font(FONT_INTER_SANS_MEDIUM);
 
+    // Guia vertical de nivel de ganancia: -9 dB (mínimo) a +9 dB (máximo), con 0 dB como referencia de "sin cambio".
+    let guide_gain = column![
+        Space::new().height(Length::Fixed(25.0)),
+        text("+9").size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+        Space::new().height(Length::Fixed(102.0)),
+        text("0").size(12).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+        Space::new().height(Length::Fixed(102.0)),
+        text("-9").size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+    ].align_x(Alignment::Center);
+
     column![
         top_row,
-        Space::new().height(Length::Fixed(30.0)),
+        Space::new().height(Length::Fixed(20.0)),
         row![
             preamp_col,
-            Space::new().width(Length::Fixed(20.0)),
-            container(Space::new().width(Length::Fixed(1.0)).height(Length::Fixed(260.0))).style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST)),
-            Space::new().width(Length::Fixed(20.0)),
+            Space::new().width(Length::Fixed(2.0)),
+            guide_gain,
+            Space::new().width(Length::Fixed(2.0)),
             bands_row
         ],
         Space::new().height(Length::Fill),
@@ -1561,7 +1576,7 @@ fn view_audio_effects<'a>(
         )
         .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
         .width(Length::Fill)
-        .height(Length::Fixed(24.0))
+        .height(Length::Fixed(18.0))
         .with_colored_track(true)
         .with_arrow_keys(true)
         .track_color(COLOR_BG);
@@ -1604,7 +1619,7 @@ fn view_audio_effects<'a>(
             ]
         )
 
-        .padding(10)
+        .padding([12, 10])
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)

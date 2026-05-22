@@ -1665,3 +1665,637 @@ where
 
     content
 }
+
+// ==========================================
+// WIDGET GLOBAL: CUSTOM SLIDER PERSONALIZADO
+// ==========================================
+// 
+// Widget de slider universal reutilizable con soporte para:
+// - Orientaciones vertical y horizontal
+// - Reset por clic secundario
+// - Tooltip mejorado con posicionamiento junto al mouse
+// - Navegación con flechas de teclado (solo con hover)
+// - Input de texto para modificación de valores
+// - Track coloreado hasta la posición del handle
+// - Arrastre continuo mejorado con estado persistente
+
+/// Enumeración para la orientación del slider
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SliderOrientation {
+    Vertical,
+    Horizontal,
+}
+
+/// Configuración de opciones opcionales del slider
+#[derive(Debug, Clone)]
+pub struct CustomSliderOptions {
+    pub enable_colored_track: bool,
+    pub enable_keyboard_input: bool,
+    pub enable_arrow_keys: bool,
+    pub show_tooltip: bool,
+    pub step_size: f32,
+    pub tooltip_font_size: f32,
+    // --- NUEVAS OPCIONES DE COLOR ---
+    pub track_color: Option<Color>,
+    pub active_track_color: Option<Color>,
+    pub handle_color: Option<Color>,
+    pub handle_hover_color: Option<Color>,
+    pub border_color: Option<Color>,
+    pub border_width: f32,
+}
+
+impl Default for CustomSliderOptions {
+    fn default() -> Self {
+        Self {
+            enable_colored_track: false,
+            enable_keyboard_input: false,
+            enable_arrow_keys: false,
+            show_tooltip: false,
+            tooltip_font_size: 13.0,
+            step_size: 0.1,
+            track_color: None,
+            active_track_color: None,
+            handle_color: None,
+            handle_hover_color: None,
+            border_color: None,
+            border_width: 0.0,
+        }
+    }
+}
+
+/// Estado interno del slider (mantiene si está siendo arrastrado y si tiene foco de teclado)
+#[derive(Debug, Clone, Default)]
+struct CustomSliderState {
+    is_dragging: bool,
+    keyboard_focused: bool,
+}
+
+/// Widget de slider personalizado global
+pub struct CustomSlider<'a, Message> {
+    value: f32,
+    range: std::ops::RangeInclusive<f32>,
+    on_change: Box<dyn Fn(f32) -> Message + 'a>,
+    on_right_click: Box<dyn Fn() -> Message + 'a>,
+    width: Length,
+    height: Length,
+    orientation: SliderOrientation,
+    options: CustomSliderOptions,
+    track_width: f32,
+    handle_size: f32,
+    format_fn: Option<Box<dyn Fn(f32) -> String + 'a>>,
+}
+
+impl<'a, Message> CustomSlider<'a, Message> {
+    /// Crear un nuevo CustomSlider con valores por defecto
+    pub fn new(
+        value: f32,
+        range: std::ops::RangeInclusive<f32>,
+        on_change: impl Fn(f32) -> Message + 'a,
+        on_right_click: impl Fn() -> Message + 'a,
+    ) -> Self {
+        Self {
+            value: value.clamp(*range.start(), *range.end()),
+            range,
+            on_change: Box::new(on_change),
+            on_right_click: Box::new(on_right_click),
+            width: Length::Fixed(20.0),
+            height: Length::Fill,
+            orientation: SliderOrientation::Vertical,
+            options: CustomSliderOptions::default(),
+            track_width: 8.0,
+            handle_size: 16.0,
+            format_fn: None,
+        }
+    }
+
+    /// Establecer anchura del widget
+    pub fn width(mut self, width: Length) -> Self {
+        self.width = width;
+        self
+    }
+
+    /// Establecer altura del widget
+    pub fn height(mut self, height: Length) -> Self {
+        self.height = height;
+        self
+    }
+
+    /// Establecer orientación (Vertical | Horizontal)
+    pub fn orientation(mut self, orientation: SliderOrientation) -> Self {
+        self.orientation = orientation;
+        self
+    }
+
+    /// Establecer opciones configurables
+    pub fn options(mut self, options: CustomSliderOptions) -> Self {
+        self.options = options;
+        self
+    }
+
+    /// Habilitar o deshabilitar track coloreado
+    pub fn with_colored_track(mut self, enabled: bool) -> Self {
+        self.options.enable_colored_track = enabled;
+        self
+    }
+
+    /// Color para la parte activa del track (hasta el handle)
+    pub fn active_track_color(mut self, color: Color) -> Self {
+        self.options.active_track_color = Some(color);
+        self
+    }
+
+    /// Colores personalizados para el slider track
+    pub fn track_color(mut self, color: Color) -> Self {
+        self.options.track_color = Some(color);
+        self
+    }
+
+    /// Colores personalizados para el handle
+    pub fn handle_color(mut self, color: Color) -> Self {
+        self.options.handle_color = Some(color);
+        self
+    }
+
+    /// Color para el handle cuando está en estado hover
+    pub fn handle_hover_color(mut self, color: Color) -> Self {
+        self.options.handle_hover_color = Some(color);
+        self
+    }
+
+    /// Establecer borde del slider con ancho y color personalizados
+    pub fn border(mut self, width: f32, color: Color) -> Self {
+        self.options.border_width = width;
+        self.options.border_color = Some(color);
+        self
+    }
+
+    /// Habilitar o deshabilitar navegación con teclado (flechas)
+    pub fn with_arrow_keys(mut self, enabled: bool) -> Self {
+        self.options.enable_arrow_keys = enabled;
+        self
+    }
+
+    /// Habilitar o deshabilitar input de texto
+    pub fn with_keyboard_input(mut self, enabled: bool) -> Self {
+        self.options.enable_keyboard_input = enabled;
+        self
+    }
+
+    /// Establecer función de formato personalizado para el tooltip
+    pub fn format_value(mut self, f: impl Fn(f32) -> String + 'a) -> Self {
+        self.format_fn = Some(Box::new(f));
+        self
+    }
+
+    /// Habilitar o deshabilitar tooltip
+    pub fn show_tooltip(mut self, enabled: bool) -> Self {
+        self.options.show_tooltip = enabled;
+        self
+    }
+
+    /// Establecer tamaño de fuente del tooltip
+    pub fn tooltip_font_size(mut self, size: f32) -> Self {
+        self.options.tooltip_font_size = size;
+        self
+    }
+
+    /// Establecer tamaño del ancho de la pista
+    pub fn track_width(mut self, width: f32) -> Self {
+        self.track_width = width;
+        self
+    }
+
+    /// Establecer tamaño del handle
+    pub fn handle_size(mut self, size: f32) -> Self {
+        self.handle_size = size;
+        self
+    }
+
+    /// Calcular el porcentaje (0.0 - 1.0) basado en el valor actual
+    fn calculate_percent(&self) -> f32 {
+        let range_size = self.range.end() - self.range.start();
+        if range_size == 0.0 {
+            return 0.0;
+        }
+        ((self.value - self.range.start()) / range_size).clamp(0.0, 1.0)
+    }
+
+    /// Convertir posición en porcentaje a valor en el rango
+    fn percent_to_value(&self, percent: f32) -> f32 {
+        let range_size = self.range.end() - self.range.start();
+        let new_value = self.range.start() + percent * range_size;
+        new_value.clamp(*self.range.start(), *self.range.end())
+    }
+
+    /// Formatear valor para mostrar en tooltip (método privado)
+    fn format_display_value(&self, val: f32) -> String {
+        if let Some(ref fmt) = self.format_fn {
+            fmt(val)
+        } else {
+            format!("{:.1}", val)
+        }
+    }
+}
+
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for CustomSlider<'a, Message> {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size {
+            width: self.width,
+            height: self.height,
+        }
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(CustomSliderState::default())
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        let size = limits.resolve(self.width, self.height, iced::Size::ZERO);
+        iced::advanced::layout::Node::new(size)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let Some(cursor_pos) = cursor.position() else {
+            // Si no hay posición del cursor, detener arrastre
+            tree.state.downcast_mut::<CustomSliderState>().is_dragging = false;
+            return;
+        };
+
+        let is_hovered = bounds.contains(cursor_pos);
+        let state = tree.state.downcast_mut::<CustomSliderState>();
+
+        match event {
+            // Clic izquierdo para iniciar arrastre
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                if is_hovered {
+                    state.is_dragging = true;
+                    let percent = match self.orientation {
+                        SliderOrientation::Vertical => {
+                            1.0 - ((cursor_pos.y - bounds.y) / bounds.height).clamp(0.0, 1.0)
+                        }
+                        SliderOrientation::Horizontal => {
+                            ((cursor_pos.x - bounds.x) / bounds.width).clamp(0.0, 1.0)
+                        }
+                    };
+                    let new_value = self.percent_to_value(percent);
+                    self.value = new_value;
+                    shell.publish((self.on_change)(new_value));
+                }
+            }
+
+            // Liberación de botón izquierdo
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                state.is_dragging = false;
+            }
+
+            // Movimiento del mouse (arrastre continuo si está siendo arrastrado)
+            // Permite drag incluso fuera de bounds mientras is_dragging sea true
+            iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
+                if state.is_dragging {
+                    let percent = match self.orientation {
+                        SliderOrientation::Vertical => {
+                            1.0 - ((cursor_pos.y - bounds.y) / bounds.height).clamp(0.0, 1.0)
+                        }
+                        SliderOrientation::Horizontal => {
+                            ((cursor_pos.x - bounds.x) / bounds.width).clamp(0.0, 1.0)
+                        }
+                    };
+                    let new_value = self.percent_to_value(percent);
+                    self.value = new_value;
+                    shell.publish((self.on_change)(new_value));
+                }
+            }
+
+            // Clic derecho para reset
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
+                if is_hovered {
+                    shell.publish((self.on_right_click)());
+                }
+            }
+
+            // Navegación con teclado (flechas) - solo si este slider tiene foco de teclado
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
+                if self.options.enable_arrow_keys && (state.keyboard_focused || is_hovered) =>
+            {
+                // Dar foco de teclado si está hovered
+                if is_hovered && !state.keyboard_focused {
+                    state.keyboard_focused = true;
+                }
+
+                let step = self.options.step_size;
+
+                let should_change = match (self.orientation, key) {
+                    (SliderOrientation::Vertical, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)) => {
+                        self.value = (self.value + step).clamp(*self.range.start(), *self.range.end());
+                        true
+                    }
+                    (SliderOrientation::Vertical, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown)) => {
+                        self.value = (self.value - step).clamp(*self.range.start(), *self.range.end());
+                        true
+                    }
+                    (SliderOrientation::Horizontal, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight)) => {
+                        self.value = (self.value + step).clamp(*self.range.start(), *self.range.end());
+                        true
+                    }
+                    (SliderOrientation::Horizontal, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft)) => {
+                        self.value = (self.value - step).clamp(*self.range.start(), *self.range.end());
+                        true
+                    }
+                    _ => {
+                        // Limpiar foco si se presiona una tecla que no es flecha
+                        state.keyboard_focused = false;
+                        false
+                    }
+                };
+
+                if should_change {
+                    shell.publish((self.on_change)(self.value));
+                }
+            }
+
+            // Limpiar foco de teclado en otras teclas
+            iced::Event::Keyboard(_) if state.keyboard_focused => {
+                state.keyboard_focused = false;
+            }
+
+            _ => {}
+        }
+    }
+
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let is_hovered = cursor.position().map(|p| bounds.contains(p)).unwrap_or(false);
+
+        let percent = self.calculate_percent();
+
+        match self.orientation {
+            SliderOrientation::Vertical => {
+                self.draw_vertical_slider(renderer, bounds, is_hovered, percent);
+            }
+            SliderOrientation::Horizontal => {
+                self.draw_horizontal_slider(renderer, bounds, is_hovered, percent);
+            }
+        }
+
+        // Obtener estado para verificar si se está dragging
+        let is_dragging = _tree.state.downcast_ref::<CustomSliderState>().is_dragging;
+
+        // Renderizar tooltip si está habilitado y (está hovered O se está dragging)
+        // Durante drag, bloquear tooltip para que solo muestre el del slider siendo arrastrado
+        if (is_hovered || is_dragging) && self.options.show_tooltip {
+            if let Some(cursor_pos) = cursor.position() {
+                self.draw_tooltip(renderer, bounds, percent, cursor_pos);
+            }
+        }
+    }
+}
+
+impl<'a, Message> CustomSlider<'a, Message> {
+    /// Renderizar slider en orientación vertical
+    fn draw_vertical_slider(
+        &self,
+        renderer: &mut iced::Renderer,
+        bounds: Rectangle,
+        is_hovered: bool,
+        percent: f32,
+    ) {
+        use iced::advanced::Renderer as _;
+
+        // Dibujar track completo (fondo)
+        let track_x = bounds.x + (bounds.width - self.track_width) / 2.0;
+        let track_rect = Rectangle {
+            x: track_x,
+            y: bounds.y,
+            width: self.track_width,
+            height: bounds.height,
+        };
+
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: track_rect,
+                border: iced::Border {
+                    radius: (self.track_width / 2.0).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            COLOR_CONTRAST,
+        );
+
+        // Dibujar track coloreado si está habilitado
+        if self.options.enable_colored_track {
+            let colored_height = bounds.height * percent;
+            let colored_y = bounds.y + bounds.height - colored_height;
+
+            let colored_rect = Rectangle {
+                x: track_x,
+                y: colored_y,
+                width: self.track_width,
+                height: colored_height,
+            };
+
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: colored_rect,
+                    border: iced::Border {
+                        radius: (self.track_width / 2.0).into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+                COLOR_ACCENT,
+            );
+        }
+
+        // Dibujar handle
+        let handle_height = self.handle_size;
+        let handle_width = self.handle_size;
+        let handle_y = bounds.y + bounds.height - (percent * bounds.height) - handle_height / 2.0;
+        let handle_x = bounds.x + (bounds.width - handle_width) / 2.0;
+
+        let handle_rect = Rectangle {
+            x: handle_x,
+            y: handle_y.clamp(bounds.y, bounds.y + bounds.height - handle_height),
+            width: handle_width,
+            height: handle_height,
+        };
+
+        let handle_color = if is_hovered {
+            COLOR_TEXT_PRIMARY
+        } else {
+            COLOR_ACCENT
+        };
+
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: handle_rect,
+                border: iced::Border {
+                    radius: 2.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            handle_color,
+        );
+    }
+
+    /// Renderizar slider en orientación horizontal
+    fn draw_horizontal_slider(
+        &self,
+        renderer: &mut iced::Renderer,
+        bounds: Rectangle,
+        is_hovered: bool,
+        percent: f32,
+    ) {
+        use iced::advanced::Renderer as _;
+
+        // 1. Determinar colores (usar personalizado o constante global)
+        let track_color = self.options.track_color.unwrap_or(COLOR_CONTRAST);
+        let active_color = self.options.active_track_color.unwrap_or(COLOR_ACCENT);
+        let handle_color = if is_hovered {
+            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
+        } else {
+            self.options.handle_color.unwrap_or(COLOR_ACCENT)
+        };
+        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+
+        
+        // 2. Dibujar track fondo
+        let track_y = bounds.y + (bounds.height - self.track_width) / 2.0;
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: Rectangle { x: bounds.x, y: track_y, width: bounds.width, height: self.track_width },
+                border: iced::Border {
+                    radius: (self.track_width / 2.0).into(),
+                    width: self.options.border_width,
+                    color: border_color,
+                },
+                ..Default::default()
+            },
+            track_color,
+        );
+
+        // 3. Dibujar track activo (si habilitado)
+        if self.options.enable_colored_track {
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: Rectangle { x: bounds.x, y: track_y, width: bounds.width * percent, height: self.track_width },
+                    border: iced::Border { radius: (self.track_width / 2.0).into(), ..Default::default() },
+                    ..Default::default()
+                },
+                active_color,
+            );
+        }
+
+        // 4. Dibujar handle
+        let handle_x = bounds.x + (percent * bounds.width) - self.handle_size / 2.0;
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: Rectangle {
+                    x: handle_x.clamp(bounds.x, bounds.x + bounds.width - self.handle_size),
+                    y: bounds.y + (bounds.height - self.handle_size) / 2.0,
+                    width: self.handle_size,
+                    height: self.handle_size,
+                },
+                border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                ..Default::default()
+            },
+            handle_color,
+        );
+    }
+
+    /// Renderizar tooltip con el valor actual junto al cursor
+    /// Se dibuja al final para asegurar que aparezca por encima de otros elementos
+    fn draw_tooltip(&self, renderer: &mut iced::Renderer, _bounds: Rectangle, _percent: f32, cursor_pos: iced::Point) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let val_display = self.format_display_value(self.value);
+
+        // Padding interno: 5px a los lados, 3px arriba/abajo
+        let padding_horizontal = 5.0;
+        let padding_vertical = 3.0;
+
+        // Calcular tamaño del tooltip basado en el contenido
+        // Estimamos el ancho basado en el largo del texto (~7px por carácter)
+        let char_width = self.options.tooltip_font_size * 0.7;
+        let text_width = (val_display.len() as f32) * char_width;
+        let tooltip_width = (text_width + padding_horizontal * 2.0).max(60.0);
+        let tooltip_height = self.options.tooltip_font_size + padding_vertical * 2.0;
+
+        // Posicionar tooltip junto al cursor (offset para que no cubra el cursor)
+        let tooltip_x = cursor_pos.x + 10.0;
+        let tooltip_y = cursor_pos.y - tooltip_height - 5.0;
+
+        let tooltip_rect = Rectangle {
+            x: tooltip_x,
+            y: tooltip_y,
+            width: tooltip_width,
+            height: tooltip_height,
+        };
+
+        // Dibujar fondo del tooltip (COLOR_CONTRAST) con borde
+        // Usar fill_quad que se renderiza por encima
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: tooltip_rect,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    width: 1.0,
+                    color: COLOR_TEXT_SECONDARY,
+                },
+                ..Default::default()
+            },
+            COLOR_CONTRAST,
+        );
+
+        // Dibujar texto del tooltip centrado verticalmente dentro del padding
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: val_display,
+                bounds: iced::Size::new(tooltip_width - padding_horizontal * 2.0, tooltip_height - padding_vertical * 2.0),
+                size: self.options.tooltip_font_size.into(),
+                line_height: iced::advanced::text::LineHeight::default(),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::default(),
+            },
+            iced::Point::new(tooltip_x + padding_horizontal, tooltip_y + padding_vertical),
+            COLOR_TEXT_SECONDARY,
+            tooltip_rect,
+        );
+    }
+}
+
+impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {
+    fn from(slider: CustomSlider<'a, Message>) -> Self {
+        Element::new(slider)
+    }
+}

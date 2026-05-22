@@ -1,6 +1,6 @@
 use iced::{
-    widget::{button, checkbox, column, container, pick_list, row, slider, text, toggler, Space, svg, mouse_area, opaque},
-    Alignment, Color, Element, Length, Rectangle, Theme,
+    widget::{button, checkbox, column, container, pick_list, row, text, toggler, Space, svg, mouse_area, opaque},
+    Alignment, Color, Element, Length, Theme,
 };
 use std::sync::Arc;
 use crate::audio::engine::{AudioSettings, BitDepth, ChannelConfig, AudioDeviceInfo};
@@ -1431,7 +1431,7 @@ fn view_equalizer<'a>(
     // Contenedor Principal de Sliders
     // Preamp (1) + Eq Bands (20 / 31)
     
-    // Custom Canvas Vertical Slider Helper
+    // Custom Canvas Vertical Slider Helper (usando nuevo widget global)
     fn vertical_slider<'a>(
         label_top: String,
         label_bot: String,
@@ -1439,7 +1439,12 @@ fn view_equalizer<'a>(
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
         on_right_click: impl Fn() -> crate::gui::app::Message + 'a,
     ) -> Element<'a, crate::gui::app::Message> {
-        let slider = VerticalSlider::new(value, -9.0..=9.0, on_change, on_right_click)
+        let slider = crate::gui::widgets::CustomSlider::new(value, -9.0..=9.0, on_change, on_right_click)
+            .orientation(crate::gui::widgets::SliderOrientation::Vertical)
+            .with_arrow_keys(true)
+            .format_value(|v| format!("{:.1} dB", v))
+            .show_tooltip(true)
+            .tooltip_font_size(12.0)
             .width(Length::Fixed(24.0))
             .height(Length::Fixed(240.0));
             
@@ -1448,7 +1453,7 @@ fn view_equalizer<'a>(
             Space::new().height(Length::Fixed(10.0)),
             slider,
             Space::new().height(Length::Fixed(10.0)),
-            text(label_bot).size(10).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
+            text(label_bot).size(10).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
         ].align_x(Alignment::Center).into()
     }
 
@@ -1484,7 +1489,7 @@ fn view_equalizer<'a>(
         ));
     }
 
-    let legend = text("*Puede restablecer al valor por defecto haciendo clic derecho sobre un deslizador.")
+    let legend = text("*Puede restablecer al valor por defecto haciendo clic secundario sobre un deslizador.")
         .size(12)
         .color(COLOR_TEXT_SECONDARY)
         .font(FONT_INTER_SANS_MEDIUM);
@@ -1523,42 +1528,82 @@ fn view_audio_effects<'a>(
         _default_val: f32,
         on_toggle: impl Fn(bool) -> crate::gui::app::Message + 'a,
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
-        on_reset: crate::gui::app::Message,
+        on_reset: crate::gui::app::Message, // Ahora se usará para el clic derecho
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
     ) -> Element<'a, crate::gui::app::Message> {
         
         let stroke_color = if enabled { COLOR_ACCENT } else { COLOR_CONTRAST };
         
-        // Cabecera con Checkbox Custom (Mock por nativo por ahora)
+        // Cabecera con Toggle Switch a la derecha
         let top_row = row![
             text(title).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fixed(10.0)),
             if let Some(w) = extra_widget { w } else { Space::new().into() },
             Space::new().width(Length::Fill),
-            checkbox(enabled).on_toggle(on_toggle)
+            crate::gui::widgets::standard_toggler(
+                enabled,
+                on_toggle,
+                17.0,
+                COLOR_ACCENT,
+                COLOR_TEXT_SECONDARY,
+                COLOR_BG,
+                COLOR_TEXT_SECONDARY,
+            )
         ].align_y(Alignment::Center);
         
-        // Slider de Iced estándar (Horizontal) acoplado a la derecha
-        let param_slider = iced::widget::slider(range, val.clone(), on_change)
-            .step(0.1)
-            .width(Length::Fill);
-        
+        // --- NUEVO CUSTOM SLIDER ---
+        let on_reset_msg = on_reset.clone();
+        let param_slider = crate::gui::widgets::CustomSlider::new(
+            val,
+            range.clone(),
+            on_change,
+            move || on_reset_msg.clone(), // Reset con clic derecho
+        )
+        .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
+        .width(Length::Fill)
+        .height(Length::Fixed(24.0))
+        .with_colored_track(true)
+        .with_arrow_keys(true)
+        .track_color(COLOR_BG);
+
+        // --- FILA INFERIOR REESTRUCTURADA ---
+        // Eliminamos el botón "R" y el texto estático, 
+        // El valor ahora se gestiona internamente o mediante el input si el widget lo soporta.
         let bottom_row = row![
             text(param_label).size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
-            Space::new().width(Length::Fixed(15.0)),
+            Space::new().width(Length::Fixed(10.0)),
             param_slider,
             Space::new().width(Length::Fixed(10.0)),
-            text(format!("{:.1}", val)).size(11).color(COLOR_TEXT_PRIMARY).width(Length::Fixed(25.0)).font(FONT_INTER_SANS_MEDIUM),
-            button(text("R").size(8).font(FONT_INTER_SANS_MEDIUM)).padding(2).on_press(on_reset)
+            
+            // Reemplazamos el texto estático por un visualizador de valor que 
+            // parece un input (opcionalmente puedes usar iced::widget::text_input aquí)
+            container(
+                text(format!("{:.1}", val))
+                    .size(11)
+                    .color(COLOR_TEXT_PRIMARY)
+                    .font(FONT_INTER_SANS_MEDIUM)
+            )
+            .padding([2, 4])
+            .style(move |_t: &Theme| {
+                container::Style::default()
+                    .background(COLOR_BG)
+                    .border(iced::Border {
+                        color: COLOR_TEXT_SECONDARY,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    })
+            })
+            .width(Length::Fixed(39.0)),
         ].align_y(Alignment::Center);
-
+        
         container(
             column![
                 top_row,
-                Space::new().height(Length::Fixed(10.0)),
+                Space::new().height(Length::Fixed(15.0)),
                 bottom_row
             ]
         )
+
         .padding(10)
         .style(move |_t: &Theme| {
             container::Style::default()
@@ -1644,10 +1689,16 @@ fn view_audio_effects<'a>(
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoExpander, v / 100.0)),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoExpander, 1.0)),
             Some(row![
-                text("Híbrido").size(10).color(COLOR_TEXT_SECONDARY),
-                toggler(stereo_expander_mode == crate::audio::dsp::ExpanderMode::Surround)
-                    .size(14)
-                    .on_toggle(|b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::StereoExpanderModeToggled(b))),
+                text("Natural").size(10).color(COLOR_TEXT_SECONDARY),
+                crate::gui::widgets::standard_toggler(
+                     stereo_expander_mode == crate::audio::dsp::ExpanderMode::Surround,
+                    |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::StereoExpanderModeToggled(b)),
+                    13.0,
+                    COLOR_ACCENT,
+                    COLOR_TEXT_SECONDARY,
+                    COLOR_TEXT_PRIMARY,
+                    COLOR_TEXT_SECONDARY,
+                ),
                 text("Surround").size(10).color(COLOR_TEXT_SECONDARY),
             ].spacing(5).align_y(Alignment::Center).into())),
             
@@ -1658,7 +1709,7 @@ fn view_audio_effects<'a>(
             None),
 
         container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Subwoofer (Mezcla > 5.1)").size(12).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
+        text("Volumen de canales en mezcla menor a 5.1").size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM),
         Space::new().height(Length::Fixed(5.0)),
         view_effect("Canal de Subwoofer", "Nivel (%)", audio_s.downmix_lfe, 0.0..=2.0, audio_s.downmix_lfe_enabled, 0.66,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(AudioStateToggle::DownmixLfe, b)),
@@ -1675,13 +1726,13 @@ fn view_audio_effects<'a>(
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::VoiceBoost, 0.0)),
             None),
             
-        view_effect("Balance Estéreo", "L/R", stereo_balance_balance, -1.0..=1.0, stereo_balance_enabled, 0.0,
+        view_effect("Balance Estéreo", "Left | Right", stereo_balance_balance, -1.0..=1.0, stereo_balance_enabled, 0.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::StereoBalance, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoBalance, v)),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::StereoBalance, 0.0)),
             None),
             
-        view_effect("Reverberación", "Nivel / Wet", reverb_wet, 0.0..=1.0, reverb_enabled, 0.5,
+        view_effect("Reverberación", "Nivel | Wet", reverb_wet, 0.0..=1.0, reverb_enabled, 0.5,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(DspEffect::Reverb, b)),
             |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, v)),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(DspEffect::Reverb, 0.5)),
@@ -1702,190 +1753,13 @@ fn view_audio_effects<'a>(
         iced::widget::scrollable(
             row![
                 col1,
-                Space::new().width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(15.0)),
                 col2,
-                Space::new().width(Length::Fixed(20.0)),
+                Space::new().width(Length::Fixed(15.0)),
                 col3
             ].width(Length::Fill)
         ).height(Length::Fill)
     ]
-    .padding(iced::Padding { top: 0.0, right: 10.0, bottom: 0.0, left: 10.0 })
+    .padding(iced::Padding { top: 0.0, right: 0.0, bottom: 0.0, left: 0.0 })
     .into()
-}
-
-// ==========================================
-// CUSTOM WIDGET: VERTICAL SLIDER (CANVAS)
-// ==========================================
-
-struct VerticalSlider<'a, Message> {
-    value: f32,
-    range: std::ops::RangeInclusive<f32>,
-    on_change: Box<dyn Fn(f32) -> Message + 'a>,
-    on_right_click: Box<dyn Fn() -> Message + 'a>,
-    width: Length,
-    height: Length,
-}
-
-impl<'a, Message> VerticalSlider<'a, Message> {
-    pub fn new(
-        value: f32,
-        range: std::ops::RangeInclusive<f32>,
-        on_change: impl Fn(f32) -> Message + 'a,
-        on_right_click: impl Fn() -> Message + 'a,
-    ) -> Self {
-        Self {
-            value,
-            range,
-            on_change: Box::new(on_change),
-            on_right_click: Box::new(on_right_click),
-            width: Length::Fixed(20.0),
-            height: Length::Fill,
-        }
-    }
-    pub fn width(mut self, width: Length) -> Self { self.width = width; self }
-    pub fn height(mut self, height: Length) -> Self { self.height = height; self }
-}
-
-impl<'a, Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VerticalSlider<'a, Message> {
-    fn size(&self) -> iced::Size<Length> {
-        iced::Size { width: self.width, height: self.height }
-    }
-
-    fn layout(&mut self, _tree: &mut iced::advanced::widget::Tree, _renderer: &iced::Renderer, limits: &iced::advanced::layout::Limits) -> iced::advanced::layout::Node {
-        let size = limits.resolve(self.width, self.height, iced::Size::ZERO);
-        iced::advanced::layout::Node::new(size)
-    }
-
-    fn update(
-        &mut self,
-        _tree: &mut iced::advanced::widget::Tree,
-        event: &iced::Event,
-        layout: iced::advanced::Layout<'_>,
-        cursor: iced::advanced::mouse::Cursor,
-        _renderer: &iced::Renderer,
-        _clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
-        _viewport: &iced::Rectangle,
-    ) {
-        let bounds = layout.bounds();
-        let Some(cursor_pos) = cursor.position() else { return };
-
-        let is_hovered = bounds.contains(cursor_pos);
-
-        match event {
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) |
-            iced::Event::Touch(iced::touch::Event::FingerPressed { .. }) => {
-                if is_hovered {
-                    let percent = 1.0 - ((cursor_pos.y - bounds.y) / bounds.height).clamp(0.0, 1.0);
-                    let new_value = self.range.start() + percent * (self.range.end() - self.range.start());
-                    let snapped = (new_value * 10.0).round() / 10.0;
-                    shell.publish((self.on_change)(snapped));
-                    return;
-                }
-            }
-            iced::Event::Mouse(iced::mouse::Event::CursorMoved { position: _ }) |
-            iced::Event::Touch(iced::touch::Event::FingerMoved { position: _, .. }) => {
-                if is_hovered && cursor.is_over(bounds) {
-                    let is_left_clicked = true; 
-                    if is_left_clicked { 
-                       // No-op for now unless stateful 
-                    }
-                }
-            }
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
-                if is_hovered {
-                    shell.publish((self.on_right_click)());
-                    return;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn draw(
-        &self,
-        _tree: &iced::advanced::widget::Tree,
-        renderer: &mut iced::Renderer,
-        _theme: &Theme,
-        _style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        cursor: iced::advanced::mouse::Cursor,
-        _viewport: &iced::Rectangle,
-    ) {
-        use iced::advanced::Renderer as _;
-        let bounds = layout.bounds();
-        let is_hovered = cursor.position().map(|p| bounds.contains(p)).unwrap_or(false);
-
-        // Draw Track
-        let track_width = 8.0;
-        let track_x = bounds.x + (bounds.width - track_width) / 2.0;
-        let track_rect = Rectangle { x: track_x, y: bounds.y, width: track_width, height: bounds.height };
-        
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad { bounds: track_rect, border: iced::Border { radius: 4.0.into(), ..Default::default() }, ..Default::default() },
-            COLOR_CONTRAST
-        );
-
-        // Draw Handle
-        let percent = (self.value - self.range.start()) / (self.range.end() - self.range.start());
-        let percent = percent.clamp(0.0, 1.0);
-        let handle_height = 16.0;
-        let handle_width = 16.0;
-        let handle_y = bounds.y + bounds.height - (percent * bounds.height) - handle_height / 2.0;
-        let handle_x = bounds.x + (bounds.width - handle_width) / 2.0;
-        
-        let handle_rect = Rectangle { x: handle_x, y: handle_y.clamp(bounds.y, bounds.y + bounds.height - handle_height), width: handle_width, height: handle_height };
-
-        let color = if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_ACCENT };
-
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad { bounds: handle_rect, border: iced::Border { radius: 2.0.into(), ..Default::default() }, ..Default::default() },
-            color
-        );
-
-        // Tooltip Zero-Latency
-        if is_hovered {
-            let val_display = format!("{:.1} dB", self.value);
-            
-            let tooltip_rect = Rectangle {
-                x: handle_rect.x + handle_width + 8.0,
-                y: handle_rect.y - 4.0,
-                width: 45.0,
-                height: 20.0,
-            };
-
-            renderer.fill_quad(
-                iced::advanced::graphics::core::renderer::Quad { bounds: tooltip_rect, border: iced::Border { radius: 2.0.into(), ..Default::default() }, ..Default::default() },
-                COLOR_CONTRAST
-            );
-
-            use iced::advanced::text::Renderer as _;
-
-            renderer.fill_text(
-                iced::advanced::text::Text {
-                    content: val_display,
-                    bounds: iced::Size::new(40.0, 16.0),
-                    size: 11.0.into(),
-                    line_height: iced::advanced::text::LineHeight::default(),
-                    font: iced::Font::default(),
-                    align_x: iced::alignment::Horizontal::Center.into(),
-                    align_y: iced::alignment::Vertical::Center,
-                    shaping: iced::advanced::text::Shaping::Basic,
-                    wrapping: iced::advanced::text::Wrapping::default(),
-                },
-                iced::Point::new(tooltip_rect.x + 4.0, tooltip_rect.y + 2.0),
-                COLOR_TEXT_PRIMARY,
-                tooltip_rect,
-            );
-        }
-    }
-}
-
-impl<'a, Message> From<VerticalSlider<'a, Message>> for Element<'a, Message>
-where
-    Message: 'a,
-{
-    fn from(slider: VerticalSlider<'a, Message>) -> Self {
-        Element::new(slider)
-    }
 }

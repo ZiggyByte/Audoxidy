@@ -11,23 +11,9 @@ cache/covers
 tmp/
 temp/
 
-arquitecture.md
-interface.md
-ecualizadores-aspectos-tecnicos.pdf
 
 library.db
 library.db-shm
 library.db-wal
 library.db*
 
-audio-effects-tab-redesign.png
-audio-center-layout-proposal.png
-audio-center-glassmorphism.png
-expanded_library_analysis.png
-library_filtering_analysis.png
-grid_search_fix.png
-unified_sorting_walkthrough.png
-grid_filter_cleanup.png
-keyboard_nav_highlight_fix.png
-grid_autoscroll_restoration.png
-analisis arquitectonico actual de Audoxidy.md

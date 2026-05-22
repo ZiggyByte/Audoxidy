@@ -307,6 +307,7 @@ pub enum ActiveDialog {
 pub enum AppFocus {
     Library,
     Playlist,
+    AudioCenter,
 }
 
 pub struct AudoxidyApp {
@@ -323,6 +324,7 @@ pub struct AudoxidyApp {
     last_artist_header_click: Option<(String, std::time::Instant)>,
     last_album_header_click: Option<(String, std::time::Instant)>,
     last_playlist_click: Option<(usize, std::time::Instant)>,
+    last_audio_center_key_event: Option<std::time::Instant>,
     pub focus: AppFocus,
     pub is_mouse_over_playlist: bool,
     pub low_resource_mode: bool,
@@ -512,6 +514,7 @@ impl AudoxidyApp {
                 last_artist_header_click: None,
                 last_album_header_click: None,
                 last_playlist_click: None,
+                last_audio_center_key_event: None,
                 focus: AppFocus::Library,
                 is_mouse_over_playlist: false,
                 low_resource_mode,
@@ -1950,6 +1953,13 @@ impl AudoxidyApp {
                 use iced::keyboard::key::Named;
                 use crate::gui::library::LibraryNavDir;
 
+                // Verificar si el audio center tuvo un evento de teclado reciente
+                let audio_center_had_recent_key_event = if let Some(last_time) = self.last_audio_center_key_event {
+                    last_time.elapsed().as_millis() < 150
+                } else {
+                    false
+                };
+
                 match key {
                     Key::Named(Named::ArrowUp) => {
                         if self.focus == AppFocus::Playlist {
@@ -1958,8 +1968,11 @@ impl AudoxidyApp {
                                  return self.execute_playlist_autoscroll(idx);
                              }
                              Task::none()
-                        } else {
+                        } else if !audio_center_had_recent_key_event {
+                             // Solo procesar si el audio center no procesó una flecha recientemente
                              self.update(Message::LibraryKeyNav(LibraryNavDir::Up, modifiers))
+                        } else {
+                            Task::none()
                         }
                     }
                     Key::Named(Named::ArrowDown) => {
@@ -1969,8 +1982,11 @@ impl AudoxidyApp {
                                  return self.execute_playlist_autoscroll(idx);
                              }
                              Task::none()
-                        } else {
+                        } else if !audio_center_had_recent_key_event {
+                             // Solo procesar si el audio center no procesó una flecha recientemente
                              self.update(Message::LibraryKeyNav(LibraryNavDir::Down, modifiers))
+                        } else {
+                            Task::none()
                         }
                     }
                     Key::Character(ref c) if c.to_lowercase() == "a" && modifiers.command() => {
@@ -1986,16 +2002,20 @@ impl AudoxidyApp {
                         if self.focus == AppFocus::Playlist {
                              self.playlist_manager.handle_key_nav(LibraryNavDir::Left, modifiers);
                              Task::none()
-                        } else {
+                        } else if !audio_center_had_recent_key_event {
                              self.update(Message::LibraryKeyNav(LibraryNavDir::Left, modifiers))
+                        } else {
+                            Task::none()
                         }
                     }
                     Key::Named(Named::ArrowRight) => {
                         if self.focus == AppFocus::Playlist {
                              self.playlist_manager.handle_key_nav(LibraryNavDir::Right, modifiers);
                              Task::none()
-                        } else {
+                        } else if !audio_center_had_recent_key_event {
                              self.update(Message::LibraryKeyNav(LibraryNavDir::Right, modifiers))
+                        } else {
+                            Task::none()
                         }
                     }
                     Key::Named(Named::Enter) => {
@@ -2991,6 +3011,11 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::AudioCenterMsg(ac_msg) => {
+                // Registrar que hubo actividad de teclado en audio center si es un cambio de slider
+                if matches!(ac_msg, crate::gui::audio_center::AudioCenterMessage::EqBandChanged(..)) {
+                    self.last_audio_center_key_event = Some(std::time::Instant::now());
+                }
+                
                 if let crate::gui::audio_center::AudioCenterMessage::DragStart = ac_msg {
                     self.audio_center_manager.drag_start = Some(self.last_mouse_pos);
                     self.audio_center_manager.is_dragging = true;

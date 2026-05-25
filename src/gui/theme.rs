@@ -1,6 +1,6 @@
-use iced::{color, Color, Theme, Font};
-use iced::font::{Family, Weight, Stretch, Style};
+use iced::font::{Family, Stretch, Style, Weight};
 use iced::theme::Palette;
+use iced::{Color, Font, Theme, color};
 
 pub const FONT_STAGE_WANDER: Font = Font::with_name("Stage Wander");
 
@@ -35,7 +35,6 @@ pub fn custom_theme() -> Theme {
             success: COLOR_SUCCESS,
             warning: COLOR_WARNING,
             danger: COLOR_ACCENT,
-        }
+        },
     )
 }
-

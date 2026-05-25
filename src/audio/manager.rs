@@ -1,6 +1,7 @@
-use std::sync::Arc;
+use crate::audio::AudioError;
 use crate::audio::engine::{AudioEngine, AudioState};
 use parking_lot::RwLock;
+use std::sync::Arc;
 
 pub struct AudioManager {
     engine: AudioEngine,
@@ -9,10 +10,10 @@ pub struct AudioManager {
 
 #[allow(dead_code)]
 impl AudioManager {
-    pub fn new() -> Result<Self, String> {
+    pub fn new() -> Result<Self, AudioError> {
         let engine = AudioEngine::new()?;
         engine.start()?;
-        
+
         Ok(Self {
             engine,
             database: Arc::new(parking_lot::Mutex::new(None)),
@@ -65,13 +66,20 @@ impl AudioManager {
         self.engine.state.read().total_duration_sec
     }
 
-        pub fn clear_eof(&self) {
+    pub fn clear_eof(&self) {
         self.engine.state.write().eof_reached = false;
     }
 
-    pub fn load_file(&self, path: &str, title: impl Into<String>, artist: impl Into<String>, track_gain: Option<f64>, album_gain: Option<f64>) -> Result<(), String> {
+    pub fn load_file(
+        &self,
+        path: &str,
+        title: impl Into<String>,
+        artist: impl Into<String>,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+    ) -> Result<(), AudioError> {
         let (mut tg, mut ag) = (track_gain, album_gain);
-        
+
         // Si no se pasaron ganancias (ej. desde el módulo Playlist), intentamos buscarlas nosotros en la BD
         if tg.is_none() && ag.is_none() {
             if let Some(db_arc) = &*self.database.lock() {
@@ -85,13 +93,14 @@ impl AudioManager {
             }
         }
 
-        self.engine.decode_file(path, title.into(), artist.into(), tg, ag)
+        self.engine
+            .decode_file(path, title.into(), artist.into(), tg, ag)
     }
 
     pub fn set_volume(&self, volume: f32) {
         self.engine.set_volume(volume);
     }
-    
+
     // DSP Controls
     pub fn get_preamp_gain(&self) -> f32 {
         self.engine.dsp.read().get_preamp_db()
@@ -123,14 +132,17 @@ impl AudioManager {
     pub fn get_eq_enabled(&self) -> bool {
         self.engine.dsp.read().equalizer.enabled
     }
-    
+
     pub fn get_eq_bands_count(&self) -> usize {
         self.engine.dsp.read().equalizer.bands.len()
     }
 
     pub fn get_eq_band_info(&self, index: usize) -> Option<(f32, f32)> {
         let dsp = self.engine.dsp.read();
-        dsp.equalizer.bands.get(index).map(|b| (b.frequency, b.gain))
+        dsp.equalizer
+            .bands
+            .get(index)
+            .map(|b| (b.frequency, b.gain))
     }
 
     pub fn set_eq_mode(&self, num_bands: usize) {
@@ -139,7 +151,7 @@ impl AudioManager {
             dsp.equalizer.set_mode(num_bands);
         }
     }
-    
+
     pub fn reset_dsp_defaults(&self) {
         let mut dsp = self.engine.dsp.write();
         dsp.set_preamp_db(0.0);
@@ -159,11 +171,14 @@ impl AudioManager {
         self.engine.get_devices()
     }
 
-    pub fn apply_audio_settings(&self, settings: crate::audio::engine::AudioSettings) -> Result<(), String> {
+    pub fn apply_audio_settings(
+        &self,
+        settings: crate::audio::engine::AudioSettings,
+    ) -> Result<(), AudioError> {
         self.engine.apply_settings(settings)
     }
 
-    pub fn purge_buffers(&self) -> Result<(), String> {
+    pub fn purge_buffers(&self) -> Result<(), AudioError> {
         self.engine.purge_buffers()
     }
 
@@ -194,18 +209,26 @@ impl AudioManager {
     }
 
     pub fn set_compressor_params(&self, threshold: f32, ratio: f32, attack: f32, release: f32) {
-        self.engine.dsp.write().compressor.set_params(threshold, ratio, attack, release);
+        self.engine
+            .dsp
+            .write()
+            .compressor
+            .set_params(threshold, ratio, attack, release);
     }
 
     // --- Direct DSP Access ---
-    pub fn with_dsp<F, R>(&self, f: F) -> R 
-    where F: FnOnce(&crate::audio::dsp::DspChain) -> R {
+    pub fn with_dsp<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&crate::audio::dsp::DspChain) -> R,
+    {
         let dsp = self.engine.dsp.read();
         f(&dsp)
     }
 
     pub fn with_dsp_mut<F>(&self, f: F)
-    where F: FnOnce(&mut crate::audio::dsp::DspChain) {
+    where
+        F: FnOnce(&mut crate::audio::dsp::DspChain),
+    {
         let mut dsp = self.engine.dsp.write();
         f(&mut dsp);
     }

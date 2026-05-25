@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "skills": {
+    "m07-concurrency": {
+      "source": "zhanghandong/rust-skills",
+      "sourceType": "github",
+      "skillPath": "skills/m07-concurrency/SKILL.md",
+      "computedHash": "6ff3b31bae02e84238a75845008150122071ba449b23edb9ea8a50e3635fffb7"
+    },
+    "m10-performance": {
+      "source": "zhanghandong/rust-skills",
+      "sourceType": "github",
+      "skillPath": "skills/m10-performance/SKILL.md",
+      "computedHash": "c0e093f630ec71079aa7a138af376821e3cc24dfb129f7162e82d854e26a1087"
+    },
+    "rust-best-practices": {
+      "source": "apollographql/skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-best-practices/SKILL.md",
+      "computedHash": "fd336f2f772eb46ddf8658de5f9dd8faa1f35615b316665307fc82eeb4b2e658"
+    },
+    "rust-engineer": {
+      "source": "jeffallan/claude-skills",
+      "sourceType": "github",
+      "skillPath": "skills/rust-engineer/SKILL.md",
+      "computedHash": "f8093c6253afe24bbac3c3328c3ca07e9ef089758896ba10221ed0f2078cb2a0"
+    },
+    "rust-testing": {
+      "source": "affaan-m/everything-claude-code",
+      "sourceType": "github",
+      "skillPath": "skills/rust-testing/SKILL.md",
+      "computedHash": "8f6cab4bcbdc5bd8c19f179e893ca5d502604a03e4e443bd27ba7c3a88a93add"
+    }
+  }
+}

@@ -7,7 +7,7 @@ Audoxidy is a modern, high-fidelity audio player for Linux, Windows, and macOS, 
 - **High-Fidelity Audio Engine**: Built on `cpal` and `rubato` for low-latency, bit-perfect playback.
 - **Advanced DSP**: Includes equalizer, compressor, reverb, and more.
 - **Smart Channel Mixing**: Automatically handles multi-channel audio (2.1, 5.1, 7.1) and downmixing.
-- **Modern UI**: Powered by `egui`, with dynamic theming and responsive design.
+- **Modern UI**: Powered by `Iced`, with dynamic theming and responsive design.
 - **Format Support**: Supports MP3, FLAC, WAV, OGG, and more via `symphonia`.
 
 ## Installation

@@ -1,5 +1,3 @@
-
-
 pub struct DspChain {
     pub preamp_gain: f32, // Linear gain
     pub equalizer: Equalizer,
@@ -97,7 +95,7 @@ impl DspChain {
             self.limiter.process(frame);
         }
     }
-    
+
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.equalizer.set_sample_rate(sample_rate);
         self.sub_bass.set_sample_rate(sample_rate);
@@ -158,9 +156,13 @@ impl Equalizer {
         // Create both sets initially
         let bands_20 = Self::create_bands(20);
         let bands_31 = Self::create_bands(31);
-        
+
         // Default to num_bands, or fallback to 31 if invalid
-        let active = if num_bands == 20 { bands_20.clone() } else { bands_31.clone() };
+        let active = if num_bands == 20 {
+            bands_20.clone()
+        } else {
+            bands_31.clone()
+        };
 
         Self {
             bands: active,
@@ -168,39 +170,45 @@ impl Equalizer {
             saved_bands_20: bands_20,
             saved_bands_31: bands_31,
             last_sample_rate: 44100.0, // Default
-            last_channel_count: 2, // Default
+            last_channel_count: 2,     // Default
         }
     }
 
     fn create_bands(num_bands: usize) -> Vec<EqBand> {
         let freqs = match num_bands {
             20 => vec![
-                22.4, 31.5, 45.0, 63.0, 90.0, 125.0, 180.0, 250.0, 355.0, 500.0, 
-                710.0, 1000.0, 1400.0, 2000.0, 2800.0, 4000.0, 5600.0, 8000.0, 11200.0, 16000.0
+                22.4, 31.5, 45.0, 63.0, 90.0, 125.0, 180.0, 250.0, 355.0, 500.0, 710.0, 1000.0,
+                1400.0, 2000.0, 2800.0, 4000.0, 5600.0, 8000.0, 11200.0, 16000.0,
             ],
             31 => vec![
-                20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 
-                200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 
-                2000.0, 2500.0, 3150.0, 4000.0, 5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0
+                20.0, 25.0, 31.5, 40.0, 50.0, 63.0, 80.0, 100.0, 125.0, 160.0, 200.0, 250.0, 315.0,
+                400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0, 2000.0, 2500.0, 3150.0, 4000.0,
+                5000.0, 6300.0, 8000.0, 10000.0, 12500.0, 16000.0, 20000.0,
             ],
             _ => vec![1000.0], // Should not happen for our UI
         };
 
         if num_bands == 20 {
-             freqs.into_iter().map(|f| {
-                 let mut b = EqBand::new(f);
-                 b.set_q(2.87); 
-                 b
-             }).collect()
+            freqs
+                .into_iter()
+                .map(|f| {
+                    let mut b = EqBand::new(f);
+                    b.set_q(2.87);
+                    b
+                })
+                .collect()
         } else {
-             freqs.into_iter().map(|f| {
-                 let mut b = EqBand::new(f);
-                 b.set_q(4.4); 
-                 b
-             }).collect()
+            freqs
+                .into_iter()
+                .map(|f| {
+                    let mut b = EqBand::new(f);
+                    b.set_q(4.4);
+                    b
+                })
+                .collect()
         }
     }
-    
+
     pub fn set_mode(&mut self, num_bands: usize) {
         // 1. Save current state
         if self.bands.len() == 20 {
@@ -231,7 +239,7 @@ impl Equalizer {
             band.update_coefficients(sample_rate);
         }
         // Also update saved states to prevent stale filters?
-        // Actually no, filters need re-update on load anyway. 
+        // Actually no, filters need re-update on load anyway.
         // But gains are what we care about saving.
     }
 
@@ -251,29 +259,45 @@ impl Equalizer {
             band.process(sample, channel_idx);
         }
     }
-    
+
     pub fn reset_all(&mut self) {
-        for band in &mut self.bands { band.set_gain(0.0); }
-        for band in &mut self.saved_bands_20 { band.set_gain(0.0); }
-        for band in &mut self.saved_bands_31 { band.set_gain(0.0); }
+        for band in &mut self.bands {
+            band.set_gain(0.0);
+        }
+        for band in &mut self.saved_bands_20 {
+            band.set_gain(0.0);
+        }
+        for band in &mut self.saved_bands_31 {
+            band.set_gain(0.0);
+        }
     }
 
     pub fn reset_state(&mut self) {
-        for band in &mut self.bands { band.reset_state(); }
-        for band in &mut self.saved_bands_20 { band.reset_state(); }
-        for band in &mut self.saved_bands_31 { band.reset_state(); }
+        for band in &mut self.bands {
+            band.reset_state();
+        }
+        for band in &mut self.saved_bands_20 {
+            band.reset_state();
+        }
+        for band in &mut self.saved_bands_31 {
+            band.reset_state();
+        }
     }
-
-
 }
 
 #[derive(Clone, Default)]
 struct BiquadState {
-    x1: f64, x2: f64, y1: f64, y2: f64,
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
 }
 impl BiquadState {
     fn reset(&mut self) {
-        self.x1 = 0.0; self.x2 = 0.0; self.y1 = 0.0; self.y2 = 0.0;
+        self.x1 = 0.0;
+        self.x2 = 0.0;
+        self.y1 = 0.0;
+        self.y2 = 0.0;
     }
 }
 
@@ -284,7 +308,12 @@ pub struct EqBand {
     pub q: f32,
     // Biquad coefficients (shared across channels)
     #[allow(dead_code)]
-    a0: f64, a1: f64, a2: f64, b0: f64, b1: f64, b2: f64,
+    a0: f64,
+    a1: f64,
+    a2: f64,
+    b0: f64,
+    b1: f64,
+    b2: f64,
     // State per channel
     states: Vec<BiquadState>,
     last_sample_rate: f32, // Store last SR to re-calculate if needed in set_gain/q
@@ -295,8 +324,13 @@ impl EqBand {
         let mut band = Self {
             frequency: freq,
             gain: 0.0,
-            q: 1.41, 
-            a0: 1.0, a1: 0.0, a2: 0.0, b0: 1.0, b1: 0.0, b2: 0.0,
+            q: 1.41,
+            a0: 1.0,
+            a1: 0.0,
+            a2: 0.0,
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
             states: vec![BiquadState::default(); 8], // Pre-alloc for 7.1/8 channels default
             last_sample_rate: 44100.0,
         };
@@ -308,7 +342,7 @@ impl EqBand {
         self.gain = gain_db;
         self.update_coefficients(self.last_sample_rate);
     }
-    
+
     // Add set_sample_rate aware setter if needed, or just update coeffs after.
 
     pub fn set_q(&mut self, q: f32) {
@@ -328,18 +362,20 @@ impl EqBand {
         }
     }
 
-    /* 
+    /*
      * Peaking EQ Filter Design
      */
     pub fn update_coefficients(&mut self, sample_rate: f32) {
         self.last_sample_rate = sample_rate;
-        if sample_rate <= 0.0 { return; }
+        if sample_rate <= 0.0 {
+            return;
+        }
 
         let w0 = 2.0 * std::f64::consts::PI * (self.frequency as f64) / (sample_rate as f64);
         let c = w0.cos();
         let s = w0.sin();
-        let alpha = s / (2.0 * (self.q as f64)); 
-        
+        let alpha = s / (2.0 * (self.q as f64));
+
         let a = 10.0f64.powf((self.gain as f64) / 40.0); // A = 10^(dB/40)
 
         // Peaking EQ coeffs
@@ -352,41 +388,48 @@ impl EqBand {
 
         // Normalized
         if a0.abs() > 1e-6 {
-             self.b0 = b0 / a0;
-             self.b1 = b1 / a0;
-             self.b2 = b2 / a0;
-             self.a1 = a1 / a0;
-             self.a2 = a2 / a0;
+            self.b0 = b0 / a0;
+            self.b1 = b1 / a0;
+            self.b2 = b2 / a0;
+            self.a1 = a1 / a0;
+            self.a2 = a2 / a0;
         } else {
-             // Fallback bypass
-             self.b0 = 1.0; self.b1 = 0.0; self.b2 = 0.0;
-             self.a1 = 0.0; self.a2 = 0.0;
+            // Fallback bypass
+            self.b0 = 1.0;
+            self.b1 = 0.0;
+            self.b2 = 0.0;
+            self.a1 = 0.0;
+            self.a2 = 0.0;
         }
     }
 
     pub fn process(&mut self, sample: &mut f64, channel_idx: usize) {
         // Bypass: banda a 0 dB es transparente (H(z) = 1), no procesar.
         // Esto evita ~31 multiplicaciones innecesarias por muestra por canal.
-        if self.gain == 0.0 { return; }
+        if self.gain == 0.0 {
+            return;
+        }
 
         // Validate channel index
         if channel_idx >= self.states.len() {
-             return;
+            return;
         }
 
         let state = &mut self.states[channel_idx];
-        
+
         let x = *sample;
-        let y = self.b0 * x + self.b1 * state.x1 + self.b2 * state.x2 - self.a1 * state.y1 - self.a2 * state.y2;
-        
+        let y = self.b0 * x + self.b1 * state.x1 + self.b2 * state.x2
+            - self.a1 * state.y1
+            - self.a2 * state.y2;
+
         // Denormal protection: umbral ultra-conservador para no afectar señales sub-graves legítimas
         let y = if y.abs() < 1e-20 { 0.0 } else { y };
-        
+
         state.x2 = state.x1;
         state.x1 = x;
         state.y2 = state.y1;
         state.y1 = y;
-        
+
         *sample = y;
     }
 }
@@ -416,7 +459,9 @@ impl DelayLine {
     }
 
     fn reset(&mut self) {
-        for s in &mut self.buffer { *s = 0.0; }
+        for s in &mut self.buffer {
+            *s = 0.0;
+        }
         self.index = 0;
     }
 }
@@ -454,9 +499,9 @@ impl CombFilter {
 
     fn process(&mut self, input: f64) -> f64 {
         let output = self.delay.read();
-        
+
         self.filter_state = output * (1.0_f64 - self.damp) + self.filter_state * self.damp;
-        
+
         let input_combined = input + self.filter_state * self.feedback;
         self.delay.write(input_combined);
 
@@ -486,7 +531,7 @@ impl AllPassFilter {
         let buffered_val = self.delay.read();
         let input_combined = input + buffered_val * self.feedback;
         self.delay.write(input_combined);
-        
+
         buffered_val - input_combined // Standard AllPass formula
     }
 }
@@ -517,8 +562,14 @@ impl Reverb {
         let comb_tunings = [1617, 1693, 1781, 1867, 1951, 2053, 2153, 2251];
         let allpass_tunings = [556, 441, 341, 225];
 
-        let combs = comb_tunings.iter().map(|&size| CombFilter::new(size)).collect();
-        let allpasses = allpass_tunings.iter().map(|&size| AllPassFilter::new(size)).collect();
+        let combs = comb_tunings
+            .iter()
+            .map(|&size| CombFilter::new(size))
+            .collect();
+        let allpasses = allpass_tunings
+            .iter()
+            .map(|&size| AllPassFilter::new(size))
+            .collect();
 
         let mut r = Self {
             combs,
@@ -536,18 +587,26 @@ impl Reverb {
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
-        if sample_rate <= 0.0 { return; }
+        if sample_rate <= 0.0 {
+            return;
+        }
         let scale = (sample_rate as f64) / (REVERB_BASE_SAMPLE_RATE as f64);
 
-        self.combs = COMB_TUNINGS_BASE.iter().map(|&base_size| {
-            let scaled = (base_size as f64 * scale).round() as usize;
-            CombFilter::new(scaled.max(1))
-        }).collect();
+        self.combs = COMB_TUNINGS_BASE
+            .iter()
+            .map(|&base_size| {
+                let scaled = (base_size as f64 * scale).round() as usize;
+                CombFilter::new(scaled.max(1))
+            })
+            .collect();
 
-        self.allpasses = ALLPASS_TUNINGS_BASE.iter().map(|&base_size| {
-            let scaled = (base_size as f64 * scale).round() as usize;
-            AllPassFilter::new(scaled.max(1))
-        }).collect();
+        self.allpasses = ALLPASS_TUNINGS_BASE
+            .iter()
+            .map(|&base_size| {
+                let scaled = (base_size as f64 * scale).round() as usize;
+                AllPassFilter::new(scaled.max(1))
+            })
+            .collect();
 
         self.update_params();
     }
@@ -582,7 +641,9 @@ impl Reverb {
     }
 
     pub fn process(&mut self, frame: &mut [f64]) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            return;
+        }
 
         for sample in frame.iter_mut() {
             let input = *sample * (self.gain as f64);
@@ -601,8 +662,12 @@ impl Reverb {
     }
 
     pub fn reset_state(&mut self) {
-        for comb in &mut self.combs { comb.reset(); }
-        for allpass in &mut self.allpasses { allpass.reset(); }
+        for comb in &mut self.combs {
+            comb.reset();
+        }
+        for allpass in &mut self.allpasses {
+            allpass.reset();
+        }
     }
 }
 
@@ -613,9 +678,9 @@ pub struct Compressor {
     pub enabled: bool,
     pub threshold: f32, // dB
     pub ratio: f32,
-    pub attack: f32, // secs
+    pub attack: f32,  // secs
     pub release: f32, // secs
-    
+
     // Internal state
     envelope: f64,
     sample_rate: f32,
@@ -647,10 +712,16 @@ impl Compressor {
     }
 
     pub fn process(&mut self, frame: &mut [f64]) {
-        if !self.enabled { return; }
+        if !self.enabled {
+            return;
+        }
 
         // Find max peak in the frame for a simple stereo-linked envelope detector
-        let max_abs = frame.iter().map(|s| s.abs()).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(0.0_f64);
+        let max_abs = frame
+            .iter()
+            .map(|s| s.abs())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0_f64);
 
         // Envelope follower (Simple AR)
         let attack_coeff = (-1.0_f64 / ((self.attack as f64) * (self.sample_rate as f64))).exp();
@@ -663,12 +734,17 @@ impl Compressor {
         }
 
         // Gain reduction calculation
-        let env_db = if self.envelope > 1e-6_f64 { 20.0_f64 * self.envelope.log10() } else { -96.0_f64 };
-        
+        let env_db = if self.envelope > 1e-6_f64 {
+            20.0_f64 * self.envelope.log10()
+        } else {
+            -96.0_f64
+        };
+
         if env_db > (self.threshold as f64) {
-            let gain_reduction_db = ((self.threshold as f64) - env_db) * (1.0_f64 - 1.0_f64 / (self.ratio as f64));
+            let gain_reduction_db =
+                ((self.threshold as f64) - env_db) * (1.0_f64 - 1.0_f64 / (self.ratio as f64));
             let gain = 10.0f64.powf(gain_reduction_db / 20.0_f64);
-            
+
             for s in frame.iter_mut() {
                 *s *= gain;
             }
@@ -699,7 +775,11 @@ pub struct BiquadFilter {
     freq: f32,
     pub gain: f32, // dB
     q: f32,
-    a1: f64, a2: f64, b0: f64, b1: f64, b2: f64,
+    a1: f64,
+    a2: f64,
+    b0: f64,
+    b1: f64,
+    b2: f64,
     states: Vec<BiquadState>,
     sample_rate: f32,
 }
@@ -707,8 +787,15 @@ pub struct BiquadFilter {
 impl BiquadFilter {
     pub fn new(filter_type: BiquadFilterType, freq: f32, gain: f32, q: f32) -> Self {
         let mut filter = Self {
-            filter_type, freq, gain, q,
-            a1: 0.0, a2: 0.0, b0: 1.0, b1: 0.0, b2: 0.0,
+            filter_type,
+            freq,
+            gain,
+            q,
+            a1: 0.0,
+            a2: 0.0,
+            b0: 1.0,
+            b1: 0.0,
+            b2: 0.0,
             states: vec![BiquadState::default(); 8],
             sample_rate: 44100.0,
         };
@@ -727,7 +814,7 @@ impl BiquadFilter {
         self.sample_rate = rate;
         self.update_coefficients(rate);
     }
-    
+
     pub fn resize_channels(&mut self, channels: usize) {
         self.states.resize(channels, BiquadState::default());
     }
@@ -747,16 +834,14 @@ impl BiquadFilter {
         let alpha = sin_w0 / (2.0 * (self.q as f64));
 
         let (b0, b1, b2, a0, a1, a2) = match self.filter_type {
-            BiquadFilterType::Peak => {
-                (
-                    1.0 + alpha * a,
-                    -2.0 * cos_w0,
-                    1.0 - alpha * a,
-                    1.0 + alpha / a,
-                    -2.0 * cos_w0,
-                    1.0 - alpha / a,
-                )
-            },
+            BiquadFilterType::Peak => (
+                1.0 + alpha * a,
+                -2.0 * cos_w0,
+                1.0 - alpha * a,
+                1.0 + alpha / a,
+                -2.0 * cos_w0,
+                1.0 - alpha / a,
+            ),
             BiquadFilterType::LowShelf => {
                 let sqa = 2.0 * a.sqrt() * alpha;
                 (
@@ -767,7 +852,7 @@ impl BiquadFilter {
                     -2.0 * ((a - 1.0) + (a + 1.0) * cos_w0),
                     (a + 1.0) + (a - 1.0) * cos_w0 - sqa,
                 )
-            },
+            }
             BiquadFilterType::HighShelf => {
                 let sqa = 2.0 * a.sqrt() * alpha;
                 (
@@ -778,37 +863,31 @@ impl BiquadFilter {
                     2.0 * ((a - 1.0) - (a + 1.0) * cos_w0),
                     (a + 1.0) - (a - 1.0) * cos_w0 - sqa,
                 )
-            },
-            BiquadFilterType::AllPass => {
-                (
-                    1.0 - alpha,
-                    -2.0 * cos_w0,
-                    1.0 + alpha,
-                    1.0 + alpha,
-                    -2.0 * cos_w0,
-                    1.0 - alpha,
-                )
-            },
-            BiquadFilterType::LowPass => {
-                (
-                    (1.0 - cos_w0) / 2.0,
-                    1.0 - cos_w0,
-                    (1.0 - cos_w0) / 2.0,
-                    1.0 + alpha,
-                    -2.0 * cos_w0,
-                    1.0 - alpha,
-                )
-            },
-            BiquadFilterType::HighPass => {
-                (
-                    (1.0 + cos_w0) / 2.0,
-                    -(1.0 + cos_w0),
-                    (1.0 + cos_w0) / 2.0,
-                    1.0 + alpha,
-                    -2.0 * cos_w0,
-                    1.0 - alpha,
-                )
             }
+            BiquadFilterType::AllPass => (
+                1.0 - alpha,
+                -2.0 * cos_w0,
+                1.0 + alpha,
+                1.0 + alpha,
+                -2.0 * cos_w0,
+                1.0 - alpha,
+            ),
+            BiquadFilterType::LowPass => (
+                (1.0 - cos_w0) / 2.0,
+                1.0 - cos_w0,
+                (1.0 - cos_w0) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos_w0,
+                1.0 - alpha,
+            ),
+            BiquadFilterType::HighPass => (
+                (1.0 + cos_w0) / 2.0,
+                -(1.0 + cos_w0),
+                (1.0 + cos_w0) / 2.0,
+                1.0 + alpha,
+                -2.0 * cos_w0,
+                1.0 - alpha,
+            ),
         };
 
         if a0 > 0.0 {
@@ -825,14 +904,17 @@ impl BiquadFilter {
         // Los filtros de corte (LP/HP/AllPass) deben procesar SIEMPRE.
         match self.filter_type {
             BiquadFilterType::Peak | BiquadFilterType::LowShelf | BiquadFilterType::HighShelf => {
-                if self.gain.abs() < 0.01 { return; }
-            },
-            _ => {} 
+                if self.gain.abs() < 0.01 {
+                    return;
+                }
+            }
+            _ => {}
         }
         for (i, sample) in frame.iter_mut().enumerate() {
             let s = &mut self.states[i];
-            let out = self.b0 * *sample + self.b1 * s.x1 + self.b2 * s.x2 
-                      - self.a1 * s.y1 - self.a2 * s.y2;
+            let out = self.b0 * *sample + self.b1 * s.x1 + self.b2 * s.x2
+                - self.a1 * s.y1
+                - self.a2 * s.y2;
             s.x2 = s.x1;
             s.x1 = *sample;
             s.y2 = s.y1;
@@ -845,76 +927,98 @@ impl BiquadFilter {
 // --- New Audio Effects Definitions ---
 
 #[derive(Clone)]
-pub struct SubBass { 
-    pub enabled: bool, 
-    pub freq: f32, 
+pub struct SubBass {
+    pub enabled: bool,
+    pub freq: f32,
     pub gain: f32,
     filter: BiquadFilter,
 }
-impl Default for SubBass { 
-    fn default() -> Self { 
-        Self { enabled: false, freq: 45.0, gain: 0.0, filter: BiquadFilter::new(BiquadFilterType::LowShelf, 45.0, 0.0, 1.0) } 
-    } 
+impl Default for SubBass {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            freq: 45.0,
+            gain: 0.0,
+            filter: BiquadFilter::new(BiquadFilterType::LowShelf, 45.0, 0.0, 1.0),
+        }
+    }
 }
 impl SubBass {
-    pub fn set_sample_rate(&mut self, rate: f32) { self.filter.set_sample_rate(rate); }
-    pub fn resize_channels(&mut self, ch: usize) { self.filter.resize_channels(ch); }
+    pub fn set_sample_rate(&mut self, rate: f32) {
+        self.filter.set_sample_rate(rate);
+    }
+    pub fn resize_channels(&mut self, ch: usize) {
+        self.filter.resize_channels(ch);
+    }
     pub fn process(&mut self, frame: &mut [f64]) {
         if self.filter.gain != self.gain {
             self.filter.set_params(self.freq, self.gain, 1.0);
         }
         self.filter.process_frame(frame);
     }
-    pub fn reset_state(&mut self) { self.filter.reset_state(); }
+    pub fn reset_state(&mut self) {
+        self.filter.reset_state();
+    }
 }
 
 #[derive(Clone)]
-pub struct MidBass { 
-    pub enabled: bool, 
-    pub freq: f32, 
+pub struct MidBass {
+    pub enabled: bool,
+    pub freq: f32,
     pub gain: f32,
     filter: BiquadFilter,
 }
-impl Default for MidBass { 
-    fn default() -> Self { 
-        Self { enabled: false, freq: 100.0, gain: 0.0, filter: BiquadFilter::new(BiquadFilterType::Peak, 100.0, 0.0, 0.8) } 
-    } 
+impl Default for MidBass {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            freq: 100.0,
+            gain: 0.0,
+            filter: BiquadFilter::new(BiquadFilterType::Peak, 100.0, 0.0, 0.8),
+        }
+    }
 }
 impl MidBass {
-    pub fn set_sample_rate(&mut self, rate: f32) { self.filter.set_sample_rate(rate); }
-    pub fn resize_channels(&mut self, ch: usize) { self.filter.resize_channels(ch); }
+    pub fn set_sample_rate(&mut self, rate: f32) {
+        self.filter.set_sample_rate(rate);
+    }
+    pub fn resize_channels(&mut self, ch: usize) {
+        self.filter.resize_channels(ch);
+    }
     pub fn process(&mut self, frame: &mut [f64]) {
         if self.filter.gain != self.gain {
             self.filter.set_params(self.freq, self.gain, 0.8);
         }
         self.filter.process_frame(frame);
     }
-    pub fn reset_state(&mut self) { self.filter.reset_state(); }
+    pub fn reset_state(&mut self) {
+        self.filter.reset_state();
+    }
 }
 
 #[derive(Clone)]
-pub struct VoiceBoost { 
-    pub enabled: bool, 
-    pub gain: f32, 
+pub struct VoiceBoost {
+    pub enabled: bool,
+    pub gain: f32,
     filter1: BiquadFilter,
     filter2: BiquadFilter,
 }
-impl Default for VoiceBoost { 
-    fn default() -> Self { 
-        Self { 
-            enabled: false, 
-            gain: 0.0, 
+impl Default for VoiceBoost {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            gain: 0.0,
             filter1: BiquadFilter::new(BiquadFilterType::Peak, 1500.0, 0.0, 0.8),
-            filter2: BiquadFilter::new(BiquadFilterType::Peak, 3000.0, 0.0, 0.8)
-        } 
-    } 
+            filter2: BiquadFilter::new(BiquadFilterType::Peak, 3000.0, 0.0, 0.8),
+        }
+    }
 }
 impl VoiceBoost {
-    pub fn set_sample_rate(&mut self, rate: f32) { 
-        self.filter1.set_sample_rate(rate); 
-        self.filter2.set_sample_rate(rate); 
+    pub fn set_sample_rate(&mut self, rate: f32) {
+        self.filter1.set_sample_rate(rate);
+        self.filter2.set_sample_rate(rate);
     }
-    pub fn resize_channels(&mut self, ch: usize) { 
+    pub fn resize_channels(&mut self, ch: usize) {
         self.filter1.resize_channels(ch);
         self.filter2.resize_channels(ch);
     }
@@ -941,11 +1045,15 @@ pub enum ExpanderMode {
 #[derive(Clone)]
 pub struct StereoExpanderHybrid {
     // Crossover 1: 250Hz (Low vs MidHigh)
-    low_lp1: BiquadFilter, low_lp2: BiquadFilter,
-    low_hp1: BiquadFilter, low_hp2: BiquadFilter,
+    low_lp1: BiquadFilter,
+    low_lp2: BiquadFilter,
+    low_hp1: BiquadFilter,
+    low_hp2: BiquadFilter,
     // Crossover 2: 5000Hz (Mid vs High)
-    mid_lp1: BiquadFilter, mid_lp2: BiquadFilter,
-    mid_hp1: BiquadFilter, mid_hp2: BiquadFilter,
+    mid_lp1: BiquadFilter,
+    mid_lp2: BiquadFilter,
+    mid_hp1: BiquadFilter,
+    mid_hp2: BiquadFilter,
     // Air Boost for Side Channel
     high_shelf_side: BiquadFilter,
     // Decorrelators for High Side channel (Natural texture)
@@ -978,11 +1086,15 @@ impl StereoExpanderHybrid {
 #[derive(Clone)]
 pub struct StereoExpanderSurround {
     // Crossover 1: 250Hz (Low vs MidHigh)
-    low_lp1: BiquadFilter, low_lp2: BiquadFilter,
-    low_hp1: BiquadFilter, low_hp2: BiquadFilter,
+    low_lp1: BiquadFilter,
+    low_lp2: BiquadFilter,
+    low_hp1: BiquadFilter,
+    low_hp2: BiquadFilter,
     // Crossover 2: 5000Hz (Mid vs High)
-    mid_lp1: BiquadFilter, mid_lp2: BiquadFilter,
-    mid_hp1: BiquadFilter, mid_hp2: BiquadFilter,
+    mid_lp1: BiquadFilter,
+    mid_lp2: BiquadFilter,
+    mid_hp1: BiquadFilter,
+    mid_hp2: BiquadFilter,
     // Air Boost for Side Channel
     high_shelf_side: BiquadFilter,
     // Decorrelators for Mid Side channel (Enveloping body)
@@ -991,7 +1103,7 @@ pub struct StereoExpanderSurround {
     // Decorrelators for High Side channel (Natural texture/Air)
     side_ap1: AllPassFilter,
     side_ap2: AllPassFilter,
-    side_ap3: AllPassFilter, 
+    side_ap3: AllPassFilter,
     sample_rate: f32,
 }
 
@@ -1020,46 +1132,56 @@ impl StereoExpanderSurround {
 }
 
 #[derive(Clone)]
-pub struct MultiBandStereoExpander { 
-    pub enabled: bool, 
+pub struct MultiBandStereoExpander {
+    pub enabled: bool,
     pub width: f32,
     pub mode: ExpanderMode,
     hybrid: StereoExpanderHybrid,
     surround: StereoExpanderSurround,
 }
 
-impl Default for MultiBandStereoExpander { 
-    fn default() -> Self { 
-        Self { 
-            enabled: false, 
+impl Default for MultiBandStereoExpander {
+    fn default() -> Self {
+        Self {
+            enabled: false,
             width: 1.0,
             mode: ExpanderMode::Hybrid,
             hybrid: StereoExpanderHybrid::new(),
             surround: StereoExpanderSurround::new(),
-        } 
-    } 
+        }
+    }
 }
 
 impl MultiBandStereoExpander {
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.hybrid.sample_rate = rate;
-        self.hybrid.low_lp1.set_sample_rate(rate); self.hybrid.low_lp2.set_sample_rate(rate);
-        self.hybrid.low_hp1.set_sample_rate(rate); self.hybrid.low_hp2.set_sample_rate(rate);
-        self.hybrid.mid_lp1.set_sample_rate(rate); self.hybrid.mid_lp2.set_sample_rate(rate);
-        self.hybrid.mid_hp1.set_sample_rate(rate); self.hybrid.mid_hp2.set_sample_rate(rate);
+        self.hybrid.low_lp1.set_sample_rate(rate);
+        self.hybrid.low_lp2.set_sample_rate(rate);
+        self.hybrid.low_hp1.set_sample_rate(rate);
+        self.hybrid.low_hp2.set_sample_rate(rate);
+        self.hybrid.mid_lp1.set_sample_rate(rate);
+        self.hybrid.mid_lp2.set_sample_rate(rate);
+        self.hybrid.mid_hp1.set_sample_rate(rate);
+        self.hybrid.mid_hp2.set_sample_rate(rate);
         self.hybrid.high_shelf_side.set_sample_rate(rate);
         // Los AllPass ya se ajustan internamente o tienen tamaños fijos pequeños para textura
         self.surround.sample_rate = rate;
-        self.surround.low_lp1.set_sample_rate(rate); self.surround.low_lp2.set_sample_rate(rate);
-        self.surround.low_hp1.set_sample_rate(rate); self.surround.low_hp2.set_sample_rate(rate);
-        self.surround.mid_lp1.set_sample_rate(rate); self.surround.mid_lp2.set_sample_rate(rate);
-        self.surround.mid_hp1.set_sample_rate(rate); self.surround.mid_hp2.set_sample_rate(rate);
+        self.surround.low_lp1.set_sample_rate(rate);
+        self.surround.low_lp2.set_sample_rate(rate);
+        self.surround.low_hp1.set_sample_rate(rate);
+        self.surround.low_hp2.set_sample_rate(rate);
+        self.surround.mid_lp1.set_sample_rate(rate);
+        self.surround.mid_lp2.set_sample_rate(rate);
+        self.surround.mid_hp1.set_sample_rate(rate);
+        self.surround.mid_hp2.set_sample_rate(rate);
         self.surround.high_shelf_side.set_sample_rate(rate);
     }
 
     pub fn process(&mut self, frame: &mut [f64]) {
-        if frame.len() != 2 || self.width == 1.0 { return; }
-        
+        if frame.len() != 2 || self.width == 1.0 {
+            return;
+        }
+
         match self.mode {
             ExpanderMode::Hybrid => self.process_hybrid(frame),
             ExpanderMode::Surround => self.process_surround(frame),
@@ -1069,35 +1191,35 @@ impl MultiBandStereoExpander {
     fn process_hybrid(&mut self, frame: &mut [f64]) {
         let mut low_band = [frame[0], frame[1]];
         let mut mid_high_band = [frame[0], frame[1]];
-        
+
         // 1. Separar Low (< 250Hz)
         self.hybrid.low_lp1.process_frame(&mut low_band);
         self.hybrid.low_lp2.process_frame(&mut low_band);
         self.hybrid.low_hp1.process_frame(&mut mid_high_band);
         self.hybrid.low_hp2.process_frame(&mut mid_high_band);
-        
+
         // El Low se fuerza a Mono para mantener el punch
         // Compensamos con un ligero boost (+1.0dB) para recuperar presencia
         let low_mono = (low_band[0] + low_band[1]) * 0.5 * 1.0_f64;
         low_band[0] = low_mono;
         low_band[1] = low_mono;
-        
+
         // 2. Separar Mid (250Hz - 5kHz) y High (> 5kHz)
         let mut mid_band = [mid_high_band[0], mid_high_band[1]];
         let mut high_band = [mid_high_band[0], mid_high_band[1]];
-        
+
         self.hybrid.mid_lp1.process_frame(&mut mid_band);
         self.hybrid.mid_lp2.process_frame(&mut mid_band);
         self.hybrid.mid_hp1.process_frame(&mut high_band);
         self.hybrid.mid_hp2.process_frame(&mut high_band);
-        
+
         // 3. Procesar Mid Band (Expansión moderada)
         self.expand_band(&mut mid_band, self.width as f64);
-        
+
         // 4. Procesar High Band (Expansión suave + Air Boost)
         let high_width = (self.width as f64 - 1.0) * 0.8 + 1.0; // Reducida agresividad para mayor naturalidad
         self.expand_band(&mut high_band, high_width);
-        
+
         // Aplicar Air Boost y Decorrelación solo al canal Side de la banda alta
         let h_mid = (high_band[0] + high_band[1]) * 0.5;
         let mut h_side_val = (high_band[0] - high_band[1]) * 0.5;
@@ -1105,23 +1227,25 @@ impl MultiBandStereoExpander {
         // 1. Decorrelación de fase (textura orgánica)
         h_side_val = self.hybrid.side_ap1.process(h_side_val);
         h_side_val = self.hybrid.side_ap2.process(h_side_val);
-        
+
         let mut h_side_buf = [h_side_val, 0.0];
-        
+
         let air_gain = ((self.width - 1.0) * 1.5).clamp(0.0, 2.0); // 2db de air boost (Refinado)
         if air_gain > 0.0 {
             // Solo actualizamos coeficientes si la ganancia cambió, para evitar zumbidos (Zipper Noise)
             if (self.hybrid.high_shelf_side.gain - air_gain).abs() > 0.001 {
                 self.hybrid.high_shelf_side.gain = air_gain;
-                self.hybrid.high_shelf_side.update_coefficients(self.hybrid.sample_rate);
+                self.hybrid
+                    .high_shelf_side
+                    .update_coefficients(self.hybrid.sample_rate);
             }
             self.hybrid.high_shelf_side.process_frame(&mut h_side_buf);
         }
-        
+
         high_band[0] = h_mid + h_side_buf[0];
         high_band[1] = h_mid - h_side_buf[0];
-        
-        frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90; 
+
+        frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90;
         frame[1] = low_band[1] + mid_band[1] + high_band[1] * 0.90;
     }
 
@@ -1155,7 +1279,7 @@ impl MultiBandStereoExpander {
         mid_band[0] = m_mid + m_side;
         mid_band[1] = m_mid - m_side;
 
-        let high_width = (self.width as f64 - 1.0) * 0.8 + 1.0; 
+        let high_width = (self.width as f64 - 1.0) * 0.8 + 1.0;
         self.expand_band(&mut high_band, high_width);
 
         let h_mid = (high_band[0] + high_band[1]) * 0.5;
@@ -1167,19 +1291,21 @@ impl MultiBandStereoExpander {
 
         let mut h_side_buf = [h_side_val, 0.0];
 
-        let air_gain = ((self.width - 1.0) * 1.5).clamp(0.0, 2.0); 
+        let air_gain = ((self.width - 1.0) * 1.5).clamp(0.0, 2.0);
         if air_gain > 0.0 {
             // Solo actualizamos coeficientes si la ganancia cambió, para evitar zumbidos (Zipper Noise)
             if (self.surround.high_shelf_side.gain - air_gain).abs() > 0.001 {
                 self.surround.high_shelf_side.gain = air_gain;
-                self.surround.high_shelf_side.update_coefficients(self.surround.sample_rate);
+                self.surround
+                    .high_shelf_side
+                    .update_coefficients(self.surround.sample_rate);
             }
             self.surround.high_shelf_side.process_frame(&mut h_side_buf);
         }
 
         high_band[0] = h_mid + h_side_buf[0];
         high_band[1] = h_mid - h_side_buf[0];
-        
+
         // 5. Recombinar todas las bandas con equilibrio tonal optimizado
         // Aplicamos una ligerísima atenuación en agudos para que se sientan "dentro" de la escena
         frame[0] = low_band[0] + mid_band[0] + high_band[0] * 0.90;
@@ -1193,19 +1319,27 @@ impl MultiBandStereoExpander {
         band[1] = mid - side * width;
     }
 
-    pub fn reset_state(&mut self) { 
-        self.hybrid.low_lp1.reset_state(); self.hybrid.low_lp2.reset_state();
-        self.hybrid.low_hp1.reset_state(); self.hybrid.low_hp2.reset_state();
-        self.hybrid.mid_lp1.reset_state(); self.hybrid.mid_lp2.reset_state();
-        self.hybrid.mid_hp1.reset_state(); self.hybrid.mid_hp2.reset_state();
+    pub fn reset_state(&mut self) {
+        self.hybrid.low_lp1.reset_state();
+        self.hybrid.low_lp2.reset_state();
+        self.hybrid.low_hp1.reset_state();
+        self.hybrid.low_hp2.reset_state();
+        self.hybrid.mid_lp1.reset_state();
+        self.hybrid.mid_lp2.reset_state();
+        self.hybrid.mid_hp1.reset_state();
+        self.hybrid.mid_hp2.reset_state();
         self.hybrid.high_shelf_side.reset_state();
         self.hybrid.side_ap1.reset();
         self.hybrid.side_ap2.reset();
 
-        self.surround.low_lp1.reset_state(); self.surround.low_lp2.reset_state();
-        self.surround.low_hp1.reset_state(); self.surround.low_hp2.reset_state();
-        self.surround.mid_lp1.reset_state(); self.surround.mid_lp2.reset_state();
-        self.surround.mid_hp1.reset_state(); self.surround.mid_hp2.reset_state();
+        self.surround.low_lp1.reset_state();
+        self.surround.low_lp2.reset_state();
+        self.surround.low_hp1.reset_state();
+        self.surround.low_hp2.reset_state();
+        self.surround.mid_lp1.reset_state();
+        self.surround.mid_lp2.reset_state();
+        self.surround.mid_hp1.reset_state();
+        self.surround.mid_hp2.reset_state();
         self.surround.high_shelf_side.reset_state();
         self.surround.mid_ap1.reset();
         self.surround.mid_ap2.reset();
@@ -1216,69 +1350,102 @@ impl MultiBandStereoExpander {
 }
 
 #[derive(Clone)]
-pub struct NoiseGate { 
-    pub enabled: bool, 
-    pub threshold: f32, 
-    pub attack: f32, 
+pub struct NoiseGate {
+    pub enabled: bool,
+    pub threshold: f32,
+    pub attack: f32,
     pub release: f32,
     envelope: f64,
     sample_rate: f32,
 }
-impl Default for NoiseGate { 
-    fn default() -> Self { Self { enabled: false, threshold: -60.0, attack: 0.005, release: 0.1, envelope: 0.0, sample_rate: 44100.0 } } 
+impl Default for NoiseGate {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            threshold: -60.0,
+            attack: 0.005,
+            release: 0.1,
+            envelope: 0.0,
+            sample_rate: 44100.0,
+        }
+    }
 }
 impl NoiseGate {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
     pub fn process(&mut self, frame: &mut [f64]) {
-        let max_abs = frame.iter().map(|s| s.abs()).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(0.0_f64);
+        let max_abs = frame
+            .iter()
+            .map(|s| s.abs())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0_f64);
         let attack_coeff = (-1.0_f64 / ((self.attack as f64) * (self.sample_rate as f64))).exp();
         let release_coeff = (-1.0_f64 / ((self.release as f64) * (self.sample_rate as f64))).exp();
-        
+
         if max_abs > self.envelope {
             self.envelope = attack_coeff * self.envelope + (1.0 - attack_coeff) * max_abs;
         } else {
             self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
         }
 
-        let env_db = if self.envelope > 1e-6_f64 { 20.0_f64 * self.envelope.log10() } else { -96.0_f64 };
+        let env_db = if self.envelope > 1e-6_f64 {
+            20.0_f64 * self.envelope.log10()
+        } else {
+            -96.0_f64
+        };
         if env_db < (self.threshold as f64) {
             // Apply a smooth attenuation when under threshold (simple soft mute)
-            let att = 10.0f64.powf((env_db - (self.threshold as f64)) / 20.0).max(0.0001);
+            let att = 10.0f64
+                .powf((env_db - (self.threshold as f64)) / 20.0)
+                .max(0.0001);
             for s in frame.iter_mut() {
                 *s *= att;
             }
         }
     }
-    pub fn reset_state(&mut self) { self.envelope = 0.0; }
+    pub fn reset_state(&mut self) {
+        self.envelope = 0.0;
+    }
 }
 #[derive(Clone)]
-pub struct Limiter { 
-    pub enabled: bool, 
-    pub ceiling: f32, 
+pub struct Limiter {
+    pub enabled: bool,
+    pub ceiling: f32,
     pub release: f32,
     envelope: f64,
     sample_rate: f32,
 }
-impl Default for Limiter { 
-    fn default() -> Self { Self { enabled: false, ceiling: -0.1, release: 0.05, envelope: 0.0, sample_rate: 44100.0 } } 
+impl Default for Limiter {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            ceiling: -0.1,
+            release: 0.05,
+            envelope: 0.0,
+            sample_rate: 44100.0,
+        }
+    }
 }
 impl Limiter {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
     pub fn process(&mut self, frame: &mut [f64]) {
-        let max_abs = frame.iter().map(|s| s.abs()).max_by(|a, b| a.partial_cmp(b).unwrap()).unwrap_or(0.0_f64);
+        let max_abs = frame
+            .iter()
+            .map(|s| s.abs())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0_f64);
         let release_coeff = (-1.0_f64 / ((self.release as f64) * (self.sample_rate as f64))).exp();
-        
+
         // Fast attack (instant), smooth release
         if max_abs > self.envelope {
             self.envelope = max_abs;
         } else {
             self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
         }
-        
+
         let ceiling_lin = 10.0f64.powf((self.ceiling as f64) / 20.0);
         if self.envelope > ceiling_lin {
             let attenuation = ceiling_lin / self.envelope;
@@ -1287,24 +1454,39 @@ impl Limiter {
             }
         }
     }
-    pub fn reset_state(&mut self) { self.envelope = 0.0; }
+    pub fn reset_state(&mut self) {
+        self.envelope = 0.0;
+    }
 }
 
 #[derive(Clone)]
-pub struct StereoBalance { 
-    pub enabled: bool, 
-    pub balance: f32 
+pub struct StereoBalance {
+    pub enabled: bool,
+    pub balance: f32,
 }
-impl Default for StereoBalance { 
-    fn default() -> Self { Self { enabled: false, balance: 0.0 } } 
+impl Default for StereoBalance {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            balance: 0.0,
+        }
+    }
 }
 impl StereoBalance {
     pub fn process(&mut self, frame: &mut [f64]) {
         if frame.len() == 2 && self.balance != 0.0 {
             // balance -1.0 = left 100%, right 0%
             // balance 1.0 = right 100%, left 0%
-            let gain_l = if self.balance > 0.0 { 1.0_f64 - (self.balance as f64) } else { 1.0_f64 };
-            let gain_r = if self.balance < 0.0 { 1.0_f64 + (self.balance as f64) } else { 1.0_f64 };
+            let gain_l = if self.balance > 0.0 {
+                1.0_f64 - (self.balance as f64)
+            } else {
+                1.0_f64
+            };
+            let gain_r = if self.balance < 0.0 {
+                1.0_f64 + (self.balance as f64)
+            } else {
+                1.0_f64
+            };
             frame[0] *= gain_l;
             frame[1] *= gain_r;
         }

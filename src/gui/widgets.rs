@@ -1,12 +1,21 @@
-use iced::{
-    widget::{button, column, container, mouse_area, row, scrollable, svg, text, text_input, Space, Responsive, pick_list, toggler, radio},
-    Alignment, Color, Element, Length, Theme, Padding,
+use iced::advanced::{
+    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
+    widget::{Operation, Tree},
 };
-use iced::advanced::{layout, mouse, overlay, renderer, widget::{Operation, Tree}, Clipboard, Layout, Shell, Widget};
+use iced::{
+    Alignment, Color, Element, Length, Padding, Theme,
+    widget::{
+        Responsive, Space, button, column, container, mouse_area, pick_list, radio, row,
+        scrollable, svg, text, text_input, toggler,
+    },
+};
 use iced::{Event, Rectangle, Size, Vector};
 
-use crate::gui::theme::{COLOR_TEXT_PRIMARY, COLOR_CONTRAST, COLOR_TEXT_SECONDARY, COLOR_ACCENT, COLOR_BG, FONT_INTER_SANS_NORMAL,FONT_INTER_SANS_MEDIUM};
-use crate::utils::{truncate_text, SortColumn, format_duration, format_metadata};
+use crate::gui::theme::{
+    COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+    FONT_INTER_SANS_MEDIUM, FONT_INTER_SANS_NORMAL,
+};
+use crate::utils::{SortColumn, format_duration, format_metadata, truncate_text};
 use std::collections::HashMap;
 
 // ==========================================
@@ -16,10 +25,10 @@ use std::collections::HashMap;
 /// ======================================================================================
 /// SISTEMA DE TRUNCAMIENTO DE TEXTO INTELIGENTE (RESPONSIVE)
 /// ======================================================================================
-/// 
+///
 /// Estas funciones proporcionan un widget de texto que se adapta dinámicamente al ancho real
 /// de su contenedor, truncando con elipsis (...) cuando el espacio es insuficiente.
-/// 
+///
 /// El sistema utiliza el componente `Responsive` de Iced para detectar el tamaño en tiempo real,
 /// eliminando la necesidad de conteos de caracteres fijos que fallan al cambiar de fuente o ventana.
 
@@ -27,7 +36,7 @@ use std::collections::HashMap;
 /// - Sin saltos de línea (Wrapping::None)
 /// - Sin sufijo adicional
 /// - Alineación: Izquierda (Horizontal) y Centro (Vertical) por defecto.
-/// 
+///
 /// Ejemplo: smart_truncate_text(song_title, 14.0, FONT, COLOR)
 pub fn smart_truncate_text<'a, Message: Clone + 'a>(
     content: impl Into<String>,
@@ -36,11 +45,14 @@ pub fn smart_truncate_text<'a, Message: Clone + 'a>(
     color: Color,
 ) -> Element<'a, Message> {
     smart_truncate_text_advanced(
-        content.into(), font_size, font, color, 
-        iced::widget::text::Wrapping::None, 
+        content.into(),
+        font_size,
+        font,
+        color,
+        iced::widget::text::Wrapping::None,
         None,
         Alignment::Start,
-        Alignment::Center
+        Alignment::Center,
     )
 }
 
@@ -49,7 +61,7 @@ pub fn smart_truncate_text<'a, Message: Clone + 'a>(
 /// - El sufijo siempre permanecerá junto al texto, cortando el texto si es necesario.
 /// - Sin saltos de línea (Wrapping::None)
 /// - Alineación: Izquierda (Horizontal) y Centro (Vertical) por defecto.
-/// 
+///
 /// Ejemplo: smart_truncate_text_with_suffix(name, 15.0, FONT, COLOR, (" •".to_string(), DOT_COLOR))
 pub fn smart_truncate_text_with_suffix<'a, Message: Clone + 'a>(
     content: String,
@@ -59,17 +71,20 @@ pub fn smart_truncate_text_with_suffix<'a, Message: Clone + 'a>(
     suffix: (String, Color),
 ) -> Element<'a, Message> {
     smart_truncate_text_advanced(
-        content, size, font, color, 
-        iced::widget::text::Wrapping::None, 
+        content,
+        size,
+        font,
+        color,
+        iced::widget::text::Wrapping::None,
         Some(suffix),
         Alignment::Start,
-        Alignment::Center
+        Alignment::Center,
     )
 }
 
 /// [NIVEL 3] Versión avanzada para control total.
 /// Permite definir manualmente el comportamiento de wrapping, sufijos y alineación.
-/// 
+///
 /// Alineaciones (Usando el enum `Alignment` de Iced):
 /// - `align_x`: Alineación HORIZONTAL (Start = Izquierda, Center = Centro, End = Derecha).
 /// - `align_y`: Alineación VERTICAL (Start = Arriba, Center = Centro, End = Abajo).
@@ -85,13 +100,17 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     Responsive::new(move |size_info| {
         // Estimación: ~0.55 el tamaño de la fuente por carácter.
-        let char_w = size * 0.55; 
+        let char_w = size * 0.55;
         let suffix_s = suffix.as_ref().map(|(s, _)| s.clone()).unwrap_or_default();
         let suffix_c = suffix.as_ref().map(|(_, c)| *c).unwrap_or(color);
-        
+
         // Calculamos ancho de sufijo (incluyendo un margen de 2px)
-        let suffix_w = if suffix_s.is_empty() { 0.0 } else { (suffix_s.chars().count() as f32) * char_w + 2.0 };
-        
+        let suffix_w = if suffix_s.is_empty() {
+            0.0
+        } else {
+            (suffix_s.chars().count() as f32) * char_w + 2.0
+        };
+
         let available_w = size_info.width;
         let text_w_needed = (content.chars().count() as f32) * char_w;
 
@@ -110,14 +129,24 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
                 .font(font)
                 .color(color)
                 .wrapping(wrapping)
-                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(size + 2.0)))
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                    size + 2.0
+                )))
         ]
         .align_y(align_y)
         .spacing(0);
 
         if !suffix_s.is_empty() {
-            r = r.push(text(suffix_s).size(size).font(font).color(suffix_c).wrapping(wrapping)
-                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(size + 2.0))));
+            r = r.push(
+                text(suffix_s)
+                    .size(size)
+                    .font(font)
+                    .color(suffix_c)
+                    .wrapping(wrapping)
+                    .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                        size + 2.0,
+                    ))),
+            );
         }
 
         container(r)
@@ -164,8 +193,15 @@ where
         self.content.as_widget().size()
     }
 
-    fn layout(&mut self, tree: &mut Tree, renderer: &Renderer, limits: &layout::Limits) -> layout::Node {
-        self.content.as_widget_mut().layout(&mut tree.children[0], renderer, limits)
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -178,7 +214,15 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content.as_widget().draw(&tree.children[0], renderer, theme, style, layout, cursor, viewport)
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        )
     }
 
     fn children(&self) -> Vec<Tree> {
@@ -196,7 +240,9 @@ where
         renderer: &Renderer,
         operation: &mut dyn Operation,
     ) {
-        self.content.as_widget_mut().operate(&mut tree.children[0], layout, renderer, operation)
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation)
     }
 
     fn update(
@@ -240,7 +286,13 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.content.as_widget().mouse_interaction(&tree.children[0], layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 
     fn overlay<'b>(
@@ -251,7 +303,13 @@ where
         viewport: &Rectangle,
         translation: Vector,
     ) -> Option<overlay::Element<'b, Message, Theme, Renderer>> {
-        self.content.as_widget_mut().overlay(&mut tree.children[0], layout, renderer, viewport, translation)
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 
@@ -278,9 +336,12 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
     size: u32,
     action: Message,
 ) -> Element<'a, Message> {
-    let content = svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
-        .width(size)
-        .height(size);
+    let content = svg(svg::Handle::from_path(format!(
+        "assets/icons/{}",
+        icon_filename
+    )))
+    .width(size)
+    .height(size);
 
     mouse_area(content)
         .on_press(action)
@@ -311,14 +372,14 @@ where
                     active_color.into(),
                     active_color,
                     1.0,
-                    thumb_active_color.into()
+                    thumb_active_color.into(),
                 )
             } else {
                 (
                     Color::TRANSPARENT.into(),
                     inactive_color,
                     1.0,
-                    thumb_inactive_color.into()
+                    thumb_inactive_color.into(),
                 )
             };
 
@@ -397,10 +458,11 @@ where
         .text_size(14)
         .style(|_theme: &Theme, status| {
             let is_active_hover = match status {
-                iced::widget::pick_list::Status::Hovered | iced::widget::pick_list::Status::Opened { .. } => true,
+                iced::widget::pick_list::Status::Hovered
+                | iced::widget::pick_list::Status::Opened { .. } => true,
                 _ => false,
             };
-            
+
             let bg_color = if is_active_hover {
                 COLOR_ACCENT
             } else {
@@ -425,19 +487,17 @@ where
                 },
             }
         })
-        .menu_style(|_theme: &Theme| {
-            iced::overlay::menu::Style {
-                background: COLOR_CONTRAST.into(),
-                border: iced::Border {
-                    width: 0.0,
-                    color: Color::TRANSPARENT,
-                    radius: 0.0.into(),
-                },
-                text_color: COLOR_TEXT_PRIMARY,
-                selected_text_color: COLOR_TEXT_PRIMARY,
-                selected_background: COLOR_ACCENT.into(),
-                shadow: iced::Shadow::default(),
-            }
+        .menu_style(|_theme: &Theme| iced::overlay::menu::Style {
+            background: COLOR_CONTRAST.into(),
+            border: iced::Border {
+                width: 0.0,
+                color: Color::TRANSPARENT,
+                radius: 0.0.into(),
+            },
+            text_color: COLOR_TEXT_PRIMARY,
+            selected_text_color: COLOR_TEXT_PRIMARY,
+            selected_background: COLOR_ACCENT.into(),
+            shadow: iced::Shadow::default(),
         });
 
     pick.into()
@@ -471,7 +531,7 @@ pub fn album_art_widget<'a, Message: 'a>(
     if handle_opt.is_none() {
         handle_opt = avif_path.and_then(|p| crate::utils::covers::load_cover_handle(p));
     }
-    
+
     // 3. Fallback: Cargar desde bytes crudos (Prioridad 2)
     if handle_opt.is_none() {
         if let Some(data) = raw_data {
@@ -485,78 +545,84 @@ pub fn album_art_widget<'a, Message: 'a>(
                 .width(bounds)
                 .height(bounds)
                 .content_fit(iced::ContentFit::Cover)
-                .border_radius(radius)
+                .border_radius(radius),
         )
         .width(bounds)
         .height(bounds)
         .style(move |_t: &Theme| {
-            container::Style::default()
-                .border(iced::Border { radius: radius.into(), ..Default::default() })
+            container::Style::default().border(iced::Border {
+                radius: radius.into(),
+                ..Default::default()
+            })
         })
         .clip(true)
         .into()
     } else {
         // 4. Fallback: Placeholder Automático basado en el estilo solicitado
         match style {
-            PlaceholderStyle::Large => {
-                container(
-                    column![
-                        svg(svg::Handle::from_path("assets/icons/album.svg"))
-                            .width(Length::Fixed(96.0))
-                            .height(Length::Fixed(96.0))
-                            .style(|_t: &Theme, _s| svg::Style { color: Some(Color::from(COLOR_TEXT_SECONDARY)) }),
-                        text("AuDoxiDY")
-                            .font(crate::gui::theme::FONT_STAGE_WANDER)
-                            .size(11)
-                            .color(COLOR_TEXT_SECONDARY)
-                    ]
-                    .align_x(Alignment::Center)
-                    .spacing(5)
-                )
-                .width(bounds)
-                .height(bounds)
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .style(move |_t: &Theme| {
-                    container::Style::default()
-                        .background(COLOR_BG)
-                        .border(iced::Border { radius: radius.into(), ..Default::default() })
-                })
-                .into()
-            }
-            PlaceholderStyle::Small => {
-                container(
+            PlaceholderStyle::Large => container(
+                column![
                     svg(svg::Handle::from_path("assets/icons/album.svg"))
-                        .width(Length::Fixed(20.0))
-                        .height(Length::Fixed(20.0))
-                        .style(|_t: &Theme, _s| svg::Style { color: Some(Color::from(COLOR_TEXT_SECONDARY)) })
-                )
-                .width(bounds)
-                .height(bounds)
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .style(move |_t: &Theme| {
-                    container::Style::default()
-                        .background(COLOR_BG)
-                        .border(iced::Border { radius: radius.into(), ..Default::default() })
-                })
-                .into()
-            }
-            PlaceholderStyle::Player => {
-                container(
+                        .width(Length::Fixed(96.0))
+                        .height(Length::Fixed(96.0))
+                        .style(|_t: &Theme, _s| svg::Style {
+                            color: Some(Color::from(COLOR_TEXT_SECONDARY))
+                        }),
                     text("AuDoxiDY")
                         .font(crate::gui::theme::FONT_STAGE_WANDER)
-                        .size(40)
-                        .color(COLOR_TEXT_PRIMARY)
-                )
-                .width(bounds)
-                .height(bounds)
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
-                .padding(20)
-                .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
-                .into()
-            }
+                        .size(11)
+                        .color(COLOR_TEXT_SECONDARY)
+                ]
+                .align_x(Alignment::Center)
+                .spacing(5),
+            )
+            .width(bounds)
+            .height(bounds)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(move |_t: &Theme| {
+                container::Style::default()
+                    .background(COLOR_BG)
+                    .border(iced::Border {
+                        radius: radius.into(),
+                        ..Default::default()
+                    })
+            })
+            .into(),
+            PlaceholderStyle::Small => container(
+                svg(svg::Handle::from_path("assets/icons/album.svg"))
+                    .width(Length::Fixed(20.0))
+                    .height(Length::Fixed(20.0))
+                    .style(|_t: &Theme, _s| svg::Style {
+                        color: Some(Color::from(COLOR_TEXT_SECONDARY)),
+                    }),
+            )
+            .width(bounds)
+            .height(bounds)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(move |_t: &Theme| {
+                container::Style::default()
+                    .background(COLOR_BG)
+                    .border(iced::Border {
+                        radius: radius.into(),
+                        ..Default::default()
+                    })
+            })
+            .into(),
+            PlaceholderStyle::Player => container(
+                text("AuDoxiDY")
+                    .font(crate::gui::theme::FONT_STAGE_WANDER)
+                    .size(40)
+                    .color(COLOR_TEXT_PRIMARY),
+            )
+            .width(bounds)
+            .height(bounds)
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .padding(20)
+            .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+            .into(),
         }
     }
 }
@@ -566,7 +632,11 @@ pub fn custom_scrollbar_style(
     status: iced::widget::scrollable::Status,
 ) -> iced::widget::scrollable::Style {
     let color = match status {
-        iced::widget::scrollable::Status::Hovered { is_vertical_scrollbar_hovered, is_horizontal_scrollbar_hovered, .. } => {
+        iced::widget::scrollable::Status::Hovered {
+            is_vertical_scrollbar_hovered,
+            is_horizontal_scrollbar_hovered,
+            ..
+        } => {
             if is_vertical_scrollbar_hovered || is_horizontal_scrollbar_hovered {
                 Color::from(COLOR_TEXT_PRIMARY)
             } else {
@@ -576,7 +646,7 @@ pub fn custom_scrollbar_style(
         iced::widget::scrollable::Status::Dragged { .. } => Color::from(COLOR_ACCENT),
         _ => Color::TRANSPARENT,
     };
-    
+
     iced::widget::scrollable::Style {
         container: iced::widget::container::Style::default(),
         vertical_rail: iced::widget::scrollable::Rail {
@@ -587,19 +657,32 @@ pub fn custom_scrollbar_style(
                     iced::Background::Gradient(iced::Gradient::Linear(iced::gradient::Linear {
                         angle: 1.5707964.into(), // 90 grados (Horizontal)
                         stops: [
-                            Some(iced::gradient::ColorStop { offset: 0.49, color: Color::TRANSPARENT }),
-                            Some(iced::gradient::ColorStop { offset: 0.5, color: color }),
-                            Some(iced::gradient::ColorStop { offset: 1.0, color: color }),
-                            None, None, None, None, None
+                            Some(iced::gradient::ColorStop {
+                                offset: 0.49,
+                                color: Color::TRANSPARENT,
+                            }),
+                            Some(iced::gradient::ColorStop {
+                                offset: 0.5,
+                                color: color,
+                            }),
+                            Some(iced::gradient::ColorStop {
+                                offset: 1.0,
+                                color: color,
+                            }),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
                         ],
                     }))
                 } else {
                     Color::TRANSPARENT.into()
                 },
-                border: iced::Border { 
-                    radius: 0.0.into(), 
-                    width: 0.0, 
-                    color: Color::TRANSPARENT 
+                border: iced::Border {
+                    radius: 0.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
                 },
             },
         },
@@ -611,19 +694,32 @@ pub fn custom_scrollbar_style(
                     iced::Background::Gradient(iced::Gradient::Linear(iced::gradient::Linear {
                         angle: 3.1415927.into(), // 180 grados (Vertical)
                         stops: [
-                            Some(iced::gradient::ColorStop { offset: 0.49, color: Color::TRANSPARENT }),
-                            Some(iced::gradient::ColorStop { offset: 0.5, color: color }),
-                            Some(iced::gradient::ColorStop { offset: 1.0, color: color }),
-                            None, None, None, None, None
+                            Some(iced::gradient::ColorStop {
+                                offset: 0.49,
+                                color: Color::TRANSPARENT,
+                            }),
+                            Some(iced::gradient::ColorStop {
+                                offset: 0.5,
+                                color: color,
+                            }),
+                            Some(iced::gradient::ColorStop {
+                                offset: 1.0,
+                                color: color,
+                            }),
+                            None,
+                            None,
+                            None,
+                            None,
+                            None,
                         ],
                     }))
                 } else {
                     Color::TRANSPARENT.into()
                 },
-                border: iced::Border { 
-                    radius: 0.0.into(), 
-                    width: 0.0, 
-                    color: Color::TRANSPARENT 
+                border: iced::Border {
+                    radius: 0.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
                 },
             },
         },
@@ -664,12 +760,12 @@ pub fn apply_marquee(text_str: &str, limit: usize, tick: u64) -> String {
     if text_str.len() <= limit && text_str.is_ascii() {
         return text_str.to_string();
     }
-    
+
     let chars: Vec<char> = text_str.chars().collect();
     if chars.len() <= limit {
         return text_str.to_string();
     }
-    
+
     // Suavizamos el movimiento dividiendo el tick
     let offset = (tick / 3) as usize % (chars.len() + 10);
     if offset < chars.len() {
@@ -703,17 +799,24 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
     on_resize: impl Fn(SortColumn) -> Message + 'a,
     on_sort: impl Fn(SortColumn) -> Message + 'a,
 ) -> Element<'a, Message> {
-
-    let mut sort_bar_content = row![].align_y(Alignment::Center).height(Length::Fill).padding(iced::Padding { top: 0.0, right: 5.0, bottom: 0.0, left: left_padding });
+    let mut sort_bar_content = row![]
+        .align_y(Alignment::Center)
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 5.0,
+            bottom: 0.0,
+            left: left_padding,
+        });
 
     for &sort in columns {
         let is_active = current_sort == Some(sort);
         let width = *column_widths.get(&sort).unwrap_or(&100) as f32;
-        
+
         let available_w = width - 15.0; // Espacio reservado para icono/separador
         let max_chars = (available_w / 7.0).max(1.0) as usize;
         let t_str = truncate_text(sort.as_str(), max_chars);
-        
+
         let t = text(t_str)
             .size(12)
             .font(FONT_INTER_SANS_MEDIUM)
@@ -721,55 +824,75 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             .wrapping(iced::widget::text::Wrapping::None);
 
         let icon_el = if is_active {
-             let handle = match sort_ascending {
-                 Some(true) => Some(svg::Handle::from_path("assets/icons/arrow-up-chevron.svg")),
-                 Some(false) => Some(svg::Handle::from_path("assets/icons/arrow-down-chevron.svg")),
-                 _ => None,
-             };
-             
-             if let Some(h) = handle {
-                 Some(svg(h)
-                     .width(20)
-                     .height(20)
-                     .style(move |_t: &Theme, _s: svg::Status| svg::Style { color: Some(COLOR_TEXT_SECONDARY) }))
-             } else {
-                 None
-             }
-        } else { None };
+            let handle = match sort_ascending {
+                Some(true) => Some(svg::Handle::from_path("assets/icons/arrow-up-chevron.svg")),
+                Some(false) => Some(svg::Handle::from_path(
+                    "assets/icons/arrow-down-chevron.svg",
+                )),
+                _ => None,
+            };
+
+            if let Some(h) = handle {
+                Some(
+                    svg(h)
+                        .width(20)
+                        .height(20)
+                        .style(move |_t: &Theme, _s: svg::Status| svg::Style {
+                            color: Some(COLOR_TEXT_SECONDARY),
+                        }),
+                )
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         let is_hovered = resizing_column == Some(sort) || hovered_column == Some(sort);
-        
+
         let separator_visual = container(Space::new())
             .width(Length::Fixed(9.0))
             .height(Length::Fixed(16.0))
             .style(move |_t: &Theme| {
-                let bg_color = if is_hovered { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
+                let bg_color = if is_hovered {
+                    COLOR_ACCENT
+                } else {
+                    COLOR_TEXT_SECONDARY
+                };
                 container::Style::default()
                     .background(bg_color)
-                    .border(iced::Border { 
-                        radius: 4.0.into(), 
-                        width: 4.0, 
-                        color: Color::TRANSPARENT
+                    .border(iced::Border {
+                        radius: 4.0.into(),
+                        width: 4.0,
+                        color: Color::TRANSPARENT,
                     })
             });
 
         let on_h = on_hover(Some(sort));
         let on_h_exit = on_hover(None);
-        let separator_area: Element<Message> = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
-            Space::new().width(4.0).into()
-        } else {
-            mouse_area(separator_visual)
-                .on_enter(on_h)
-                .on_exit(on_h_exit)
-                .on_press(on_resize(sort))
-                .interaction(iced::mouse::Interaction::ResizingHorizontally)
-                .into()
-        };
+        let separator_area: Element<Message> =
+            if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
+                Space::new().width(4.0).into()
+            } else {
+                mouse_area(separator_visual)
+                    .on_enter(on_h)
+                    .on_exit(on_h_exit)
+                    .on_press(on_resize(sort))
+                    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+                    .into()
+            };
 
         let sort_btn_content = if sort == SortColumn::TrackNumber {
             if let Some(ic) = icon_el {
-                row![Space::new().width(Length::Fill), t, ic, Space::new().width(3.0)].align_y(Alignment::Center)
+                row![
+                    Space::new().width(Length::Fill),
+                    t,
+                    ic,
+                    Space::new().width(3.0)
+                ]
+                .align_y(Alignment::Center)
             } else {
-                row![Space::new().width(Length::Fill), t, Space::new().width(3.0)].align_y(Alignment::Center)
+                row![Space::new().width(Length::Fill), t, Space::new().width(3.0)]
+                    .align_y(Alignment::Center)
             }
         } else {
             if let Some(ic) = icon_el {
@@ -782,13 +905,27 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let sort_btn = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
             button(sort_btn_content)
                 .width(Length::Fill)
-                .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
-                .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+                .padding(iced::Padding {
+                    left: 5.0,
+                    right: 0.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                })
+                .style(|_t: &Theme, _s| {
+                    button::Style::default().with_background(Color::TRANSPARENT)
+                })
         } else {
             button(sort_btn_content)
                 .width(Length::Fill)
-                .padding(iced::Padding { left: 5.0, right: 0.0, top: 0.0, bottom: 0.0 })
-                .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
+                .padding(iced::Padding {
+                    left: 5.0,
+                    right: 0.0,
+                    top: 0.0,
+                    bottom: 0.0,
+                })
+                .style(|_t: &Theme, _s| {
+                    button::Style::default().with_background(Color::TRANSPARENT)
+                })
                 .on_press(on_sort(sort))
         };
 
@@ -797,12 +934,12 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             Space::new().width(3.0),
             separator_area,
             Space::new().width(3.0)
-        ].align_y(Alignment::Center).width(Length::Fixed(width));
-            
-        let col_container = container(content)
-            .width(Length::Fixed(width))
-            .clip(true);
-            
+        ]
+        .align_y(Alignment::Center)
+        .width(Length::Fixed(width));
+
+        let col_container = container(content).width(Length::Fixed(width)).clip(true);
+
         sort_bar_content = sort_bar_content.push(col_container);
     }
 
@@ -818,7 +955,8 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
         container(Space::new().width(Length::Fill).height(2.0))
             .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
-    ].into()
+    ]
+    .into()
 }
 
 // ==========================================
@@ -838,32 +976,37 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
 
     let mut input = text_input(placeholder, value)
         .on_input(on_change)
-        .padding(iced::Padding { right: 25.0, ..Default::default() }) // Espacio a la derecha para la 'x'
+        .padding(iced::Padding {
+            right: 25.0,
+            ..Default::default()
+        }) // Espacio a la derecha para la 'x'
         .size(14)
         .font(FONT_INTER_SANS_MEDIUM)
         .width(Length::Fill)
-        .style(move |_t: &Theme, status: iced::widget::text_input::Status| {
-            let is_focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
-            
-            let (bg, txt) = if is_focused {
-                (COLOR_CONTRAST, COLOR_TEXT_PRIMARY)
-            } else {
-                (COLOR_CONTRAST, COLOR_TEXT_SECONDARY)
-            };
+        .style(
+            move |_t: &Theme, status: iced::widget::text_input::Status| {
+                let is_focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
 
-            iced::widget::text_input::Style {
-                background: bg.into(),
-                border: iced::Border { 
-                    radius: 0.0.into(), 
-                    width: 0.0, 
-                    color: Color::TRANSPARENT 
-                },
-                icon: COLOR_TEXT_SECONDARY,
-                placeholder: COLOR_TEXT_SECONDARY,
-                value: txt,
-                selection: COLOR_ACCENT,
-            }
-        });
+                let (bg, txt) = if is_focused {
+                    (COLOR_CONTRAST, COLOR_TEXT_PRIMARY)
+                } else {
+                    (COLOR_CONTRAST, COLOR_TEXT_SECONDARY)
+                };
+
+                iced::widget::text_input::Style {
+                    background: bg.into(),
+                    border: iced::Border {
+                        radius: 0.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    icon: COLOR_TEXT_SECONDARY,
+                    placeholder: COLOR_TEXT_SECONDARY,
+                    value: txt,
+                    selection: COLOR_ACCENT,
+                }
+            },
+        );
 
     if let Some(actual_id) = id {
         input = input.id(actual_id);
@@ -873,11 +1016,16 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
 
     if has_content {
         let clear_btn = button(
-            container(text("x").size(14).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM))
-                .width(Length::Fixed(20.0))
-                .height(Length::Fixed(20.0))
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Center)
+            container(
+                text("x")
+                    .size(14)
+                    .color(COLOR_TEXT_PRIMARY)
+                    .font(FONT_INTER_SANS_MEDIUM),
+            )
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0))
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center),
         )
         .padding(0)
         .style(|_t, _s| button::Style::default().with_background(Color::TRANSPARENT))
@@ -888,7 +1036,10 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
                 .width(Length::Fill)
                 .height(Length::Fixed(24.0))
                 .align_x(iced::alignment::Horizontal::Right)
-                .padding(iced::Padding { right: 5.0, ..Default::default() })
+                .padding(iced::Padding {
+                    right: 5.0,
+                    ..Default::default()
+                }),
         );
     }
 
@@ -915,7 +1066,11 @@ pub struct ContextMenuEntry<Message> {
 pub fn build_context_menu_content<'a, Message: Clone + 'a>(
     entries: Vec<ContextMenuEntry<Message>>,
 ) -> Element<'a, Message> {
-    let max_chars = entries.iter().map(|e| e.label.chars().count()).max().unwrap_or(0);
+    let max_chars = entries
+        .iter()
+        .map(|e| e.label.chars().count())
+        .max()
+        .unwrap_or(0);
     let calculated_width = (max_chars as f32 * 7.5) + 52.0;
     let final_width = calculated_width.max(80.0);
 
@@ -925,7 +1080,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
         if let Some(action) = entry.action {
             let label = entry.label.clone();
             let icon_name = entry.icon.clone();
-            
+
             let is_rename = label == "Renombrar lista";
             let left_padding = if is_rename { 9.0 } else { 10.0 };
             let row_spacing = if is_rename { 16.0 } else { 15.0 };
@@ -942,9 +1097,9 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                                         .height(Length::Fixed(24.0))
                                         .style(|_t, _s| iced::widget::svg::Style {
                                             color: Some(COLOR_TEXT_PRIMARY),
-                                        })
+                                        }),
                                 )
-                                .width(Length::Fixed(24.0))
+                                .width(Length::Fixed(24.0)),
                             )
                         } else {
                             Element::from(Space::new().width(Length::Fixed(24.0)))
@@ -956,22 +1111,34 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                             .font(FONT_INTER_SANS_NORMAL)
                             .wrapping(iced::widget::text::Wrapping::None)
                     ]
-                    .align_y(Alignment::Center)
+                    .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
                 .height(Length::Fixed(32.0))
-                .padding(iced::Padding { left: left_padding, right: 0.0, ..Default::default() })
-                .align_y(iced::alignment::Vertical::Center)
+                .padding(iced::Padding {
+                    left: left_padding,
+                    right: 0.0,
+                    ..Default::default()
+                })
+                .align_y(iced::alignment::Vertical::Center),
             )
             .on_press(action)
             .padding(0)
             .style(move |_t: &Theme, status: iced::widget::button::Status| {
                 let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
-                
+
                 button::Style {
-                    background: if is_hovered { Some(COLOR_CONTRAST.into()) } else { None },
+                    background: if is_hovered {
+                        Some(COLOR_CONTRAST.into())
+                    } else {
+                        None
+                    },
                     text_color: COLOR_TEXT_PRIMARY,
-                    border: iced::Border { radius: 0.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                    border: iced::Border {
+                        radius: 0.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
                     ..Default::default()
                 }
             });
@@ -982,18 +1149,20 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
             content = content.push(
                 container(Space::new().height(Length::Fixed(1.0)))
                     .width(Length::Fill)
-                    .padding(iced::Padding { top: 0.0, bottom: 0.0, ..Default::default() })
-                    .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+                    .padding(iced::Padding {
+                        top: 0.0,
+                        bottom: 0.0,
+                        ..Default::default()
+                    })
+                    .style(|_t: &Theme| {
+                        container::Style::default().background(COLOR_TEXT_SECONDARY)
+                    }),
             );
         }
     }
 
-    container(
-        column![
-            content
-        ].spacing(0)
-    )
-    .width(Length::Fixed(final_width))
+    container(column![content].spacing(0))
+        .width(Length::Fixed(final_width))
         .style(|_t: &Theme| {
             container::Style::default()
                 .background(COLOR_BG)
@@ -1008,7 +1177,12 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                     color: Color::from_rgba8(0, 0, 0, 0.5),
                 })
         })
-        .padding(iced::Padding { top: 5.0, bottom: 5.0, left: 1.0, right: 1.0 })
+        .padding(iced::Padding {
+            top: 5.0,
+            bottom: 5.0,
+            left: 1.0,
+            right: 1.0,
+        })
         .into()
 }
 
@@ -1020,8 +1194,13 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     confirm_msg: Option<Message>,
     confirm_label: String,
 ) -> Element<'a, Message> {
-
-    let mut footer = row![].spacing(10).padding(iced::Padding { top: 5.0,  ..Default::default() }).align_y(Alignment::Center);
+    let mut footer = row![]
+        .spacing(10)
+        .padding(iced::Padding {
+            top: 5.0,
+            ..Default::default()
+        })
+        .align_y(Alignment::Center);
 
     if let Some(cancel) = cancel_msg {
         footer = footer.push(
@@ -1031,12 +1210,24 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                 .style(|_t: &Theme, status: iced::widget::button::Status| {
                     let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
                     button::Style {
-                        background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
-                        text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
-                        border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        background: if is_hovered {
+                            Some(COLOR_ACCENT.into())
+                        } else {
+                            Some(COLOR_CONTRAST.into())
+                        },
+                        text_color: if is_hovered {
+                            COLOR_TEXT_PRIMARY
+                        } else {
+                            COLOR_TEXT_SECONDARY
+                        },
+                        border: iced::Border {
+                            radius: 6.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
                         ..Default::default()
                     }
-                })
+                }),
         );
     }
 
@@ -1048,25 +1239,43 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                 .style(|_t: &Theme, status: iced::widget::button::Status| {
                     let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
                     button::Style {
-                        background: if is_hovered { Some(COLOR_ACCENT.into()) } else { Some(COLOR_CONTRAST.into()) },
-                        text_color: if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY },
-                        border: iced::Border { radius: 6.0.into(), width: 0.0, color: Color::TRANSPARENT },
+                        background: if is_hovered {
+                            Some(COLOR_ACCENT.into())
+                        } else {
+                            Some(COLOR_CONTRAST.into())
+                        },
+                        text_color: if is_hovered {
+                            COLOR_TEXT_PRIMARY
+                        } else {
+                            COLOR_TEXT_SECONDARY
+                        },
+                        border: iced::Border {
+                            radius: 6.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
                         ..Default::default()
                     }
-                })
+                }),
         );
     }
 
     container(
         column![
-            Space::new().width(Length::Fixed(200.0)).height(Length::Fixed(0.0)),
-            text(title).size(16).font(FONT_INTER_SANS_MEDIUM).color(COLOR_TEXT_PRIMARY).align_x(iced::alignment::Horizontal::Center),
+            Space::new()
+                .width(Length::Fixed(200.0))
+                .height(Length::Fixed(0.0)),
+            text(title)
+                .size(16)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .color(COLOR_TEXT_PRIMARY)
+                .align_x(iced::alignment::Horizontal::Center),
             container(content).padding([10, 0]).width(Length::Shrink),
             footer,
         ]
         .spacing(0)
         .align_x(Alignment::Center)
-        .width(Length::Shrink)
+        .width(Length::Shrink),
     )
     .padding(15)
     .width(Length::Shrink)
@@ -1110,15 +1319,20 @@ pub fn chevron_btn<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     button(
         container(
-            svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
-                .width(icon_size)
-                .height(icon_size)
-                .style(move |_t: &Theme, _s: svg::Status| svg::Style { color: Some(COLOR_TEXT_SECONDARY) })
+            svg(svg::Handle::from_path(format!(
+                "assets/icons/{}",
+                icon_filename
+            )))
+            .width(icon_size)
+            .height(icon_size)
+            .style(move |_t: &Theme, _s: svg::Status| svg::Style {
+                color: Some(COLOR_TEXT_SECONDARY),
+            }),
         )
         .width(btn_size)
         .height(btn_size)
         .center_x(btn_size)
-        .center_y(btn_size)
+        .center_y(btn_size),
     )
     .on_press(action)
     .padding(0)
@@ -1135,13 +1349,17 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     albums_count: usize,
     songs_count: usize,
     duration_secs: f64,
-    row_h: f32,       // Altura de la fila: 32px para SimpleList/DetailedList, 42px para ThumbnailList
+    row_h: f32, // Altura de la fila: 32px para SimpleList/DetailedList, 42px para ThumbnailList
     on_select: Message,
     on_toggle: Message,
 ) -> Element<'a, Message> {
-    let chevron = if is_collapsed { "arrow-down-chevron.svg" } else { "arrow-up-chevron.svg" };
+    let chevron = if is_collapsed {
+        "arrow-down-chevron.svg"
+    } else {
+        "arrow-up-chevron.svg"
+    };
     let time_str = format_duration(duration_secs);
-    
+
     let (name_color, dot_color, show_dot) = if is_selected {
         (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, true)
     } else if is_playing {
@@ -1170,24 +1388,40 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
     let header_content = row![
         name_widget,
         container(
-            text(format!("{} Canciones | {} Álbumes | {}",  songs_count, albums_count, time_str))
-                .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
-                .wrapping(iced::widget::text::Wrapping::None)
-        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }).center_y(Length::Fill),
+            text(format!(
+                "{} Canciones | {} Álbumes | {}",
+                songs_count, albums_count, time_str
+            ))
+            .size(14)
+            .color(COLOR_TEXT_SECONDARY)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .wrapping(iced::widget::text::Wrapping::None)
+        )
+        .padding(Padding {
+            left: 10.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0
+        })
+        .center_y(Length::Fill),
         Space::new().width(15),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
-    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 })
+    ]
+    .align_y(Alignment::Center)
+    .padding(Padding {
+        left: 15.0,
+        right: 6.0,
+        top: 0.0,
+        bottom: 0.0,
+    })
     .height(Length::Fill);
 
-    container(
-        mouse_area(header_content)
-            .on_press(on_select_clone)
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(row_h))
-    .center_y(Length::Fill)
-    .style(|_t| container::Style::default().background(COLOR_CONTRAST))
-    .into()
+    container(mouse_area(header_content).on_press(on_select_clone))
+        .width(Length::Fill)
+        .height(Length::Fixed(row_h))
+        .center_y(Length::Fill)
+        .style(|_t| container::Style::default().background(COLOR_CONTRAST))
+        .into()
 }
 
 /// Renderiza la cabecera de un grupo de álbumes dentro de un artista.
@@ -1202,9 +1436,13 @@ pub fn album_header_widget<'a, Message: Clone + 'a>(
     on_select: Message,
     on_toggle: Message,
 ) -> Element<'a, Message> {
-    let chevron = if is_expanded { "arrow-up-chevron.svg" } else { "arrow-down-chevron.svg" };
+    let chevron = if is_expanded {
+        "arrow-up-chevron.svg"
+    } else {
+        "arrow-down-chevron.svg"
+    };
     let time_str = format_duration(duration_secs);
-    
+
     let (txt_color, dot_color, show_dot) = if is_selected {
         (COLOR_TEXT_PRIMARY, COLOR_TEXT_PRIMARY, true)
     } else if is_playing {
@@ -1232,23 +1470,36 @@ pub fn album_header_widget<'a, Message: Clone + 'a>(
         name_widget,
         container(
             text(format!("{} Canciones | {}", songs_count, time_str))
-                .size(14).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM)
+                .size(14)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::None)
-        ).padding(Padding { left: 10.0, right: 0.0, top: 0.0, bottom: 0.0 }).center_y(Length::Fill),
+        )
+        .padding(Padding {
+            left: 10.0,
+            right: 0.0,
+            top: 0.0,
+            bottom: 0.0
+        })
+        .center_y(Length::Fill),
         Space::new().width(15),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
-    ].align_y(Alignment::Center).padding(Padding { left: 15.0, right: 6.0, top: 0.0, bottom: 0.0 })
+    ]
+    .align_y(Alignment::Center)
+    .padding(Padding {
+        left: 15.0,
+        right: 6.0,
+        top: 0.0,
+        bottom: 0.0,
+    })
     .height(Length::Fill);
 
-    container(
-        mouse_area(header_content)
-            .on_press(on_select_clone)
-    )
-    .width(Length::Fill)
-    .height(Length::Fixed(row_h))
-    .center_y(Length::Fill)
-    .style(|_t| container::Style::default().background(COLOR_CONTRAST))
-    .into()
+    container(mouse_area(header_content).on_press(on_select_clone))
+        .width(Length::Fill)
+        .height(Length::Fixed(row_h))
+        .center_y(Length::Fill)
+        .style(|_t| container::Style::default().background(COLOR_CONTRAST))
+        .into()
 }
 
 /// Widget universal para renderizar una fila de canción en cualquier vista de lista.
@@ -1264,7 +1515,11 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     row_height: f32,
     show_thumbnail: bool,
 ) -> Element<'a, Message> {
-    let txt_color = if is_selected { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY };
+    let txt_color = if is_selected {
+        COLOR_TEXT_PRIMARY
+    } else {
+        COLOR_TEXT_SECONDARY
+    };
     let is_playing = song.full_file_path.as_ref() == playing_path;
 
     let get_col = |col: SortColumn| -> Element<'a, Message> {
@@ -1275,19 +1530,58 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
 
         let content: Element<'a, Message> = if col == SortColumn::TrackNumber {
             row![
-                container(if is_playing { text("•").size(13).color(COLOR_ACCENT).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None) } else { text("").size(13) })
-                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Center).align_y(iced::alignment::Vertical::Center),
-                container(text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None))
-                    .width(Length::Fixed(26.0)).align_x(iced::alignment::Horizontal::Right).align_y(iced::alignment::Vertical::Center)
-            ].spacing(0).align_y(Alignment::Center).into()
+                container(if is_playing {
+                    text("•")
+                        .size(13)
+                        .color(COLOR_ACCENT)
+                        .font(FONT_INTER_SANS_MEDIUM)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                } else {
+                    text("").size(13)
+                })
+                .width(Length::Fixed(26.0))
+                .align_x(iced::alignment::Horizontal::Center)
+                .align_y(iced::alignment::Vertical::Center),
+                container(
+                    text(truncated)
+                        .size(13)
+                        .color(Color::from(txt_color))
+                        .font(FONT_INTER_SANS_MEDIUM)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                )
+                .width(Length::Fixed(26.0))
+                .align_x(iced::alignment::Horizontal::Right)
+                .align_y(iced::alignment::Vertical::Center)
+            ]
+            .spacing(0)
+            .align_y(Alignment::Center)
+            .into()
         } else {
-            text(truncated).size(13).color(Color::from(txt_color)).font(FONT_INTER_SANS_MEDIUM).wrapping(iced::widget::text::Wrapping::None).into()
+            text(truncated)
+                .size(13)
+                .color(Color::from(txt_color))
+                .font(FONT_INTER_SANS_MEDIUM)
+                .wrapping(iced::widget::text::Wrapping::None)
+                .into()
         };
 
-        let pad_left = if col == SortColumn::TrackNumber { 0.0 } else { 15.0 };
+        let pad_left = if col == SortColumn::TrackNumber {
+            0.0
+        } else {
+            15.0
+        };
         container(content)
-            .width(Length::Fixed(w)).height(Length::Fill).center_y(Length::Fill)
-            .padding(Padding { left: pad_left, right: 5.0, top: 0.0, bottom: 0.0 }).clip(true).into()
+            .width(Length::Fixed(w))
+            .height(Length::Fill)
+            .center_y(Length::Fill)
+            .padding(Padding {
+                left: pad_left,
+                right: 5.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .clip(true)
+            .into()
     };
 
     let mut elements: Vec<Element<'a, Message>> = Vec::new();
@@ -1309,7 +1603,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
                 .height(Length::Fixed(row_height))
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Center)
-                .into()
+                .into(),
         );
     }
 
@@ -1320,18 +1614,27 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
         }
     }
 
-
-
     let song_row_inner = iced::widget::Row::with_children(elements)
-        .align_y(Alignment::Center).padding([0, 5]).height(Length::Fill);
+        .align_y(Alignment::Center)
+        .padding([0, 5])
+        .height(Length::Fill);
 
     mouse_area(
-        container(song_row_inner).width(Length::Fill).height(Length::Fixed(row_height)).align_y(Alignment::Center)
+        container(song_row_inner)
+            .width(Length::Fill)
+            .height(Length::Fixed(row_height))
+            .align_y(Alignment::Center)
             .style(move |_t: &Theme| {
-                if is_selected { container::Style::default().background(Color::from(COLOR_CONTRAST)) } 
-                else { container::Style::default() }
-            })
-    ).on_press(on_select).interaction(iced::mouse::Interaction::Pointer).into()
+                if is_selected {
+                    container::Style::default().background(Color::from(COLOR_CONTRAST))
+                } else {
+                    container::Style::default()
+                }
+            }),
+    )
+    .on_press(on_select)
+    .interaction(iced::mouse::Interaction::Pointer)
+    .into()
 }
 
 pub fn library_song_row_widget<'a, Message: Clone + 'a>(
@@ -1344,8 +1647,15 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
     playing_path: &str,
 ) -> Element<'a, Message> {
     universal_song_row_widget(
-        song, song_idx, is_selected, columns, column_widths, 
-        on_select, playing_path, 32.0, false
+        song,
+        song_idx,
+        is_selected,
+        columns,
+        column_widths,
+        on_select,
+        playing_path,
+        32.0,
+        false,
     )
 }
 
@@ -1361,74 +1671,149 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     playing_path: &str,
 ) -> Element<'a, Message> {
     universal_song_row_widget(
-        song, song_idx, is_selected, columns, column_widths, 
-        on_select, playing_path, 42.0, true
+        song,
+        song_idx,
+        is_selected,
+        columns,
+        column_widths,
+        on_select,
+        playing_path,
+        42.0,
+        true,
     )
 }
-
 
 /// Permite construir una lista universalizada que agrupa canciones por artistas,
 /// gestiona el scroll, la virtualización, y las cabeceras pegajosas de forma global.
 pub fn universal_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
-    _row_height: f32, 
+    _row_height: f32,
     playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool, &str) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(
+            &std::sync::Arc<crate::db::database::SongData>,
+            usize,
+            bool,
+            &str,
+        ) -> Element<'a, crate::gui::app::Message>
+        + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
-        return container(text("La biblioteca está vacía o cargando...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
+        return container(
+            text("La biblioteca está vacía o cargando...")
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
     }
 
-    let header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 }; 
-    let album_header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
+    let header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList {
+        42.0
+    } else {
+        32.0
+    };
+    let album_header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList
+    {
+        42.0
+    } else {
+        32.0
+    };
 
-    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) = manager.get_visible_elements();
+    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) =
+        manager.get_visible_elements();
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
         list_col = list_col.push(
             mouse_area(Space::new().height(Length::Fixed(top_space)))
-                .on_press(crate::gui::app::Message::LibraryDeselect)
+                .on_press(crate::gui::app::Message::LibraryDeselect),
         );
     }
 
     for element in visible_elements {
         match element {
-            crate::gui::library::LibraryVirtualRow::ArtistHeader { name, is_collapsed, albums_count, songs_count, duration_secs } => {
-                let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
-                
-                let is_artist_playing = manager.artist_groups.iter()
+            crate::gui::library::LibraryVirtualRow::ArtistHeader {
+                name,
+                is_collapsed,
+                albums_count,
+                songs_count,
+                duration_secs,
+            } => {
+                let is_header_selected = manager
+                    .selected_items
+                    .contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
+
+                let is_artist_playing = manager
+                    .artist_groups
+                    .iter()
                     .find(|g| g.name == *name)
-                    .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
+                    .map(|g| {
+                        g.songs
+                            .iter()
+                            .any(|s| s.full_file_path.as_ref() == playing_path)
+                    })
                     .unwrap_or(false);
-                
+
                 list_col = list_col.push(artist_header_widget(
-                    name.clone(), is_collapsed, is_header_selected, is_artist_playing,
-                    albums_count, songs_count, duration_secs, header_h,
+                    name.clone(),
+                    is_collapsed,
+                    is_header_selected,
+                    is_artist_playing,
+                    albums_count,
+                    songs_count,
+                    duration_secs,
+                    header_h,
                     crate::gui::app::Message::SelectArtistHeader(name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(name.clone()),
                 ));
             }
-            crate::gui::library::LibraryVirtualRow::AlbumBlock { album_name, album_hash, artist_name, is_expanded, songs_count, duration_secs, .. } => {
+            crate::gui::library::LibraryVirtualRow::AlbumBlock {
+                album_name,
+                album_hash,
+                artist_name,
+                is_expanded,
+                songs_count,
+                duration_secs,
+                ..
+            } => {
                 let composite_id = format!("{}|{}", artist_name, album_hash);
-                let is_album_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
-                
+                let is_album_selected =
+                    manager
+                        .selected_items
+                        .contains(&crate::gui::library::LibraryListItem::Album(
+                            composite_id.clone(),
+                        ));
+
                 // En este modo, el header del álbum se renderiza como una fila
                 list_col = list_col.push(album_header_widget(
-                    album_name.clone(), songs_count, duration_secs, is_expanded, is_album_selected, false,
+                    album_name.clone(),
+                    songs_count,
+                    duration_secs,
+                    is_expanded,
+                    is_album_selected,
+                    false,
                     album_header_h,
                     crate::gui::app::Message::SelectAlbum(composite_id.clone()),
                     crate::gui::app::Message::ToggleAlbumExpansion(composite_id),
                 ));
             }
             crate::gui::library::LibraryVirtualRow::SimpleSong { song, global_idx } => {
-                let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
-                list_col = list_col.push(row_builder(&song, global_idx, is_song_selected, playing_path));
+                let is_song_selected = manager
+                    .selected_items
+                    .contains(&crate::gui::library::LibraryListItem::Song(song.id));
+                list_col = list_col.push(row_builder(
+                    &song,
+                    global_idx,
+                    is_song_selected,
+                    playing_path,
+                ));
             }
         }
     }
@@ -1436,50 +1821,75 @@ where
     if bottom_space > 0.0 {
         list_col = list_col.push(
             mouse_area(Space::new().height(Length::Fixed(bottom_space)))
-                .on_press(crate::gui::app::Message::LibraryDeselect)
+                .on_press(crate::gui::app::Message::LibraryDeselect),
         );
     }
 
-    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
-        .on_press(crate::gui::app::Message::LibraryDeselect);
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
+        left: 10.0,
+        right: 15.0,
+        top: 0.0,
+        bottom: 0.0,
+    }))
+    .on_press(crate::gui::app::Message::LibraryDeselect);
 
     let main_scroll = standard_scrollable(
         crate::gui::library::LIBRARY_SCROLL_ID.clone(),
         list_container,
-        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar()),
     )
     .width(Length::Fill)
     .height(Length::Fill)
     .on_scroll(crate::gui::app::Message::LibraryScroll);
 
-    let content: Element<'a, crate::gui::app::Message> = if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) = sticky_artist_info {
-        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_name.clone()));
-        
-        let is_artist_playing = manager.artist_groups.iter()
-            .find(|g| g.name == *st_name)
-            .map(|g| g.songs.iter().any(|s| s.full_file_path .as_ref() == playing_path))
-            .unwrap_or(false);
+    let content: Element<'a, crate::gui::app::Message> =
+        if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) =
+            sticky_artist_info
+        {
+            let is_header_selected =
+                manager
+                    .selected_items
+                    .contains(&crate::gui::library::LibraryListItem::Artist(
+                        st_name.clone(),
+                    ));
 
-        let sticky_overlay = container(
-            artist_header_widget(
-                st_name.clone(), st_collapsed, is_header_selected, is_artist_playing,
-                st_albums, st_songs, st_duration, header_h,
+            let is_artist_playing = manager
+                .artist_groups
+                .iter()
+                .find(|g| g.name == *st_name)
+                .map(|g| {
+                    g.songs
+                        .iter()
+                        .any(|s| s.full_file_path.as_ref() == playing_path)
+                })
+                .unwrap_or(false);
+
+            let sticky_overlay = container(artist_header_widget(
+                st_name.clone(),
+                st_collapsed,
+                is_header_selected,
+                is_artist_playing,
+                st_albums,
+                st_songs,
+                st_duration,
+                header_h,
                 crate::gui::app::Message::SelectArtistHeader(st_name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_name.clone()),
-            )
-        )
-        .width(Length::Fill)
-        .height(Length::Fixed(header_h))
-        .padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 })
-        .align_y(iced::alignment::Vertical::Top);
+            ))
+            .width(Length::Fill)
+            .height(Length::Fixed(header_h))
+            .padding(Padding {
+                left: 10.0,
+                right: 15.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .align_y(iced::alignment::Vertical::Top);
 
-        iced::widget::stack![
-            main_scroll,
-            sticky_overlay
-        ].into()
-    } else {
-        main_scroll.into()
-    };
+            iced::widget::stack![main_scroll, sticky_overlay].into()
+        } else {
+            main_scroll.into()
+        };
 
     content
 }
@@ -1489,93 +1899,200 @@ where
 pub fn detailed_song_list<'a, F>(
     manager: &'a crate::gui::library::LibraryManager,
     row_builder: F,
-    _row_height: f32, 
+    _row_height: f32,
     playing_path: &'a str,
 ) -> Element<'a, crate::gui::app::Message>
 where
-    F: Fn(&std::sync::Arc<crate::db::database::SongData>, usize, bool, &str) -> Element<'a, crate::gui::app::Message> + 'a,
+    F: Fn(
+            &std::sync::Arc<crate::db::database::SongData>,
+            usize,
+            bool,
+            &str,
+        ) -> Element<'a, crate::gui::app::Message>
+        + 'a,
 {
     let groups = &manager.artist_groups;
     if groups.is_empty() {
-        return container(text("La biblioteca está vacía o cargando...").color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM))
-            .width(Length::Fill).height(Length::Fill).center_x(Length::Fill).center_y(Length::Fill).into();
+        return container(
+            text("La biblioteca está vacía o cargando...")
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .center_x(Length::Fill)
+        .center_y(Length::Fill)
+        .into();
     }
 
-    let _header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList { 42.0 } else { 32.0 };
+    let _header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList {
+        42.0
+    } else {
+        32.0
+    };
     let album_header_h = 32.0;
     let card_w = 250.0;
 
-    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) = manager.get_visible_elements();
+    let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) =
+        manager.get_visible_elements();
 
     let mut list_col = column![].spacing(0);
     if top_space > 0.0 {
         list_col = list_col.push(
             mouse_area(Space::new().height(Length::Fixed(top_space)))
-                .on_press(crate::gui::app::Message::LibraryDeselect)
+                .on_press(crate::gui::app::Message::LibraryDeselect),
         );
     }
 
     for element in visible_elements {
         match element {
-            crate::gui::library::LibraryVirtualRow::ArtistHeader { name, is_collapsed, albums_count, songs_count, duration_secs } => {
-                let is_artist_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
-                
-                let is_artist_playing = manager.artist_groups.iter()
+            crate::gui::library::LibraryVirtualRow::ArtistHeader {
+                name,
+                is_collapsed,
+                albums_count,
+                songs_count,
+                duration_secs,
+            } => {
+                let is_artist_explicitly_selected = manager
+                    .selected_items
+                    .contains(&crate::gui::library::LibraryListItem::Artist(name.clone()));
+
+                let is_artist_playing = manager
+                    .artist_groups
+                    .iter()
                     .find(|g| g.name == *name)
-                    .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
+                    .map(|g| {
+                        g.songs
+                            .iter()
+                            .any(|s| s.full_file_path.as_ref() == playing_path)
+                    })
                     .unwrap_or(false);
 
                 let header = artist_header_widget(
-                    name.clone(), is_collapsed, is_artist_explicitly_selected, is_artist_playing,
-                    albums_count, songs_count, duration_secs, 32.0,
+                    name.clone(),
+                    is_collapsed,
+                    is_artist_explicitly_selected,
+                    is_artist_playing,
+                    albums_count,
+                    songs_count,
+                    duration_secs,
+                    32.0,
                     crate::gui::app::Message::SelectArtistHeader(name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(name.clone()),
                 );
                 list_col = list_col.push(header);
             }
-            crate::gui::library::LibraryVirtualRow::AlbumBlock { album_name, album_hash, artist_name, genre, year, is_expanded, songs, songs_count, duration_secs } => {
+            crate::gui::library::LibraryVirtualRow::AlbumBlock {
+                album_name,
+                album_hash,
+                artist_name,
+                genre,
+                year,
+                is_expanded,
+                songs,
+                songs_count,
+                duration_secs,
+            } => {
                 let cover_path = if let Some(albums) = &manager.cached_albums {
-                    albums.iter().find(|a| a.title == *album_name && a.artist == *artist_name).and_then(|a| a.cover_path.clone())
+                    albums
+                        .iter()
+                        .find(|a| a.title == *album_name && a.artist == *artist_name)
+                        .and_then(|a| a.cover_path.clone())
                 } else {
                     None
                 };
 
                 let card_wrapper = album_art_widget(
-                    cover_path.as_deref(), None, None, PlaceholderStyle::Large, Length::Fixed(card_w - 30.0), 8.0,
+                    cover_path.as_deref(),
+                    None,
+                    None,
+                    PlaceholderStyle::Large,
+                    Length::Fixed(card_w - 30.0),
+                    8.0,
                 );
 
                 let info_col = column![
-                    smart_truncate_text(artist_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
-                    smart_truncate_text(album_name.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
-                    smart_truncate_text(genre.clone(), 13.0, FONT_INTER_SANS_MEDIUM, COLOR_TEXT_PRIMARY),
-                    text(year.clone()).size(13).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM),
-                ].spacing(2).width(Length::Fill);
+                    smart_truncate_text(
+                        artist_name.clone(),
+                        13.0,
+                        FONT_INTER_SANS_MEDIUM,
+                        COLOR_TEXT_PRIMARY
+                    ),
+                    smart_truncate_text(
+                        album_name.clone(),
+                        13.0,
+                        FONT_INTER_SANS_MEDIUM,
+                        COLOR_TEXT_PRIMARY
+                    ),
+                    smart_truncate_text(
+                        genre.clone(),
+                        13.0,
+                        FONT_INTER_SANS_MEDIUM,
+                        COLOR_TEXT_PRIMARY
+                    ),
+                    text(year.clone())
+                        .size(13)
+                        .color(COLOR_TEXT_PRIMARY)
+                        .font(FONT_INTER_SANS_MEDIUM),
+                ]
+                .spacing(2)
+                .width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);
-                let is_album_explicitly_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Album(composite_id.clone()));
-                let is_song_selected_in_album = songs.iter().any(|(s, _)| manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(s.id)));
-                let is_album_card_highlighted = is_album_explicitly_selected || is_song_selected_in_album;
+                let is_album_explicitly_selected =
+                    manager
+                        .selected_items
+                        .contains(&crate::gui::library::LibraryListItem::Album(
+                            composite_id.clone(),
+                        ));
+                let is_song_selected_in_album = songs.iter().any(|(s, _)| {
+                    manager
+                        .selected_items
+                        .contains(&crate::gui::library::LibraryListItem::Song(s.id))
+                });
+                let is_album_card_highlighted =
+                    is_album_explicitly_selected || is_song_selected_in_album;
 
-                let card_col = column![card_wrapper, info_col].spacing(5).width(Length::Fixed(card_w - 30.0));
-                
+                let card_col = column![card_wrapper, info_col]
+                    .spacing(5)
+                    .width(Length::Fixed(card_w - 30.0));
+
                 let card_container = mouse_area(
                     container(card_col)
-                        .width(Length::Fixed(card_w)).height(Length::Fixed(323.0))
-                        .padding(iced::Padding { top: 15.0, bottom: 15.0, left: 15.0, right: 15.0 })
+                        .width(Length::Fixed(card_w))
+                        .height(Length::Fixed(323.0))
+                        .padding(iced::Padding {
+                            top: 15.0,
+                            bottom: 15.0,
+                            left: 15.0,
+                            right: 15.0,
+                        })
                         .style(move |_t: &Theme| {
                             if is_album_card_highlighted {
-                                let rad = iced::border::Radius { top_left: 0.0, top_right: 0.0, bottom_right: 10.0, bottom_left: 10.0 };
-                                container::Style::default().background(COLOR_CONTRAST).border(iced::Border { radius: rad, ..Default::default() })
+                                let rad = iced::border::Radius {
+                                    top_left: 0.0,
+                                    top_right: 0.0,
+                                    bottom_right: 10.0,
+                                    bottom_left: 10.0,
+                                };
+                                container::Style::default()
+                                    .background(COLOR_CONTRAST)
+                                    .border(iced::Border {
+                                        radius: rad,
+                                        ..Default::default()
+                                    })
                             } else {
                                 container::Style::default()
                             }
-                        })
+                        }),
                 )
                 .on_press(crate::gui::app::Message::SelectAlbum(composite_id.clone()))
                 .interaction(iced::mouse::Interaction::Pointer);
 
-                let is_album_playing = songs.iter().any(|(s, _)| s.full_file_path.as_ref() == playing_path);
-                
+                let is_album_playing = songs
+                    .iter()
+                    .any(|(s, _)| s.full_file_path.as_ref() == playing_path);
+
                 let alb_header = album_header_widget(
                     album_name.clone(),
                     songs_count,
@@ -1592,7 +2109,9 @@ where
 
                 if is_expanded {
                     for (song, song_i) in &songs {
-                        let is_song_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Song(song.id));
+                        let is_song_selected = manager
+                            .selected_items
+                            .contains(&crate::gui::library::LibraryListItem::Song(song.id));
                         let song_row = row_builder(song, *song_i, is_song_selected, playing_path);
                         right_col = right_col.push(song_row);
                     }
@@ -1600,20 +2119,33 @@ where
 
                 let content_row = if is_expanded {
                     row![
-                        container(card_container).height(Length::Shrink).align_y(iced::alignment::Vertical::Top),
-                        container(right_col).height(Length::Shrink).align_y(iced::alignment::Vertical::Top)
-                    ].spacing(0).width(Length::Fill).align_y(Alignment::Start)
+                        container(card_container)
+                            .height(Length::Shrink)
+                            .align_y(iced::alignment::Vertical::Top),
+                        container(right_col)
+                            .height(Length::Shrink)
+                            .align_y(iced::alignment::Vertical::Top)
+                    ]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .align_y(Alignment::Start)
                 } else {
                     row![
                         // If collapsed, we omit the card (it's hidden) and just show the header block spanning
                         container(Space::new().width(card_w)).height(Length::Shrink),
-                        container(right_col).height(Length::Shrink).align_y(iced::alignment::Vertical::Top)
-                    ].spacing(0).width(Length::Fill).align_y(Alignment::Start)
+                        container(right_col)
+                            .height(Length::Shrink)
+                            .align_y(iced::alignment::Vertical::Top)
+                    ]
+                    .spacing(0)
+                    .width(Length::Fill)
+                    .align_y(Alignment::Start)
                 };
 
-                list_col = list_col.push(
-                    column![content_row, Space::new().height(Length::Fixed(10.0))]
-                );
+                list_col = list_col.push(column![
+                    content_row,
+                    Space::new().height(Length::Fixed(10.0))
+                ]);
             }
             _ => {}
         }
@@ -1622,46 +2154,75 @@ where
     if bottom_space > 0.0 {
         list_col = list_col.push(
             mouse_area(Space::new().height(Length::Fixed(bottom_space)))
-                .on_press(crate::gui::app::Message::LibraryDeselect)
+                .on_press(crate::gui::app::Message::LibraryDeselect),
         );
     }
 
-    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 }))
-        .on_press(crate::gui::app::Message::LibraryDeselect);
+    let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
+        left: 10.0,
+        right: 15.0,
+        top: 0.0,
+        bottom: 0.0,
+    }))
+    .on_press(crate::gui::app::Message::LibraryDeselect);
 
     let main_scroll = standard_scrollable(
         crate::gui::library::LIBRARY_SCROLL_ID.clone(),
         list_container,
-        iced::widget::scrollable::Direction::Vertical(standard_scrollbar())
+        iced::widget::scrollable::Direction::Vertical(standard_scrollbar()),
     )
     .width(Length::Fill)
     .height(Length::Fill)
     .on_scroll(crate::gui::app::Message::LibraryScroll);
 
-    let content: Element<'a, crate::gui::app::Message> = if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) = sticky_artist_info {
-        let is_header_selected = manager.selected_items.contains(&crate::gui::library::LibraryListItem::Artist(st_name.clone()));
-        
-        let is_artist_playing = manager.artist_groups.iter()
-            .find(|g| g.name == *st_name)
-            .map(|g| g.songs.iter().any(|s| s.full_file_path.as_ref() == playing_path))
-            .unwrap_or(false);
-        
-        let sticky_overlay = container(
-            artist_header_widget(
-                st_name.clone(), st_collapsed, is_header_selected, is_artist_playing,
-                st_albums, st_songs, st_duration, 32.0,
+    let content: Element<'a, crate::gui::app::Message> =
+        if let Some((ref st_name, st_collapsed, st_albums, st_songs, st_duration)) =
+            sticky_artist_info
+        {
+            let is_header_selected =
+                manager
+                    .selected_items
+                    .contains(&crate::gui::library::LibraryListItem::Artist(
+                        st_name.clone(),
+                    ));
+
+            let is_artist_playing = manager
+                .artist_groups
+                .iter()
+                .find(|g| g.name == *st_name)
+                .map(|g| {
+                    g.songs
+                        .iter()
+                        .any(|s| s.full_file_path.as_ref() == playing_path)
+                })
+                .unwrap_or(false);
+
+            let sticky_overlay = container(artist_header_widget(
+                st_name.clone(),
+                st_collapsed,
+                is_header_selected,
+                is_artist_playing,
+                st_albums,
+                st_songs,
+                st_duration,
+                32.0,
                 crate::gui::app::Message::SelectArtistHeader(st_name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_name.clone()),
-            )
-        )
-        .width(Length::Fill).height(Length::Fixed(32.0))
-        .padding(Padding { left: 10.0, right: 15.0, top: 0.0, bottom: 0.0 })
-        .align_y(iced::alignment::Vertical::Top);
+            ))
+            .width(Length::Fill)
+            .height(Length::Fixed(32.0))
+            .padding(Padding {
+                left: 10.0,
+                right: 15.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .align_y(iced::alignment::Vertical::Top);
 
-        iced::widget::stack![main_scroll, sticky_overlay].into()
-    } else {
-        main_scroll.into()
-    };
+            iced::widget::stack![main_scroll, sticky_overlay].into()
+        } else {
+            main_scroll.into()
+        };
 
     content
 }
@@ -1669,7 +2230,7 @@ where
 // ==========================================
 // WIDGET GLOBAL: CUSTOM SLIDER PERSONALIZADO
 // ==========================================
-// 
+//
 // Widget de slider universal reutilizable con soporte para:
 // - Orientaciones vertical y horizontal
 // - Reset por clic secundario
@@ -1897,7 +2458,9 @@ impl<'a, Message> CustomSlider<'a, Message> {
     }
 }
 
-impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for CustomSlider<'a, Message> {
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
+    for CustomSlider<'a, Message>
+{
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
             width: self.width,
@@ -2001,20 +2564,36 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
                 let step = self.options.step_size;
 
                 let should_change = match (self.orientation, key) {
-                    (SliderOrientation::Vertical, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp)) => {
-                        self.value = (self.value + step).clamp(*self.range.start(), *self.range.end());
+                    (
+                        SliderOrientation::Vertical,
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp),
+                    ) => {
+                        self.value =
+                            (self.value + step).clamp(*self.range.start(), *self.range.end());
                         true
                     }
-                    (SliderOrientation::Vertical, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown)) => {
-                        self.value = (self.value - step).clamp(*self.range.start(), *self.range.end());
+                    (
+                        SliderOrientation::Vertical,
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown),
+                    ) => {
+                        self.value =
+                            (self.value - step).clamp(*self.range.start(), *self.range.end());
                         true
                     }
-                    (SliderOrientation::Horizontal, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight)) => {
-                        self.value = (self.value + step).clamp(*self.range.start(), *self.range.end());
+                    (
+                        SliderOrientation::Horizontal,
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight),
+                    ) => {
+                        self.value =
+                            (self.value + step).clamp(*self.range.start(), *self.range.end());
                         true
                     }
-                    (SliderOrientation::Horizontal, iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft)) => {
-                        self.value = (self.value - step).clamp(*self.range.start(), *self.range.end());
+                    (
+                        SliderOrientation::Horizontal,
+                        iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft),
+                    ) => {
+                        self.value =
+                            (self.value - step).clamp(*self.range.start(), *self.range.end());
                         true
                     }
                     _ => {
@@ -2049,7 +2628,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
         _viewport: &iced::Rectangle,
     ) {
         let bounds = layout.bounds();
-        let is_hovered = cursor.position().map(|p| bounds.contains(p)).unwrap_or(false);
+        let is_hovered = cursor
+            .position()
+            .map(|p| bounds.contains(p))
+            .unwrap_or(false);
 
         let percent = self.calculate_percent();
 
@@ -2178,18 +2760,24 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let track_color = self.options.track_color.unwrap_or(COLOR_CONTRAST);
         let active_color = self.options.active_track_color.unwrap_or(COLOR_ACCENT);
         let handle_color = if is_hovered {
-            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options
+                .handle_hover_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
         let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
 
-        
         // 2. Dibujar track fondo
         let track_y = bounds.y + (bounds.height - self.track_width) / 2.0;
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
-                bounds: Rectangle { x: bounds.x, y: track_y, width: bounds.width, height: self.track_width },
+                bounds: Rectangle {
+                    x: bounds.x,
+                    y: track_y,
+                    width: bounds.width,
+                    height: self.track_width,
+                },
                 border: iced::Border {
                     radius: (self.track_width / 2.0).into(),
                     width: self.options.border_width,
@@ -2204,8 +2792,16 @@ impl<'a, Message> CustomSlider<'a, Message> {
         if self.options.enable_colored_track {
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
-                    bounds: Rectangle { x: bounds.x, y: track_y, width: bounds.width * percent, height: self.track_width },
-                    border: iced::Border { radius: (self.track_width / 2.0).into(), ..Default::default() },
+                    bounds: Rectangle {
+                        x: bounds.x,
+                        y: track_y,
+                        width: bounds.width * percent,
+                        height: self.track_width,
+                    },
+                    border: iced::Border {
+                        radius: (self.track_width / 2.0).into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
                 },
                 active_color,
@@ -2222,7 +2818,10 @@ impl<'a, Message> CustomSlider<'a, Message> {
                     width: self.handle_size,
                     height: self.handle_size,
                 },
-                border: iced::Border { radius: 2.0.into(), ..Default::default() },
+                border: iced::Border {
+                    radius: 2.0.into(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
             handle_color,
@@ -2231,7 +2830,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
     /// Renderizar tooltip con el valor actual junto al cursor
     /// Se dibuja al final para asegurar que aparezca por encima de otros elementos
-    fn draw_tooltip(&self, renderer: &mut iced::Renderer, _bounds: Rectangle, _percent: f32, cursor_pos: iced::Point) {
+    fn draw_tooltip(
+        &self,
+        renderer: &mut iced::Renderer,
+        _bounds: Rectangle,
+        _percent: f32,
+        cursor_pos: iced::Point,
+    ) {
         use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
 
@@ -2278,7 +2883,10 @@ impl<'a, Message> CustomSlider<'a, Message> {
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: val_display,
-                bounds: iced::Size::new(tooltip_width - padding_horizontal * 2.0, tooltip_height - padding_vertical * 2.0),
+                bounds: iced::Size::new(
+                    tooltip_width - padding_horizontal * 2.0,
+                    tooltip_height - padding_vertical * 2.0,
+                ),
                 size: self.options.tooltip_font_size.into(),
                 line_height: iced::advanced::text::LineHeight::default(),
                 font: FONT_INTER_SANS_MEDIUM,

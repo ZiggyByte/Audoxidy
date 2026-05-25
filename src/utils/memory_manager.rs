@@ -34,7 +34,7 @@ impl MemoryManager {
 
         let now = Self::get_now_secs();
         let last = LAST_GLOBAL_PURGE.load(Ordering::Relaxed);
-        
+
         // Si es 0 (primera ejecución), inicializamos
         if last == 0 {
             LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);

@@ -1,5 +1,5 @@
-use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, PlatformConfig};
 use crate::audio::AudioManager;
+use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, PlatformConfig};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -13,9 +13,7 @@ impl SystemMediaControls {
         let hwnd = None;
 
         #[cfg(target_os = "windows")]
-        let hwnd = {
-             None 
-        };
+        let hwnd = { None };
 
         #[cfg(target_os = "macos")]
         let hwnd = None;
@@ -30,19 +28,17 @@ impl SystemMediaControls {
         let am = audio_manager.clone();
 
         // Configurar capacidades iniciales
-        controls.attach(move |event| {
-            match event {
-                MediaControlEvent::Play => am.set_playing(true),
-                MediaControlEvent::Pause => am.set_playing(false),
-                MediaControlEvent::Toggle => {
-                    let playing = am.get_state().is_playing;
-                    am.set_playing(!playing);
-                }
-                MediaControlEvent::Next => tracing::info!("MPRIS: Next (No implementado)"),
-                MediaControlEvent::Previous => tracing::info!("MPRIS: Previous (No implementado)"),
-                MediaControlEvent::Stop => am.stop(),
-                _ => {}
+        controls.attach(move |event| match event {
+            MediaControlEvent::Play => am.set_playing(true),
+            MediaControlEvent::Pause => am.set_playing(false),
+            MediaControlEvent::Toggle => {
+                let playing = am.get_state().is_playing;
+                am.set_playing(!playing);
             }
+            MediaControlEvent::Next => tracing::info!("MPRIS: Next (No implementado)"),
+            MediaControlEvent::Previous => tracing::info!("MPRIS: Previous (No implementado)"),
+            MediaControlEvent::Stop => am.stop(),
+            _ => {}
         })?;
 
         Ok(Self {
@@ -54,9 +50,17 @@ impl SystemMediaControls {
         // Actualizar estado de reproducción
         let mut controls = self.controls.lock().unwrap();
         let status = if state.is_playing {
-             souvlaki::MediaPlayback::Playing { progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(state.current_pos_sec))) }
+            souvlaki::MediaPlayback::Playing {
+                progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
+                    state.current_pos_sec,
+                ))),
+            }
         } else {
-             souvlaki::MediaPlayback::Paused { progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(state.current_pos_sec))) }
+            souvlaki::MediaPlayback::Paused {
+                progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
+                    state.current_pos_sec,
+                ))),
+            }
         };
         let _ = controls.set_playback(status);
 

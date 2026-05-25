@@ -1,13 +1,13 @@
-use std::path::PathBuf;
-use std::collections::{HashSet, HashMap, VecDeque};
-use std::sync::OnceLock;
-use parking_lot::Mutex;
-use sha2::{Sha256, Digest};
-use image::{ExtendedColorType, ImageEncoder};
-use image::codecs::avif::AvifEncoder;
 use fast_image_resize::images::Image;
-use fast_image_resize::{Resizer, ResizeOptions, FilterType, ResizeAlg};
+use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
+use image::codecs::avif::AvifEncoder;
+use image::{ExtendedColorType, ImageEncoder};
+use parking_lot::Mutex;
 use rayon::ThreadPoolBuilder;
+use sha2::{Digest, Sha256};
+use std::collections::{HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// Instancia estática del Thread Pool limitado para tareas de fondo
 pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
@@ -28,15 +28,19 @@ pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
 const MAX_COVERS_CACHE: usize = 64;
 
 pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
-    LRU_COVER_CACHE.get_or_init(|| Mutex::new(CoverCache {
-        map: HashMap::with_capacity(MAX_COVERS_CACHE),
-        order: VecDeque::with_capacity(MAX_COVERS_CACHE),
-    }))
+    LRU_COVER_CACHE.get_or_init(|| {
+        Mutex::new(CoverCache {
+            map: HashMap::with_capacity(MAX_COVERS_CACHE),
+            order: VecDeque::with_capacity(MAX_COVERS_CACHE),
+        })
+    })
 }
 
 pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     COVER_POOL.get_or_init(|| {
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(4);
         // Low-resource: máx 1 hilo. Normal: 1/3 de los procesadores (para evitar sobrecalentamiento)
         let pool_size = if crate::utils::is_low_resource() {
             (cores / 3).clamp(1, 1)
@@ -54,14 +58,14 @@ pub fn get_cover_pool() -> &'static rayon::ThreadPool {
 }
 
 /// Encola una tarea de procesamiento de carátula de forma segura.
-/// Si hay demasiadas tareas pendientes (16), el hilo del escáner esperará, 
+/// Si hay demasiadas tareas pendientes (16), el hilo del escáner esperará,
 /// evitando clonar miles de búferes de imagen en la RAM simultáneamente.
 pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
     let tx = COVER_GATEWAY.get_or_init(|| {
         let (tx, rx) = crossbeam::channel::bounded::<(Vec<u8>, String)>(16);
-        
+
         let pool = get_cover_pool();
-        
+
         // Iniciamos hilos persistentes en el pool que consumen del canal
         // Los Receiver de crossbeam se pueden clonar y compartir entre hilos directamente
         for _ in 0..pool.current_num_threads() {
@@ -74,7 +78,7 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
                 }
             });
         }
-        
+
         tx
     });
 
@@ -102,7 +106,7 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     if !cache_dir.exists() {
         std::fs::create_dir_all(&cache_dir)?;
     }
-    
+
     let dst_path = cache_dir.join(format!("{}.avif", safe_album_name));
     if dst_path.exists() {
         return Ok(dst_path);
@@ -111,39 +115,61 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     // 1. Cargar imagen en memoria y convertirla genéricamente a RGBA 8 bit
     let img = match image::load_from_memory(data) {
         Ok(i) => i.to_rgba8(),
-        Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Failed to decode image")),
+        Err(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "Failed to decode image",
+            ));
+        }
     };
 
     let width = img.width();
     let height = img.height();
-    
+
     if width == 0 || height == 0 {
-        return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, "Dimensiones inválidas: 0"));
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "Dimensiones inválidas: 0",
+        ));
     }
-    
-    let src_image = Image::from_vec_u8(width, height, img.into_raw(), fast_image_resize::PixelType::U8x4)
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+
+    let src_image = Image::from_vec_u8(
+        width,
+        height,
+        img.into_raw(),
+        fast_image_resize::PixelType::U8x4,
+    )
+    .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
     let dst_width = 400;
     let dst_height = 400;
     let mut dst_image = Image::new(dst_width, dst_height, src_image.pixel_type());
 
     let mut resizer = Resizer::new();
-    
+
     // Activar opcionalmente extensiones de procesador modernas en x86 para super-velocidad
     #[cfg(target_arch = "x86_64")]
-    unsafe { resizer.set_cpu_extensions(fast_image_resize::CpuExtensions::Avx2); }
+    unsafe {
+        resizer.set_cpu_extensions(fast_image_resize::CpuExtensions::Avx2);
+    }
 
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
 
-    resizer.resize(&src_image, &mut dst_image, &options)
+    resizer
+        .resize(&src_image, &mut dst_image, &options)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
     // Guardar como AVIF con calidad 90 y velocidad rápida (8) para ahorrar RAM/CPU
     let file = std::fs::File::create(&dst_path)?;
     let encoder = AvifEncoder::new_with_speed_quality(file, 8, 90);
-    
-    encoder.write_image(dst_image.buffer(), dst_width, dst_height, ExtendedColorType::Rgba8.into())
+
+    encoder
+        .write_image(
+            dst_image.buffer(),
+            dst_width,
+            dst_height,
+            ExtendedColorType::Rgba8.into(),
+        )
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
 
     Ok(dst_path)
@@ -163,7 +189,7 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     // 2. Revisar la Caché LRU en memoria
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
-    
+
     let handle_opt = cache.map.get(path).cloned();
     if let Some(handle) = handle_opt {
         // Actualizar el orden del LRU (remover de la posición actual y poner al frente)
@@ -178,24 +204,24 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     let handle = iced::widget::image::Handle::from_path(path);
     cache.map.insert(path.to_string(), handle.clone());
     cache.order.push_back(path.to_string());
-    
+
     // 4. Limitar el tamaño a MAX_COVERS_CACHE (150)
     while cache.order.len() > MAX_COVERS_CACHE {
         if let Some(oldest_path) = cache.order.pop_front() {
             cache.map.remove(&oldest_path);
         }
     }
-    
+
     Some(handle)
 }
 
-/// Purga las carátulas más viejas de la caché. 
+/// Purga las carátulas más viejas de la caché.
 /// Usado por el Garbage Collector cuando la app está inactiva.
 pub fn purge_old_covers(count: usize) {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
     let to_remove = count.min(cache.order.len());
-    
+
     for _ in 0..to_remove {
         if let Some(oldest_path) = cache.order.pop_front() {
             cache.map.remove(&oldest_path);
@@ -206,7 +232,9 @@ pub fn purge_old_covers(count: usize) {
 /// Carga una imagen desde bytes crudos (fallback del reproductor).
 /// Solo se usa cuando no hay carátula en caché de disco (datos embebidos del archivo de audio).
 pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handle> {
-    if data.is_empty() { return None; }
+    if data.is_empty() {
+        return None;
+    }
     // Delegar a Iced directamente con los bytes crudos
     Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
 }

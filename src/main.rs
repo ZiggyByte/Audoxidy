@@ -1,8 +1,12 @@
 mod audio;
-mod gui;
 mod db;
+mod gui;
 mod integrations;
 mod utils;
+
+#[cfg(test)]
+#[path = "audio/dsp_tests.rs"]
+mod dsp_tests;
 
 use crate::audio::AudioManager;
 use crate::gui::app::AudoxidyApp;
@@ -10,9 +14,8 @@ use crate::gui::app::AudoxidyApp;
 fn main() -> iced::Result {
     tracing_subscriber::fmt::init();
 
-    let audio_manager = std::sync::Arc::new(
-        AudioManager::new().expect("No se pudo inicializar el motor de audio")
-    );
+    let audio_manager =
+        std::sync::Arc::new(AudioManager::new().expect("No se pudo inicializar el motor de audio"));
 
     iced::application(
         move || AudoxidyApp::new(audio_manager.clone()),

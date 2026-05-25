@@ -1,7 +1,7 @@
-use rusqlite::{params, Connection, OptionalExtension, Result};
-use std::sync::Arc;
-use sha2::{Sha256, Digest};
 use hex;
+use rusqlite::{Connection, OptionalExtension, Result, params};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
 
 pub struct Database {
     conn: Connection,
@@ -112,7 +112,7 @@ pub struct ShuffleSession {
     pub session_id: String,
     pub shuffle_order: Vec<i64>, // song_ids en orden aleatorio
     pub current_position: usize,
-    pub history: Vec<i64>,       // song_ids ya reproducidos en orden
+    pub history: Vec<i64>, // song_ids ya reproducidos en orden
 }
 
 impl Default for Database {
@@ -134,7 +134,7 @@ impl Database {
         // Configuraciones de rendimiento
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.pragma_update(None, "cache_size", -8000)?; 
+        conn.pragma_update(None, "cache_size", -8000)?;
         conn.pragma_update(None, "mmap_size", 16777216)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
@@ -326,21 +326,28 @@ impl Database {
         )?;
 
         // Triggers para mantener FTS5 sincronizado automáticamente
-        conn.execute("CREATE TRIGGER IF NOT EXISTS songs_ai AFTER INSERT ON SONGS BEGIN
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_ai AFTER INSERT ON SONGS BEGIN
             INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
             VALUES (new.id, new.title, 
                    (SELECT name FROM ARTISTS WHERE id = new.artist_id), 
                    (SELECT title FROM ALBUMS WHERE id = new.album_id));
-        END;", [])?;
+        END;",
+            [],
+        )?;
 
-        conn.execute("CREATE TRIGGER IF NOT EXISTS songs_ad AFTER DELETE ON SONGS BEGIN
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_ad AFTER DELETE ON SONGS BEGIN
             INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
             VALUES('delete', old.id, old.title, 
                    (SELECT name FROM ARTISTS WHERE id = old.artist_id), 
                    (SELECT title FROM ALBUMS WHERE id = old.album_id));
-        END;", [])?;
+        END;",
+            [],
+        )?;
 
-        conn.execute("CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE ON SONGS BEGIN
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE ON SONGS BEGIN
             INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
             VALUES('delete', old.id, old.title, 
                    (SELECT name FROM ARTISTS WHERE id = old.artist_id), 
@@ -349,14 +356,31 @@ impl Database {
             VALUES (new.id, new.title, 
                    (SELECT name FROM ARTISTS WHERE id = new.artist_id), 
                    (SELECT title FROM ALBUMS WHERE id = new.album_id));
-        END;", [])?;
+        END;",
+            [],
+        )?;
 
         // Índices adicionales para filtros rápidos (agrupación)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_folder ON SONGS(folder_id)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_album ON SONGS(album_id)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_songs_artist ON SONGS(artist_id)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_albums_year ON ALBUMS(year)", [])?;
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_albums_genre ON ALBUMS(genre)", [])?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_songs_folder ON SONGS(folder_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_songs_album ON SONGS(album_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_songs_artist ON SONGS(artist_id)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_albums_year ON ALBUMS(year)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_albums_genre ON ALBUMS(genre)",
+            [],
+        )?;
 
         // Inicializar playlists del sistema si no existen
         Self::init_system_playlists(conn)?;
@@ -392,81 +416,116 @@ impl Database {
     // --- Métodos de Inserción Relacional ---
 
     pub fn upsert_folder(&self, path: &str) -> Result<i64> {
-        self.conn.prepare_cached(
-            "INSERT INTO FOLDERS (path, name) VALUES (?1, ?2)
-             ON CONFLICT(path) DO NOTHING"
-        )?.execute(
-            params![path, std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or("Música")],
-        )?;
-        self.conn.prepare_cached("SELECT id FROM FOLDERS WHERE path = ?1")?.query_row([path], |row| row.get(0))
+        self.conn
+            .prepare_cached(
+                "INSERT INTO FOLDERS (path, name) VALUES (?1, ?2)
+             ON CONFLICT(path) DO NOTHING",
+            )?
+            .execute(params![
+                path,
+                std::path::Path::new(path)
+                    .file_name()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Música")
+            ])?;
+        self.conn
+            .prepare_cached("SELECT id FROM FOLDERS WHERE path = ?1")?
+            .query_row([path], |row| row.get(0))
     }
 
     pub fn upsert_artist(&self, name: &str) -> Result<i64> {
         let normalized_name = name.trim();
         let hash_id = Self::generate_hash(&normalized_name.to_lowercase());
-        self.conn.prepare_cached(
-            "INSERT INTO ARTISTS (name, hash_id) VALUES (?1, ?2)
-             ON CONFLICT(hash_id) DO NOTHING"
-        )?.execute(
-            params![normalized_name, hash_id],
-        )?;
-        self.conn.prepare_cached("SELECT id FROM ARTISTS WHERE hash_id = ?1")?.query_row([hash_id], |row| row.get(0))
+        self.conn
+            .prepare_cached(
+                "INSERT INTO ARTISTS (name, hash_id) VALUES (?1, ?2)
+             ON CONFLICT(hash_id) DO NOTHING",
+            )?
+            .execute(params![normalized_name, hash_id])?;
+        self.conn
+            .prepare_cached("SELECT id FROM ARTISTS WHERE hash_id = ?1")?
+            .query_row([hash_id], |row| row.get(0))
     }
 
-    pub fn upsert_album(&self, title: &str, artist_id: i64, folder_id: i64, folder_path: &str, year: Option<&str>, genre: Option<&str>) -> Result<i64> {
+    pub fn upsert_album(
+        &self,
+        title: &str,
+        artist_id: i64,
+        folder_id: i64,
+        folder_path: &str,
+        year: Option<&str>,
+        genre: Option<&str>,
+    ) -> Result<i64> {
         let hash_id = Self::generate_hash(&format!("{}{}{}", title, artist_id, folder_path));
-        self.conn.prepare_cached(
-            "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
+        self.conn
+            .prepare_cached(
+                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 year = COALESCE(year, excluded.year),
-                genre = COALESCE(genre, excluded.genre)"
-        )?.execute(
-            params![title, artist_id, folder_id, hash_id, year, genre],
-        )?;
-        self.conn.prepare_cached("SELECT id FROM ALBUMS WHERE hash_id = ?1")?.query_row([hash_id], |row| row.get(0))
+                genre = COALESCE(genre, excluded.genre)",
+            )?
+            .execute(params![title, artist_id, folder_id, hash_id, year, genre])?;
+        self.conn
+            .prepare_cached("SELECT id FROM ALBUMS WHERE hash_id = ?1")?
+            .query_row([hash_id], |row| row.get(0))
     }
 
     pub fn insert_song_full(
-        &mut self, 
-        song: &SongData, 
-        extended: &SongMetadataExtended, 
+        &mut self,
+        song: &SongData,
+        extended: &SongMetadataExtended,
         pic_bytes_hash: Option<String>,
         raw_tags: Vec<(String, String, String)>, // (tag_type, item_key, raw_value)
-        is_external: bool
+        is_external: bool,
     ) -> Result<(String, bool)> {
-        let folder_path = std::path::Path::new(song.full_file_path.as_ref()).parent().and_then(|p| p.to_str()).unwrap_or("");
-        
+        let folder_path = std::path::Path::new(song.full_file_path.as_ref())
+            .parent()
+            .and_then(|p| p.to_str())
+            .unwrap_or("");
+
         let folder_id = self.upsert_folder(folder_path)?;
-        
+
         // Identidades de Artista por Separado (Pista vs Álbum)
         let raw_track_artist = song.artist.as_deref().unwrap_or("Desconocido");
-        let raw_album_artist = song.album_artist.as_deref().or(song.artist.as_deref()).unwrap_or("Desconocido");
-        
+        let raw_album_artist = song
+            .album_artist
+            .as_deref()
+            .or(song.artist.as_deref())
+            .unwrap_or("Desconocido");
+
         let track_artist_id = self.upsert_artist(raw_track_artist)?;
         let album_artist_id = self.upsert_artist(raw_album_artist)?;
-        
+
         let album_title = song.album.as_deref().unwrap_or("Desconocido");
-        let album_hash_id = Self::generate_hash(&format!("{}{}{}", album_title, album_artist_id, folder_path));
+        let album_hash_id = Self::generate_hash(&format!(
+            "{}{}{}",
+            album_title, album_artist_id, folder_path
+        ));
 
         // 1. Resolver o crear álbum (Aseguramos que el álbum pertenezca al artista del álbum)
-        self.conn.prepare_cached(
-            "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
+        self.conn
+            .prepare_cached(
+                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 artist_id = excluded.artist_id,
                 year = COALESCE(year, excluded.year),
-                genre = COALESCE(genre, excluded.genre)"
-        )?.execute(
-            params![album_title, album_artist_id, folder_id, album_hash_id, song.release_year.as_deref(), song.genre.as_deref()],
-        )?;
+                genre = COALESCE(genre, excluded.genre)",
+            )?
+            .execute(params![
+                album_title,
+                album_artist_id,
+                folder_id,
+                album_hash_id,
+                song.release_year.as_deref(),
+                song.genre.as_deref()
+            ])?;
 
-        let (_, _): (Option<String>, Option<String>) = self.conn.prepare_cached(
-            "SELECT cover_path, cover_hash FROM ALBUMS WHERE hash_id = ?1"
-        )?.query_row(
-            [&album_hash_id],
-            |row| Ok((row.get(0)?, row.get(1)?))
-        )?;
+        let (_, _): (Option<String>, Option<String>) = self
+            .conn
+            .prepare_cached("SELECT cover_path, cover_hash FROM ALBUMS WHERE hash_id = ?1")?
+            .query_row([&album_hash_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
 
         let mut final_song_cover_override = None;
         let mut needs_processing = false;
@@ -474,37 +533,36 @@ impl Database {
 
         if let Some(current_pic_hash) = pic_bytes_hash {
             // Verificar si el álbum ya tiene carátula
-            let album_has_cover: bool = self.conn.prepare_cached(
-                "SELECT cover_hash IS NOT NULL FROM ALBUMS WHERE hash_id = ?1"
-            )?.query_row(
-                [&album_hash_id],
-                |row| row.get(0)
-            )?;
+            let album_has_cover: bool = self
+                .conn
+                .prepare_cached("SELECT cover_hash IS NOT NULL FROM ALBUMS WHERE hash_id = ?1")?
+                .query_row([&album_hash_id], |row| row.get(0))?;
 
             if !album_has_cover {
                 // Es la primera carátula del álbum, la asignamos como principal
                 let path = format!("cache/covers/{}.avif", album_hash_id);
-                
-                self.conn.prepare_cached(
-                    "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3"
-                )?.execute(
-                    params![current_pic_hash, path, album_hash_id],
-                )?;
+
+                self.conn
+                    .prepare_cached(
+                        "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3",
+                    )?
+                    .execute(params![current_pic_hash, path, album_hash_id])?;
                 needs_processing = true;
             } else {
-                let album_cover_hash: Option<String> = self.conn.prepare_cached(
-                    "SELECT cover_hash FROM ALBUMS WHERE hash_id = ?1"
-                )?.query_row(
-                    [&album_hash_id],
-                    |row| row.get(0)
-                )?;
+                let album_cover_hash: Option<String> = self
+                    .conn
+                    .prepare_cached("SELECT cover_hash FROM ALBUMS WHERE hash_id = ?1")?
+                    .query_row([&album_hash_id], |row| row.get(0))?;
 
                 if album_cover_hash.as_ref() != Some(&current_pic_hash) {
                     // Es una carátula diferente a la del álbum (Override)
-                    let song_cover_hash = Self::generate_hash(&format!("{}{}", song.full_file_path, current_pic_hash));
+                    let song_cover_hash = Self::generate_hash(&format!(
+                        "{}{}",
+                        song.full_file_path, current_pic_hash
+                    ));
                     final_song_cover_override = Some(song_cover_hash.clone());
                     target_hash_for_processing = song_cover_hash;
-                    needs_processing = true; 
+                    needs_processing = true;
                 }
             }
         }
@@ -529,10 +587,15 @@ impl Database {
             ],
         )?;
 
-        let song_id: i64 = self.conn.prepare_cached("SELECT id FROM SONGS WHERE file_path = ?1")?.query_row([&song.full_file_path], |row| row.get(0))?;
+        let song_id: i64 = self
+            .conn
+            .prepare_cached("SELECT id FROM SONGS WHERE file_path = ?1")?
+            .query_row([&song.full_file_path], |row| row.get(0))?;
 
         // 3. Guardar metadatos técnicos crudos de todos los formatos presentes
-        self.conn.prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?.execute([song_id])?;
+        self.conn
+            .prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?
+            .execute([song_id])?;
         for (tag_type, key, value) in raw_tags {
             self.conn.prepare_cached(
                 "INSERT OR REPLACE INTO SONG_TAG_ITEMS (song_id, tag_type, item_key, raw_value) 
@@ -562,37 +625,42 @@ impl Database {
 
     /// Obtiene el ID de una canción por su ruta de archivo.
     pub fn get_song_id_by_path(&self, path: &str) -> Result<Option<i64>> {
-        self.conn.query_row(
-            "SELECT id FROM SONGS WHERE file_path = ?1",
-            [path],
-            |row| row.get(0)
-        ).optional()
+        self.conn
+            .query_row("SELECT id FROM SONGS WHERE file_path = ?1", [path], |row| {
+                row.get(0)
+            })
+            .optional()
     }
 
     /// Obtiene los valores de ReplayGain (track_gain, album_gain) por ruta de archivo.
     /// Consulta eficiente con JOIN directo (evita dos queries separadas).
     pub fn get_replay_gain_by_path(&self, path: &str) -> Result<(Option<f64>, Option<f64>)> {
-        self.conn.prepare_cached(
-            "SELECT m.track_gain, m.album_gain
+        self.conn
+            .prepare_cached(
+                "SELECT m.track_gain, m.album_gain
              FROM SONGS s
              JOIN SONG_METADATA m ON m.song_id = s.id
-             WHERE s.file_path = ?1"
-        )?.query_row([path], |row| {
-            Ok((row.get(0)?, row.get(1)?))
-        }).optional().map(|opt| opt.unwrap_or((None, None)))
+             WHERE s.file_path = ?1",
+            )?
+            .query_row([path], |row| Ok((row.get(0)?, row.get(1)?)))
+            .optional()
+            .map(|opt| opt.unwrap_or((None, None)))
     }
 
     /// Obtiene las características técnicas de la canción (sample_rate, bit_depth, channels) por ruta.
     pub fn get_song_technical_meta_by_path(&self, path: &str) -> Result<Option<(u32, u32, u32)>> {
-        self.conn.prepare_cached(
-            "SELECT sample_rate, bit_depth, channels FROM SONGS WHERE file_path = ?1"
-        )?.query_row([path], |row| {
-            Ok((
-                row.get::<_, Option<i32>>(0)?.unwrap_or(0) as u32,
-                row.get::<_, Option<i32>>(1)?.unwrap_or(0) as u32,
-                row.get::<_, Option<i32>>(2)?.unwrap_or(0) as u32,
-            ))
-        }).optional()
+        self.conn
+            .prepare_cached(
+                "SELECT sample_rate, bit_depth, channels FROM SONGS WHERE file_path = ?1",
+            )?
+            .query_row([path], |row| {
+                Ok((
+                    row.get::<_, Option<i32>>(0)?.unwrap_or(0) as u32,
+                    row.get::<_, Option<i32>>(1)?.unwrap_or(0) as u32,
+                    row.get::<_, Option<i32>>(2)?.unwrap_or(0) as u32,
+                ))
+            })
+            .optional()
     }
 
     // --- Métodos de Transacción ---
@@ -615,7 +683,8 @@ impl Database {
     // --- Consultas de Alto Rendimiento ---
 
     pub fn search_songs(&self, query: &str) -> Result<Vec<Arc<SongData>>> {
-        let mut stmt = self.conn.prepare("
+        let mut stmt = self.conn.prepare(
+            "
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
@@ -628,35 +697,58 @@ impl Database {
             WHERE SONGS_FTS MATCH ?1
             ORDER BY rank
             LIMIT 100
-        ")?;
-        
+        ",
+        )?;
+
         let rows = stmt.query_map([format!("{}*", query)], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
-            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
-            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
+            song.title = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(2)?.as_deref(),
+            );
+            song.artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(3)?.as_deref(),
+            );
+            song.album = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(4)?.as_deref(),
+            );
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(5)?.as_deref(),
+            );
             song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
+            song.format = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(7)?.as_deref(),
+            );
             song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref()); // TEXT -> Option<Arc<str>>
+            song.track_number = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(9)?.as_deref(),
+            ); // TEXT -> Option<Arc<str>>
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
+            song.cover_override = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(14)?.as_deref(),
+            );
             song.import_order = row.get(15)?;
-            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
-            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
-            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
+            song.genre = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(16)?.as_deref(),
+            );
+            song.release_year = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(17)?.as_deref(),
+            );
+            song.album_artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(18)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
         let mut results = Vec::new();
         for r in rows {
-            if let Ok(s) = r { results.push(s); }
+            if let Ok(s) = r {
+                results.push(s);
+            }
         }
         Ok(results)
     }
@@ -679,35 +771,59 @@ impl Database {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
-            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
-            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
+            song.title = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(2)?.as_deref(),
+            );
+            song.artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(3)?.as_deref(),
+            );
+            song.album = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(4)?.as_deref(),
+            );
             song.album_id = 0; // Se puede añadir al SELECT si es crítico, por ahora 0 es seguro
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(5)?.as_deref(),
+            );
             song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
+            song.format = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(7)?.as_deref(),
+            );
             song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref());
+            song.track_number = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(9)?.as_deref(),
+            );
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
+            song.cover_override = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(14)?.as_deref(),
+            );
             song.import_order = row.get(15)?;
-            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
-            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
-            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
+            song.genre = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(16)?.as_deref(),
+            );
+            song.release_year = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(17)?.as_deref(),
+            );
+            song.album_artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(18)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
         let mut songs = Vec::new();
         for r in rows {
-            if let Ok(s) = r { songs.push(s); }
+            if let Ok(s) = r {
+                songs.push(s);
+            }
         }
         Ok(songs)
     }
 
-    pub fn get_all_albums(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
+    pub fn get_all_albums(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
             SELECT DISTINCT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
             FROM ALBUMS al
@@ -719,20 +835,28 @@ impl Database {
 
         let rows = stmt.query_map([], |row| {
             Ok((
-                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3).unwrap_or_default(), 
-                row.get(4).unwrap_or_default(), row.get(5)?
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3).unwrap_or_default(),
+                row.get(4).unwrap_or_default(),
+                row.get(5)?,
             ))
         })?;
 
         let mut results = Vec::new();
         for r in rows {
-            if let Ok(a) = r { results.push(a); }
+            if let Ok(a) = r {
+                results.push(a);
+            }
         }
         Ok(results)
     }
 
     /// Obtiene álbumes para la vista Grid, agrupados correctamente para evitar duplicados en compilaciones
-    pub fn get_grid_items_by_artist(&self) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
+    pub fn get_grid_items_by_artist(
+        &self,
+    ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
             SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
             FROM ALBUMS al
@@ -745,39 +869,49 @@ impl Database {
 
         let rows = stmt.query_map([], |row| {
             Ok((
-                row.get(0)?, row.get(1)?, row.get(2)?, row.get(3).unwrap_or_default(), 
-                row.get(4).unwrap_or_default(), row.get(5)?
+                row.get(0)?,
+                row.get(1)?,
+                row.get(2)?,
+                row.get(3).unwrap_or_default(),
+                row.get(4).unwrap_or_default(),
+                row.get(5)?,
             ))
         })?;
 
         let mut results = Vec::new();
         for r in rows {
-            if let Ok(a) = r { results.push(a); }
+            if let Ok(a) = r {
+                results.push(a);
+            }
         }
         Ok(results)
     }
 
     pub fn get_all_folders(&self) -> Result<Vec<(i64, String, String)>> {
-        let mut stmt = self.conn.prepare("SELECT id, path, name FROM FOLDERS ORDER BY path COLLATE NOCASE ASC")?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, path, name FROM FOLDERS ORDER BY path COLLATE NOCASE ASC")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
 
         let mut results = Vec::new();
         for r in rows {
-            if let Ok(f) = r { results.push(f); }
+            if let Ok(f) = r {
+                results.push(f);
+            }
         }
         Ok(results)
     }
 
     pub fn get_album_stats_by_hash(&self, album_hash: &str) -> Result<(u64, f64, f64)> {
-        let mut stmt = self.conn.prepare("
+        let mut stmt = self.conn.prepare(
+            "
             SELECT COUNT(*), SUM(duration), SUM(size)
             FROM SONGS s
             JOIN ALBUMS al ON s.album_id = al.id
             WHERE al.hash_id = ?1
-        ")?;
-        
+        ",
+        )?;
+
         let stats = stmt.query_row(params![album_hash], |row| {
             Ok((
                 row.get::<_, i64>(0)? as u64,
@@ -788,15 +922,21 @@ impl Database {
         Ok(stats)
     }
 
-    pub fn get_album_stats_by_hash_and_artist(&self, album_hash: &str, artist_name: &str) -> Result<(u64, f64, f64)> {
-        let mut stmt = self.conn.prepare("
+    pub fn get_album_stats_by_hash_and_artist(
+        &self,
+        album_hash: &str,
+        artist_name: &str,
+    ) -> Result<(u64, f64, f64)> {
+        let mut stmt = self.conn.prepare(
+            "
             SELECT COUNT(*), SUM(s.duration), SUM(s.size)
             FROM SONGS s
             JOIN ALBUMS al ON s.album_id = al.id
             JOIN ARTISTS ar ON s.artist_id = ar.id
             WHERE al.hash_id = ?1 AND ar.name = ?2
-        ")?;
-        
+        ",
+        )?;
+
         let stats = stmt.query_row(params![album_hash, artist_name], |row| {
             Ok((
                 row.get::<_, i64>(0)? as u64,
@@ -825,34 +965,60 @@ impl Database {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
-            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
-            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
+            song.title = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(2)?.as_deref(),
+            );
+            song.artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(3)?.as_deref(),
+            );
+            song.album = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(4)?.as_deref(),
+            );
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(5)?.as_deref(),
+            );
             song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
+            song.format = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(7)?.as_deref(),
+            );
             song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref());
+            song.track_number = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(9)?.as_deref(),
+            );
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
+            song.cover_override = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(14)?.as_deref(),
+            );
             song.import_order = row.get(15)?;
-            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
-            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
-            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
+            song.genre = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(16)?.as_deref(),
+            );
+            song.release_year = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(17)?.as_deref(),
+            );
+            song.album_artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(18)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
         let mut songs = Vec::new();
         for r in rows {
-            if let Ok(s) = r { songs.push(s); }
+            if let Ok(s) = r {
+                songs.push(s);
+            }
         }
         Ok(songs)
     }
 
-    pub fn get_songs_by_album_and_artist(&self, album_hash_id: &str, artist_name: &str) -> Result<Vec<Arc<SongData>>> {
+    pub fn get_songs_by_album_and_artist(
+        &self,
+        album_hash_id: &str,
+        artist_name: &str,
+    ) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
@@ -870,42 +1036,69 @@ impl Database {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(2)?.as_deref());
-            song.artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(3)?.as_deref());
-            song.album = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(4)?.as_deref());
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(5)?.as_deref()); 
+            song.title = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(2)?.as_deref(),
+            );
+            song.artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(3)?.as_deref(),
+            );
+            song.album = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(4)?.as_deref(),
+            );
+            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(5)?.as_deref(),
+            );
             song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(7)?.as_deref());
+            song.format = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(7)?.as_deref(),
+            );
             song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(9)?.as_deref());
+            song.track_number = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(9)?.as_deref(),
+            );
             song.bit_depth = row.get(10)?;
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(14)?.as_deref());
+            song.cover_override = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(14)?.as_deref(),
+            );
             song.import_order = row.get(15)?;
-            song.genre = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(16)?.as_deref());
-            song.release_year = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(17)?.as_deref());
-            song.album_artist = crate::utils::interner::intern_string_opt(row.get::<_, Option<String>>(18)?.as_deref());
+            song.genre = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(16)?.as_deref(),
+            );
+            song.release_year = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(17)?.as_deref(),
+            );
+            song.album_artist = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(18)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
         let mut songs = Vec::new();
         for r in rows {
-            if let Ok(s) = r { songs.push(s); }
+            if let Ok(s) = r {
+                songs.push(s);
+            }
         }
         Ok(songs)
     }
 
-    pub fn get_artist_groups_sql(&self, search_query: Option<&str>) -> Result<Vec<(String, usize, usize, f64)>> {
-        let mut sql = String::from("
+    pub fn get_artist_groups_sql(
+        &self,
+        search_query: Option<&str>,
+    ) -> Result<Vec<(String, usize, usize, f64)>> {
+        let mut sql = String::from(
+            "
             SELECT ar.name, COUNT(s.id), COUNT(DISTINCT al.id), SUM(s.duration)
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
             WHERE s.is_external = 0
-        ");
-        
+        ",
+        );
+
         let mut params_vec = Vec::new();
         if let Some(q) = search_query {
             if !q.is_empty() {
@@ -913,24 +1106,42 @@ impl Database {
                 params_vec.push(format!("{}*", q));
             }
         }
-        
+
         sql.push_str(" GROUP BY ar.name ORDER BY ar.name ASC");
-        
+
         let rows = if params_vec.is_empty() {
             let mut stmt = self.conn.prepare(&sql)?;
             let mapped = stmt.query_map([], |row| {
-                Ok((row.get(0)?, row.get::<_, i64>(1)? as usize, row.get::<_, i64>(2)? as usize, row.get::<_, f64>(3).unwrap_or(0.0)))
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as usize,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
             })?;
             let mut res = Vec::new();
-            for r in mapped { if let Ok(v) = r { res.push(v); } }
+            for r in mapped {
+                if let Ok(v) = r {
+                    res.push(v);
+                }
+            }
             res
         } else {
             let mut stmt = self.conn.prepare(&sql)?;
             let mapped = stmt.query_map([&params_vec[0]], |row| {
-                Ok((row.get(0)?, row.get::<_, i64>(1)? as usize, row.get::<_, i64>(2)? as usize, row.get::<_, f64>(3).unwrap_or(0.0)))
+                Ok((
+                    row.get(0)?,
+                    row.get::<_, i64>(1)? as usize,
+                    row.get::<_, i64>(2)? as usize,
+                    row.get::<_, f64>(3).unwrap_or(0.0),
+                ))
             })?;
             let mut res = Vec::new();
-            for r in mapped { if let Ok(v) = r { res.push(v); } }
+            for r in mapped {
+                if let Ok(v) = r {
+                    res.push(v);
+                }
+            }
             res
         };
 
@@ -940,36 +1151,61 @@ impl Database {
     pub fn get_max_import_order(&self) -> Result<i64> {
         let mut stmt = self.conn.prepare("SELECT MAX(import_order) FROM SONGS")?;
         let res = stmt.query_row([], |row| {
-             let val: Option<i64> = row.get(0)?;
-             Ok(val.unwrap_or(0))
+            let val: Option<i64> = row.get(0)?;
+            Ok(val.unwrap_or(0))
         });
         res
     }
 
     pub fn get_library_stats(&self) -> Result<(usize, usize, f64, f64, usize)> {
-        let songs: i64 = self.conn.query_row("SELECT COUNT(*) FROM SONGS WHERE is_external = 0", [], |r| r.get(0))?;
+        let songs: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM SONGS WHERE is_external = 0",
+            [],
+            |r| r.get(0),
+        )?;
         let albums: i64 = self.conn.query_row("SELECT COUNT(*) FROM ALBUMS WHERE id IN (SELECT album_id FROM SONGS WHERE is_external = 0)", [], |r| r.get(0))?;
         let artists: i64 = self.conn.query_row("SELECT COUNT(*) FROM ARTISTS WHERE id IN (SELECT artist_id FROM SONGS WHERE is_external = 0)", [], |r| r.get(0))?;
-        let duration: f64 = self.conn.query_row("SELECT SUM(duration) FROM SONGS WHERE is_external = 0", [], |r| Ok(r.get::<_, Option<f64>>(0)?.unwrap_or(0.0)))?;
-        let size: f64 = self.conn.query_row("SELECT SUM(size) FROM SONGS WHERE is_external = 0", [], |r| Ok(r.get::<_, Option<i64>>(0)?.unwrap_or(0) as f64))?;
-        
-        Ok((songs as usize, albums as usize, duration, size, artists as usize))
+        let duration: f64 = self.conn.query_row(
+            "SELECT SUM(duration) FROM SONGS WHERE is_external = 0",
+            [],
+            |r| Ok(r.get::<_, Option<f64>>(0)?.unwrap_or(0.0)),
+        )?;
+        let size: f64 = self.conn.query_row(
+            "SELECT SUM(size) FROM SONGS WHERE is_external = 0",
+            [],
+            |r| Ok(r.get::<_, Option<i64>>(0)?.unwrap_or(0) as f64),
+        )?;
+
+        Ok((
+            songs as usize,
+            albums as usize,
+            duration,
+            size,
+            artists as usize,
+        ))
     }
 
     pub fn delete_song(&self, path: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM SONGS WHERE file_path = ?1", [path])?;
+        self.conn
+            .execute("DELETE FROM SONGS WHERE file_path = ?1", [path])?;
         Ok(())
     }
 
     pub fn delete_album_group(&self, album_hash: &str) -> Result<()> {
         // En el nuevo esquema usamos hash_id para identificar álbumes
-        self.conn.execute("DELETE FROM SONGS WHERE album_id = (SELECT id FROM ALBUMS WHERE hash_id = ?1)", [album_hash])?;
-        self.conn.execute("DELETE FROM ALBUMS WHERE hash_id = ?1", [album_hash])?;
+        self.conn.execute(
+            "DELETE FROM SONGS WHERE album_id = (SELECT id FROM ALBUMS WHERE hash_id = ?1)",
+            [album_hash],
+        )?;
+        self.conn
+            .execute("DELETE FROM ALBUMS WHERE hash_id = ?1", [album_hash])?;
         Ok(())
     }
 
     pub fn batch_delete_songs(&self, ids: &[i64]) -> Result<()> {
-        if ids.is_empty() { return Ok(()); }
+        if ids.is_empty() {
+            return Ok(());
+        }
         let mut stmt = self.conn.prepare("DELETE FROM SONGS WHERE id = ?1")?;
         for id in ids {
             stmt.execute([id])?;
@@ -980,8 +1216,8 @@ impl Database {
     pub fn cleanup_empty_metadata(&self) -> Result<()> {
         // Eliminar álbumes sin canciones
         self.conn.execute(
-            "DELETE FROM ALBUMS WHERE NOT EXISTS (SELECT 1 FROM SONGS WHERE album_id = ALBUMS.id)", 
-            []
+            "DELETE FROM ALBUMS WHERE NOT EXISTS (SELECT 1 FROM SONGS WHERE album_id = ALBUMS.id)",
+            [],
         )?;
         // Eliminar artistas sin álbumes ni canciones
         self.conn.execute(
@@ -1011,7 +1247,7 @@ impl Database {
         let max_order: i64 = self.conn.query_row(
             "SELECT COALESCE(MAX(sort_order), 0) FROM PLAYLISTS",
             [],
-            |r| r.get(0)
+            |r| r.get(0),
         )?;
 
         self.conn.execute(
@@ -1019,26 +1255,31 @@ impl Database {
             params![name, max_order + 1, if is_system { 1 } else { 0 }],
         )?;
 
-        self.conn.query_row("SELECT id FROM PLAYLISTS WHERE name = ?1", [name], |r| r.get(0))
+        self.conn
+            .query_row("SELECT id FROM PLAYLISTS WHERE name = ?1", [name], |r| {
+                r.get(0)
+            })
     }
 
     /// Elimina una playlist por ID. No permite eliminar playlists del sistema.
     pub fn delete_playlist(&self, playlist_id: i64) -> Result<bool> {
         // Verificar que no sea del sistema
-        let is_system: bool = self.conn.query_row(
-            "SELECT is_system = 1 FROM PLAYLISTS WHERE id = ?1",
-            [playlist_id],
-            |r| r.get(0)
-        ).unwrap_or(false);
+        let is_system: bool = self
+            .conn
+            .query_row(
+                "SELECT is_system = 1 FROM PLAYLISTS WHERE id = ?1",
+                [playlist_id],
+                |r| r.get(0),
+            )
+            .unwrap_or(false);
 
         if is_system {
             return Ok(false); // No se puede eliminar
         }
 
-        let changed = self.conn.execute(
-            "DELETE FROM PLAYLISTS WHERE id = ?1",
-            [playlist_id],
-        )?;
+        let changed = self
+            .conn
+            .execute("DELETE FROM PLAYLISTS WHERE id = ?1", [playlist_id])?;
 
         Ok(changed > 0)
     }
@@ -1149,11 +1390,15 @@ impl Database {
     /// Retorna true si se agregó, false si ya existía.
     pub fn add_song_to_playlist(&self, playlist_id: i64, song_id: i64) -> Result<bool> {
         // Obtener el siguiente sequence_order disponible
-        let max_seq: Option<f64> = self.conn.query_row(
-            "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
-            [playlist_id],
-            |r| r.get(0)
-        ).ok().flatten();
+        let max_seq: Option<f64> = self
+            .conn
+            .query_row(
+                "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
+                [playlist_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
 
         let next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
 
@@ -1173,12 +1418,15 @@ impl Database {
         }
 
         let tx = self.conn.transaction()?;
-        
-        let max_seq: Option<f64> = tx.query_row(
-            "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
-            [playlist_id],
-            |r| r.get(0)
-        ).ok().flatten();
+
+        let max_seq: Option<f64> = tx
+            .query_row(
+                "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
+                [playlist_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
 
         let mut next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
         let mut count = 0;
@@ -1211,11 +1459,19 @@ impl Database {
     }
 
     /// Remueve múltiples canciones de una playlist de forma eficiente.
-    pub fn batch_remove_songs_from_playlist(&mut self, playlist_id: i64, song_ids: &[i64]) -> Result<()> {
-        if song_ids.is_empty() { return Ok(()); }
+    pub fn batch_remove_songs_from_playlist(
+        &mut self,
+        playlist_id: i64,
+        song_ids: &[i64],
+    ) -> Result<()> {
+        if song_ids.is_empty() {
+            return Ok(());
+        }
         let tx = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare_cached("DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2")?;
+            let mut stmt = tx.prepare_cached(
+                "DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
+            )?;
             for &song_id in song_ids {
                 stmt.execute(params![playlist_id, song_id])?;
             }
@@ -1239,7 +1495,7 @@ impl Database {
         let current: bool = self.conn.query_row(
             "SELECT enabled = 1 FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
             params![playlist_id, song_id],
-            |r| r.get(0)
+            |r| r.get(0),
         )?;
 
         let new_val = if current { 0 } else { 1 };
@@ -1252,7 +1508,12 @@ impl Database {
     }
 
     /// Establece explícitamente el estado enabled/disabled de una canción.
-    pub fn set_song_enabled_in_playlist(&self, playlist_id: i64, song_id: i64, enabled: bool) -> Result<()> {
+    pub fn set_song_enabled_in_playlist(
+        &self,
+        playlist_id: i64,
+        song_id: i64,
+        enabled: bool,
+    ) -> Result<()> {
         let val = if enabled { 1 } else { 0 };
         self.conn.execute(
             "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
@@ -1262,7 +1523,11 @@ impl Database {
     }
 
     /// Cambia el estado enabled/disabled de todas las canciones de un folder/álbum en una playlist.
-    pub fn toggle_folder_enabled_in_playlist(&self, playlist_id: i64, folder_path: &str) -> Result<bool> {
+    pub fn toggle_folder_enabled_in_playlist(
+        &self,
+        playlist_id: i64,
+        folder_path: &str,
+    ) -> Result<bool> {
         // Leer estado de la primera canción del folder
         let any_enabled: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM PLAYLIST_ITEMS pi JOIN SONGS s ON s.id = pi.song_id WHERE pi.playlist_id = ?1 AND s.folder_id = (SELECT id FROM FOLDERS WHERE path = ?2) AND pi.enabled = 1)",
@@ -1281,7 +1546,12 @@ impl Database {
     }
 
     /// Establece explícitamente el estado enabled/disabled para todas las canciones de un folder.
-    pub fn set_folder_enabled_in_playlist(&self, playlist_id: i64, folder_path: &str, enabled: bool) -> Result<()> {
+    pub fn set_folder_enabled_in_playlist(
+        &self,
+        playlist_id: i64,
+        folder_path: &str,
+        enabled: bool,
+    ) -> Result<()> {
         let val = if enabled { 1 } else { 0 };
         self.conn.execute(
             "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id IN (SELECT id FROM SONGS WHERE folder_id = (SELECT id FROM FOLDERS WHERE path = ?3))",
@@ -1291,7 +1561,12 @@ impl Database {
     }
 
     /// Actualiza el sequence_order de una canción (para reordenamiento drag-and-drop).
-    pub fn update_playlist_item_order(&self, playlist_id: i64, song_id: i64, new_sequence: f64) -> Result<()> {
+    pub fn update_playlist_item_order(
+        &self,
+        playlist_id: i64,
+        song_id: i64,
+        new_sequence: f64,
+    ) -> Result<()> {
         self.conn.execute(
             "UPDATE PLAYLIST_ITEMS SET sequence_order = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
             params![new_sequence, playlist_id, song_id],
@@ -1300,15 +1575,15 @@ impl Database {
     }
 
     pub fn update_playlist_persistence(
-        &self, 
-        playlist_id: i64, 
-        last_song_id: Option<i64>, 
-        last_pos_sec: f64, 
-        is_playing: bool, 
-        shuffle_active: bool, 
+        &self,
+        playlist_id: i64,
+        last_song_id: Option<i64>,
+        last_pos_sec: f64,
+        is_playing: bool,
+        shuffle_active: bool,
         repeat_mode: i32,
         shuffle_pos: usize,
-        shuffle_id: Option<String>
+        shuffle_id: Option<String>,
     ) -> Result<()> {
         self.conn.execute(
             "UPDATE PLAYLISTS SET 
@@ -1321,10 +1596,10 @@ impl Database {
                 shuffle_id = ?7
              WHERE id = ?8",
             params![
-                last_song_id, 
-                last_pos_sec, 
-                if is_playing { 1 } else { 0 }, 
-                if shuffle_active { 1 } else { 0 }, 
+                last_song_id,
+                last_pos_sec,
+                if is_playing { 1 } else { 0 },
+                if shuffle_active { 1 } else { 0 },
                 repeat_mode,
                 shuffle_pos as i64,
                 shuffle_id,
@@ -1335,19 +1610,31 @@ impl Database {
     }
 
     /// Mueve múltiples canciones de una playlist a otra de forma eficiente.
-    pub fn batch_move_songs_between_playlists(&mut self, from_playlist_id: i64, to_playlist_id: i64, song_ids: &[i64]) -> Result<()> {
-        if song_ids.is_empty() { return Ok(()); }
+    pub fn batch_move_songs_between_playlists(
+        &mut self,
+        from_playlist_id: i64,
+        to_playlist_id: i64,
+        song_ids: &[i64],
+    ) -> Result<()> {
+        if song_ids.is_empty() {
+            return Ok(());
+        }
         let tx = self.conn.transaction()?;
-        
-        let max_seq: Option<f64> = tx.query_row(
-            "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
-            [to_playlist_id],
-            |r| r.get(0)
-        ).ok().flatten();
+
+        let max_seq: Option<f64> = tx
+            .query_row(
+                "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
+                [to_playlist_id],
+                |r| r.get(0),
+            )
+            .ok()
+            .flatten();
         let mut next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
 
         {
-            let mut stmt_del = tx.prepare_cached("DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2")?;
+            let mut stmt_del = tx.prepare_cached(
+                "DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
+            )?;
             let mut stmt_ins = tx.prepare_cached("INSERT INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)")?;
 
             for &song_id in song_ids {
@@ -1356,7 +1643,7 @@ impl Database {
                 next_seq += 1.0;
             }
         }
-        
+
         tx.commit()?;
         Ok(())
     }
@@ -1368,7 +1655,8 @@ impl Database {
     /// Obtiene todas las canciones de una playlist con metadata completa (JOIN).
     /// Retorna las canciones ordenadas por sequence_order.
     pub fn get_playlist_songs(&self, playlist_id: i64) -> Result<Vec<PlaylistSongRef>> {
-        let mut stmt = self.conn.prepare("
+        let mut stmt = self.conn.prepare(
+            "
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
@@ -1382,7 +1670,8 @@ impl Database {
             JOIN FOLDERS f ON f.id = s.folder_id
             WHERE pi.playlist_id = ?1
             ORDER BY pi.sequence_order ASC
-        ")?;
+        ",
+        )?;
 
         let rows = stmt.query_map([playlist_id], |r| {
             let title_val: Option<String> = r.get(4)?;
@@ -1394,17 +1683,36 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
-                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
-                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
-                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
-                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
-                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
-                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
+                title: crate::utils::interner::intern_string(
+                    &title_val.unwrap_or_else(|| "Sin título".to_string()),
+                ),
+                artist_name: crate::utils::interner::intern_string(
+                    &artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                album_title: crate::utils::interner::intern_string(
+                    &album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
+                ),
+                album_artist_name: crate::utils::interner::intern_string(
+                    &r.get::<_, Option<String>>(7)?
+                        .unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                year: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(8)?.as_deref(),
+                ),
+                genre: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                track_number: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(10)?.as_deref(),
+                ),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
-                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
-                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                cover_path: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(13)?.as_deref(),
+                ),
+                cover_override: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(14)?.as_deref(),
+                ),
                 folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
@@ -1412,15 +1720,23 @@ impl Database {
 
         let mut results = Vec::new();
         for row in rows {
-            if let Ok(s) = row { results.push(s); }
+            if let Ok(s) = row {
+                results.push(s);
+            }
         }
         Ok(results)
     }
 
     /// Obtiene canciones de una playlist paginadas (para virtualización).
     /// LIMIT + OFFSET para renderizado eficiente.
-    pub fn get_playlist_songs_paginated(&self, playlist_id: i64, limit: usize, offset: usize) -> Result<Vec<PlaylistSongRef>> {
-        let mut stmt = self.conn.prepare("
+    pub fn get_playlist_songs_paginated(
+        &self,
+        playlist_id: i64,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<PlaylistSongRef>> {
+        let mut stmt = self.conn.prepare(
+            "
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
@@ -1435,7 +1751,8 @@ impl Database {
             WHERE pi.playlist_id = ?1
             ORDER BY pi.sequence_order ASC
             LIMIT ?2 OFFSET ?3
-        ")?;
+        ",
+        )?;
 
         let rows = stmt.query_map(params![playlist_id, limit as i64, offset as i64], |r| {
             let title_val: Option<String> = r.get(4)?;
@@ -1447,17 +1764,36 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
-                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
-                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
-                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
-                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
-                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
-                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
+                title: crate::utils::interner::intern_string(
+                    &title_val.unwrap_or_else(|| "Sin título".to_string()),
+                ),
+                artist_name: crate::utils::interner::intern_string(
+                    &artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                album_title: crate::utils::interner::intern_string(
+                    &album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
+                ),
+                album_artist_name: crate::utils::interner::intern_string(
+                    &r.get::<_, Option<String>>(7)?
+                        .unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                year: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(8)?.as_deref(),
+                ),
+                genre: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                track_number: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(10)?.as_deref(),
+                ),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
-                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
-                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                cover_path: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(13)?.as_deref(),
+                ),
+                cover_override: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(14)?.as_deref(),
+                ),
                 folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
@@ -1465,7 +1801,9 @@ impl Database {
 
         let mut results = Vec::new();
         for row in rows {
-            if let Ok(s) = row { results.push(s); }
+            if let Ok(s) = row {
+                results.push(s);
+            }
         }
         Ok(results)
     }
@@ -1475,20 +1813,26 @@ impl Database {
         self.conn.query_row(
             "SELECT COUNT(*) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
             [playlist_id],
-            |r| r.get(0)
+            |r| r.get(0),
         )
     }
 
     /// Obtiene canciones de una playlist agrupadas por folder_path.
     /// Retorna grupos con nombre de carpeta, canciones y estadísticas.
-    pub fn get_playlist_songs_grouped_by_folder(&self, playlist_id: i64) -> Result<Vec<PlaylistFolderGroup>> {
+    pub fn get_playlist_songs_grouped_by_folder(
+        &self,
+        playlist_id: i64,
+    ) -> Result<Vec<PlaylistFolderGroup>> {
         let songs = self.get_playlist_songs(playlist_id)?;
         let mut groups: Vec<PlaylistFolderGroup> = Vec::new();
 
         for song in songs {
             // Encontrar o crear el grupo (solo si es el último grupo para mantener el orden de la lista)
-            let is_same_folder = groups.last().map(|g| g.folder_path == song.folder_path).unwrap_or(false);
-            
+            let is_same_folder = groups
+                .last()
+                .map(|g| g.folder_path == song.folder_path)
+                .unwrap_or(false);
+
             if is_same_folder {
                 if let Some(group) = groups.last_mut() {
                     group.total_duration += song.duration;
@@ -1499,7 +1843,7 @@ impl Database {
                 let folder_path = song.folder_path.clone();
                 let folder_name = song.folder_name.clone();
                 let duration = song.duration;
-                
+
                 groups.push(PlaylistFolderGroup {
                     folder_path,
                     folder_name,
@@ -1529,7 +1873,7 @@ impl Database {
                     r.get::<_, f64>(1)?,
                     r.get::<_, f64>(2)?,
                 ))
-            }
+            },
         )
     }
 
@@ -1538,15 +1882,20 @@ impl Database {
         self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2)",
             params![playlist_id, song_id],
-            |r| r.get(0)
+            |r| r.get(0),
         )
     }
 
     /// Busca canciones dentro de una playlist por query (búsqueda local).
-    pub fn search_playlist_songs(&self, playlist_id: i64, query: &str) -> Result<Vec<PlaylistSongRef>> {
+    pub fn search_playlist_songs(
+        &self,
+        playlist_id: i64,
+        query: &str,
+    ) -> Result<Vec<PlaylistSongRef>> {
         let search_pattern = format!("%{}%", query);
 
-        let mut stmt = self.conn.prepare("
+        let mut stmt = self.conn.prepare(
+            "
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
@@ -1565,7 +1914,8 @@ impl Database {
                   OR LOWER(al.title) LIKE LOWER(?2)
               )
             ORDER BY pi.sequence_order ASC
-        ")?;
+        ",
+        )?;
 
         let rows = stmt.query_map(params![playlist_id, search_pattern], |r| {
             let title_val: Option<String> = r.get(4)?;
@@ -1577,17 +1927,36 @@ impl Database {
                 song_id: r.get(1)?,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
-                title: crate::utils::interner::intern_string(&title_val.unwrap_or_else(|| "Sin título".to_string())),
-                artist_name: crate::utils::interner::intern_string(&artist_val.unwrap_or_else(|| "Artista desconocido".to_string())),
-                album_title: crate::utils::interner::intern_string(&album_val.unwrap_or_else(|| "Álbum desconocido".to_string())),
-                album_artist_name: crate::utils::interner::intern_string(&r.get::<_, Option<String>>(7)?.unwrap_or_else(|| "Artista desconocido".to_string())),
-                year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
-                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
-                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
+                title: crate::utils::interner::intern_string(
+                    &title_val.unwrap_or_else(|| "Sin título".to_string()),
+                ),
+                artist_name: crate::utils::interner::intern_string(
+                    &artist_val.unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                album_title: crate::utils::interner::intern_string(
+                    &album_val.unwrap_or_else(|| "Álbum desconocido".to_string()),
+                ),
+                album_artist_name: crate::utils::interner::intern_string(
+                    &r.get::<_, Option<String>>(7)?
+                        .unwrap_or_else(|| "Artista desconocido".to_string()),
+                ),
+                year: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(8)?.as_deref(),
+                ),
+                genre: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                track_number: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(10)?.as_deref(),
+                ),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
-                cover_path: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(13)?.as_deref()),
-                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(14)?.as_deref()),
+                cover_path: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(13)?.as_deref(),
+                ),
+                cover_override: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(14)?.as_deref(),
+                ),
                 folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })
@@ -1595,7 +1964,9 @@ impl Database {
 
         let mut results = Vec::new();
         for row in rows {
-            if let Ok(s) = row { results.push(s); }
+            if let Ok(s) = row {
+                results.push(s);
+            }
         }
         Ok(results)
     }
@@ -1606,11 +1977,13 @@ impl Database {
 
     /// Genera un nuevo ID de sesión de shuffle (UUID simple basado en timestamp + random).
     pub fn get_setting(&self, key: &str) -> Option<String> {
-        self.conn.query_row(
-            "SELECT value FROM APP_SETTINGS WHERE key = ?1",
-            [key],
-            |r| r.get(0)
-        ).ok()
+        self.conn
+            .query_row(
+                "SELECT value FROM APP_SETTINGS WHERE key = ?1",
+                [key],
+                |r| r.get(0),
+            )
+            .ok()
     }
 
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
@@ -1633,7 +2006,11 @@ impl Database {
 
     /// Guarda una sesión de shuffle completa en la base de datos.
     /// Esto persiste el orden aleatorio y el historial para navegación backward.
-    pub fn save_shuffle_session(&mut self, playlist_id: i64, session: &ShuffleSession) -> Result<()> {
+    pub fn save_shuffle_session(
+        &mut self,
+        playlist_id: i64,
+        session: &ShuffleSession,
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
 
         // Limpiar sesión previa del mismo playlist (si existe)
@@ -1650,7 +2027,12 @@ impl Database {
             // Insertar shuffle_order (canciones pendientes)
             for (i, &song_id) in session.shuffle_order.iter().enumerate() {
                 // play_order negativo para diferenciar de history
-                stmt.execute(params![playlist_id, session.session_id, song_id, -(i as i64)])?;
+                stmt.execute(params![
+                    playlist_id,
+                    session.session_id,
+                    song_id,
+                    -(i as i64)
+                ])?;
             }
 
             // Insertar history (canciones ya reproducidas)
@@ -1662,7 +2044,11 @@ impl Database {
         // Actualizar también en la tabla PLAYLISTS
         tx.execute(
             "UPDATE PLAYLISTS SET shuffle_pos = ?1, shuffle_id = ?2 WHERE id = ?3",
-            params![session.current_position as i64, session.session_id, playlist_id],
+            params![
+                session.current_position as i64,
+                session.session_id,
+                playlist_id
+            ],
         )?;
 
         tx.commit()?;
@@ -1689,9 +2075,12 @@ impl Database {
         )?;
 
         let mut history = Vec::new();
-        let history_rows = stmt_history.query_map(params![playlist_id, session_id], |r| r.get(0))?;
+        let history_rows =
+            stmt_history.query_map(params![playlist_id, session_id], |r| r.get(0))?;
         for row in history_rows {
-            if let Ok(song_id) = row { history.push(song_id); }
+            if let Ok(song_id) = row {
+                history.push(song_id);
+            }
         }
 
         // Cargar shuffle_order (play_order < 0), ordenado por valor absoluto
@@ -1702,15 +2091,20 @@ impl Database {
         let mut shuffle_order = Vec::new();
         let order_rows = stmt_order.query_map(params![playlist_id, session_id], |r| r.get(0))?;
         for row in order_rows {
-            if let Ok(song_id) = row { shuffle_order.push(song_id); }
+            if let Ok(song_id) = row {
+                shuffle_order.push(song_id);
+            }
         }
 
         // 3. Obtener la posición actual desde PLAYLISTS
-        let current_position: usize = self.conn.query_row(
-            "SELECT shuffle_pos FROM PLAYLISTS WHERE id = ?1",
-            [playlist_id],
-            |r| r.get::<_, i64>(0)
-        ).unwrap_or(0) as usize;
+        let current_position: usize = self
+            .conn
+            .query_row(
+                "SELECT shuffle_pos FROM PLAYLISTS WHERE id = ?1",
+                [playlist_id],
+                |r| r.get::<_, i64>(0),
+            )
+            .unwrap_or(0) as usize;
 
         Ok(Some(ShuffleSession {
             session_id,
@@ -1735,7 +2129,7 @@ impl Database {
         self.conn.query_row(
             "SELECT COUNT(*) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
             [playlist_id],
-            |r| r.get(0)
+            |r| r.get(0),
         )
     }
 
@@ -1749,21 +2143,25 @@ impl Database {
 
         let mut results = Vec::new();
         for row in rows {
-            if let Ok(song_id) = row { results.push(song_id); }
+            if let Ok(song_id) = row {
+                results.push(song_id);
+            }
         }
         Ok(results)
     }
 
     pub fn get_playlist_all_song_ids(&self, playlist_id: i64) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(
-            "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 ORDER BY sequence_order ASC"
+            "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 ORDER BY sequence_order ASC",
         )?;
 
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
 
         let mut results = Vec::new();
         for row in rows {
-            if let Ok(song_id) = row { results.push(song_id); }
+            if let Ok(song_id) = row {
+                results.push(song_id);
+            }
         }
         Ok(results)
     }
@@ -1774,41 +2172,59 @@ impl Database {
 
     /// Obtiene los datos necesarios para construir el árbol de filtros de forma eficiente.
     /// Retorna una lista de tuplas (L1, L2, L3) según el tipo de filtro solicitado.
-    pub fn get_filter_hierarchy(&self, filter_type: &str) -> Result<Vec<(std::sync::Arc<str>, std::sync::Arc<str>, Option<std::sync::Arc<str>>)>> {
+    pub fn get_filter_hierarchy(
+        &self,
+        filter_type: &str,
+    ) -> Result<
+        Vec<(
+            std::sync::Arc<str>,
+            std::sync::Arc<str>,
+            Option<std::sync::Arc<str>>,
+        )>,
+    > {
         let query = match filter_type {
-            "Genre" => "
+            "Genre" => {
+                "
                 SELECT DISTINCT 
                     COALESCE(NULLIF(al.genre, ''), 'Desconocido') as l1, 
                     COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
-                ORDER BY l1, l2, l3",
-            "Artist" => "
+                ORDER BY l1, l2, l3"
+            }
+            "Artist" => {
+                "
                 SELECT DISTINCT 
                     COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l1, 
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l2, 
                     NULL as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
-                ORDER BY l1, l2",
-            "Album" => "
+                ORDER BY l1, l2"
+            }
+            "Album" => {
+                "
                 SELECT DISTINCT 
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l1, 
                     COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
                     NULL as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
-                ORDER BY l1, l2",
-            "Year" => "
+                ORDER BY l1, l2"
+            }
+            "Year" => {
+                "
                 SELECT DISTINCT 
                     COALESCE(NULLIF(al.year, ''), 'Desconocido') as l1, 
                     COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
-                ORDER BY l1, l2, l3",
-            "Folder" => "
+                ORDER BY l1, l2, l3"
+            }
+            "Folder" => {
+                "
                 SELECT DISTINCT 
                     COALESCE(NULLIF(f.name, ''), 'Raiz') as l1, 
                     COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
@@ -1817,7 +2233,8 @@ impl Database {
                 JOIN FOLDERS f ON s.folder_id = f.id
                 JOIN ALBUMS al ON s.album_id = al.id
                 JOIN ARTISTS ar ON s.artist_id = ar.id
-                ORDER BY l1, l2, l3",
+                ORDER BY l1, l2, l3"
+            }
             _ => return Ok(Vec::new()),
         };
 
@@ -1856,9 +2273,11 @@ pub struct LibrarySearchParams {
 }
 
 impl Database {
-
     /// Realiza una búsqueda y filtrado unificado en la base de datos usando FTS5 y filtros relacionales.
-    pub fn get_library_songs_filtered(&self, params: &LibrarySearchParams) -> Result<Vec<Arc<SongData>>> {
+    pub fn get_library_songs_filtered(
+        &self,
+        params: &LibrarySearchParams,
+    ) -> Result<Vec<Arc<SongData>>> {
         let mut sql = "
             SELECT s.id, s.folder_id, s.artist_id, s.album_id, s.file_path, s.title, 
                    ar.name as artist_name, al.title as album_title, al.year, al.genre, 
@@ -1869,7 +2288,8 @@ impl Database {
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
             LEFT JOIN ARTISTS aar ON al.artist_id = aar.id
-        ".to_string();
+        "
+        .to_string();
 
         let mut conditions = Vec::new();
         let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -1917,9 +2337,10 @@ impl Database {
         sql.push_str(" ORDER BY COALESCE(aar.name, ar.name) COLLATE NOCASE, al.year, al.title, CAST(s.track_num AS INTEGER), s.track_num");
 
         let mut stmt = self.conn.prepare(&sql)?;
-        
+
         // Convertir Box<dyn ToSql> a &dyn ToSql para rusqlite
-        let query_params: Vec<&dyn rusqlite::ToSql> = sql_params.iter().map(|p| p.as_ref()).collect();
+        let query_params: Vec<&dyn rusqlite::ToSql> =
+            sql_params.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt.query_map(query_params.as_slice(), |r| {
             Ok(Arc::new(SongData {
@@ -1928,32 +2349,52 @@ impl Database {
                 artist_id: r.get(2)?,
                 album_id: r.get(3)?,
                 full_file_path: crate::utils::interner::intern_string(&r.get::<_, String>(4)?),
-                title: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(5)?.as_deref()),
-                artist: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(6)?.as_deref()),
-                album: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(7)?.as_deref()),
-                release_year: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(8)?.as_deref()),
-                genre: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(9)?.as_deref()),
-                track_number: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(10)?.as_deref()),
+                title: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(5)?.as_deref(),
+                ),
+                artist: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(6)?.as_deref(),
+                ),
+                album: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(7)?.as_deref(),
+                ),
+                release_year: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(8)?.as_deref(),
+                ),
+                genre: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                track_number: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(10)?.as_deref(),
+                ),
                 duration_secs: r.get(11)?,
-                format: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(12)?.as_deref()),
+                format: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(12)?.as_deref(),
+                ),
                 bit_depth: r.get(13)?,
                 sample_rate: r.get(14)?,
                 size: r.get(15)?,
                 channels: r.get(16)?,
                 embedded_cover: r.get(17)?,
-                cover_override: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(18)?.as_deref()),
+                cover_override: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(18)?.as_deref(),
+                ),
                 import_order: r.get(19)?,
-                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(20)?.as_deref()),
-                album_artist: crate::utils::interner::intern_string_opt(r.get::<_, Option<String>>(21)?.as_deref()),
+                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(20)?.as_deref(),
+                ),
+                album_artist: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(21)?.as_deref(),
+                ),
             }))
         })?;
 
         let mut songs = Vec::new();
         for row in rows {
-            if let Ok(s) = row { songs.push(s); }
+            if let Ok(s) = row {
+                songs.push(s);
+            }
         }
         Ok(songs)
     }
 }
-
-

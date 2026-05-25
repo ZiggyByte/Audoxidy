@@ -1,0 +1,28 @@
+# .graphifyignore
+vendor/
+node_modules/
+dist/
+*.generated.py
+
+target/
+covers/
+cache/
+cache/covers
+**/*.rs.bk
+.DS_Store
+# *.lock (Cargo.lock should be tracked for apps)
+.vscode/
+.idea/
+*.log
+tmp/
+temp/
+
+
+library.db
+library.db-shm
+library.db-wal
+library.db*
+
+
+.opencode/
+.agents/

@@ -1,8 +1,8 @@
 pub mod app;
-pub mod theme;
+pub mod audio_center;
+pub mod library;
+pub mod library_filters;
 pub mod player;
 pub mod playlist;
-pub mod library_filters;
-pub mod library;
-pub mod audio_center;
+pub mod theme;
 pub mod widgets;

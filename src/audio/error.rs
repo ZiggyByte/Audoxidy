@@ -1,0 +1,41 @@
+use std::fmt;
+
+#[derive(Debug)]
+pub enum AudioError {
+    NoDevice,
+    NoActiveOutput,
+    HostNotFound,
+    DeviceNotFound,
+    UnsupportedSampleFormat,
+    ConfigError(String),
+    StreamError(String),
+    DeviceError(String),
+    IoError(std::io::Error),
+}
+
+impl fmt::Display for AudioError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AudioError::NoDevice => write!(f, "No audio device found"),
+            AudioError::NoActiveOutput => {
+                write!(f, "No hay una salida de audio activa para purgar")
+            }
+            AudioError::HostNotFound => write!(f, "Host no encontrado"),
+            AudioError::DeviceNotFound => write!(f, "Dispositivo no encontrado"),
+            AudioError::UnsupportedSampleFormat => write!(f, "Formato de muestra no soportado"),
+            AudioError::ConfigError(msg) => write!(f, "Config error: {msg}"),
+            AudioError::StreamError(msg) => write!(f, "Stream error: {msg}"),
+            AudioError::DeviceError(msg) => write!(f, "Device error: {msg}"),
+            AudioError::IoError(e) => write!(f, "I/O error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for AudioError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            AudioError::IoError(e) => Some(e),
+            _ => None,
+        }
+    }
+}

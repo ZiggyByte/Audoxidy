@@ -2284,11 +2284,12 @@ impl Default for CustomSliderOptions {
     }
 }
 
-/// Estado interno del slider (mantiene si está siendo arrastrado y si tiene foco de teclado)
+/// Estado interno del slider (arrastre, foco, tooltip)
 #[derive(Debug, Clone, Default)]
 struct CustomSliderState {
     is_dragging: bool,
     keyboard_focused: bool,
+    tooltip_pos: Option<iced::Point>,
 }
 
 /// Widget de slider personalizado global
@@ -2458,6 +2459,87 @@ impl<'a, Message> CustomSlider<'a, Message> {
     }
 }
 
+// ── Tooltip overlay para renderizar SIEMPRE por encima de otros widgets ──
+
+struct TooltipOverlay {
+    value_text: String,
+    cursor_pos: iced::Point,
+    font_size: f32,
+}
+
+impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Renderer>
+    for TooltipOverlay
+{
+    fn layout(&mut self, _renderer: &iced::Renderer, _bounds: iced::Size) -> iced::advanced::layout::Node {
+        iced::advanced::layout::Node::new(iced::Size::ZERO)
+    }
+
+    fn draw(
+        &self,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        _layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+    ) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let val_display = &self.value_text;
+        let font_size = (self.font_size - 1.0).max(10.0);
+        let padding: f32 = 4.0;
+        let border_radius = 4.0;
+
+        let char_width = font_size * 0.6;
+        let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
+        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(48.0) - 10.0;
+        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(20.0);
+
+        let cursor_pos = self.cursor_pos;
+
+        // No clamp contra viewport porque es overlay (va sobre todo)
+        let tooltip_x = cursor_pos.x - tooltip_width / 2.0;
+        let tooltip_y = cursor_pos.y - tooltip_height - 10.0;
+
+        let tooltip_rect = iced::Rectangle {
+            x: tooltip_x,
+            y: tooltip_y,
+            width: tooltip_width,
+            height: tooltip_height,
+        };
+
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: tooltip_rect,
+                border: iced::Border {
+                    radius: border_radius.into(),
+                    width: 1.0,
+                    color: COLOR_TEXT_SECONDARY,
+                },
+                ..Default::default()
+            },
+            COLOR_CONTRAST,
+        );
+
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: val_display.clone(),
+                bounds: iced::Size::new(tooltip_width - padding * 2.0, tooltip_height - padding * 2.0),
+                size: iced::Pixels(font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(tooltip_x + padding + 15.0, tooltip_y + padding + 6.0),
+            COLOR_TEXT_PRIMARY,
+            tooltip_rect,
+        );
+    }
+}
+
 impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
     for CustomSlider<'a, Message>
 {
@@ -2502,6 +2584,13 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         let is_hovered = bounds.contains(cursor_pos);
         let state = tree.state.downcast_mut::<CustomSliderState>();
+
+        // Almacenar posición del cursor para tooltip overlay
+        state.tooltip_pos = if (is_hovered || state.is_dragging) && self.options.show_tooltip {
+            Some(cursor_pos)
+        } else {
+            None
+        };
 
         match event {
             // Clic izquierdo para iniciar arrastre
@@ -2644,15 +2733,31 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             }
         }
 
-        // Obtener estado para verificar si se está dragging
-        let is_dragging = _tree.state.downcast_ref::<CustomSliderState>().is_dragging;
+    }
 
-        // Renderizar tooltip si está habilitado y (está hovered O se está dragging)
-        if (is_hovered || is_dragging) && self.options.show_tooltip {
-            if let Some(cursor_pos) = cursor.position() {
-                self.draw_tooltip(renderer, _viewport, percent, cursor_pos);
-            }
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut iced::advanced::widget::Tree,
+        _layout: iced::advanced::Layout<'_>,
+        _renderer: &iced::Renderer,
+        _viewport: &iced::Rectangle,
+        _translation: iced::Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, iced::Renderer>> {
+        let state = tree.state.downcast_ref::<CustomSliderState>();
+        let cursor_pos = state.tooltip_pos?;
+
+        let val_display = self.format_display_value(self.value);
+        if val_display.is_empty() {
+            return None;
         }
+
+        let overlay = TooltipOverlay {
+            value_text: val_display,
+            cursor_pos,
+            font_size: self.options.tooltip_font_size,
+        };
+
+        Some(iced::advanced::overlay::Element::new(Box::new(overlay)))
     }
 }
 
@@ -2837,83 +2942,6 @@ impl<'a, Message> CustomSlider<'a, Message> {
         );
     }
 
-    /// Renderizar tooltip con el valor actual junto al cursor.
-    /// Diseño idéntico al tooltip de la barra de búsqueda del reproductor (player.rs):
-    /// fondo COLOR_CONTRAST, borde 1px COLOR_TEXT_SECONDARY, texto blanco, padding 4px.
-    /// Tooltip con posicionamiento en coordenadas absolutas del viewport.
-    fn draw_tooltip(
-        &self,
-        renderer: &mut iced::Renderer,
-        viewport: &iced::Rectangle,
-        _percent: f32,
-        cursor_pos: iced::Point,
-    ) {
-        use iced::advanced::Renderer as _;
-        use iced::advanced::text::Renderer as _;
-
-        let val_display = self.format_display_value(self.value);
-        let font_size = (self.options.tooltip_font_size - 1.0).max(10.0);
-
-        let padding: f32 = 4.0;
-        let border_radius = 4.0;
-
-        // Ancho estimado del texto
-        let char_width = font_size * 0.6;
-        let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
-        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(48.0);
-        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(20.0);
-
-        // Posicionar tooltip centrado sobre el cursor, arriba.
-        // Las coordenadas están en espacio del viewport, clamps absolutos.
-        let vp_w = viewport.width;
-        let vp_h = viewport.height;
-
-        let tooltip_x = (cursor_pos.x - tooltip_width / 2.0)
-            .max(2.0)
-            .min(vp_w - tooltip_width - 2.0);
-        let tooltip_y = (cursor_pos.y - tooltip_height - 10.0)
-            .max(2.0)
-            .min(vp_h - tooltip_height - 2.0);
-
-        let tooltip_rect = Rectangle {
-            x: tooltip_x,
-            y: tooltip_y,
-            width: tooltip_width,
-            height: tooltip_height,
-        };
-
-        // Fondo del tooltip con borde
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad {
-                bounds: tooltip_rect,
-                border: iced::Border {
-                    radius: border_radius.into(),
-                    width: 1.0,
-                    color: COLOR_TEXT_SECONDARY,
-                },
-                ..Default::default()
-            },
-            COLOR_CONTRAST,
-        );
-
-        // Texto blanco centrado
-        renderer.fill_text(
-            iced::advanced::text::Text {
-                content: val_display,
-                bounds: iced::Size::new(tooltip_width - padding * 2.0, tooltip_height - padding * 2.0),
-                size: iced::Pixels(font_size),
-                line_height: iced::advanced::text::LineHeight::Relative(1.0),
-                font: FONT_INTER_SANS_MEDIUM,
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center,
-                shaping: iced::advanced::text::Shaping::Basic,
-                wrapping: iced::advanced::text::Wrapping::None,
-            },
-            iced::Point::new(tooltip_x + padding + 15.0, tooltip_y + padding + 6.0),
-            Color::WHITE,
-            tooltip_rect,
-        );
-    }
 }
 
 impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {

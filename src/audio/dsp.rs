@@ -1,3 +1,5 @@
+use wide::CmpLt;
+
 pub struct DspChain {
     pub preamp_gain: f32, // Linear gain
     pub equalizer: Equalizer,
@@ -44,10 +46,8 @@ impl DspChain {
             for s in frame.iter_mut() {
                 *s *= self.preamp_gain as f64;
             }
-            // Apply EQ
-            for (ch_idx, sample) in frame.iter_mut().enumerate() {
-                self.equalizer.process(sample, ch_idx);
-            }
+            // Apply EQ — procesa frame completo con SIMD (x86_64)
+            self.equalizer.process_frame(frame);
         }
 
         // Noise Gate
@@ -251,12 +251,25 @@ impl Equalizer {
         }
     }
 
+    #[allow(dead_code)]
     pub fn process(&mut self, sample: &mut f64, channel_idx: usize) {
         if !self.enabled {
             return;
         }
         for band in &mut self.bands {
             band.process(sample, channel_idx);
+        }
+    }
+
+    /// Procesa un frame completo (todos los canales) a través de todas las bandas.
+    /// Usa EqBand::process_frame con SIMD para aceleración en x86_64.
+    /// Preferir esta sobre `process()` cuando se tenga un frame completo.
+    pub fn process_frame(&mut self, frame: &mut [f64]) {
+        if !self.enabled {
+            return;
+        }
+        for band in &mut self.bands {
+            band.process_frame(frame);
         }
     }
 
@@ -403,34 +416,99 @@ impl EqBand {
         }
     }
 
+    #[allow(dead_code)]
     pub fn process(&mut self, sample: &mut f64, channel_idx: usize) {
-        // Bypass: banda a 0 dB es transparente (H(z) = 1), no procesar.
-        // Esto evita ~31 multiplicaciones innecesarias por muestra por canal.
         if self.gain == 0.0 {
             return;
         }
-
-        // Validate channel index
         if channel_idx >= self.states.len() {
             return;
         }
 
         let state = &mut self.states[channel_idx];
-
         let x = *sample;
         let y = self.b0 * x + self.b1 * state.x1 + self.b2 * state.x2
             - self.a1 * state.y1
             - self.a2 * state.y2;
-
-        // Denormal protection: umbral ultra-conservador para no afectar señales sub-graves legítimas
         let y = if y.abs() < 1e-20 { 0.0 } else { y };
-
         state.x2 = state.x1;
         state.x1 = x;
         state.y2 = state.y1;
         state.y1 = y;
-
         *sample = y;
+    }
+
+    /// Procesa un frame completo (todos los canales) a través de este filtro biquad.
+    /// Usa SIMD (f64x4) para procesar 4 canales simultáneamente en x86_64.
+    pub fn process_frame(&mut self, frame: &mut [f64]) {
+        if self.gain == 0.0 {
+            return;
+        }
+        let b0 = self.b0;
+        let b1 = self.b1;
+        let b2 = self.b2;
+        let a1 = self.a1;
+        let a2 = self.a2;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let max_ch = frame.len().min(self.states.len());
+            let mut i = 0;
+            while i + 4 <= max_ch {
+                let s_ptr = self.states.as_mut_ptr();
+                let s0 = unsafe { &mut *s_ptr.add(i) };
+                let s1 = unsafe { &mut *s_ptr.add(i + 1) };
+                let s2 = unsafe { &mut *s_ptr.add(i + 2) };
+                let s3 = unsafe { &mut *s_ptr.add(i + 3) };
+
+                let x = wide::f64x4::new([frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]);
+                let xs1 = wide::f64x4::new([s0.x1, s1.x1, s2.x1, s3.x1]);
+                let xs2 = wide::f64x4::new([s0.x2, s1.x2, s2.x2, s3.x2]);
+                let ys1 = wide::f64x4::new([s0.y1, s1.y1, s2.y1, s3.y1]);
+                let ys2 = wide::f64x4::new([s0.y2, s1.y2, s2.y2, s3.y2]);
+
+                let out = wide::f64x4::splat(b0) * x
+                    + wide::f64x4::splat(b1) * xs1
+                    + wide::f64x4::splat(b2) * xs2
+                    - wide::f64x4::splat(a1) * ys1
+                    - wide::f64x4::splat(a2) * ys2;
+                let out = out.blend(
+                    wide::f64x4::splat(0.0),
+                    out.abs().cmp_lt(wide::f64x4::splat(1e-20)),
+                );
+                let arr = out.to_array();
+
+                frame[i] = arr[0]; frame[i + 1] = arr[1];
+                frame[i + 2] = arr[2]; frame[i + 3] = arr[3];
+
+                s0.x2 = s0.x1; s0.x1 = frame[i]; s0.y2 = s0.y1; s0.y1 = frame[i];
+                s1.x2 = s1.x1; s1.x1 = frame[i + 1]; s1.y2 = s1.y1; s1.y1 = frame[i + 1];
+                s2.x2 = s2.x1; s2.x1 = frame[i + 2]; s2.y2 = s2.y1; s2.y1 = frame[i + 2];
+                s3.x2 = s3.x1; s3.x1 = frame[i + 3]; s3.y2 = s3.y1; s3.y1 = frame[i + 3];
+
+                i += 4;
+            }
+            // Canales restantes (<4) en modo escalar
+            while i < max_ch {
+                let s = &mut self.states[i];
+                let x = frame[i];
+                let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
+                frame[i] = if y.abs() < 1e-20 { 0.0 } else { y };
+                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[i];
+                i += 1;
+            }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            for ch in 0..frame.len().min(self.states.len()) {
+                let s = &mut self.states[ch];
+                let x = frame[ch];
+                let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
+                frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
+                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[ch];
+            }
+        }
     }
 }
 // --- Reverb (Freeverb implementation) ---
@@ -900,8 +978,6 @@ impl BiquadFilter {
     }
 
     pub fn process_frame(&mut self, frame: &mut [f64]) {
-        // Optimización: Solo saltar si es un filtro de ganancia (Peak/Shelf) y la ganancia es despreciable.
-        // Los filtros de corte (LP/HP/AllPass) deben procesar SIEMPRE.
         match self.filter_type {
             BiquadFilterType::Peak | BiquadFilterType::LowShelf | BiquadFilterType::HighShelf => {
                 if self.gain.abs() < 0.01 {
@@ -910,16 +986,69 @@ impl BiquadFilter {
             }
             _ => {}
         }
-        for (i, sample) in frame.iter_mut().enumerate() {
-            let s = &mut self.states[i];
-            let out = self.b0 * *sample + self.b1 * s.x1 + self.b2 * s.x2
-                - self.a1 * s.y1
-                - self.a2 * s.y2;
-            s.x2 = s.x1;
-            s.x1 = *sample;
-            s.y2 = s.y1;
-            s.y1 = out;
-            *sample = out;
+
+        let b0 = self.b0;
+        let b1 = self.b1;
+        let b2 = self.b2;
+        let a1 = self.a1;
+        let a2 = self.a2;
+
+        #[cfg(target_arch = "x86_64")]
+        {
+            let max_ch = frame.len().min(self.states.len());
+            let mut i = 0;
+            while i + 4 <= max_ch {
+                let s_ptr = self.states.as_mut_ptr();
+                let s0 = unsafe { &mut *s_ptr.add(i) };
+                let s1 = unsafe { &mut *s_ptr.add(i + 1) };
+                let s2 = unsafe { &mut *s_ptr.add(i + 2) };
+                let s3 = unsafe { &mut *s_ptr.add(i + 3) };
+
+                let x = wide::f64x4::new([frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]);
+                let xs1 = wide::f64x4::new([s0.x1, s1.x1, s2.x1, s3.x1]);
+                let xs2 = wide::f64x4::new([s0.x2, s1.x2, s2.x2, s3.x2]);
+                let ys1 = wide::f64x4::new([s0.y1, s1.y1, s2.y1, s3.y1]);
+                let ys2 = wide::f64x4::new([s0.y2, s1.y2, s2.y2, s3.y2]);
+
+                let out = wide::f64x4::splat(b0) * x
+                    + wide::f64x4::splat(b1) * xs1
+                    + wide::f64x4::splat(b2) * xs2
+                    - wide::f64x4::splat(a1) * ys1
+                    - wide::f64x4::splat(a2) * ys2;
+                let out = out.blend(
+                    wide::f64x4::splat(0.0),
+                    out.abs().cmp_lt(wide::f64x4::splat(1e-20)),
+                );
+                let arr = out.to_array();
+                frame[i] = arr[0]; frame[i + 1] = arr[1];
+                frame[i + 2] = arr[2]; frame[i + 3] = arr[3];
+
+                s0.x2 = s0.x1; s0.x1 = frame[i]; s0.y2 = s0.y1; s0.y1 = frame[i];
+                s1.x2 = s1.x1; s1.x1 = frame[i + 1]; s1.y2 = s1.y1; s1.y1 = frame[i + 1];
+                s2.x2 = s2.x1; s2.x1 = frame[i + 2]; s2.y2 = s2.y1; s2.y1 = frame[i + 2];
+                s3.x2 = s3.x1; s3.x1 = frame[i + 3]; s3.y2 = s3.y1; s3.y1 = frame[i + 3];
+
+                i += 4;
+            }
+            while i < max_ch {
+                let s = &mut self.states[i];
+                let x = frame[i];
+                let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
+                frame[i] = if y.abs() < 1e-20 { 0.0 } else { y };
+                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[i];
+                i += 1;
+            }
+        }
+
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            for ch in 0..frame.len().min(self.states.len()) {
+                let s = &mut self.states[ch];
+                let x = frame[ch];
+                let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
+                frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
+                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[ch];
+            }
         }
     }
 }

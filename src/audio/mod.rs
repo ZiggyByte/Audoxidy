@@ -1,4 +1,5 @@
 pub mod decoder;
+pub mod device_manager;
 pub mod dsp;
 pub mod engine;
 pub mod error;

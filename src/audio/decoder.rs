@@ -2,7 +2,8 @@
 //! and pushing decoded audio into the ring buffer shared with the CPAL callback.
 
 use std::fs::File;
-use symphonia::core::io::MediaSourceStream;
+use std::io::{Read, Seek, SeekFrom};
+use symphonia::core::io::{MediaSource, MediaSourceStream};
 use symphonia::core::probe::Hint;
 use symphonia::core::formats::{FormatOptions, FormatReader};
 use symphonia::core::meta::{MetadataOptions, Limit};
@@ -12,6 +13,230 @@ use ringbuf::traits::{Consumer, Producer, Observer};
 use crossbeam::channel::Receiver;
 use rubato::{Async, FixedAsync, Resampler, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
+
+/// Umbral para usar memoria mapeada en lugar de File normal (> 10 MB)
+const MEMMAP_THRESHOLD: u64 = 10 * 1024 * 1024;
+
+/// Información de un stream decodificado.
+#[derive(Clone, Debug)]
+pub struct DecodeStreamInfo {
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub total_duration_sec: f64,
+    pub channel_count: usize,
+}
+
+/// Resultado de una operación de decodificación.
+pub struct DecodedPacket {
+    pub data: Vec<f64>,
+    pub frames: usize,
+    pub channels: usize,
+    pub sample_rate: u32,
+}
+
+/// Trait que abstrae la decodificación de archivos de audio.
+/// Permite usar diferentes backends (Symphonia, miniaudio, etc.)
+/// y facilita el mocking en pruebas unitarias.
+pub trait AudioDecoder: Send {
+    /// Abre un archivo de audio y devuelve información del stream.
+    fn open(&mut self, path: &str) -> Result<DecodeStreamInfo, super::AudioError>;
+
+    /// Decodifica el siguiente paquete de audio.
+    /// Devuelve `Ok(None)` cuando se alcanza el final del archivo.
+    fn decode_next(&mut self) -> Result<Option<DecodedPacket>, super::AudioError>;
+
+    /// Busca a una posición específica en segundos.
+    fn seek(&mut self, time_secs: f64) -> Result<(), super::AudioError>;
+
+    /// Reinicia el estado interno del decodificador.
+    fn reset(&mut self);
+}
+
+/// Implementación con Symphonia (backend por defecto de alta fidelidad).
+pub struct SymphoniaDecoder {
+    format: Option<Box<dyn FormatReader>>,
+    decoder: Option<Box<dyn Decoder>>,
+    track_id: u32,
+}
+
+impl SymphoniaDecoder {
+    pub fn new() -> Self {
+        Self { format: None, decoder: None, track_id: 0 }
+    }
+}
+
+impl AudioDecoder for SymphoniaDecoder {
+    fn open(&mut self, path: &str) -> Result<DecodeStreamInfo, super::AudioError> {
+        use symphonia::core::io::MediaSourceStream;
+        use symphonia::core::meta::Limit;
+
+        let source = open_audio_source(path)
+            .map_err(super::AudioError::IoError)?;
+        let mss = MediaSourceStream::new(source, Default::default());
+        let hint = symphonia::core::probe::Hint::new();
+        let metadata_opts = symphonia::core::meta::MetadataOptions {
+            limit_metadata_bytes: Limit::Maximum(0),
+            limit_visual_bytes: Limit::Maximum(0),
+        };
+
+        let probed = symphonia::default::get_probe().format(
+            &hint, mss, &symphonia::core::formats::FormatOptions::default(), &metadata_opts,
+        ).map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
+
+        let track = probed.format.default_track()
+            .ok_or(super::AudioError::ConfigError("No default track".into()))?;
+        self.track_id = track.id;
+        let sr = track.codec_params.sample_rate.unwrap_or(44100);
+        let dur = track.codec_params.n_frames
+            .map(|f| f as f64 / sr as f64)
+            .unwrap_or(0.0);
+        let ch_count = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+
+        let dec = symphonia::default::get_codecs()
+            .make(&track.codec_params, &symphonia::core::codecs::DecoderOptions::default())
+            .map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
+
+        self.format = Some(probed.format);
+        self.decoder = Some(dec);
+
+        Ok(DecodeStreamInfo {
+            sample_rate: sr,
+            channels: ch_count as u16,
+            total_duration_sec: dur,
+            channel_count: ch_count,
+        })
+    }
+
+    fn decode_next(&mut self) -> Result<Option<DecodedPacket>, super::AudioError> {
+        use symphonia::core::audio::AudioBuffer;
+
+        let fmt = self.format.as_mut()
+            .ok_or(super::AudioError::ConfigError("No format loaded".into()))?;
+        let dec = self.decoder.as_mut()
+            .ok_or(super::AudioError::ConfigError("No decoder loaded".into()))?;
+
+        loop {
+            let packet = match fmt.next_packet() {
+                Ok(p) => p,
+                Err(symphonia::core::errors::Error::IoError(e))
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+                Err(e) => {
+                    tracing::warn!("Symphonia decode error: {}", e);
+                    continue;
+                }
+            };
+
+            if packet.track_id() != self.track_id {
+                continue;
+            }
+
+            if let Ok(decoded) = dec.decode(&packet) {
+                let spec = *decoded.spec();
+                let frames = decoded.frames();
+                let channels = spec.channels.count();
+                let sr = spec.rate;
+
+                // Convertir a f64 plano (interleaved)
+                let mut buf = AudioBuffer::<f64>::new(frames as u64, spec);
+                decoded.convert(&mut buf);
+                let planes = buf.planes();
+
+                let mut data = Vec::with_capacity(frames * channels);
+                for i in 0..frames {
+                    for ch in 0..channels {
+                        data.push(planes.planes()[ch][i]);
+                    }
+                }
+
+                return Ok(Some(DecodedPacket {
+                    data,
+                    frames,
+                    channels,
+                    sample_rate: sr,
+                }));
+            }
+        }
+    }
+
+    fn seek(&mut self, time_secs: f64) -> Result<(), super::AudioError> {
+        if let Some(fmt) = self.format.as_mut() {
+            fmt.seek(
+                symphonia::core::formats::SeekMode::Accurate,
+                symphonia::core::formats::SeekTo::Time {
+                    time: symphonia::core::units::Time::from(time_secs),
+                    track_id: Some(self.track_id),
+                },
+            ).ok();
+        }
+        Ok(())
+    }
+
+    fn reset(&mut self) {
+        self.format = None;
+        self.decoder = None;
+        self.track_id = 0;
+    }
+}
+
+/// Wrapper que presenta un Mmap como un MediaSource para Symphonia.
+/// Los archivos grandes (>10MB) se mapean a memoria para evitar copias
+/// y reducir presión en el page cache del kernel.
+struct MmapSource {
+    mmap: memmap2::Mmap,
+    pos: usize,
+}
+
+unsafe impl Send for MmapSource {}
+unsafe impl Sync for MmapSource {}
+
+impl Read for MmapSource {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let remaining = self.mmap.len().saturating_sub(self.pos);
+        let to_read = buf.len().min(remaining);
+        buf[..to_read].copy_from_slice(&self.mmap[self.pos..self.pos + to_read]);
+        self.pos += to_read;
+        Ok(to_read)
+    }
+}
+
+impl Seek for MmapSource {
+    fn seek(&mut self, pos: SeekFrom) -> std::io::Result<u64> {
+        self.pos = match pos {
+            SeekFrom::Start(p) => p as usize,
+            SeekFrom::End(p) => self.mmap.len().saturating_add_signed(p as isize),
+            SeekFrom::Current(p) => self.pos.saturating_add_signed(p as isize),
+        };
+        self.pos = self.pos.min(self.mmap.len());
+        Ok(self.pos as u64)
+    }
+}
+
+impl MediaSource for MmapSource {
+    fn is_seekable(&self) -> bool {
+        true
+    }
+    fn byte_len(&self) -> Option<u64> {
+        Some(self.mmap.len() as u64)
+    }
+}
+
+/// Abre un archivo de audio usando memoria mapeada si es grande, o File normal si no.
+fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    if metadata.len() > MEMMAP_THRESHOLD {
+        // unsafe: el mapeo es válido mientras el archivo exista (lo hacemos para lectura)
+        let mmap = unsafe { memmap2::Mmap::map(&file)? };
+        tracing::debug!(
+            "MemMap audio source ({} MB) para {}",
+            metadata.len() / (1024 * 1024),
+            path
+        );
+        Ok(Box::new(MmapSource { mmap, pos: 0 }))
+    } else {
+        Ok(Box::new(file))
+    }
+}
 
 use crate::audio::engine::{AudioEngine, AudioCommand, ChannelMap};
 
@@ -35,7 +260,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut output_accumulator: Vec<f64> = Vec::with_capacity(131072);
     let mut output_accumulator_f32: Vec<f32> = Vec::with_capacity(131072);
 
+    // bumpalo arena para asignaciones temporales por ciclo.
+    // Se resetea completo al inicio de cada iteración, liberando toda la memoria
+    // sin necesidad de drop individual. Ideal para pequeños Vecs temporales.
+    let mut arena = bumpalo::Bump::new();
+
     loop {
+        // Resetear arena bumpalo: todas las asignaciones temporales del ciclo anterior
+        // se liberan en O(1) — sin recorrer cada Vec individualmente.
+        arena.reset();
+
         // Limpieza TOTAL por ciclo para evitar que datos fantasmas (basura residual) se queden en el acumulador.
         // Esto erradica los pitidos y zumbidos al cambiar de canción o al procesar OGG irregulares.
         output_accumulator.clear();
@@ -57,6 +291,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     track_gain,
                     album_gain,
                 } => {
+                    // Check for custom decoder (DI/mock support)
+                    let has_custom_decoder = engine.custom_decoder.lock().is_some();
+
                     {
                         let mut s = state.write();
                         s.title = title;
@@ -80,10 +317,21 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                     }
 
-                    match File::open(&path) {
-                        Ok(file) => {
+                    if has_custom_decoder {
+                        if let Some(dec) = engine.custom_decoder.lock().as_mut() {
+                            let _ = dec.open(&path);
+                        }
+                        state.write().eof_reached = false;
+                        if let Some(consumer) = engine.buffer_consumer.lock().as_mut() {
+                            consumer.skip(usize::MAX);
+                        }
+                        continue;
+                    }
+
+                    match open_audio_source(&path) {
+                        Ok(source) => {
                             let mss =
-                                MediaSourceStream::new(Box::new(file), Default::default());
+                                MediaSourceStream::new(source, Default::default());
                             let hint = Hint::new();
                             let metadata_opts = MetadataOptions {
                                 limit_metadata_bytes: Limit::Maximum(0), // No cargar metadatos, ya los tenemos en la DB
@@ -241,6 +489,44 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             }
         };
 
+        // Ruta rápida para decoder custom (DI/mock): leer del trait y pushear directamente
+        if can_push && engine.custom_decoder.lock().is_some() {
+            let custom_eof = {
+                let mut dec_lock = engine.custom_decoder.lock();
+                if let Some(dec) = dec_lock.as_mut() {
+                    match dec.decode_next() {
+                        Ok(Some(packet)) => {
+                            let vol = state.read().volume;
+                            let gain = vol as f64;
+                            for s in packet.data.iter() {
+                                output_accumulator_f32.push((*s * gain).clamp(-1.0, 1.0) as f32);
+                            }
+                            false
+                        }
+                        Ok(None) => true,
+                        Err(_) => true,
+                    }
+                } else { true }
+            };
+            if custom_eof {
+                state.write().is_playing = false;
+                state.write().eof_reached = true;
+            }
+            // Push custom decoded data
+            if !output_accumulator_f32.is_empty() {
+                if let Some(producer) = producer_mutex.lock().as_mut() {
+                    let _ = producer.push_slice(&output_accumulator_f32);
+                }
+                output_accumulator_f32.clear();
+            }
+            if custom_eof {
+                let _ = engine.purge_buffers();
+                current_format = None;
+                *engine.custom_decoder.lock() = None;
+            }
+            continue;
+        }
+
         if can_push {
             let mut eof = false;
             let dec_opt = current_decoder.as_mut();
@@ -320,9 +606,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         (s.device_sample_rate, s.channels)
                     };
 
-                    // Upsampling de Ultra Alta Fidelidad: Sinc Interpolation a 64 bits.
-                    // La interpolación Sinc con ventana Blackman-Harris y sobremuestreo masivo
-                    // es teóricamente "perfecta", eliminando por completo el aliasing.
+                    // Resampleo adaptativo: calidad superior vs velocidad según recursos disponibles.
+                    // En modo normal: SincInterpolation con oversampling masivo (calidad audiófila).
+                    // En low-resource: Linear interpolation rápida con menor overhead de CPU.
                     if spec.rate != out_rate {
                         let recreate = if let Some(stored) = resampler_rates {
                             stored != (spec.rate, out_rate, spec.channels.count())
@@ -331,19 +617,33 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         };
 
                         if recreate {
-                            let params = SincInterpolationParameters {
-                                sinc_len: 256,
-                                f_cutoff: 0.99,
-                                interpolation: SincInterpolationType::Cubic,
-                                oversampling_factor: 256,
-                                window: WindowFunction::BlackmanHarris2,
+                            let is_low = crate::utils::is_low_resource();
+                            let params = if is_low {
+                                // Perfil rápido: Linear + Sinc corto, mínimo overhead de CPU
+                                SincInterpolationParameters {
+                                    sinc_len: 64,
+                                    f_cutoff: 0.95,
+                                    interpolation: SincInterpolationType::Linear,
+                                    oversampling_factor: 64,
+                                    window: WindowFunction::BlackmanHarris2,
+                                }
+                            } else {
+                                // Perfil audiófilo: Cubic + Sinc largo, aliasing eliminado
+                                SincInterpolationParameters {
+                                    sinc_len: 256,
+                                    f_cutoff: 0.99,
+                                    interpolation: SincInterpolationType::Cubic,
+                                    oversampling_factor: 256,
+                                    window: WindowFunction::BlackmanHarris2,
+                                }
                             };
+                            let chunk_size = if is_low { 256 } else { 1024 };
 
                             match Async::<f64>::new_sinc(
                                 out_rate as f64 / spec.rate as f64,
                                 2.0,
                                 &params,
-                                1024,
+                                chunk_size,
                                 spec.channels.count(),
                                 FixedAsync::Input,
                             ) {
@@ -353,13 +653,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         Some((spec.rate, out_rate, spec.channels.count()));
                                     resampler_in_buf = (0..spec.channels.count())
                                         .map(|_| {
-                                            std::collections::VecDeque::with_capacity(4096)
+                                            std::collections::VecDeque::with_capacity(
+                                                if is_low { 1024 } else { 4096 }
+                                            )
                                         })
                                         .collect();
                                     tracing::info!(
-                                        "Audiophile Resampler initialized: {} -> {} (SincFixedIn, 64-bit)",
+                                        "Resampler initialized: {} -> {} ({} mode, 64-bit)",
                                         spec.rate,
-                                        out_rate
+                                        out_rate,
+                                        if is_low { "low-resource" } else { "audiophile" }
                                     );
                                 }
                                 Err(e) => {

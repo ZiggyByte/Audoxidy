@@ -1,5 +1,5 @@
 use crate::audio::AudioManager;
-use crate::audio::engine::{AudioDeviceInfo, AudioSettings, BitDepth, ChannelConfig};
+use crate::audio::device_manager::{AudioDeviceInfo, AudioSettings, BitDepth, ChannelConfig};
 use iced::{
     Alignment, Color, Element, Length, Theme,
     widget::{Space, button, column, container, mouse_area, opaque, pick_list, row, svg, text},

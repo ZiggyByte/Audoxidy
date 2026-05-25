@@ -10,7 +10,14 @@ pub enum AudioError {
     ConfigError(String),
     StreamError(String),
     DeviceError(String),
+    DecodeError(String),
     IoError(std::io::Error),
+}
+
+impl From<std::io::Error> for AudioError {
+    fn from(e: std::io::Error) -> Self {
+        AudioError::IoError(e)
+    }
 }
 
 impl fmt::Display for AudioError {
@@ -26,6 +33,7 @@ impl fmt::Display for AudioError {
             AudioError::ConfigError(msg) => write!(f, "Config error: {msg}"),
             AudioError::StreamError(msg) => write!(f, "Stream error: {msg}"),
             AudioError::DeviceError(msg) => write!(f, "Device error: {msg}"),
+            AudioError::DecodeError(msg) => write!(f, "Decode error: {msg}"),
             AudioError::IoError(e) => write!(f, "I/O error: {e}"),
         }
     }

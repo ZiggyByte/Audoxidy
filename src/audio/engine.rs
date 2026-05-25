@@ -1,6 +1,9 @@
 use super::AudioError;
+use crate::audio::decoder::AudioDecoder;
 use crate::audio::dsp::DspChain;
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use crate::audio::device_manager::AudioDeviceManager;
+pub use crate::audio::device_manager::{BitDepth, ChannelConfig, AudioSettings, AudioDeviceInfo};
+use cpal::traits::DeviceTrait;
 use crossbeam::channel::{Sender, unbounded};
 use parking_lot::{Mutex, RwLock};
 use ringbuf::wrap::caching::Caching;
@@ -29,10 +32,6 @@ pub(crate) struct ChannelMap {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum AudioCommand {
-    // ... (lines 39-470 skipped for brevity in replace_file_content, target only changed lines)
-    // wait, I can't skip lines in ReplacementContent if they are part of the block I am replacing.
-    // I should make multiple small edits or one precise edit.
-    // I'll make multiple edits.
     Load {
         path: String,
         title: String,
@@ -44,66 +43,16 @@ pub enum AudioCommand {
     Stop,
 }
 
-#[derive(Clone, Debug, PartialEq, Copy)]
-pub enum BitDepth {
-    Bits16,
-    Bits24,
-    Bits32Float,
-}
-
-impl Default for BitDepth {
-    fn default() -> Self {
-        Self::Bits32Float
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum ChannelConfig {
-    Auto,
-    Manual(u16),
-}
-
-impl Default for ChannelConfig {
-    fn default() -> Self {
-        Self::Manual(2)
-    }
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct AudioSettings {
-    pub host_id: Option<String>,
-    pub device_name: Option<String>,
-    pub sample_rate: Option<u32>,
-    pub bit_depth: Option<BitDepth>,
-    pub channels: ChannelConfig,
-
-    pub buffer_size: Option<u32>,
-    pub auto_upsample: bool,
-}
-
-#[derive(Clone, Debug)]
-pub struct AudioDeviceInfo {
-    pub name: String,
-    #[allow(dead_code)]
-    pub supported_configs: Vec<cpal::SupportedStreamConfigRange>,
-}
-
-struct AudioOutput {
-    host: cpal::Host,
-    device: cpal::Device,
-    stream_config: cpal::StreamConfig,
-    sample_format: cpal::SampleFormat,
-    stream: Option<cpal::Stream>,
-}
-
 #[derive(Clone)]
 pub struct AudioEngine {
-    output: Arc<RwLock<Option<AudioOutput>>>,
+    pub device_manager: Arc<AudioDeviceManager>,
     pub state: Arc<RwLock<AudioState>>,
     pub buffer_consumer: Arc<Mutex<Option<HeapConsumer<f32>>>>,
     pub buffer_producer: Arc<Mutex<Option<HeapProducer<f32>>>>,
     command_tx: Sender<AudioCommand>,
     pub dsp: Arc<RwLock<DspChain>>,
+    // Decodificador inyectable para pruebas (None = usar SymphoniaDecoder por defecto)
+    pub custom_decoder: Arc<Mutex<Option<Box<dyn AudioDecoder>>>>,
 }
 
 #[derive(Clone)]
@@ -186,7 +135,10 @@ impl Default for AudioState {
 
 #[allow(dead_code)]
 impl AudioEngine {
-    pub fn new() -> Result<Self, AudioError> {
+    /// Crea un nuevo AudioEngine.
+    /// Si se proporciona `decoder`, se usará en lugar del SymphoniaDecoder por defecto
+    /// (útil para inyección de dependencias en pruebas).
+    pub fn new_with_decoder(decoder: Option<Box<dyn AudioDecoder>>) -> Result<Self, AudioError> {
         let (command_tx, command_rx) = unbounded::<AudioCommand>();
 
         // Aumentado significativamente para evitar underruns a 384kHz 7.1ch (~2 segundos de audio)
@@ -197,16 +149,17 @@ impl AudioEngine {
 
         let state = Arc::new(RwLock::new(AudioState::default()));
         let dsp = Arc::new(RwLock::new(DspChain::default()));
-        let output = Arc::new(RwLock::new(None));
+        let device_manager = Arc::new(AudioDeviceManager::new());
 
         // Hilo de decodificación recibe una copia del Engine para controlarse a sí mismo
         let engine = Self {
-            output,
+            device_manager: device_manager.clone(),
             state,
             buffer_consumer: Arc::new(Mutex::new(Some(consumer))),
             buffer_producer: Arc::new(Mutex::new(Some(producer))),
             command_tx,
             dsp,
+            custom_decoder: Arc::new(Mutex::new(decoder)),
         };
 
         let engine_clone = engine.clone();
@@ -220,84 +173,68 @@ impl AudioEngine {
         Ok(engine)
     }
 
+    /// Constructor por defecto (usa SymphoniaDecoder).
+    pub fn new() -> Result<Self, AudioError> {
+        Self::new_with_decoder(None)
+    }
+
     fn init_default_output(&self) -> Result<(), AudioError> {
-        let host = cpal::default_host();
-        let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
-        let config = device
-            .default_output_config()
-            .map_err(|e| AudioError::DeviceError(e.to_string()))?;
+        let (host, device, config, sample_fmt) = self.device_manager.init_default_output()?;
+        let sample_rate = config.sample_rate;
+        self.state.write().device_sample_rate = sample_rate;
 
-        let mut stream_config: cpal::StreamConfig = config.clone().into();
-        stream_config.buffer_size = cpal::BufferSize::Default;
-        stream_config.channels = 2; // Default to Stereo
+        self.start_stream_with_device(host, device, config, sample_fmt)
+    }
 
-        // Intentar iniciar con defaults
-        // Host no es Clone, asi que creamos uno nuevo para el fallback si hace falta
-        // transferimos ownership de 'host' aqui
-        if let Err(_) = self.configure_and_start_stream(
+    fn start_stream_with_device(
+        &self,
+        host: cpal::Host,
+        device: cpal::Device,
+        stream_config: cpal::StreamConfig,
+        sample_format: cpal::SampleFormat,
+    ) -> Result<(), AudioError> {
+        // Configurar el manager
+        self.device_manager.set_output(
             host,
             device.clone(),
             stream_config.clone(),
-            config.sample_format(),
-        ) {
-            // Fallback al default del dispositivo
-            let host_fallback = cpal::default_host();
-            let sample_fmt = config.sample_format();
-            let def_conf: cpal::StreamConfig = config.into();
-            self.state.write().device_sample_rate = def_conf.sample_rate;
-            self.configure_and_start_stream(host_fallback, device, def_conf, sample_fmt)?;
-        } else {
-            self.state.write().device_sample_rate = stream_config.sample_rate;
-        }
-        Ok(())
-    }
+            sample_format,
+        );
 
-    pub fn start(&self) -> Result<(), AudioError> {
-        self.start_stream()
-    }
+        let state = self.state.clone();
+        let consumer_arc = self.buffer_consumer.clone();
+        let channels = stream_config.channels as usize;
 
-    fn start_stream(&self) -> Result<(), AudioError> {
-        let mut out_lock = self.output.write();
-        if let Some(output) = out_lock.as_mut() {
-            if output.stream.is_some() {
-                return Ok(());
-            }
+        let err_fn = |err| tracing::error!("Stream error: {}", err);
 
-            let state = self.state.clone();
-            let consumer_arc = self.buffer_consumer.clone();
-            let channels = output.stream_config.channels as usize;
-
-            let err_fn = |err| tracing::error!("Stream error: {}", err);
-
-            // DSP ya no se procesa aquí — se procesa en el hilo de decodificación
-            // El callback solo lee del RingBuffer y escribe al stream (zero-lock passthrough)
-            let stream = match output.sample_format {
-                cpal::SampleFormat::F32 => output.device.build_output_stream(
-                    &output.stream_config,
+        self.device_manager.start_stream(|dev, cfg, fmt| {
+            let stream = match fmt {
+                cpal::SampleFormat::F32 => dev.build_output_stream(
+                    cfg,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(data, channels, &state, &consumer_arc)
                     },
                     err_fn,
                     None,
                 ),
-                cpal::SampleFormat::I16 => output.device.build_output_stream(
-                    &output.stream_config,
+                cpal::SampleFormat::I16 => dev.build_output_stream(
+                    cfg,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(data, channels, &state, &consumer_arc)
                     },
                     err_fn,
                     None,
                 ),
-                cpal::SampleFormat::U16 => output.device.build_output_stream(
-                    &output.stream_config,
+                cpal::SampleFormat::U16 => dev.build_output_stream(
+                    cfg,
                     move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(data, channels, &state, &consumer_arc)
                     },
                     err_fn,
                     None,
                 ),
-                cpal::SampleFormat::I32 => output.device.build_output_stream(
-                    &output.stream_config,
+                cpal::SampleFormat::I32 => dev.build_output_stream(
+                    cfg,
                     move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(data, channels, &state, &consumer_arc)
                     },
@@ -308,12 +245,64 @@ impl AudioEngine {
             }
             .map_err(|e| AudioError::StreamError(e.to_string()))?;
 
-            stream
-                .play()
-                .map_err(|e| AudioError::StreamError(e.to_string()))?;
-            output.stream = Some(stream);
+            Ok(stream)
+        })
+    }
+
+    pub fn start(&self) -> Result<(), AudioError> {
+        if self.device_manager.has_stream() {
+            return Ok(());
         }
-        Ok(())
+
+        let (_device, config, fmt) = match self.device_manager.get_device() {
+            Some(d) => (d, self.device_manager.get_stream_config().unwrap(), self.device_manager.get_sample_format().unwrap()),
+            None => return Ok(()),
+        };
+
+        let state = self.state.clone();
+        let consumer_arc = self.buffer_consumer.clone();
+        let channels = config.channels as usize;
+        let err_fn = |err| tracing::error!("Stream error: {}", err);
+
+        self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
+            let stream = match fmt {
+                cpal::SampleFormat::F32 => dev.build_output_stream(
+                    &config,
+                    move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(data, channels, &state, &consumer_arc)
+                    },
+                    err_fn,
+                    None,
+                ),
+                cpal::SampleFormat::I16 => dev.build_output_stream(
+                    &config,
+                    move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(data, channels, &state, &consumer_arc)
+                    },
+                    err_fn,
+                    None,
+                ),
+                cpal::SampleFormat::U16 => dev.build_output_stream(
+                    &config,
+                    move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(data, channels, &state, &consumer_arc)
+                    },
+                    err_fn,
+                    None,
+                ),
+                cpal::SampleFormat::I32 => dev.build_output_stream(
+                    &config,
+                    move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(data, channels, &state, &consumer_arc)
+                    },
+                    err_fn,
+                    None,
+                ),
+                _ => return Err(AudioError::UnsupportedSampleFormat),
+            }
+            .map_err(|e| AudioError::StreamError(e.to_string()))?;
+            Ok(stream)
+        })
     }
 
     /// Callback de audio simplificado: solo lee del RingBuffer y escribe al stream.
@@ -363,19 +352,27 @@ impl AudioEngine {
         }
 
         if let Some(consumer) = consumer_mutex.lock().as_mut() {
-            for frame_out in output.chunks_mut(channels) {
-                let mut valid = true;
-                for sample_out in frame_out.iter_mut() {
-                    if let Some(val) = consumer.try_pop() {
-                        *sample_out = T::from_sample(val);
-                    } else {
-                        *sample_out = T::from_sample(0.0);
-                        valid = false;
+            // Buffer intermedio f32 en pila para pop_slice.
+            // pop_slice requiere &mut [f32] (formato nativo del ringbuffer).
+            // Luego convertimos cada frame de f32 a T.
+            let out_len = output.len();
+            let mut written = 0;
+            // Buffer temporal en pila para lectura por lotes (evita llamadas individuales a try_pop)
+            let mut tmp_buf = [0.0f32; 128];
+            while written < out_len {
+                let remaining = (out_len - written).min(tmp_buf.len());
+                let n = consumer.pop_slice(&mut tmp_buf[..remaining]);
+                if n == 0 {
+                    // Underrun: llenar el resto con silencio
+                    for s in output[written..].iter_mut() {
+                        *s = T::from_sample(0.0);
                     }
-                }
-                if !valid {
                     break;
                 }
+                for (dst, &src) in output[written..written + n].iter_mut().zip(tmp_buf[..n].iter()) {
+                    *dst = T::from_sample(src);
+                }
+                written += n;
             }
         } else {
             output.fill(T::from_sample(0.0));
@@ -383,264 +380,45 @@ impl AudioEngine {
     }
 
     pub fn get_available_hosts(&self) -> Vec<String> {
-        if cfg!(target_os = "linux") {
-            let hosts: Vec<String> = cpal::available_hosts()
-                .iter()
-                .map(|id| id.name().to_string())
-                .collect();
-            hosts
-        } else {
-            cpal::available_hosts()
-                .iter()
-                .map(|id| id.name().to_string())
-                .collect()
-        }
+        AudioDeviceManager::get_available_hosts()
     }
 
     pub fn get_devices(&self) -> Vec<AudioDeviceInfo> {
-        let host_name = if let Some(out) = self.output.read().as_ref() {
-            out.host.id().name()
-        } else {
-            cpal::default_host().id().name()
-        };
-
-        let host_id = cpal::available_hosts()
-            .into_iter()
-            .find(|h| h.name() == host_name)
-            .unwrap_or(cpal::default_host().id());
-        let host = cpal::host_from_id(host_id).unwrap_or(cpal::default_host());
-
-        if let Ok(devices) = host.output_devices() {
-            devices
-                .map(|d| {
-                    #[allow(deprecated)]
-                    let name = d.name().unwrap_or_else(|_| "Unknown".into());
-                    let supported_configs = d
-                        .supported_output_configs()
-                        .map(|c| c.collect())
-                        .unwrap_or_default();
-                    AudioDeviceInfo {
-                        name,
-                        supported_configs,
-                    }
-                })
-                .collect()
-        } else {
-            Vec::new()
-        }
+        self.device_manager.get_devices()
     }
 
     /// Realiza una purga profunda de los buffers y reinicia el stream con la configuración actual.
-    /// Útil para liberar memoria RAM cuando la reproducción se detiene o pausa.
     pub fn purge_buffers(&self) -> Result<(), AudioError> {
         println!("Audoxidy Audio: Cleaning Audio Engine Buffers");
-        let (host, device, config, format) = {
-            let mut out_lock = self.output.write();
-            // Extraemos los valores actuales (esto libera el stream anterior y sus buffers de hardware)
-            let out = out_lock.take().ok_or(AudioError::NoActiveOutput)?;
-            (out.host, out.device, out.stream_config, out.sample_format)
-        };
-
-        // Reconfigura el motor (recrea el RingBuffer) y arranca un stream fresco con los mismos parámetros
-        self.configure_and_start_stream(host, device, config, format)
+        let (host, device, config, fmt) = self.device_manager.take_output()
+            .ok_or(AudioError::NoActiveOutput)?;
+        self.recreate_stream(host, device, config, fmt)
     }
 
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
-        {
-            let mut out = self.output.write();
-            if let Some(o) = out.as_mut() {
-                o.stream = None;
-            }
-        }
+        self.device_manager.stop_stream();
+        let current_rate = self.state.read().device_sample_rate;
 
-        let target_host_id = if let Some(ref name) = settings.host_id {
-            cpal::available_hosts()
-                .into_iter()
-                .find(|h| h.name() == name)
-                .ok_or(AudioError::HostNotFound)?
-        } else {
-            cpal::default_host().id()
-        };
-
-        let host = cpal::host_from_id(target_host_id)
-            .map_err(|e| AudioError::DeviceError(e.to_string()))?;
-
-        let device = if let Some(ref dev_name) = settings.device_name {
-            #[allow(deprecated)]
-            host.output_devices()
-                .map_err(|e| AudioError::DeviceError(e.to_string()))?
-                .find(|d| d.name().unwrap_or_default() == *dev_name)
-                .ok_or(AudioError::DeviceNotFound)?
-        } else {
-            host.default_output_device().ok_or(AudioError::NoDevice)?
-        };
-
-        let mut supported_configs: Vec<_> = device
-            .supported_output_configs()
-            .map_err(|e| AudioError::DeviceError(e.to_string()))?
-            .collect();
-
-        if let Some(bd) = settings.bit_depth {
-            let filtered: Vec<_> = supported_configs
-                .iter()
-                .cloned()
-                .filter(|c| match bd {
-                    BitDepth::Bits16 => {
-                        c.sample_format() == cpal::SampleFormat::I16
-                            || c.sample_format() == cpal::SampleFormat::U16
-                    }
-                    BitDepth::Bits24 => c.sample_format() == cpal::SampleFormat::I32,
-                    BitDepth::Bits32Float => c.sample_format() == cpal::SampleFormat::F32,
-                })
-                .collect();
-
-            if !filtered.is_empty() {
-                supported_configs = filtered;
-            } else {
-                tracing::warn!(
-                    "Requested bit depth not supported by device, falling back to auto selection from supported formats"
-                );
-            }
-        }
-
-        let req_channels = match settings.channels {
-            ChannelConfig::Auto => {
-                2 // Default to Stereo for Auto
-            }
-            ChannelConfig::Manual(c) => c,
-        };
-
-        let req_rate = settings.sample_rate;
-
-        let best_config_range = supported_configs
-            .iter()
-            .fold(None, |best, current| {
-                let cur_channels = current.channels();
-                let cur_min_rate = current.min_sample_rate();
-                let cur_max_rate = current.max_sample_rate();
-
-                let channel_score = if cur_channels == req_channels {
-                    100
-                } else if cur_channels > req_channels {
-                    50
-                } else {
-                    0
-                };
-
-                let rate_score = if let Some(r) = req_rate {
-                    if r >= cur_min_rate && r <= cur_max_rate {
-                        100
-                    } else {
-                        0
-                    }
-                } else {
-                    if (cur_min_rate..=cur_max_rate).contains(&44100) {
-                        10
-                    } else {
-                        0
-                    }
-                };
-
-                let total_score = channel_score + rate_score;
-
-                match best {
-                    Some((score, cfg)) => {
-                        if total_score > score {
-                            Some((total_score, current))
-                        } else {
-                            Some((score, cfg))
-                        }
-                    }
-                    None => Some((total_score, current)),
-                }
-            })
-            .map(|(_, c)| c)
-            .ok_or(AudioError::ConfigError("No valid config found".into()))?;
-
-        let target_rate = if let Some(r) = req_rate {
-            r
-        } else {
-            let min = best_config_range.min_sample_rate();
-            let max = best_config_range.max_sample_rate();
-
-            if min <= 44100 && max >= 44100 {
-                44100
-            } else if min <= 48000 && max >= 48000 {
-                48000
-            } else {
-                max
-            }
-        };
-
-        // Upsampling automático: cuando está activado, usar la tasa máxima
-        // soportada por el dispositivo para que Rubato FFT siempre realice
-        // la reconstrucción de señal en software con calidad superior al DAC.
-        let target_rate = if settings.auto_upsample {
-            let max_rate = best_config_range.max_sample_rate();
-            if max_rate > target_rate {
-                tracing::info!(
-                    "Auto-upsample: {} Hz -> {} Hz (máximo del dispositivo)",
-                    target_rate,
-                    max_rate
-                );
-                max_rate
-            } else {
-                target_rate
-            }
-        } else {
-            target_rate
-        };
-
-        // Almacenar estado de auto-upsample
-        self.state.write().auto_upsample = settings.auto_upsample;
-
-        let config = best_config_range.with_sample_rate(target_rate);
-        let mut stream_config: cpal::StreamConfig = config.clone().into();
-
-        if let Some(frames) = settings.buffer_size {
-            stream_config.buffer_size = cpal::BufferSize::Fixed(frames);
-        } else {
-            let base_latency_ms = 10.0;
-            let calculated_frames = (target_rate as f64 * base_latency_ms / 1000.0) as u32;
-
-            let quantum = if calculated_frames < 256 {
-                256
-            } else if calculated_frames < 512 {
-                512
-            } else if calculated_frames < 1024 {
-                1024
-            } else if calculated_frames < 2048 {
-                2048
-            } else if calculated_frames < 4096 {
-                4096
-            } else {
-                8192
-            };
-
-            stream_config.buffer_size = cpal::BufferSize::Fixed(quantum);
-        }
+        let (host, device, stream_config, sample_format) =
+            self.device_manager.resolve_settings(&settings, current_rate)?;
 
         {
             let mut s = self.state.write();
+            s.auto_upsample = settings.auto_upsample;
             s.config_channels = settings.channels.clone();
         }
 
         // Update DSP configuration
         {
             let mut dsp = self.dsp.write();
-            dsp.set_sample_rate(config.sample_rate() as f32);
+            dsp.set_sample_rate(stream_config.sample_rate as f32);
             dsp.set_channel_count(stream_config.channels as usize);
         }
 
-        self.configure_and_start_stream(
-            host,
-            device,
-            stream_config,
-            best_config_range.sample_format(),
-        )
+        self.recreate_stream(host, device, stream_config, sample_format)
     }
 
-    fn configure_and_start_stream(
+    fn recreate_stream(
         &self,
         host: cpal::Host,
         device: cpal::Device,
@@ -665,38 +443,26 @@ impl AudioEngine {
             .to_string();
         }
 
-        {
-            let mut out = self.output.write();
-            *out = Some(AudioOutput {
-                host,
-                device,
-                stream_config: stream_config.clone(),
-                sample_format,
-                stream: None,
-            });
-        }
+        self.device_manager.set_output(host, device.clone(), stream_config.clone(), sample_format);
 
-        // Recreate RingBuffer scaled to sample rate (~2 seconds of audio, ~0.5s en low-resource)
+        // Recreate RingBuffer scaled to sample rate
         let sr = stream_config.sample_rate as usize;
         let ch = stream_config.channels as usize;
         let dur_secs = if crate::utils::is_low_resource() { 0.5 } else { 2.0 };
         let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
-        let rb = HeapRb::<f32>::new(rb_size.max(384_000)); // Mínimo 384k muestras
+        let rb = HeapRb::<f32>::new(rb_size.max(384_000));
         let (producer, consumer) = rb.split();
 
-        // Update handles
         {
             let mut p_lock = self.buffer_producer.lock();
             *p_lock = Some(producer);
         }
-
         {
             let mut c_lock = self.buffer_consumer.lock();
             *c_lock = Some(consumer);
         }
 
-        self.start_stream()?;
-        Ok(())
+        self.start()
     }
 
     pub fn decode_file(

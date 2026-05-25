@@ -1,5 +1,5 @@
 use eframe::egui;
-use crate::audio::engine::{AudioSettings, BitDepth, ChannelConfig, AudioDeviceInfo};
+use crate::audio::device_manager::{AudioSettings, BitDepth, ChannelConfig, AudioDeviceInfo};
 use crate::audio::AudioManager;
 use crate::audio::EqPreset;
 use std::process::Command;

@@ -22,16 +22,25 @@ pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 pub struct CoverCache {
     pub map: HashMap<String, iced::widget::image::Handle>,
     pub order: VecDeque<String>,
+    pub max_size: usize,
+}
+
+/// Límite dinámico de carátulas en caché según modo:
+/// - Normal: 64 (estándar, suficiente para pantallas grandes)
+/// - Low-resource: 16 (evicción agresiva para ahorrar RAM)
+fn get_max_covers() -> usize {
+    if crate::utils::is_low_resource() { 16 } else { 64 }
 }
 
 pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
-const MAX_COVERS_CACHE: usize = 64;
 
 pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
     LRU_COVER_CACHE.get_or_init(|| {
+        let initial_max = get_max_covers();
         Mutex::new(CoverCache {
-            map: HashMap::with_capacity(MAX_COVERS_CACHE),
-            order: VecDeque::with_capacity(MAX_COVERS_CACHE),
+            map: HashMap::with_capacity(initial_max),
+            order: VecDeque::with_capacity(initial_max),
+            max_size: initial_max,
         })
     })
 }
@@ -43,7 +52,7 @@ pub fn get_cover_pool() -> &'static rayon::ThreadPool {
             .unwrap_or(4);
         // Low-resource: máx 1 hilo. Normal: 1/3 de los procesadores (para evitar sobrecalentamiento)
         let pool_size = if crate::utils::is_low_resource() {
-            (cores / 3).clamp(1, 1)
+            1
         } else {
             (cores / 3).max(1)
         };
@@ -67,7 +76,6 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
         let pool = get_cover_pool();
 
         // Iniciamos hilos persistentes en el pool que consumen del canal
-        // Los Receiver de crossbeam se pueden clonar y compartir entre hilos directamente
         for _ in 0..pool.current_num_threads() {
             let rx_worker = rx.clone();
             pool.spawn(move || {
@@ -82,7 +90,6 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
         tx
     });
 
-    // Esta llamada BLOQUEA al escáner si el canal (16 slots) está lleno
     let _ = tx.send((data, hash));
 }
 
@@ -133,6 +140,8 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
         ));
     }
 
+    let target_size = if crate::utils::is_low_resource() { 200 } else { 400 };
+
     let src_image = Image::from_vec_u8(
         width,
         height,
@@ -141,8 +150,8 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     )
     .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
-    let dst_width = 400;
-    let dst_height = 400;
+    let dst_width = target_size;
+    let dst_height = target_size;
     let mut dst_image = Image::new(dst_width, dst_height, src_image.pixel_type());
 
     let mut resizer = Resizer::new();
@@ -190,6 +199,18 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
 
+    // Recalcular límite dinámico en cada carga (el modo pudo cambiar)
+    let current_max = get_max_covers();
+    if cache.max_size != current_max {
+        cache.max_size = current_max;
+        // Si el nuevo límite es menor, purgar inmediatamente los excedentes
+        while cache.order.len() > cache.max_size {
+            if let Some(oldest_path) = cache.order.pop_front() {
+                cache.map.remove(&oldest_path);
+            }
+        }
+    }
+
     let handle_opt = cache.map.get(path).cloned();
     if let Some(handle) = handle_opt {
         // Actualizar el orden del LRU (remover de la posición actual y poner al frente)
@@ -205,8 +226,8 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     cache.map.insert(path.to_string(), handle.clone());
     cache.order.push_back(path.to_string());
 
-    // 4. Limitar el tamaño a MAX_COVERS_CACHE (150)
-    while cache.order.len() > MAX_COVERS_CACHE {
+    // 4. Limitar el tamaño al límite dinámico actual
+    while cache.order.len() > cache.max_size {
         if let Some(oldest_path) = cache.order.pop_front() {
             cache.map.remove(&oldest_path);
         }
@@ -217,10 +238,16 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
 
 /// Purga las carátulas más viejas de la caché.
 /// Usado por el Garbage Collector cuando la app está inactiva.
+/// En low-resource, purga el doble de elementos por ciclo.
 pub fn purge_old_covers(count: usize) {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
-    let to_remove = count.min(cache.order.len());
+    let effective_count = if crate::utils::is_low_resource() {
+        count * 2
+    } else {
+        count
+    };
+    let to_remove = effective_count.min(cache.order.len());
 
     for _ in 0..to_remove {
         if let Some(oldest_path) = cache.order.pop_front() {
@@ -235,11 +262,14 @@ pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handl
     if data.is_empty() {
         return None;
     }
-    // Delegar a Iced directamente con los bytes crudos
     Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
 }
 
 /// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
 pub fn clear_raw_cache() {
-    // Ya no hay caché RAM propia — Iced gestiona internamente
+    // Vaciar LRU completo al limpiar
+    let cache_mtx = get_lru_cache();
+    let mut cache = cache_mtx.lock();
+    cache.map.clear();
+    cache.order.clear();
 }

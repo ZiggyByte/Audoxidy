@@ -2909,7 +2909,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },
-            iced::Point::new(tooltip_x + padding, tooltip_y + padding),
+            iced::Point::new(tooltip_x + padding + 15.0, tooltip_y + padding + 6.0),
             Color::WHITE,
             tooltip_rect,
         );

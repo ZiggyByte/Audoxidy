@@ -63,6 +63,29 @@ sysinfo = "0.38.4"
 fast_image_resize = "6.0.0"
 lru = "0.18.0"
 
+# === Features para desarrollo y perfilado ===
+[features]
+default = []
+# pipewire: optimizaciones específicas para Linux PipeWire
+pipewire = []
+# dev: perfil rápido para desarrollo (omite crates pesados opcionales)
+dev = []
+
+[dev-dependencies]
+criterion = { version = "0.6", features = ["html_reports"] }
+
+[[bench]]
+name = "dsp_bench"
+harness = false
+
+[[bench]]
+name = "engine_bench"
+harness = false
+
+[[bench]]
+name = "utils_bench"
+harness = false
+
 [profile.release]
 opt-level = 3
 lto = true

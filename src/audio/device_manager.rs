@@ -3,6 +3,39 @@ use parking_lot::RwLock;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+/// Devuelve la latencia base recomendada en milisegundos para la plataforma actual.
+/// - Linux (PipeWire): 5ms (baja latencia nativa)
+/// - Linux (ALSA): 10ms (estable)
+/// - Windows (WASAPI): 5ms (exclusive mode)
+/// - Windows (WASAPI shared): 10ms
+/// - macOS (Core Audio): 5ms (muy estable)
+/// - Otros: 10ms (conservador)
+fn platform_base_latency_ms() -> f64 {
+    #[cfg(all(target_os = "linux", feature = "pipewire"))]
+    { 5.0 }
+    #[cfg(all(target_os = "linux", not(feature = "pipewire")))]
+    { 10.0 }
+    #[cfg(target_os = "windows")]
+    { 5.0 }
+    #[cfg(target_os = "macos")]
+    { 5.0 }
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    { 10.0 }
+}
+
+/// Devuelve el tamaño de buffer mínimo (en frames) recomendado para la plataforma.
+/// Valores más bajos = menor latencia pero más riesgo de underruns.
+fn platform_min_buffer_frames() -> u32 {
+    #[cfg(target_os = "linux")]
+    { 64 }   // PipeWire/ALSA pueden manejar 64 frames
+    #[cfg(target_os = "windows")]
+    { 96 }   // WASAPI exclusivo soporta 96
+    #[cfg(target_os = "macos")]
+    { 64 }   // Core Audio muy estable a 64
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    { 128 }  // Default conservador
+}
+
 // --- Device-related types extracted from engine.rs ---
 
 #[derive(Clone, Debug, PartialEq, Copy)]
@@ -309,13 +342,21 @@ impl AudioDeviceManager {
         if let Some(frames) = settings.buffer_size {
             stream_config.buffer_size = cpal::BufferSize::Fixed(frames);
         } else {
-            let base_latency_ms = 10.0;
+            // Latencia adaptativa por plataforma (5.2)
+            let base_latency_ms = platform_base_latency_ms();
+            let min_frames = platform_min_buffer_frames();
             let calculated = (target_rate as f64 * base_latency_ms / 1000.0) as u32;
-            let quantum = if calculated < 256 { 256 }
-                else if calculated < 512 { 512 }
-                else if calculated < 1024 { 1024 }
-                else if calculated < 2048 { 2048 }
-                else if calculated < 4096 { 4096 }
+            let quantum = calculated.max(min_frames);
+            // Redondear al quantum estándar más cercano
+            let quantum = if quantum <= 64 { 64 }
+                else if quantum <= 96 { 96 }
+                else if quantum <= 128 { 128 }
+                else if quantum <= 192 { 192 }
+                else if quantum <= 256 { 256 }
+                else if quantum <= 512 { 512 }
+                else if quantum <= 1024 { 1024 }
+                else if quantum <= 2048 { 2048 }
+                else if quantum <= 4096 { 4096 }
                 else { 8192 };
             stream_config.buffer_size = cpal::BufferSize::Fixed(quantum);
         }

@@ -1,0 +1,57 @@
+# ── Configuración optimizada para Audoxidy ──────────────────────
+#
+# ## Perfilado y cobertura
+#
+#   cargo install cargo-llvm-cov
+#   cargo llvm-cov                 # cobertura + informe terminal
+#   cargo llvm-cov --html          # cobertura + reporte HTML
+#   cargo llvm-cov --open          # cobertura + abrir en navegador
+#
+# ## Benchmarks
+#
+#   cargo bench                    # todos los benchmarks
+#   cargo bench --bench dsp_bench  # solo DSP
+#   cargo bench --bench engine_bench
+#   cargo bench --bench utils_bench
+#   open target/criterion/report/index.html  # reporte HTML
+#
+# ## Flamegraph (mapeo de llamadas en caliente)
+#
+#   cargo install flamegraph
+#   cargo flamegraph --bin audoxidy -- --help
+#   # Para perfilado real: reproducir audio mientras se perfila
+#   cargo flamegraph --bin audoxidy --root --output flame.svg
+#
+# ## Valgrind / Massif (perfilado de memoria)
+#
+#   # Uso de heap de toda la aplicación
+#   valgrind --tool=massif --massif-out-file=massif.out ./target/release/audoxidy
+#   # Visualizar: massif-visualizer massif.out
+#   # Ver pico de uso: ms_print massif.out | head -60
+#
+#   # Perfilado de llamadas (cachegrind)
+#   valgrind --tool=callgrind --dump-instr=yes ./target/release/audoxidy
+#   # Visualizar: qcachegrind callgrind.out.*
+#
+# ## Compilación rápida
+#
+#   cargo install sccache
+#   cargo install cargo-nextest
+#   cargo nextest run  # ejecuta tests 2-3x más rápido que cargo test
+#
+# ## Enlaces rápidos (linker)
+#   Linux: sudo apt install lld clang
+#   macOS: usa ld64 (rápido nativo)
+#   Windows: rustup component add llvm-tools
+
+[build]
+# rustc-wrapper = "sccache"  # Descomentar tras instalar sccache
+# jobs = 8                    # Ajustar a núcleos de CPU disponibles
+
+# Perfil de desarrollo optimizado para compile rápido
+[profile.dev]
+opt-level = 1
+lto = false
+codegen-units = 256
+debug = true
+incremental = true

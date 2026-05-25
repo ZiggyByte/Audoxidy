@@ -2663,10 +2663,14 @@ impl<'a, Message> CustomSlider<'a, Message> {
         &self,
         renderer: &mut iced::Renderer,
         bounds: Rectangle,
-        is_hovered: bool,
+        _is_hovered: bool,
         percent: f32,
     ) {
         use iced::advanced::Renderer as _;
+
+        let track_color = self.options.track_color.unwrap_or(COLOR_CONTRAST);
+        let active_color = self.options.active_track_color.unwrap_or(COLOR_ACCENT);
+        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
 
         // Dibujar track completo (fondo)
         let track_x = bounds.x + (bounds.width - self.track_width) / 2.0;
@@ -2682,11 +2686,12 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 bounds: track_rect,
                 border: iced::Border {
                     radius: (self.track_width / 2.0).into(),
-                    ..Default::default()
+                    width: self.options.border_width,
+                    color: border_color,
                 },
                 ..Default::default()
             },
-            COLOR_CONTRAST,
+            track_color,
         );
 
         // Dibujar track coloreado si está habilitado
@@ -2710,7 +2715,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                     },
                     ..Default::default()
                 },
-                COLOR_ACCENT,
+                active_color,
             );
         }
 
@@ -2720,6 +2725,16 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let handle_y = bounds.y + bounds.height - (percent * bounds.height) - handle_height / 2.0;
         let handle_x = bounds.x + (bounds.width - handle_width) / 2.0;
 
+        // Usar colores configurables (mismo que horizontal)
+        let handle_color = if _is_hovered {
+            self.options
+                .handle_hover_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
+        } else {
+            self.options.handle_color.unwrap_or(COLOR_ACCENT)
+        };
+        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+
         let handle_rect = Rectangle {
             x: handle_x,
             y: handle_y.clamp(bounds.y, bounds.y + bounds.height - handle_height),
@@ -2727,18 +2742,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
             height: handle_height,
         };
 
-        let handle_color = if is_hovered {
-            COLOR_TEXT_PRIMARY
-        } else {
-            COLOR_ACCENT
-        };
-
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
                 bounds: handle_rect,
                 border: iced::Border {
                     radius: 2.0.into(),
-                    ..Default::default()
+                    width: self.options.border_width,
+                    color: border_color,
                 },
                 ..Default::default()
             },
@@ -2828,8 +2838,9 @@ impl<'a, Message> CustomSlider<'a, Message> {
         );
     }
 
-    /// Renderizar tooltip con el valor actual junto al cursor
-    /// Se dibuja al final para asegurar que aparezca por encima de otros elementos
+    /// Renderizar tooltip con el valor actual junto al cursor.
+    /// Diseño idéntico al tooltip de la barra de búsqueda del reproductor (player.rs):
+    /// fondo COLOR_CONTRAST, borde 1px COLOR_TEXT_SECONDARY, texto blanco, padding 4px.
     fn draw_tooltip(
         &self,
         renderer: &mut iced::Renderer,
@@ -2841,21 +2852,23 @@ impl<'a, Message> CustomSlider<'a, Message> {
         use iced::advanced::text::Renderer as _;
 
         let val_display = self.format_display_value(self.value);
+        let font_size = (self.options.tooltip_font_size - 1.0).max(10.0);
 
-        // Padding interno: 5px a los lados, 3px arriba/abajo
-        let padding_horizontal = 5.0;
-        let padding_vertical = 3.0;
+        // Padding y borde redondeado (como el tooltip del reproductor)
+        let padding: f32 = 4.0;
+        let border_radius = 4.0;
 
-        // Calcular tamaño del tooltip basado en el contenido
-        // Estimamos el ancho basado en el largo del texto (~7px por carácter)
-        let char_width = self.options.tooltip_font_size * 0.7;
-        let text_width = (val_display.len() as f32) * char_width;
-        let tooltip_width = (text_width + padding_horizontal * 2.0).max(60.0);
-        let tooltip_height = self.options.tooltip_font_size + padding_vertical * 2.0;
+        // Estimar ancho del texto (~6.5px por carácter para font-size 11)
+        let char_width = font_size * 0.6;
+        let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
+        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(48.0);
+        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(20.0);
 
-        // Posicionar tooltip junto al cursor (offset para que no cubra el cursor)
-        let tooltip_x = cursor_pos.x + 10.0;
-        let tooltip_y = cursor_pos.y - tooltip_height - 5.0;
+        // Posicionar: centrado sobre el cursor, arriba
+        let tooltip_x = (cursor_pos.x - tooltip_width / 2.0)
+            .max(2.0)
+            .min(_bounds.width - tooltip_width - 2.0);
+        let tooltip_y = (cursor_pos.y - tooltip_height - 8.0).max(2.0);
 
         let tooltip_rect = Rectangle {
             x: tooltip_x,
@@ -2864,13 +2877,12 @@ impl<'a, Message> CustomSlider<'a, Message> {
             height: tooltip_height,
         };
 
-        // Dibujar fondo del tooltip (COLOR_CONTRAST) con borde
-        // Usar fill_quad que se renderiza por encima
+        // Fondo del tooltip con borde (mismo estilo que player.rs)
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
                 bounds: tooltip_rect,
                 border: iced::Border {
-                    radius: 4.0.into(),
+                    radius: border_radius.into(),
                     width: 1.0,
                     color: COLOR_TEXT_SECONDARY,
                 },
@@ -2879,24 +2891,21 @@ impl<'a, Message> CustomSlider<'a, Message> {
             COLOR_CONTRAST,
         );
 
-        // Dibujar texto del tooltip centrado verticalmente dentro del padding
+        // Texto blanco centrado (mismo que player.rs: container -> text size 12, Color::WHITE)
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: val_display,
-                bounds: iced::Size::new(
-                    tooltip_width - padding_horizontal * 2.0,
-                    tooltip_height - padding_vertical * 2.0,
-                ),
-                size: self.options.tooltip_font_size.into(),
-                line_height: iced::advanced::text::LineHeight::default(),
+                bounds: iced::Size::new(tooltip_width - padding * 2.0, tooltip_height - padding * 2.0),
+                size: iced::Pixels(font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),
                 align_y: iced::alignment::Vertical::Center,
                 shaping: iced::advanced::text::Shaping::Basic,
-                wrapping: iced::advanced::text::Wrapping::default(),
+                wrapping: iced::advanced::text::Wrapping::None,
             },
-            iced::Point::new(tooltip_x + padding_horizontal, tooltip_y + padding_vertical),
-            COLOR_TEXT_SECONDARY,
+            iced::Point::new(tooltip_x + padding, tooltip_y + padding),
+            Color::WHITE,
             tooltip_rect,
         );
     }

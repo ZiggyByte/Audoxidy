@@ -19,3 +19,9 @@ library.db*
 graphify-out/
 .criterion/
 logs/
+.opencode/
+.agents/
+Archivos_de_ayuda_e_informacion_de_Audoxidy_desactualizados/
+PLAN_IMPLEMENTACION.md
+skills-lock.json
+AGENTS.md

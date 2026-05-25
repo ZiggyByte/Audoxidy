@@ -2492,8 +2492,8 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
 
         let char_width = font_size * 0.6;
         let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
-        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(50.0) - 5.0;
-        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(22.0);
+        let tooltip_width = (text_width + padding * 2.0 + 2.0).max(56.0) - 4.0;
+        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(25.0);
 
         let cursor_pos = self.cursor_pos;
 
@@ -2533,7 +2533,7 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },
-            iced::Point::new(tooltip_x + padding + 3.0, tooltip_y + padding + 7.0),
+            iced::Point::new(tooltip_x + padding + 4.0, tooltip_y + padding + 9.0),
             COLOR_TEXT_PRIMARY,
             tooltip_rect,
         );

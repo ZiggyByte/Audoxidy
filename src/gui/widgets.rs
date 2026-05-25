@@ -2486,14 +2486,14 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
         use iced::advanced::text::Renderer as _;
 
         let val_display = &self.value_text;
-        let font_size = (self.font_size - 1.0).max(10.0);
+        let font_size = 12.0;
         let padding: f32 = 4.0;
         let border_radius = 4.0;
 
         let char_width = font_size * 0.6;
         let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
-        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(48.0) - 10.0;
-        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(20.0);
+        let tooltip_width = (text_width + padding * 2.0 + 4.0).max(50.0) - 5.0;
+        let tooltip_height = (font_size + padding * 2.0 + 2.0).max(22.0);
 
         let cursor_pos = self.cursor_pos;
 
@@ -2528,12 +2528,12 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
                 size: iced::Pixels(font_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
-                align_x: iced::alignment::Horizontal::Center.into(),
+                align_x: iced::alignment::Horizontal::Left.into(),
                 align_y: iced::alignment::Vertical::Center,
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },
-            iced::Point::new(tooltip_x + padding + 15.0, tooltip_y + padding + 6.0),
+            iced::Point::new(tooltip_x + padding + 3.0, tooltip_y + padding + 7.0),
             COLOR_TEXT_PRIMARY,
             tooltip_rect,
         );

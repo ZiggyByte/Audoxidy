@@ -878,7 +878,13 @@ impl AudoxidyApp {
                     self.persist_playlist_state();
                 }
 
-                // 5. Sistema de Purga Automática (Ciclo fijo de 2 minutos)
+                // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente (D-03)
+                if crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap() {
+                    println!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
+                    return Task::done(Message::GlobalMemoryPurge);
+                }
+
+                // 5b. Purga por timer (solo cuando RAM está por debajo del hard cap)
                 let is_scanning_now = self
                     .scanner
                     .is_scanning
@@ -906,8 +912,8 @@ impl AudoxidyApp {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_secs();
-                    // Liberar memoria 30s después del escaneo
-                    if now.saturating_sub(finished_at) >= 30 {
+                    // D-02: Liberar memoria 40s después del escaneo
+                    if now.saturating_sub(finished_at) >= 40 {
                         self.scan_finished_at = None;
                         println!("Audoxidy GC: Scan complete, clearing memory");
                         crate::utils::covers::purge_old_covers(32); // Vaciar caché de covers generado por escáner
@@ -930,9 +936,9 @@ impl AudoxidyApp {
                 let is_playing = self.audio_manager.is_playing();
                 let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
 
-                // Descargar listas inactivas
+                // D-06: Descargar listas inactivas (la pestaña activa siempre se conserva)
                 self.playlist_manager
-                    .unload(is_playlist_focused, is_playing || is_loaded_in_player);
+                    .unload(is_playlist_focused, is_playing || is_loaded_in_player, true);
 
                 // Descargar biblioteca inactiva
                 self.library_manager.unload(is_library_focused);

@@ -224,8 +224,8 @@ impl PlaylistManager {
     }
 
     /// Descarga los datos pesados de la RAM si no se están usando
-    pub fn unload(&mut self, is_focused: bool, is_playing: bool) {
-        if is_focused || is_playing {
+    pub fn unload(&mut self, is_focused: bool, is_playing: bool, is_active_tab: bool) {
+        if is_focused || is_playing || is_active_tab {
             return;
         }
 

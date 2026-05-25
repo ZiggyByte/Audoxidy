@@ -257,6 +257,37 @@ pub fn purge_old_covers(count: usize) {
 }
 
 /// Carga una imagen desde bytes crudos (fallback del reproductor).
+/// Precarga carátulas para una lista de rutas de álbumes visibles.
+/// Útil para evitar frames en blanco al hacer scroll por la biblioteca:
+/// las carátulas se cargan en la LRU cache antes de que el usuario las vea.
+pub fn preload_visible_covers(paths: &[String]) {
+    if paths.is_empty() {
+        return;
+    }
+    let cache_mtx = get_lru_cache();
+    let mut cache = cache_mtx.lock();
+    for path in paths {
+        if cache.map.contains_key(path) {
+            // Ya en caché: mover al final (MRU)
+            if let Some(idx) = cache.order.iter().position(|x| x == path) {
+                cache.order.remove(idx);
+                cache.order.push_back(path.clone());
+            }
+        } else {
+            // No está: cargar desde disco y guardar en LRU
+            let handle = iced::widget::image::Handle::from_path(path);
+            cache.map.insert(path.clone(), handle);
+            cache.order.push_back(path.clone());
+        }
+    }
+    // Mantener límite después de precarga
+    while cache.order.len() > cache.max_size {
+        if let Some(oldest) = cache.order.pop_front() {
+            cache.map.remove(&oldest);
+        }
+    }
+}
+
 /// Solo se usa cuando no hay carátula en caché de disco (datos embebidos del archivo de audio).
 pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handle> {
     if data.is_empty() {

@@ -5,10 +5,23 @@ use iced::{
     Alignment, Color, Element, Length, Task, Theme,
     widget::{Space, button, column, container, mouse_area, row, text},
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 // Import deleted since song row is injected and artist header is in universal_song_list
 use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
 use crate::utils::{SortColumn, format_duration, format_size};
+
+// Contadores de redraw para diagnóstico — se incrementan cada vez que la vista se reconstruye
+static LIBRARY_VIEW_REDRAWS: AtomicU64 = AtomicU64::new(0);
+pub fn get_library_redraw_count() -> u64 {
+    LIBRARY_VIEW_REDRAWS.load(Ordering::Relaxed)
+}
+pub fn library_redraw_count_log() {
+    let count = LIBRARY_VIEW_REDRAWS.fetch_add(1, Ordering::Relaxed) + 1;
+    if count % 100 == 0 {
+        tracing::info!("Library view redraws: {}", count);
+    }
+}
 
 /// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
 pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
@@ -549,6 +562,7 @@ impl LibraryManager {
     }
 
     /// Obtiene los elementos visibles según el viewport actual (Virtualización)
+    #[tracing::instrument(skip(self))]
     pub fn get_visible_elements(
         &self,
     ) -> (
@@ -574,8 +588,10 @@ impl LibraryManager {
         let view_min = view_min_raw.min(max_scroll);
         let view_max = view_min + viewport_h;
 
-        let render_min = view_min - 300.0;
-        let render_max = view_max + 300.0;
+        // Margen reducido para menos redraws — la virtualización manual es eficiente
+        let margin = if crate::utils::is_low_resource() { 50.0 } else { 100.0 };
+        let render_min = view_min - margin;
+        let render_max = view_max + margin;
 
         let mut top_space = 0.0;
         let mut bottom_space = 0.0;
@@ -755,6 +771,7 @@ impl LibraryManager {
     }
 
     /// Calcula los elementos visibles en la cuadrícula para el modo Grid, con virtualización avanzada.
+    #[tracing::instrument(skip(self))]
     pub fn get_visible_grid_elements(
         &self,
         columns: usize,
@@ -824,11 +841,11 @@ impl LibraryManager {
             total_height += row_h;
         }
 
-        // 2. Filtrar por visibilidad
+        // 2. Filtrar por visibilidad — margen reducido (grid mide más alto por filas de álbumes)
         let lazy_margin = if crate::utils::is_low_resource() {
-            600.0
+            150.0
         } else {
-            900.0
+            300.0
         };
         let render_min = viewport_y - lazy_margin;
         let render_max = viewport_y + viewport_h + lazy_margin;
@@ -2376,6 +2393,7 @@ pub fn view<'a>(
     _database: &'a Arc<Mutex<Database>>,
     playing_path: &'a str,
 ) -> Element<'a, Message> {
+    library_redraw_count_log();
     // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
     let icon_btn_size = |icon: &str, action: Message, size: f32| -> Element<'a, Message> {
         let content = iced::widget::svg(iced::widget::svg::Handle::from_path(format!(

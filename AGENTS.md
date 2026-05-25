@@ -37,7 +37,7 @@ Structure
 cargo check                # fast compile check (run after every change)
 cargo build --release      # release: panic='abort', LTO, codegen-units=1
 cargo fmt && cargo clippy  # before PRs
-cargo test                 # 108 tests, all passing
+cargo test                 # 116 tests, all passing
 ```
 
 ## Architecture

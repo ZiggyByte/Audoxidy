@@ -130,6 +130,15 @@ impl Database {
         Ok(Self { conn })
     }
 
+    /// Crea una base de datos en memoria para pruebas.
+    #[cfg(test)]
+    pub fn new_memory() -> Result<Self> {
+        let conn = Connection::open_in_memory()?;
+        conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        Self::create_schema(&conn)?;
+        Ok(Self { conn })
+    }
+
     fn create_schema(conn: &Connection) -> Result<()> {
         // Configuraciones de rendimiento
         conn.pragma_update(None, "journal_mode", "WAL")?;

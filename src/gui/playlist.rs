@@ -8,7 +8,11 @@ use iced::{
     Alignment, Background, Color, Element, Length, Padding, Theme,
     widget::{Space, button, column, container, mouse_area, row, svg, text},
 };
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+
+// Contadores de redraw para diagnóstico
+static PLAYLIST_VIEW_REDRAWS: AtomicU64 = AtomicU64::new(0);
 
 // ============================================================
 // Constantes y IDs
@@ -839,6 +843,10 @@ pub fn view<'a>(
     manager: &'a PlaylistManager,
     _audio_manager: &AudioManager,
 ) -> Element<'a, Message> {
+    let count = PLAYLIST_VIEW_REDRAWS.fetch_add(1, Ordering::Relaxed) + 1;
+    if count % 100 == 0 {
+        tracing::info!("Playlist view redraws: {}", count);
+    }
     let tabs_container = build_tabs_bar(manager);
     let playlist_scroll = build_song_list(manager);
     let bottom_container = build_bottom_bar(manager);
@@ -1130,8 +1138,8 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let view_min = viewport.y;
     let view_max = view_min + viewport.height;
 
-    // Margen de renderizado para evitar parpadeos al hacer scroll
-    let margin = 400.0;
+    // Margen de renderizado reducido para menos redraws
+    let margin = if crate::utils::is_low_resource() { 50.0 } else { 150.0 };
     let render_min = (view_min - margin).max(0.0);
     let render_max = view_max + margin;
 

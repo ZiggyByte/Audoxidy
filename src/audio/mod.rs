@@ -7,6 +7,8 @@ pub mod manager;
 pub mod preset;
 #[cfg(test)]
 pub mod tests;
+#[cfg(test)]
+pub mod integration_tests;
 
 pub use error::AudioError;
 pub use manager::AudioManager;

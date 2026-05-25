@@ -307,8 +307,9 @@ impl LibraryFiltersManager {
         let scroll_y = self.scroll_offset.y;
 
         let start_index = (scroll_y / item_height).floor() as usize;
-        // Margen de seguridad para evitar parpadeos
-        let margin = 5;
+        // D-05: Margen dinámico = max(5, total_visible_items / 2)
+        let total_visible_items = (viewport_height / item_height).ceil() as usize;
+        let margin = (total_visible_items / 2).max(5);
         let start_index = start_index.saturating_sub(margin);
 
         let visible_count = (viewport_height / item_height).ceil() as usize + (margin * 2);

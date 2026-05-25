@@ -38,6 +38,7 @@ fn platform_min_buffer_frames() -> u32 {
 
 // --- Device-related types extracted from engine.rs ---
 
+/// Profundidad de bits para la salida de audio.
 #[derive(Clone, Debug, PartialEq, Copy)]
 pub enum BitDepth {
     Bits16,
@@ -51,6 +52,7 @@ impl Default for BitDepth {
     }
 }
 
+/// Configuración de canales de salida.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ChannelConfig {
     Auto,
@@ -63,6 +65,7 @@ impl Default for ChannelConfig {
     }
 }
 
+/// Configuración completa del dispositivo de audio.
 #[derive(Clone, Debug, Default)]
 pub struct AudioSettings {
     pub host_id: Option<String>,
@@ -74,6 +77,7 @@ pub struct AudioSettings {
     pub auto_upsample: bool,
 }
 
+/// Información de un dispositivo de audio disponible.
 #[derive(Clone, Debug)]
 pub struct AudioDeviceInfo {
     pub name: String,
@@ -97,12 +101,14 @@ pub struct AudioDeviceManager {
 }
 
 impl AudioDeviceManager {
+    /// Crea un nuevo gestor de dispositivos de audio sin salida activa.
     pub fn new() -> Self {
         Self {
             output: RwLock::new(None),
         }
     }
 
+    /// Establece la salida de audio activa con el host, dispositivo y formato dados.
     pub fn set_output(&self, host: cpal::Host, device: cpal::Device, config: cpal::StreamConfig, fmt: cpal::SampleFormat) {
         let mut out = self.output.write();
         *out = Some(AudioOutput {
@@ -114,26 +120,34 @@ impl AudioDeviceManager {
         });
     }
 
+    /// Extrae y retorna la salida activa actual (host, dispositivo, configuración, formato).
     pub fn take_output(&self) -> Option<(cpal::Host, cpal::Device, cpal::StreamConfig, cpal::SampleFormat)> {
         self.output.write().take().map(|o| (o.host, o.device, o.stream_config, o.sample_format))
     }
 
+    /// Devuelve la configuración del stream activo, si existe.
     pub fn get_stream_config(&self) -> Option<cpal::StreamConfig> {
         self.output.read().as_ref().map(|o| o.stream_config.clone())
     }
 
+    /// Devuelve el dispositivo de salida activo, si existe.
     pub fn get_device(&self) -> Option<cpal::Device> {
         self.output.read().as_ref().map(|o| o.device.clone())
     }
 
+    /// Devuelve el formato de muestra del stream activo, si existe.
     pub fn get_sample_format(&self) -> Option<cpal::SampleFormat> {
         self.output.read().as_ref().map(|o| o.sample_format)
     }
 
+    /// Verifica si hay un stream de audio activo.
     pub fn has_stream(&self) -> bool {
         self.output.read().as_ref().and_then(|o| o.stream.as_ref()).is_some()
     }
 
+    /// Inicializa la salida de audio por defecto del sistema.
+    ///
+    /// Usa el host y dispositivo predeterminados de CPAL.
     pub fn init_default_output(&self) -> Result<(cpal::Host, cpal::Device, cpal::StreamConfig, cpal::SampleFormat), AudioError> {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
@@ -181,6 +195,9 @@ impl AudioDeviceManager {
         Ok(())
     }
 
+    /// Inicia el stream de audio usando un closure que construye el stream CPAL.
+    ///
+    /// Si ya hay un stream activo, no hace nada.
     pub fn start_stream<F>(
         &self,
         build_stream: F,
@@ -200,6 +217,7 @@ impl AudioDeviceManager {
         Ok(())
     }
 
+    /// Detiene el stream de audio activo (si existe).
     pub fn stop_stream(&self) {
         let mut out = self.output.write();
         if let Some(o) = out.as_mut() {
@@ -207,6 +225,7 @@ impl AudioDeviceManager {
         }
     }
 
+    /// Devuelve la lista de hosts de audio disponibles en el sistema.
     pub fn get_available_hosts() -> Vec<String> {
         cpal::available_hosts()
             .iter()
@@ -214,6 +233,7 @@ impl AudioDeviceManager {
             .collect()
     }
 
+    /// Devuelve la lista de dispositivos de salida del host activo.
     pub fn get_devices(&self) -> Vec<AudioDeviceInfo> {
         let host_name = self.output.read().as_ref().map(|o| o.host.id().name())
             .unwrap_or_else(|| cpal::default_host().id().name());

@@ -12,11 +12,14 @@ static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 /// Cached system info para evitar crear el objeto sysinfo::System en cada consulta
 static SYSINFO: OnceLock<parking_lot::Mutex<sysinfo::System>> = OnceLock::new();
 
+/// Obtiene o inicializa la instancia global de `sysinfo::System`.
 fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
     SYSINFO.get_or_init(|| parking_lot::Mutex::new(sysinfo::System::new()))
 }
 
-/// Devuelve el porcentaje de RAM usado (0.0 - 100.0)
+/// Devuelve el porcentaje de RAM usado (0.0 - 100.0).
+///
+/// Usa `sysinfo` para leer memoria total y usada del sistema.
 fn get_ram_usage_percent() -> f64 {
     if let Some(mut sys) = get_sysinfo().try_lock() {
         sys.refresh_memory();
@@ -48,15 +51,20 @@ pub fn get_dynamic_purge_interval_mins() -> u64 {
 }
 
 impl MemoryManager {
-    /// Inicializa los temporizadores al arrancar la aplicación
+    /// Inicializa los temporizadores internos de purga.
+    ///
+    /// Debe llamarse una sola vez al arrancar la aplicación.
     pub fn init() {
         let now = Self::get_now_secs();
         START_TIME.store(now, Ordering::Relaxed);
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
 
+    /// Registra actividad general (actualmente no operativa).
     pub fn register_activity() {}
+    /// Registra actividad en la playlist (actualmente no operativa).
     pub fn register_playlist_activity() {}
+    /// Registra actividad en la biblioteca (actualmente no operativa).
     pub fn register_library_activity() {}
 
     /// Reinicia el temporizador de la purga global (útil tras escaneos o acciones masivas)
@@ -91,6 +99,7 @@ impl MemoryManager {
         false
     }
 
+    /// Devuelve la marca de tiempo UNIX actual en segundos.
     fn get_now_secs() -> u64 {
         SystemTime::now()
             .duration_since(UNIX_EPOCH)

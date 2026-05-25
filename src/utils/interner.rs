@@ -8,10 +8,12 @@ const INTERNER_MEMORY_LIMIT: u64 = 10 * 1024 * 1024;
 static STRING_CACHE: OnceLock<Mutex<HashSet<Arc<str>>>> = OnceLock::new();
 static TOTAL_ALLOCATED: AtomicU64 = AtomicU64::new(0);
 
+/// Obtiene o inicializa la caché global de cadenas internadas.
 fn get_cache() -> &'static Mutex<HashSet<Arc<str>>> {
     STRING_CACHE.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// Verifica si la memoria asignada excede el límite y purga si es necesario.
 fn check_and_purge() {
     if TOTAL_ALLOCATED.load(Ordering::Relaxed) > INTERNER_MEMORY_LIMIT {
         clear_interner();

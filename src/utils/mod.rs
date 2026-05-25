@@ -1,9 +1,17 @@
-// Utilidades comunes y funciones matemáticas de formateo
+//! Utilidades comunes para Audoxidy: formateo, ordenamiento, búsqueda,
+//! gestión de memoria, interner de cadenas, carátulas y configuración RON.
+
+pub mod config;
 pub mod covers;
 pub mod interner;
 pub mod memory_manager;
 use crate::db::database::SongData;
 
+/// Busca una canción verificando si el término de búsqueda aparece en
+/// título, artista, artista del álbum o álbum.
+///
+/// `query_lowercase` debe estar en minúsculas; los campos de la canción
+/// se convierten internamente para la comparación.
 pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
     song.title
         .as_ref()
@@ -31,10 +39,12 @@ pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
 pub static LOW_RESOURCE_MODE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Devuelve `true` si el modo de bajos recursos está activo.
 pub fn is_low_resource() -> bool {
     LOW_RESOURCE_MODE.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+/// Columnas de ordenamiento disponibles en la biblioteca y listas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SortColumn {
     TrackNumber,
@@ -56,6 +66,7 @@ pub enum SortColumn {
 }
 
 impl SortColumn {
+    /// Devuelve la etiqueta en español para la columna.
     pub fn as_str(&self) -> &'static str {
         match self {
             SortColumn::TrackNumber => "#",
@@ -157,7 +168,9 @@ pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
     }
 }
 
-/// Recorta de manera segura un String basado en su conteo de caracteres visuales.
+/// Recorta un string basándose en su conteo de caracteres Unicode.
+///
+/// Si el texto excede el límite, se trunca y se añade "..." al final.
 pub fn truncate_text(text: &str, limit: usize) -> String {
     if text.chars().count() > limit {
         format!(
@@ -204,9 +217,11 @@ pub fn format_size(bytes: i64) -> String {
     }
 }
 
-/// Estructura para gestionar la visualización de rutas en la biblioteca de forma inteligente.
+/// Representación visual de una ruta con soporte multi-disco.
 pub struct IntelligentPath {
+    /// Ruta formateada para mostrar al usuario.
     pub display: String,
+    /// `true` si hay múltiples puntos de montaje activos.
     pub is_multi_drive: bool,
 }
 

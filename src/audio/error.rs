@@ -1,5 +1,8 @@
 use std::fmt;
 
+/// Errores del motor de audio de Audoxidy.
+///
+/// Abarca problemas de dispositivo, stream, configuración, decodificación y E/S.
 #[derive(Debug)]
 pub enum AudioError {
     NoDevice,
@@ -14,6 +17,7 @@ pub enum AudioError {
     IoError(std::io::Error),
 }
 
+/// Convierte un `std::io::Error` en `AudioError::IoError`.
 impl From<std::io::Error> for AudioError {
     fn from(e: std::io::Error) -> Self {
         AudioError::IoError(e)
@@ -39,6 +43,7 @@ impl fmt::Display for AudioError {
     }
 }
 
+/// Implementación del trait `Error` para compatibilidad con la biblioteca estándar.
 impl std::error::Error for AudioError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {

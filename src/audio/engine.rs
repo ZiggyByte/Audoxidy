@@ -14,9 +14,16 @@ use ringbuf::{
 use std::sync::Arc;
 
 // Define aliases based on ringbuf 0.4 structure
+/// Productor de anillo circular para audio, con caché habilitada.
+///
+/// Tipo alias para `Caching<Arc<HeapRb<T>>, true, false>` (ringbuf 0.4).
 pub type HeapProducer<T> = Caching<Arc<HeapRb<T>>, true, false>;
+/// Consumidor de anillo circular para audio, con caché habilitada.
+///
+/// Tipo alias para `Caching<Arc<HeapRb<T>>, false, true>` (ringbuf 0.4).
 pub type HeapConsumer<T> = Caching<Arc<HeapRb<T>>, false, true>;
 
+/// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
 #[derive(Default, Clone, Copy, Debug)]
 pub(crate) struct ChannelMap {
     pub(crate) fl: Option<usize>,
@@ -29,6 +36,7 @@ pub(crate) struct ChannelMap {
     pub(crate) sbr: Option<usize>,
 }
 
+/// Comandos enviados al hilo de decodificación de fondo.
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum AudioCommand {
@@ -43,6 +51,10 @@ pub enum AudioCommand {
     Stop,
 }
 
+/// Motor de audio principal de Audoxidy.
+///
+/// Gestiona la decodificación en segundo plano, el anillo circular de audio,
+/// la cadena DSP, el stream de salida CPAL y el estado de reproducción.
 #[derive(Clone)]
 pub struct AudioEngine {
     pub device_manager: Arc<AudioDeviceManager>,
@@ -55,6 +67,7 @@ pub struct AudioEngine {
     pub custom_decoder: Arc<Mutex<Option<Box<dyn AudioDecoder>>>>,
 }
 
+/// Estado mutable del motor de audio compartido entre hilos.
 #[derive(Clone)]
 pub struct AudioState {
     pub is_playing: bool,
@@ -249,6 +262,9 @@ impl AudioEngine {
         })
     }
 
+    /// Inicia o reinicia el stream de salida de audio.
+    ///
+    /// Si ya hay un stream activo, no hace nada.
     pub fn start(&self) -> Result<(), AudioError> {
         if self.device_manager.has_stream() {
             return Ok(());
@@ -379,10 +395,12 @@ impl AudioEngine {
         }
     }
 
+    /// Devuelve la lista de hosts de audio disponibles (ALSA, PipeWire, WASAPI, etc.).
     pub fn get_available_hosts(&self) -> Vec<String> {
         AudioDeviceManager::get_available_hosts()
     }
 
+    /// Devuelve la lista de dispositivos de salida disponibles.
     pub fn get_devices(&self) -> Vec<AudioDeviceInfo> {
         self.device_manager.get_devices()
     }
@@ -395,6 +413,10 @@ impl AudioEngine {
         self.recreate_stream(host, device, config, fmt)
     }
 
+    /// Aplica una configuración de audio completa: host, dispositivo, sample rate,
+    /// profundidad de bits, canales y tamaño de buffer.
+    ///
+    /// Detiene el stream actual y lo recrea con la nueva configuración.
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
         self.device_manager.stop_stream();
         let current_rate = self.state.read().device_sample_rate;
@@ -465,6 +487,9 @@ impl AudioEngine {
         self.start()
     }
 
+    /// Encola un archivo para decodificación en el hilo de fondo.
+    ///
+    /// Envía un comando `AudioCommand::Load` al canal `crossbeam`.
     pub fn decode_file(
         &self,
         path: &str,
@@ -762,16 +787,26 @@ impl AudioEngine {
         }
     }
 
+    /// Busca a una posición específica en segundos.
+    ///
+    /// Envía un comando `AudioCommand::Seek` al hilo de decodificación.
     pub fn seek(&self, pos: f64) {
         let _ = self.command_tx.send(AudioCommand::Seek(pos));
     }
+    /// Detiene la reproducción y resetea el estado.
+    ///
+    /// Envía un comando `AudioCommand::Stop` y marca `is_playing = false`.
     pub fn stop(&self) {
         let _ = self.command_tx.send(AudioCommand::Stop);
         self.set_playing(false);
     }
+    /// Establece el estado de reproducción (pausa/reanudación).
     pub fn set_playing(&self, playing: bool) {
         self.state.write().is_playing = playing;
     }
+    /// Establece el volumen de reproducción (0.0 a 1.0).
+    ///
+    /// El valor se clamp automáticamente al rango válido.
     pub fn set_volume(&self, volume: f32) {
         self.state.write().volume = volume.clamp(0.0, 1.0);
     }

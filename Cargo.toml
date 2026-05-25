@@ -44,7 +44,7 @@ memmap2 = "0.9.5"
 bumpalo = "3.17.0"
 wide = "0.7.31"
 tracing = "0.1.44"
-tracing-subscriber = "0.3.22"
+tracing-subscriber = { version = "0.3.22", features = ["env-filter", "registry"] }
 parking_lot = "0.12.5"
 rayon = "1.11.0"
 color-thief = "0.2.2"

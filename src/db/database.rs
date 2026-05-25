@@ -3,6 +3,11 @@ use rusqlite::{Connection, OptionalExtension, Result, params};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
+/// Base de datos SQLite de la biblioteca musical de Audoxidy.
+///
+/// Gestiona el esquema relacional completo: carpetas, artistas, álbumes,
+/// canciones, metadatos extendidos, playlists y sesiones de shuffle.
+/// Usa WAL, FTS5 para búsqueda de texto completo y pragmas de rendimiento.
 pub struct Database {
     conn: Connection,
 }
@@ -122,6 +127,7 @@ impl Default for Database {
 }
 
 impl Database {
+    /// Abre o crea la base de datos `library.db` e inicializa el esquema.
     pub fn new() -> Result<Self> {
         let db_path = "library.db";
         let conn = Connection::open(db_path)?;
@@ -416,6 +422,7 @@ impl Database {
 
     // --- Helpers de Hashing para Identidad Basada en Rutas ---
 
+    /// Genera un hash SHA-256 para identificación única de rutas y entidades.
     pub fn generate_hash(input: &str) -> String {
         let mut hasher = Sha256::new();
         hasher.update(input);
@@ -424,6 +431,7 @@ impl Database {
 
     // --- Métodos de Inserción Relacional ---
 
+    /// Inserta o recupera el ID de una carpeta por su ruta.
     pub fn upsert_folder(&self, path: &str) -> Result<i64> {
         self.conn
             .prepare_cached(
@@ -442,6 +450,7 @@ impl Database {
             .query_row([path], |row| row.get(0))
     }
 
+    /// Inserta o recupera el ID de un artista por nombre (hash normalizado).
     pub fn upsert_artist(&self, name: &str) -> Result<i64> {
         let normalized_name = name.trim();
         let hash_id = Self::generate_hash(&normalized_name.to_lowercase());
@@ -456,6 +465,7 @@ impl Database {
             .query_row([hash_id], |row| row.get(0))
     }
 
+    /// Inserta o actualiza un álbum por título, artista, carpeta, año y género.
     pub fn upsert_album(
         &self,
         title: &str,
@@ -480,6 +490,9 @@ impl Database {
             .query_row([hash_id], |row| row.get(0))
     }
 
+    /// Inserta una canción con todos sus metadatos, carátula y tags RAW.
+    ///
+    /// Retorna (hash_de_carátula, necesita_procesamiento).
     pub fn insert_song_full(
         &mut self,
         song: &SongData,
@@ -691,6 +704,7 @@ impl Database {
 
     // --- Consultas de Alto Rendimiento ---
 
+    /// Busca canciones usando FTS5 con el término de búsqueda dado.
     pub fn search_songs(&self, query: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare(
             "
@@ -762,6 +776,7 @@ impl Database {
         Ok(results)
     }
 
+    /// Obtiene todas las canciones de la biblioteca (no externas) ordenadas.
     pub fn get_all_songs(&self) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
@@ -830,6 +845,7 @@ impl Database {
         Ok(songs)
     }
 
+    /// Obtiene todos los álbumes de la biblioteca con metadatos básicos.
     pub fn get_all_albums(
         &self,
     ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
@@ -863,6 +879,7 @@ impl Database {
     }
 
     /// Obtiene álbumes para la vista Grid, agrupados correctamente para evitar duplicados en compilaciones
+    /// Obtiene álbumes para la vista Grid, agrupados por artista sin duplicados.
     pub fn get_grid_items_by_artist(
         &self,
     ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
@@ -896,6 +913,7 @@ impl Database {
         Ok(results)
     }
 
+    /// Obtiene todas las carpetas registradas en la biblioteca.
     pub fn get_all_folders(&self) -> Result<Vec<(i64, String, String)>> {
         let mut stmt = self
             .conn
@@ -911,6 +929,7 @@ impl Database {
         Ok(results)
     }
 
+    /// Obtiene estadísticas de un álbum (conteo, duración total, tamaño total).
     pub fn get_album_stats_by_hash(&self, album_hash: &str) -> Result<(u64, f64, f64)> {
         let mut stmt = self.conn.prepare(
             "
@@ -931,6 +950,7 @@ impl Database {
         Ok(stats)
     }
 
+    /// Obtiene estadísticas de un álbum filtrado por artista.
     pub fn get_album_stats_by_hash_and_artist(
         &self,
         album_hash: &str,
@@ -956,6 +976,7 @@ impl Database {
         Ok(stats)
     }
 
+    /// Obtiene las canciones de un álbum específico por su hash.
     pub fn get_songs_by_album(&self, album_hash_id: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
@@ -1023,6 +1044,7 @@ impl Database {
         Ok(songs)
     }
 
+    /// Obtiene las canciones de un álbum filtradas por nombre de artista.
     pub fn get_songs_by_album_and_artist(
         &self,
         album_hash_id: &str,
@@ -1094,6 +1116,7 @@ impl Database {
         Ok(songs)
     }
 
+    /// Obtiene agrupaciones de artistas con conteos de canciones, álbumes y duración.
     pub fn get_artist_groups_sql(
         &self,
         search_query: Option<&str>,
@@ -1157,6 +1180,7 @@ impl Database {
         Ok(rows)
     }
 
+    /// Obtiene el valor máximo de `import_order` entre todas las canciones.
     pub fn get_max_import_order(&self) -> Result<i64> {
         let mut stmt = self.conn.prepare("SELECT MAX(import_order) FROM SONGS")?;
         let res = stmt.query_row([], |row| {
@@ -1166,6 +1190,7 @@ impl Database {
         res
     }
 
+    /// Obtiene estadísticas generales de la biblioteca (canciones, álbumes, artistas, duración, tamaño).
     pub fn get_library_stats(&self) -> Result<(usize, usize, f64, f64, usize)> {
         let songs: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM SONGS WHERE is_external = 0",
@@ -1194,12 +1219,14 @@ impl Database {
         ))
     }
 
+    /// Elimina una canción por su ruta de archivo.
     pub fn delete_song(&self, path: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM SONGS WHERE file_path = ?1", [path])?;
         Ok(())
     }
 
+    /// Elimina un álbum completo y todas sus canciones.
     pub fn delete_album_group(&self, album_hash: &str) -> Result<()> {
         // En el nuevo esquema usamos hash_id para identificar álbumes
         self.conn.execute(
@@ -1211,6 +1238,7 @@ impl Database {
         Ok(())
     }
 
+    /// Elimina múltiples canciones por sus IDs.
     pub fn batch_delete_songs(&self, ids: &[i64]) -> Result<()> {
         if ids.is_empty() {
             return Ok(());
@@ -1222,6 +1250,7 @@ impl Database {
         Ok(())
     }
 
+    /// Limpia álbumes sin canciones y artistas huérfanos.
     pub fn cleanup_empty_metadata(&self) -> Result<()> {
         // Eliminar álbumes sin canciones
         self.conn.execute(
@@ -1237,6 +1266,7 @@ impl Database {
         Ok(())
     }
 
+    /// Verifica si un hash de carátula está siendo usado por algún álbum o canción.
     pub fn is_cover_hash_in_use(&self, hash: &str) -> Result<bool> {
         let count: i64 = self.conn.query_row(
             "SELECT (SELECT COUNT(*) FROM ALBUMS WHERE hash_id = ? OR cover_hash = ?) + (SELECT COUNT(*) FROM SONGS WHERE cover_override = ?)",
@@ -1583,6 +1613,7 @@ impl Database {
         Ok(())
     }
 
+    /// Persiste el estado de reproducción de una playlist (última canción, posición, shuffle).
     pub fn update_playlist_persistence(
         &self,
         playlist_id: i64,
@@ -1619,6 +1650,7 @@ impl Database {
     }
 
     /// Mueve múltiples canciones de una playlist a otra de forma eficiente.
+    /// Mueve canciones de una playlist a otra de forma eficiente.
     pub fn batch_move_songs_between_playlists(
         &mut self,
         from_playlist_id: i64,
@@ -1663,6 +1695,7 @@ impl Database {
 
     /// Obtiene todas las canciones de una playlist con metadata completa (JOIN).
     /// Retorna las canciones ordenadas por sequence_order.
+    /// Obtiene todas las canciones de una playlist con metadatos completo (JOIN).
     pub fn get_playlist_songs(&self, playlist_id: i64) -> Result<Vec<PlaylistSongRef>> {
         let mut stmt = self.conn.prepare(
             "
@@ -1738,6 +1771,7 @@ impl Database {
 
     /// Obtiene canciones de una playlist paginadas (para virtualización).
     /// LIMIT + OFFSET para renderizado eficiente.
+    /// Obtiene canciones de una playlist paginadas para virtualización.
     pub fn get_playlist_songs_paginated(
         &self,
         playlist_id: i64,
@@ -1818,6 +1852,7 @@ impl Database {
     }
 
     /// Obtiene el total de canciones de una playlist (para virtualización).
+    /// Obtiene el total de canciones en una playlist.
     pub fn get_playlist_song_count(&self, playlist_id: i64) -> Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
@@ -1828,6 +1863,7 @@ impl Database {
 
     /// Obtiene canciones de una playlist agrupadas por folder_path.
     /// Retorna grupos con nombre de carpeta, canciones y estadísticas.
+    /// Obtiene canciones de una playlist agrupadas por carpeta.
     pub fn get_playlist_songs_grouped_by_folder(
         &self,
         playlist_id: i64,
@@ -1867,6 +1903,7 @@ impl Database {
     }
 
     /// Obtiene estadísticas de una playlist: total canciones, duración total, tamaño total.
+    /// Obtiene estadísticas de una playlist (conteo, duración total, tamaño total).
     pub fn get_playlist_stats(&self, playlist_id: i64) -> Result<(usize, f64, f64)> {
         self.conn.query_row(
             "
@@ -1887,6 +1924,7 @@ impl Database {
     }
 
     /// Verifica si una canción específica está en una playlist.
+    /// Verifica si una canción está en una playlist.
     pub fn is_song_in_playlist(&self, playlist_id: i64, song_id: i64) -> Result<bool> {
         self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2)",
@@ -1896,6 +1934,7 @@ impl Database {
     }
 
     /// Busca canciones dentro de una playlist por query (búsqueda local).
+    /// Busca canciones dentro de una playlist por texto (título, artista, álbum).
     pub fn search_playlist_songs(
         &self,
         playlist_id: i64,
@@ -1985,6 +2024,7 @@ impl Database {
     // ============================================================
 
     /// Genera un nuevo ID de sesión de shuffle (UUID simple basado en timestamp + random).
+    /// Obtiene un valor de configuración de la tabla APP_SETTINGS.
     pub fn get_setting(&self, key: &str) -> Option<String> {
         self.conn
             .query_row(
@@ -1995,6 +2035,7 @@ impl Database {
             .ok()
     }
 
+    /// Establece un valor de configuración en la tabla APP_SETTINGS.
     pub fn set_setting(&self, key: &str, value: &str) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO APP_SETTINGS (key, value) VALUES (?1, ?2)",
@@ -2003,6 +2044,7 @@ impl Database {
         Ok(())
     }
 
+    /// Genera un ID único de sesión de shuffle (timestamp + random).
     pub fn generate_shuffle_session_id() -> String {
         use std::time::{SystemTime, UNIX_EPOCH};
         let timestamp = SystemTime::now()
@@ -2015,6 +2057,7 @@ impl Database {
 
     /// Guarda una sesión de shuffle completa en la base de datos.
     /// Esto persiste el orden aleatorio y el historial para navegación backward.
+    /// Persiste una sesión de shuffle completa (orden + historial) en la BD.
     pub fn save_shuffle_session(
         &mut self,
         playlist_id: i64,
@@ -2065,6 +2108,7 @@ impl Database {
     }
 
     /// Carga la última sesión de shuffle de una playlist.
+    /// Carga la última sesión de shuffle de una playlist desde la BD.
     pub fn load_shuffle_session(&self, playlist_id: i64) -> Result<Option<ShuffleSession>> {
         // Obtener la sesión más reciente
         let session_id: Option<String> = self.conn.query_row(
@@ -2124,6 +2168,7 @@ impl Database {
     }
 
     /// Limpia la sesión de shuffle de una playlist.
+    /// Limpia la sesión de shuffle de una playlist.
     pub fn clear_shuffle_session(&self, playlist_id: i64) -> Result<()> {
         self.conn.execute(
             "DELETE FROM PLAYLIST_SHUFFLE_HISTORY WHERE playlist_id = ?1",
@@ -2134,6 +2179,7 @@ impl Database {
 
     /// Obtiene el total de canciones en una playlist (para uso en shuffle).
     /// Incluye canciones disabled también.
+    /// Obtiene el total de canciones en una playlist (incluyendo disabled).
     pub fn get_playlist_total_count(&self, playlist_id: i64) -> Result<i64> {
         self.conn.query_row(
             "SELECT COUNT(*) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
@@ -2143,6 +2189,7 @@ impl Database {
     }
 
     /// Obtiene las canciones enabled de una playlist (para shuffle).
+    /// Obtiene los IDs de canciones habilitadas en una playlist.
     pub fn get_playlist_enabled_songs(&self, playlist_id: i64) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND enabled = 1 ORDER BY sequence_order ASC"
@@ -2159,6 +2206,7 @@ impl Database {
         Ok(results)
     }
 
+    /// Obtiene todos los IDs de canciones de una playlist en orden.
     pub fn get_playlist_all_song_ids(&self, playlist_id: i64) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(
             "SELECT song_id FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 ORDER BY sequence_order ASC",
@@ -2181,6 +2229,7 @@ impl Database {
 
     /// Obtiene los datos necesarios para construir el árbol de filtros de forma eficiente.
     /// Retorna una lista de tuplas (L1, L2, L3) según el tipo de filtro solicitado.
+    /// Obtiene la jerarquía de filtros (L1, L2, L3) para el árbol de navegación.
     pub fn get_filter_hierarchy(
         &self,
         filter_type: &str,
@@ -2283,6 +2332,7 @@ pub struct LibrarySearchParams {
 
 impl Database {
     /// Realiza una búsqueda y filtrado unificado en la base de datos usando FTS5 y filtros relacionales.
+    /// Realiza una búsqueda y filtrado unificado con FTS5 y filtros relacionales.
     pub fn get_library_songs_filtered(
         &self,
         params: &LibrarySearchParams,

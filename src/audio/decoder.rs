@@ -17,7 +17,7 @@ use audioadapter_buffers::direct::SequentialSliceOfVecs;
 /// Umbral para usar memoria mapeada en lugar de File normal (> 10 MB)
 const MEMMAP_THRESHOLD: u64 = 10 * 1024 * 1024;
 
-/// Información de un stream decodificado.
+/// Información técnica del stream de audio decodificado.
 #[derive(Clone, Debug)]
 pub struct DecodeStreamInfo {
     pub sample_rate: u32,
@@ -26,7 +26,7 @@ pub struct DecodeStreamInfo {
     pub channel_count: usize,
 }
 
-/// Resultado de una operación de decodificación.
+/// Paquete de audio decodificado listo para procesamiento.
 pub struct DecodedPacket {
     pub data: Vec<f64>,
     pub frames: usize,
@@ -52,7 +52,9 @@ pub trait AudioDecoder: Send {
     fn reset(&mut self);
 }
 
-/// Implementación con Symphonia (backend por defecto de alta fidelidad).
+/// Decodificador basado en Symphonia (backend por defecto).
+///
+/// Soporta MP3, FLAC, WAV, OGG, M4A, AAC, APE, Opus, WavPack y más.
 pub struct SymphoniaDecoder {
     format: Option<Box<dyn FormatReader>>,
     decoder: Option<Box<dyn Decoder>>,
@@ -60,6 +62,7 @@ pub struct SymphoniaDecoder {
 }
 
 impl SymphoniaDecoder {
+    /// Crea un nuevo decodificador Symphonia sin estado interno.
     pub fn new() -> Self {
         Self { format: None, decoder: None, track_id: 0 }
     }
@@ -816,6 +819,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                             // 1. Aplicar ReplayGain, DSP (EQ, etc.), y Volumen a `output_accumulator` en f64 nativo.
                             {
+                                let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
                                 let out_ch = out_channels as usize;
                                 if let Some(mut dsp_lock) = engine.dsp.try_write() {
                                     for frame in output_accumulator.chunks_mut(out_ch) {

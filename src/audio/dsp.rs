@@ -1,5 +1,9 @@
 use wide::CmpLt;
 
+/// Cadena de procesamiento DSP de Audoxidy.
+///
+/// Aplica en orden: preamplificador, ecualizador, noise gate, sub-bass, mid-bass,
+/// voice boost, compresor, reverberación, expansor estéreo, balance y limitador.
 pub struct DspChain {
     pub preamp_gain: f32, // Linear gain
     pub equalizer: Equalizer,
@@ -36,6 +40,9 @@ impl Default for DspChain {
 
 #[allow(dead_code)]
 impl DspChain {
+    /// Procesa un frame completo (todos los canales) a través de la cadena DSP.
+    ///
+    /// Si `enabled` es `false`, retorna sin modificar el frame.
     pub fn process_frame(&mut self, frame: &mut [f64]) {
         if !self.enabled {
             return;
@@ -96,6 +103,7 @@ impl DspChain {
         }
     }
 
+    /// Actualiza la frecuencia de muestreo en todos los módulos DSP.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.equalizer.set_sample_rate(sample_rate);
         self.sub_bass.set_sample_rate(sample_rate);
@@ -108,6 +116,7 @@ impl DspChain {
         self.reverb.set_sample_rate(sample_rate);
     }
 
+    /// Redimensiona el estado interno de los filtros para el número de canales dado.
     pub fn set_channel_count(&mut self, channels: usize) {
         self.equalizer.set_channel_count(channels);
         self.sub_bass.resize_channels(channels);
@@ -115,6 +124,7 @@ impl DspChain {
         self.voice_boost.resize_channels(channels);
     }
 
+    /// Devuelve la ganancia del preamplificador en dB.
     pub fn get_preamp_db(&self) -> f32 {
         if self.preamp_gain > 0.0 {
             20.0 * self.preamp_gain.log10()
@@ -123,6 +133,9 @@ impl DspChain {
         }
     }
 
+    /// Establece la ganancia del preamplificador en dB.
+    ///
+    /// Convierte el valor a ganancia lineal internamente.
     pub fn set_preamp_db(&mut self, db: f32) {
         self.preamp_gain = 10.0f32.powf(db / 20.0);
     }
@@ -138,8 +151,13 @@ impl DspChain {
         self.noise_gate.reset_state();
         self.limiter.reset_state();
     }
+
 }
 
+/// Ecualizador paramétrico de múltiples bandas (20 o 31 bandas).
+///
+/// Cada banda es un filtro biquad peak con frecuencia, ganancia y Q configurables.
+/// Usa SIMD (f64x4) en x86_64 para procesamiento eficiente.
 #[derive(Clone)]
 pub struct Equalizer {
     pub bands: Vec<EqBand>,
@@ -152,6 +170,7 @@ pub struct Equalizer {
 }
 
 impl Equalizer {
+    /// Crea un ecualizador con el número de bandas especificado (20 o 31).
     pub fn new(num_bands: usize) -> Self {
         // Create both sets initially
         let bands_20 = Self::create_bands(20);
@@ -209,6 +228,7 @@ impl Equalizer {
         }
     }
 
+    /// Cambia entre modo de 20 y 31 bandas preservando los estados guardados.
     pub fn set_mode(&mut self, num_bands: usize) {
         // 1. Save current state
         if self.bands.len() == 20 {
@@ -233,6 +253,7 @@ impl Equalizer {
     }
 
     // Initialize/Update Sample Rate
+    /// Actualiza los coeficientes de todas las bandas al nuevo sample rate.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.last_sample_rate = sample_rate;
         for band in &mut self.bands {
@@ -244,6 +265,7 @@ impl Equalizer {
     }
 
     // Initialize/Update Channels
+    /// Redimensiona los estados internos de los filtros por canal.
     pub fn set_channel_count(&mut self, channels: usize) {
         self.last_channel_count = channels;
         for band in &mut self.bands {
@@ -273,6 +295,7 @@ impl Equalizer {
         }
     }
 
+    /// Pone a cero la ganancia de todas las bandas (20 y 31).
     pub fn reset_all(&mut self) {
         for band in &mut self.bands {
             band.set_gain(0.0);
@@ -285,6 +308,7 @@ impl Equalizer {
         }
     }
 
+    /// Resetea el estado interno de todas las bandas del ecualizador.
     pub fn reset_state(&mut self) {
         for band in &mut self.bands {
             band.reset_state();
@@ -314,6 +338,10 @@ impl BiquadState {
     }
 }
 
+/// Banda de ecualización paramétrica (filtro biquad peak).
+///
+/// Cada banda tiene frecuencia, ganancia (dB) y Q configurables,
+/// con estado por canal para soporte multicanal (hasta 7.1).
 #[derive(Clone)]
 pub struct EqBand {
     pub frequency: f32,
@@ -333,6 +361,7 @@ pub struct EqBand {
 }
 
 impl EqBand {
+    /// Crea una nueva banda de ecualización con la frecuencia central dada.
     pub fn new(freq: f32) -> Self {
         let mut band = Self {
             frequency: freq,
@@ -351,6 +380,7 @@ impl EqBand {
         band
     }
 
+    /// Establece la ganancia de la banda en dB y actualiza los coeficientes.
     pub fn set_gain(&mut self, gain_db: f32) {
         self.gain = gain_db;
         self.update_coefficients(self.last_sample_rate);
@@ -358,17 +388,20 @@ impl EqBand {
 
     // Add set_sample_rate aware setter if needed, or just update coeffs after.
 
+    /// Establece el factor Q de la banda y actualiza los coeficientes.
     pub fn set_q(&mut self, q: f32) {
         self.q = q;
         self.update_coefficients(self.last_sample_rate);
     }
 
+    /// Redimensiona el buffer de estados por canal.
     pub fn resize_channels(&mut self, channels: usize) {
         if self.states.len() != channels {
             self.states.resize(channels, BiquadState::default());
         }
     }
 
+    /// Resetea el estado interno del filtro biquad (pone historial a cero).
     pub fn reset_state(&mut self) {
         for state in &mut self.states {
             state.reset();
@@ -378,6 +411,7 @@ impl EqBand {
     /*
      * Peaking EQ Filter Design
      */
+    /// Recalcula los coeficientes del filtro biquad peak para el sample rate dado.
     pub fn update_coefficients(&mut self, sample_rate: f32) {
         self.last_sample_rate = sample_rate;
         if sample_rate <= 0.0 {
@@ -619,6 +653,7 @@ const COMB_TUNINGS_BASE: [usize; 8] = [1617, 1693, 1781, 1867, 1951, 2053, 2153,
 const ALLPASS_TUNINGS_BASE: [usize; 4] = [556, 441, 341, 225];
 const REVERB_BASE_SAMPLE_RATE: f32 = 44100.0;
 
+/// Efecto de reverberación tipo Freeverb con 8 filtros comb y 4 all-pass.
 #[derive(Clone)]
 pub struct Reverb {
     combs: Vec<CombFilter>,
@@ -635,6 +670,7 @@ pub struct Reverb {
 
 #[allow(dead_code)]
 impl Reverb {
+    /// Crea un nuevo reverb con valores predeterminados (hall grande).
     pub fn new() -> Self {
         // Peines un 50% más amplios para un efecto "Hall" Premium mucho más notorio
         let comb_tunings = [1617, 1693, 1781, 1867, 1951, 2053, 2153, 2251];
@@ -664,6 +700,7 @@ impl Reverb {
         r
     }
 
+    /// Recalcula las líneas de delay para el sample rate dado.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         if sample_rate <= 0.0 {
             return;
@@ -689,20 +726,24 @@ impl Reverb {
         self.update_params();
     }
 
+    /// Establece el tamaño de la habitación (0.0 a 1.0).
     pub fn set_room_size(&mut self, value: f32) {
         self.room_size = value.clamp(0.0, 1.0);
         self.update_params();
     }
 
+    /// Establece el damping (amortiguación) del reverb (0.0 a 1.0).
     pub fn set_damping(&mut self, value: f32) {
         self.damping = value.clamp(0.0, 1.0);
         self.update_params();
     }
 
+    /// Establece el nivel de señal procesada (wet) (0.0 a 1.0).
     pub fn set_wet(&mut self, value: f32) {
         self.wet = value.clamp(0.0, 1.0);
     }
 
+    /// Establece el nivel de señal seca (dry) (0.0 a 1.0).
     pub fn set_dry(&mut self, value: f32) {
         self.dry = value.clamp(0.0, 1.0);
     }
@@ -718,6 +759,7 @@ impl Reverb {
         }
     }
 
+    /// Procesa un frame de audio aplicando el efecto de reverberación.
     pub fn process(&mut self, frame: &mut [f64]) {
         if !self.enabled {
             return;
@@ -739,6 +781,7 @@ impl Reverb {
         }
     }
 
+    /// Resetea el estado interno del reverb (líneas de delay).
     pub fn reset_state(&mut self) {
         for comb in &mut self.combs {
             comb.reset();
@@ -751,6 +794,7 @@ impl Reverb {
 
 // --- Compressor ---
 
+/// Compresor de audio dinámico con control de threshold, ratio, attack y release.
 #[derive(Clone)]
 pub struct Compressor {
     pub enabled: bool,
@@ -766,6 +810,7 @@ pub struct Compressor {
 
 #[allow(dead_code)]
 impl Compressor {
+    /// Crea un compresor con valores predeterminados.
     pub fn new() -> Self {
         Self {
             enabled: false,
@@ -778,10 +823,12 @@ impl Compressor {
         }
     }
 
+    /// Establece la frecuencia de muestreo para el seguidor de envolvente.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
 
+    /// Configura los parámetros del compresor.
     pub fn set_params(&mut self, threshold: f32, ratio: f32, attack: f32, release: f32) {
         self.threshold = threshold;
         self.ratio = ratio.max(1.0);
@@ -789,6 +836,7 @@ impl Compressor {
         self.release = release.max(0.001);
     }
 
+    /// Procesa un frame aplicando compresión dinámica.
     pub fn process(&mut self, frame: &mut [f64]) {
         if !self.enabled {
             return;
@@ -829,6 +877,7 @@ impl Compressor {
         }
     }
 
+    /// Resetea la envolvente del compresor.
     pub fn reset_state(&mut self) {
         self.envelope = 0.0;
     }
@@ -836,6 +885,7 @@ impl Compressor {
 
 // --- Biquad General Filter ---
 
+/// Tipo de filtro biquad disponible en el DSP.
 #[derive(Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 pub enum BiquadFilterType {
@@ -847,6 +897,7 @@ pub enum BiquadFilterType {
     HighPass,
 }
 
+/// Filtro biquad genérico configurable (peak, low shelf, high shelf, etc.).
 #[derive(Clone)]
 pub struct BiquadFilter {
     filter_type: BiquadFilterType,
@@ -863,6 +914,7 @@ pub struct BiquadFilter {
 }
 
 impl BiquadFilter {
+    /// Crea un nuevo filtro biquad del tipo, frecuencia, ganancia y Q especificados.
     pub fn new(filter_type: BiquadFilterType, freq: f32, gain: f32, q: f32) -> Self {
         let mut filter = Self {
             filter_type,
@@ -881,6 +933,7 @@ impl BiquadFilter {
         filter
     }
 
+    /// Configura los parámetros del filtro y actualiza los coeficientes.
     pub fn set_params(&mut self, freq: f32, gain: f32, q: f32) {
         self.freq = freq;
         self.gain = gain;
@@ -888,21 +941,25 @@ impl BiquadFilter {
         self.update_coefficients(self.sample_rate);
     }
 
+    /// Establece la frecuencia de muestreo y actualiza los coeficientes.
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.sample_rate = rate;
         self.update_coefficients(rate);
     }
 
+    /// Redimensiona los estados internos para el número de canales dado.
     pub fn resize_channels(&mut self, channels: usize) {
         self.states.resize(channels, BiquadState::default());
     }
 
+    /// Resetea el estado interno del filtro.
     pub fn reset_state(&mut self) {
         for state in &mut self.states {
             state.reset();
         }
     }
 
+    /// Recalcula los coeficientes del filtro para el sample rate dado.
     pub fn update_coefficients(&mut self, sample_rate: f32) {
         // Cálculos de coeficientes en f64 para máxima precisión
         let w0 = 2.0 * std::f64::consts::PI * (self.freq as f64) / (sample_rate as f64);
@@ -977,6 +1034,7 @@ impl BiquadFilter {
         }
     }
 
+    /// Procesa un frame completo a través del filtro biquad con SIMD en x86_64.
     pub fn process_frame(&mut self, frame: &mut [f64]) {
         match self.filter_type {
             BiquadFilterType::Peak | BiquadFilterType::LowShelf | BiquadFilterType::HighShelf => {
@@ -1055,6 +1113,7 @@ impl BiquadFilter {
 
 // --- New Audio Effects Definitions ---
 
+/// Filtro Low-Shelf para realzar o atenuar frecuencias sub-graves.
 #[derive(Clone)]
 pub struct SubBass {
     pub enabled: bool,
@@ -1073,23 +1132,29 @@ impl Default for SubBass {
     }
 }
 impl SubBass {
+    /// Establece la frecuencia de muestreo del filtro sub-bass.
+    /// Establece la frecuencia de muestreo del filtro sub-bass.
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.filter.set_sample_rate(rate);
     }
+    /// Redimensiona los canales del filtro sub-bass.
     pub fn resize_channels(&mut self, ch: usize) {
         self.filter.resize_channels(ch);
     }
+    /// Procesa un frame aplicando el filtro sub-bass.
     pub fn process(&mut self, frame: &mut [f64]) {
         if self.filter.gain != self.gain {
             self.filter.set_params(self.freq, self.gain, 1.0);
         }
         self.filter.process_frame(frame);
     }
+    /// Resetea el estado interno del filtro sub-bass.
     pub fn reset_state(&mut self) {
         self.filter.reset_state();
     }
 }
 
+/// Filtro Peak para realzar o atenuar frecuencias medias-graves (~100 Hz).
 #[derive(Clone)]
 pub struct MidBass {
     pub enabled: bool,
@@ -1108,23 +1173,28 @@ impl Default for MidBass {
     }
 }
 impl MidBass {
+    /// Establece la frecuencia de muestreo del filtro mid-bass.
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.filter.set_sample_rate(rate);
     }
+    /// Redimensiona los canales del filtro mid-bass.
     pub fn resize_channels(&mut self, ch: usize) {
         self.filter.resize_channels(ch);
     }
+    /// Procesa un frame aplicando el filtro mid-bass.
     pub fn process(&mut self, frame: &mut [f64]) {
         if self.filter.gain != self.gain {
             self.filter.set_params(self.freq, self.gain, 0.8);
         }
         self.filter.process_frame(frame);
     }
+    /// Resetea el estado interno del filtro mid-bass.
     pub fn reset_state(&mut self) {
         self.filter.reset_state();
     }
 }
 
+/// Refuerzo de frecuencias vocales con dos filtros peak (1.5 kHz y 3 kHz).
 #[derive(Clone)]
 pub struct VoiceBoost {
     pub enabled: bool,
@@ -1143,14 +1213,17 @@ impl Default for VoiceBoost {
     }
 }
 impl VoiceBoost {
+    /// Establece la frecuencia de muestreo de los filtros vocales.
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.filter1.set_sample_rate(rate);
         self.filter2.set_sample_rate(rate);
     }
+    /// Redimensiona los canales de los filtros vocales.
     pub fn resize_channels(&mut self, ch: usize) {
         self.filter1.resize_channels(ch);
         self.filter2.resize_channels(ch);
     }
+    /// Procesa un frame aplicando el refuerzo vocal.
     pub fn process(&mut self, frame: &mut [f64]) {
         if self.filter1.gain != (self.gain * 0.6) {
             self.filter1.set_params(1500.0, self.gain * 0.6, 0.8);
@@ -1159,12 +1232,14 @@ impl VoiceBoost {
         self.filter1.process_frame(frame);
         self.filter2.process_frame(frame);
     }
+    /// Resetea el estado interno de los filtros vocales.
     pub fn reset_state(&mut self) {
         self.filter1.reset_state();
         self.filter2.reset_state();
     }
 }
 
+/// Modo de operación del expansor estéreo multicapa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExpanderMode {
     Hybrid,
@@ -1260,6 +1335,10 @@ impl StereoExpanderSurround {
     }
 }
 
+/// Expansor estéreo multicapa con modos Hybrid y Surround.
+///
+/// Separa el audio en bandas de frecuencia (low, mid, high) y aplica
+/// expansión estéreo independiente con decorrelación de fase y air boost.
 #[derive(Clone)]
 pub struct MultiBandStereoExpander {
     pub enabled: bool,
@@ -1282,6 +1361,7 @@ impl Default for MultiBandStereoExpander {
 }
 
 impl MultiBandStereoExpander {
+    /// Establece la frecuencia de muestreo y reconfigura los filtros internos.
     pub fn set_sample_rate(&mut self, rate: f32) {
         self.hybrid.sample_rate = rate;
         self.hybrid.low_lp1.set_sample_rate(rate);
@@ -1306,6 +1386,7 @@ impl MultiBandStereoExpander {
         self.surround.high_shelf_side.set_sample_rate(rate);
     }
 
+    /// Procesa un frame estéreo aplicando expansión multicapa.
     pub fn process(&mut self, frame: &mut [f64]) {
         if frame.len() != 2 || self.width == 1.0 {
             return;
@@ -1448,6 +1529,7 @@ impl MultiBandStereoExpander {
         band[1] = mid - side * width;
     }
 
+    /// Resetea el estado interno de todos los filtros del expansor.
     pub fn reset_state(&mut self) {
         self.hybrid.low_lp1.reset_state();
         self.hybrid.low_lp2.reset_state();
@@ -1478,6 +1560,7 @@ impl MultiBandStereoExpander {
     }
 }
 
+/// Puerta de ruido con seguidor de envolvente y atenuación suave.
 #[derive(Clone)]
 pub struct NoiseGate {
     pub enabled: bool,
@@ -1500,6 +1583,7 @@ impl Default for NoiseGate {
     }
 }
 impl NoiseGate {
+    /// Establece la frecuencia de muestreo para el seguidor de envolvente.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
@@ -1537,6 +1621,7 @@ impl NoiseGate {
         self.envelope = 0.0;
     }
 }
+/// Limitador de pico con ataque instantáneo y release suave.
 #[derive(Clone)]
 pub struct Limiter {
     pub enabled: bool,
@@ -1557,6 +1642,7 @@ impl Default for Limiter {
     }
 }
 impl Limiter {
+    /// Establece la frecuencia de muestreo para el seguidor de envolvente.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
     }
@@ -1588,6 +1674,7 @@ impl Limiter {
     }
 }
 
+/// Control de balance estéreo (panorama) entre canal izquierdo y derecho.
 #[derive(Clone)]
 pub struct StereoBalance {
     pub enabled: bool,
@@ -1602,6 +1689,7 @@ impl Default for StereoBalance {
     }
 }
 impl StereoBalance {
+    /// Procesa un frame estéreo ajustando el balance izquierda/derecha.
     pub fn process(&mut self, frame: &mut [f64]) {
         if frame.len() == 2 && self.balance != 0.0 {
             // balance -1.0 = left 100%, right 0%

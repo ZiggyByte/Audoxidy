@@ -17,3 +17,5 @@ library.db-shm
 library.db-wal
 library.db*
 graphify-out/
+.criterion/
+logs/

@@ -1,3 +1,8 @@
+//! Módulo de audio de Audoxidy.
+//!
+//! Contiene el motor de reproducción, cadena DSP, gestión de dispositivos,
+//! decodificación de formatos y ecualización por presets.
+
 pub mod decoder;
 pub mod device_manager;
 pub mod dsp;

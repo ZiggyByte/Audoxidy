@@ -1,3 +1,6 @@
+//! Escáner de biblioteca musical que recorre directorios, extrae metadatos
+//! con `lofty` y almacena la información en la base de datos SQLite.
+
 use lofty::prelude::{AudioFile, ItemKey, TaggedFileExt};
 use lofty::probe::Probe;
 use std::path::Path;
@@ -9,6 +12,12 @@ use walkdir::WalkDir;
 
 use crate::db::database::{Database, SongData, SongMetadataExtended};
 
+/// Escáner de la biblioteca musical.
+///
+/// Recorre directorios del sistema de archivos, extrae metadatos de audio
+/// mediante `lofty` con fusión inteligente de tags (priorizando ID3v2,
+/// VorbisComments, APE según el formato), y los almacena en la base de datos.
+/// También encola el procesamiento de carátulas embebidas.
 pub struct Scanner {
     _db: Arc<Mutex<Database>>,
     pub db_dirty: Arc<AtomicBool>,
@@ -16,6 +25,7 @@ pub struct Scanner {
 }
 
 impl Scanner {
+    /// Crea un nuevo escáner con la referencia a la base de datos.
     pub fn new(db: Arc<Mutex<Database>>) -> Self {
         Self {
             _db: db,
@@ -24,6 +34,7 @@ impl Scanner {
         }
     }
 
+    /// Escanea un directorio en un hilo separado de forma asíncrona.
     pub fn scan_folder_async(&self, folder_path: String) {
         let db_arc = Arc::clone(&self._db);
         let dirty_flag = Arc::clone(&self.db_dirty);
@@ -95,6 +106,10 @@ impl Scanner {
         dirty_flag.store(true, Ordering::Relaxed);
     }
 
+    /// Procesa un archivo de audio individual: extrae metadatos y lo inserta en la BD.
+    ///
+    /// Usa `lofty` para leer tags con fusión por prioridad según formato,
+    /// extrae carátulas embebidas y encola su procesamiento AVIF.
     pub fn process_file(
         db_m: &Arc<Mutex<Database>>,
         path: &Path,
@@ -277,6 +292,9 @@ impl Scanner {
         }
     }
 
+    /// Importa un archivo M3U/M3U8 como una nueva playlist.
+    ///
+    /// Las canciones que no existen en la BD se procesan como externas.
     pub fn import_m3u(db_m: &Arc<Mutex<Database>>, m3u_path: &str) -> Option<i64> {
         use std::io::BufRead;
         let path = Path::new(m3u_path);
@@ -341,6 +359,9 @@ impl Scanner {
         Some(playlist_id)
     }
 
+    /// Procesa un lote de archivos externos y los añade a una playlist.
+    ///
+    /// Soporta archivos de audio individuales, directorios (recursivo) y M3U.
     pub fn process_external_batch(
         db_m: &Arc<Mutex<Database>>,
         paths: Vec<std::path::PathBuf>,

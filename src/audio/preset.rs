@@ -1,5 +1,9 @@
 use serde::{Deserialize, Serialize};
 
+/// Preset de ecualización con nombre, preamplificador y bandas para 20/31 bandas.
+///
+/// Puede almacenar ganancias para ambos modos (20 y 31 bandas) y realiza
+/// conversión por interpolación logarítmica entre ellos.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EqPreset {
     pub name: String,
@@ -9,6 +13,7 @@ pub struct EqPreset {
 }
 
 impl EqPreset {
+    /// Crea un nuevo preset de ecualización.
     pub fn new(
         name: &str,
         preamp_gain: f32,
@@ -23,6 +28,7 @@ impl EqPreset {
         }
     }
 
+    /// Devuelve las ganancias para 20 bandas, convirtiendo desde 31 si es necesario.
     pub fn get_gains_20(&self) -> Vec<f32> {
         if let Some(ref b) = self.bands_20 {
             b.clone()
@@ -33,6 +39,7 @@ impl EqPreset {
         }
     }
 
+    /// Devuelve las ganancias para 31 bandas, convirtiendo desde 20 si es necesario.
     pub fn get_gains_31(&self) -> Vec<f32> {
         if let Some(ref b) = self.bands_31 {
             b.clone()
@@ -43,6 +50,7 @@ impl EqPreset {
         }
     }
 
+    /// Convierte ganancias de 31 bandas a 20 bandas por interpolación logarítmica.
     pub fn convert_31_to_20(gains_31: &[f32]) -> Vec<f32> {
         let f20 = [
             22.4, 31.5, 45.0, 63.0, 90.0, 125.0, 180.0, 250.0, 355.0, 500.0, 710.0, 1000.0, 1400.0,
@@ -58,6 +66,7 @@ impl EqPreset {
             .collect()
     }
 
+    /// Convierte ganancias de 20 bandas a 31 bandas por interpolación logarítmica.
     pub fn convert_20_to_31(gains_20: &[f32]) -> Vec<f32> {
         let f20 = [
             22.4, 31.5, 45.0, 63.0, 90.0, 125.0, 180.0, 250.0, 355.0, 500.0, 710.0, 1000.0, 1400.0,
@@ -100,6 +109,7 @@ impl EqPreset {
         0.0
     }
 
+    /// Devuelve una lista de presets predefinidos (Default, Ballad, Classical, etc.).
     pub fn default_presets() -> Vec<Self> {
         vec![
             // Default

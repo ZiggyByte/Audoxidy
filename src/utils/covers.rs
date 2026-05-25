@@ -1,3 +1,9 @@
+//! Sistema de caché y procesamiento de carátulas de álbumes.
+//!
+//! Escala imágenes a 400×400 (o 200×200 en modo low-resource),
+//! las comprime en formato AVIF al 90% de calidad y las almacena
+//! en `cache/covers/` con un LRU cache en RAM para Iced.
+
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
 use image::codecs::avif::AvifEncoder;
@@ -9,7 +15,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
-/// Instancia estática del Thread Pool limitado para tareas de fondo
+/// Instancia estática del Thread Pool limitado para tareas de fondo de carátulas.
 pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 
 /// Canal limitado para controlar la presión de memoria durante el escaneado
@@ -18,10 +24,13 @@ static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = 
 /// Almacena rutas de archivos que fallaron o no existen (evita reintentos)
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Estructura de caché LRU manual para retener Handles y prevenir OOM en Iced
+/// Caché LRU manual para retener Handles de carátulas y prevenir OOM en Iced.
 pub struct CoverCache {
+    /// Mapa de ruta de carátula a Handle de Iced.
     pub map: HashMap<String, iced::widget::image::Handle>,
+    /// Orden de acceso (frente = menos reciente, final = más reciente).
     pub order: VecDeque<String>,
+    /// Número máximo de entradas en la caché.
     pub max_size: usize,
 }
 
@@ -34,6 +43,7 @@ fn get_max_covers() -> usize {
 
 pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
 
+/// Obtiene o inicializa la caché LRU global de carátulas.
 pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
     LRU_COVER_CACHE.get_or_init(|| {
         let initial_max = get_max_covers();
@@ -45,6 +55,9 @@ pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
     })
 }
 
+/// Obtiene o inicializa el ThreadPool global para procesamiento de carátulas.
+///
+/// En modo low-resource usa 1 hilo; en modo normal usa 1/3 de los núcleos.
 pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     COVER_POOL.get_or_init(|| {
         let cores = std::thread::available_parallelism()
@@ -94,6 +107,7 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
 }
 
 /// Limpia la caché negativa (archivos que fallaron). Útil tras re-escaneo.
+/// Limpia la caché negativa de archivos que fallaron al cargar.
 pub fn clear_all_cover_cache() {
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
         neg_cache_mtx.lock().clear();
@@ -289,6 +303,7 @@ pub fn preload_visible_covers(paths: &[String]) {
 }
 
 /// Solo se usa cuando no hay carátula en caché de disco (datos embebidos del archivo de audio).
+/// Carga una imagen desde bytes crudos para usar en Iced (fallback para datos embebidos).
 pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handle> {
     if data.is_empty() {
         return None;
@@ -297,6 +312,7 @@ pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handl
 }
 
 /// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
+/// Limpia la caché LRU completa de carátulas (llamado al cambiar de canción).
 pub fn clear_raw_cache() {
     // Vaciar LRU completo al limpiar
     let cache_mtx = get_lru_cache();

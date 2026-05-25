@@ -12,6 +12,12 @@ static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 /// Cached system info para evitar crear el objeto sysinfo::System en cada consulta
 static SYSINFO: OnceLock<parking_lot::Mutex<sysinfo::System>> = OnceLock::new();
 
+/// Intervalo fijo de purga: 120 segundos (2 minutos). D-01: estricto, sin backoff ni lógica adaptativa.
+const FIXED_PURGE_INTERVAL_SECS: u64 = 120;
+
+/// Umbral de hard cap de RAM: si el uso supera este porcentaje, se fuerza purga inmediata. D-03.
+const RAM_HARD_CAP_PERCENT: f64 = 75.0;
+
 /// Obtiene o inicializa la instancia global de `sysinfo::System`.
 fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
     SYSINFO.get_or_init(|| parking_lot::Mutex::new(sysinfo::System::new()))
@@ -30,24 +36,6 @@ fn get_ram_usage_percent() -> f64 {
         }
     }
     0.0
-}
-
-/// Devuelve el intervalo de purga en minutos basado en el uso real de RAM.
-/// - RAM < 50%:  purga cada 15 minutos (relajado)
-/// - RAM 50-70%: purga cada 8 minutos
-/// - RAM 70-85%: purga cada 4 minutos
-/// - RAM > 85%:  purga cada 1 minuto (agresivo)
-pub fn get_dynamic_purge_interval_mins() -> u64 {
-    let ram_pct = get_ram_usage_percent();
-    if ram_pct > 85.0 {
-        1
-    } else if ram_pct > 70.0 {
-        4
-    } else if ram_pct > 50.0 {
-        8
-    } else {
-        15
-    }
 }
 
 impl MemoryManager {
@@ -73,9 +61,10 @@ impl MemoryManager {
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
 
-    /// Verifica si han pasado X minutos desde la última purga global.
-    /// El intervalo se calcula dinámicamente según el uso real de RAM.
-    pub fn should_run_global_purge(_interval_mins: u64, is_scanning: bool) -> bool {
+    /// Verifica si han pasado 120 segundos desde la última purga global.
+    /// Usa un intervalo fijo de 2 minutos (D-01), sin lógica adaptativa.
+    /// No se activa durante escaneos.
+    pub fn should_run_global_purge(_ignored: u64, is_scanning: bool) -> bool {
         if is_scanning {
             return false;
         }
@@ -89,10 +78,7 @@ impl MemoryManager {
             return false;
         }
 
-        // Usar intervalo dinámico basado en RAM real
-        let interval_mins = get_dynamic_purge_interval_mins();
-
-        if now.saturating_sub(last) >= (interval_mins * 60) {
+        if now.saturating_sub(last) >= FIXED_PURGE_INTERVAL_SECS {
             LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
             return true;
         }
@@ -116,6 +102,14 @@ impl MemoryManager {
             }
             malloc_trim(0);
         }
+    }
+
+    /// Comprueba si la RAM del sistema supera el hard cap (75%). D-03.
+    /// Si retorna `true`, el Tick handler debe forzar un `GlobalMemoryPurge` inmediato
+    /// sin esperar el ciclo de 2 minutos.
+    pub fn is_ram_over_hard_cap() -> bool {
+        let ram_pct = get_ram_usage_percent();
+        ram_pct > RAM_HARD_CAP_PERCENT
     }
 
     /// Ejecuta la secuencia de purga global notificando a la App

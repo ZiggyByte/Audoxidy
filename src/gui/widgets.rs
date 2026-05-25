@@ -2648,10 +2648,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let is_dragging = _tree.state.downcast_ref::<CustomSliderState>().is_dragging;
 
         // Renderizar tooltip si está habilitado y (está hovered O se está dragging)
-        // Durante drag, bloquear tooltip para que solo muestre el del slider siendo arrastrado
         if (is_hovered || is_dragging) && self.options.show_tooltip {
             if let Some(cursor_pos) = cursor.position() {
-                self.draw_tooltip(renderer, bounds, percent, cursor_pos);
+                self.draw_tooltip(renderer, _viewport, percent, cursor_pos);
             }
         }
     }
@@ -2841,10 +2840,11 @@ impl<'a, Message> CustomSlider<'a, Message> {
     /// Renderizar tooltip con el valor actual junto al cursor.
     /// Diseño idéntico al tooltip de la barra de búsqueda del reproductor (player.rs):
     /// fondo COLOR_CONTRAST, borde 1px COLOR_TEXT_SECONDARY, texto blanco, padding 4px.
+    /// Tooltip con posicionamiento en coordenadas absolutas del viewport.
     fn draw_tooltip(
         &self,
         renderer: &mut iced::Renderer,
-        _bounds: Rectangle,
+        viewport: &iced::Rectangle,
         _percent: f32,
         cursor_pos: iced::Point,
     ) {
@@ -2854,21 +2854,26 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let val_display = self.format_display_value(self.value);
         let font_size = (self.options.tooltip_font_size - 1.0).max(10.0);
 
-        // Padding y borde redondeado (como el tooltip del reproductor)
         let padding: f32 = 4.0;
         let border_radius = 4.0;
 
-        // Estimar ancho del texto (~6.5px por carácter para font-size 11)
+        // Ancho estimado del texto
         let char_width = font_size * 0.6;
         let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
         let tooltip_width = (text_width + padding * 2.0 + 4.0).max(48.0);
         let tooltip_height = (font_size + padding * 2.0 + 2.0).max(20.0);
 
-        // Posicionar: centrado sobre el cursor, arriba
+        // Posicionar tooltip centrado sobre el cursor, arriba.
+        // Las coordenadas están en espacio del viewport, clamps absolutos.
+        let vp_w = viewport.width;
+        let vp_h = viewport.height;
+
         let tooltip_x = (cursor_pos.x - tooltip_width / 2.0)
             .max(2.0)
-            .min(_bounds.width - tooltip_width - 2.0);
-        let tooltip_y = (cursor_pos.y - tooltip_height - 8.0).max(2.0);
+            .min(vp_w - tooltip_width - 2.0);
+        let tooltip_y = (cursor_pos.y - tooltip_height - 10.0)
+            .max(2.0)
+            .min(vp_h - tooltip_height - 2.0);
 
         let tooltip_rect = Rectangle {
             x: tooltip_x,
@@ -2877,7 +2882,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
             height: tooltip_height,
         };
 
-        // Fondo del tooltip con borde (mismo estilo que player.rs)
+        // Fondo del tooltip con borde
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
                 bounds: tooltip_rect,
@@ -2891,7 +2896,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
             COLOR_CONTRAST,
         );
 
-        // Texto blanco centrado (mismo que player.rs: container -> text size 12, Color::WHITE)
+        // Texto blanco centrado
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: val_display,

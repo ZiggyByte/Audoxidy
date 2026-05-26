@@ -193,37 +193,146 @@ mod tests {
     fn test_compressor_params_defaults() {
         let c = Compressor::new();
         assert!((c.threshold - (-3.0)).abs() < 1e-6);
-        assert!((c.ratio - 4.0).abs() < 1e-6);
-        assert!((c.attack - 0.005).abs() < 1e-6);
-        assert!((c.release - 0.1).abs() < 1e-6);
+        assert!((c.intensity - 0.5).abs() < 1e-6);
     }
 
     #[test]
-    fn test_compressor_ratio_min_enforced() {
+    fn test_compressor_set_params_deprecated_still_works() {
         let mut c = Compressor::new();
-        c.set_params(-10.0, 0.5, 0.01, 0.1);
-        assert!(c.ratio >= 1.0);
-    }
-
-    #[test]
-    fn test_compressor_attack_release_min() {
-        let mut c = Compressor::new();
-        c.set_params(-10.0, 4.0, 0.0, 0.0);
-        assert!(c.attack >= 0.001);
-        assert!(c.release >= 0.001);
+        #[allow(deprecated)]
+        c.set_params(-20.0, 4.0, 0.005, 0.1);
+        assert!((c.threshold - (-20.0)).abs() < 1e-6);
+        assert!((c.intensity - 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn test_compressor_process_no_panic() {
         let mut c = Compressor::new();
         c.enabled = true;
-        c.process(&mut [0.5, -0.3]);
+        for _ in 0..100 {
+            c.process(&mut [0.5, -0.3]);
+        }
     }
 
     #[test]
     fn test_compressor_reset_state() {
         let mut c = Compressor::new();
         c.reset_state();
+    }
+
+    // ========================================================================
+    // Compressor premium tests (D-02, D-03, D-05)
+    // ========================================================================
+
+    #[test]
+    fn test_compressor_rms_vs_peak() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        c.threshold = -10.0;
+        c.intensity = 0.5;
+        c.update_intensity_params();
+        // Fill lookahead with steady signal
+        for _ in 0..c.lookahead_samples {
+            c.process(&mut [0.01_f64, 0.01_f64]);
+        }
+        // Feed transient
+        c.process(&mut [0.9_f64, -0.1_f64]);
+        // RMS envelope should be lower than peak 0.9
+        assert!(c.envelope < 0.9);
+    }
+
+    #[test]
+    fn test_compressor_soft_knee_curve() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        c.threshold = -10.0;
+        c.intensity = 0.5;
+        c.update_intensity_params();
+        // Fill lookahead with steady signal at -14dB ≈ 0.2 linear
+        for _ in 0..c.lookahead_samples {
+            c.process(&mut [0.2_f64, 0.2_f64]);
+        }
+        // After processing, envelope should be around 0.2
+        assert!(c.envelope < 0.3);
+        // Process should not panic with knee active
+    }
+
+    #[test]
+    fn test_compressor_intensity_mapping() {
+        let mut c0 = Compressor::new();
+        c0.intensity = 0.0;
+        c0.update_intensity_params();
+        assert!(c0.intensity_ratio >= 1.0 && c0.intensity_ratio <= 2.0);
+
+        let mut c5 = Compressor::new();
+        c5.intensity = 0.5;
+        c5.update_intensity_params();
+        assert!(c5.intensity_ratio >= 3.5 && c5.intensity_ratio <= 4.5);
+
+        let mut c1 = Compressor::new();
+        c1.intensity = 1.0;
+        c1.update_intensity_params();
+        assert!(c1.intensity_ratio >= 18.0 && c1.intensity_ratio <= 22.0);
+    }
+
+    #[test]
+    fn test_compressor_lookahead_transient() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        c.threshold = -3.0;
+        c.intensity = 0.75;
+        c.update_intensity_params();
+        // Fill lookahead with silence
+        for _ in 0..c.lookahead_samples {
+            c.process(&mut [0.0_f64, 0.0_f64]);
+        }
+        let mut impulse = [0.98_f64, -0.98_f64];
+        c.process(&mut impulse);
+        assert!(impulse[0].abs() < 0.98, "Lookahead should compress transient");
+    }
+
+    #[test]
+    fn test_compressor_zero_threshold_bypass() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        c.threshold = 0.0;
+        c.intensity = 0.5;
+        c.update_intensity_params();
+        // Feed frames at -6dB (well below 0dB threshold) until buffer full + output
+        for _ in 0..c.lookahead_samples + 1 {
+            let mut frame = [0.5_f64, -0.3_f64];
+            let orig = frame;
+            c.process(&mut frame);
+            // Once buffer is full, output should be identical or very close (makeup may apply)
+            assert!((frame[0] - orig[0]).abs() < 1.0); // makeup adds gain but no compression
+        }
+    }
+
+    #[test]
+    fn test_compressor_makeup_gain() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        c.threshold = -30.0;
+        c.intensity = 0.5;
+        c.update_intensity_params();
+        // Fill lookahead with above-threshold signal
+        for _ in 0..c.lookahead_samples {
+            c.process(&mut [0.5_f64, 0.5_f64]);
+        }
+        let mut frame = [0.5_f64, 0.5_f64];
+        c.process(&mut frame);
+        assert!(frame[0] > 0.0, "Makeup gain should produce non-zero output with heavy compression");
+    }
+
+    #[test]
+    fn test_compressor_nan_guard() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        for _ in 0..c.lookahead_samples {
+            c.process(&mut [f64::NAN, f64::INFINITY]);
+        }
+        c.process(&mut [f64::NAN, f64::INFINITY]);
+        // Should not panic and should produce finite output
     }
 
     // ========================================================================

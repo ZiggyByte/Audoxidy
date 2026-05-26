@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use wide::CmpLt;
 
 /// Cadena de procesamiento DSP de Audoxidy.
@@ -797,92 +799,259 @@ impl Reverb {
 
 // --- Compressor ---
 
-/// Compresor de audio dinámico con control de threshold, ratio, attack y release.
+/// Compresor premium con detección RMS, soft knee, lookahead y makeup gain.
 #[derive(Clone)]
 pub struct Compressor {
     pub enabled: bool,
     pub threshold: f32, // dB
-    pub ratio: f32,
-    pub attack: f32,  // secs
-    pub release: f32, // secs
+    pub intensity: f32, // 0.0..1.0
+
+    // Internal — derived from intensity
+    pub intensity_ratio: f32,
+    intensity_attack: f32,
+    intensity_release: f32,
+    knee_width: f32,    // dB
+    makeup_gain: f32,   // linear
 
     // Internal state
-    envelope: f64,
+    pub envelope: f64,
+    envelope_rms: f64,
     sample_rate: f32,
+    lookahead: VecDeque<Vec<f64>>,
+    pub lookahead_samples: usize,
 }
 
 #[allow(dead_code)]
 impl Compressor {
     /// Crea un compresor con valores predeterminados.
     pub fn new() -> Self {
-        Self {
+        let sr: f32 = 44100.0;
+        let ls = (0.001 * sr).round() as usize;
+        let mut c = Self {
             enabled: false,
             threshold: -3.0,
-            ratio: 4.0,
-            attack: 0.005,
-            release: 0.1,
+            intensity: 0.5,
+            intensity_ratio: 4.0,
+            intensity_attack: 0.005,
+            intensity_release: 0.1,
+            knee_width: 0.0,
+            makeup_gain: 1.0,
             envelope: 0.0,
-            sample_rate: 44100.0,
-        }
+            envelope_rms: 0.0,
+            sample_rate: sr,
+            lookahead: VecDeque::with_capacity(ls + 1),
+            lookahead_samples: ls,
+        };
+        c.update_intensity_params();
+        c
     }
 
     /// Establece la frecuencia de muestreo para el seguidor de envolvente.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
+        self.lookahead_samples = (0.001 * sample_rate).round() as usize;
+        self.lookahead = VecDeque::with_capacity(self.lookahead_samples + 1);
+        self.update_intensity_params();
     }
 
-    /// Configura los parámetros del compresor.
-    pub fn set_params(&mut self, threshold: f32, ratio: f32, attack: f32, release: f32) {
+    /// Configura los parámetros del compresor (deprecated — usar `intensity`).
+    #[deprecated(note = "Use `intensity` field instead. Ratio/attack/release params are now derived from intensity.")]
+    pub fn set_params(&mut self, threshold: f32, _ratio: f32, _attack: f32, _release: f32) {
         self.threshold = threshold;
-        self.ratio = ratio.max(1.0);
-        self.attack = attack.max(0.001);
-        self.release = release.max(0.001);
+        self.intensity = 0.5;
+        self.update_intensity_params();
     }
 
-    /// Procesa un frame aplicando compresión dinámica.
+    /// Actualiza ratio, attack, release, knee_width y makeup_gain a partir de `intensity` (0..1).
+    pub fn update_intensity_params(&mut self) {
+        let i = self.intensity.clamp(0.0, 1.0);
+
+        // 5-point interpolation table (intensity normalized to 0..1)
+        let lerp = |t: f32, a: f32, b: f32| a + (b - a) * t;
+
+        let ratio = if i <= 0.25 {
+            let t = i / 0.25;
+            lerp(t, 1.5, 2.5)
+        } else if i <= 0.5 {
+            let t = (i - 0.25) / 0.25;
+            lerp(t, 2.5, 4.0)
+        } else if i <= 0.75 {
+            let t = (i - 0.5) / 0.25;
+            lerp(t, 4.0, 8.0)
+        } else {
+            let t = (i - 0.75) / 0.25;
+            lerp(t, 8.0, 20.0)
+        };
+
+        let att_ms = if i <= 0.25 {
+            let t = i / 0.25;
+            lerp(t, 30.0, 15.0)
+        } else if i <= 0.5 {
+            let t = (i - 0.25) / 0.25;
+            lerp(t, 15.0, 8.0)
+        } else if i <= 0.75 {
+            let t = (i - 0.5) / 0.25;
+            lerp(t, 8.0, 3.0)
+        } else {
+            let t = (i - 0.75) / 0.25;
+            lerp(t, 3.0, 1.0)
+        };
+
+        let rel_ms = if i <= 0.25 {
+            let t = i / 0.25;
+            lerp(t, 200.0, 150.0)
+        } else if i <= 0.5 {
+            let t = (i - 0.25) / 0.25;
+            lerp(t, 150.0, 100.0)
+        } else if i <= 0.75 {
+            let t = (i - 0.5) / 0.25;
+            lerp(t, 100.0, 60.0)
+        } else {
+            let t = (i - 0.75) / 0.25;
+            lerp(t, 60.0, 30.0)
+        };
+
+        let knee_db = if i <= 0.25 {
+            let t = i / 0.25;
+            lerp(t, 30.0, 20.0)
+        } else if i <= 0.5 {
+            let t = (i - 0.25) / 0.25;
+            lerp(t, 20.0, 10.0)
+        } else if i <= 0.75 {
+            let t = (i - 0.5) / 0.25;
+            lerp(t, 10.0, 5.0)
+        } else {
+            let t = (i - 0.75) / 0.25;
+            lerp(t, 5.0, 0.0)
+        };
+
+        let mkup_db = if i <= 0.25 {
+            let t = i / 0.25;
+            lerp(t, 1.5, 3.0)
+        } else if i <= 0.5 {
+            let t = (i - 0.25) / 0.25;
+            lerp(t, 3.0, 5.0)
+        } else if i <= 0.75 {
+            let t = (i - 0.5) / 0.25;
+            lerp(t, 5.0, 7.0)
+        } else {
+            let t = (i - 0.75) / 0.25;
+            lerp(t, 7.0, 9.0)
+        };
+
+        self.intensity_ratio = ratio;
+        self.intensity_attack = att_ms / 1000.0;
+        self.intensity_release = rel_ms / 1000.0;
+        self.knee_width = knee_db;
+        self.makeup_gain = 10.0_f32.powf(mkup_db / 20.0);
+    }
+
+    /// Procesa un frame aplicando compresión dinámica premium (RMS + soft knee + lookahead).
     pub fn process(&mut self, frame: &mut [f64]) {
         if !self.enabled {
             return;
         }
 
-        // Find max peak in the frame for a simple stereo-linked envelope detector
-        let max_abs = frame
-            .iter()
-            .map(|s| s.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0_f64);
-
-        // Envelope follower (Simple AR)
-        let attack_coeff = (-1.0_f64 / ((self.attack as f64) * (self.sample_rate as f64))).exp();
-        let release_coeff = (-1.0_f64 / ((self.release as f64) * (self.sample_rate as f64))).exp();
-
-        if max_abs > self.envelope {
-            self.envelope = attack_coeff * self.envelope + (1.0 - attack_coeff) * max_abs;
-        } else {
-            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
+        // Push current frame into lookahead buffer
+        self.lookahead.push_back(frame.to_vec());
+        while self.lookahead.len() > self.lookahead_samples {
+            self.lookahead.pop_front();
         }
 
-        // Gain reduction calculation
+        // Buffer not full yet — no output
+        if self.lookahead.len() < self.lookahead_samples {
+            return;
+        }
+
+        // Compute RMS of lookahead for envelope follower (stereo-linked)
+        let total_samples: usize = self.lookahead.iter().map(|f| f.len()).sum();
+        let rms_sq = if total_samples > 0 {
+            let sum_sq: f64 = self
+                .lookahead
+                .iter()
+                .flatten()
+                .filter(|s| s.is_finite())
+                .map(|s| s * s)
+                .sum();
+            if total_samples > 0 { sum_sq / total_samples as f64 } else { 0.0 }
+        } else {
+            0.0
+        };
+        let rms = rms_sq.sqrt().max(1e-10);
+
+        // Find future peak in lookahead
+        let future_peak = self
+            .lookahead
+            .iter()
+            .flatten()
+            .map(|s| if s.is_finite() { s.abs() } else { 0.0 })
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+
+        let drive = future_peak.max(rms);
+
+        // Envelope follower
+        let attack_coeff =
+            (-1.0_f64 / ((self.intensity_attack as f64) * (self.sample_rate as f64))).exp();
+        let release_coeff =
+            (-1.0_f64 / ((self.intensity_release as f64) * (self.sample_rate as f64))).exp();
+
+        if drive > self.envelope {
+            self.envelope = attack_coeff * self.envelope + (1.0 - attack_coeff) * drive;
+        } else {
+            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * drive;
+        }
+
+        // Envelope to dB
         let env_db = if self.envelope > 1e-6_f64 {
             20.0_f64 * self.envelope.log10()
         } else {
             -96.0_f64
         };
 
-        if env_db > (self.threshold as f64) {
-            let gain_reduction_db =
-                ((self.threshold as f64) - env_db) * (1.0_f64 - 1.0_f64 / (self.ratio as f64));
-            let gain = 10.0f64.powf(gain_reduction_db / 20.0_f64);
+        // Soft knee gain reduction
+        let threshold = self.threshold as f64;
+        let ratio = self.intensity_ratio as f64;
+        let knee_half = (self.knee_width as f64) * 0.5;
+        let knee_low = threshold - knee_half;
+        let knee_high = threshold + knee_half;
 
-            for s in frame.iter_mut() {
+        let gain_reduction_db = if env_db > knee_high {
+            (threshold - env_db) * (1.0_f64 - 1.0_f64 / ratio)
+        } else if env_db > knee_low {
+            let t = (env_db - knee_low) / self.knee_width as f64;
+            let effective_ratio = 1.0_f64 + (ratio - 1.0_f64) * t * t;
+            let effective_threshold = knee_low + self.knee_width as f64 * t * t * 0.5;
+            (effective_threshold - env_db) * (1.0_f64 - 1.0_f64 / effective_ratio)
+        } else {
+            0.0
+        };
+
+        let gain = 10.0_f64.powf(gain_reduction_db / 20.0);
+        let makeup = self.makeup_gain as f64;
+
+        // Apply to front frame
+        if let Some(front_frame) = self.lookahead.front_mut() {
+            for s in front_frame.iter_mut() {
                 *s *= gain;
+                *s *= makeup;
+                if !s.is_finite() {
+                    *s = 0.0;
+                }
             }
+            // Copy front frame to output
+            let n = frame.len().min(front_frame.len());
+            frame[..n].copy_from_slice(&front_frame[..n]);
         }
+
+        self.lookahead.pop_front();
     }
 
-    /// Resetea la envolvente del compresor.
+    /// Resetea la envolvente y el buffer de lookahead.
     pub fn reset_state(&mut self) {
         self.envelope = 0.0;
+        self.envelope_rms = 0.0;
+        self.lookahead.clear();
     }
 }
 

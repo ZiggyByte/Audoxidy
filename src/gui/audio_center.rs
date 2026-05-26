@@ -2146,6 +2146,25 @@ fn view_audio_effects<'a>(
         on_reset: crate::gui::app::Message, // Ahora se usará para el clic derecho
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
     ) -> Element<'a, crate::gui::app::Message> {
+        view_effect_with_secondary(
+            title, param_label, val, range, enabled, _default_val,
+            on_toggle, on_change, on_reset, extra_widget, None,
+        )
+    }
+
+    fn view_effect_with_secondary<'a>(
+        title: &'a str,
+        param_label: &'a str,
+        val: f32,
+        range: std::ops::RangeInclusive<f32>,
+        enabled: bool,
+        _default_val: f32,
+        on_toggle: impl Fn(bool) -> crate::gui::app::Message + 'a,
+        on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
+        on_reset: crate::gui::app::Message,
+        extra_widget: Option<Element<'a, crate::gui::app::Message>>,
+        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str)>,
+    ) -> Element<'a, crate::gui::app::Message> {
         let stroke_color = if enabled {
             COLOR_ACCENT
         } else {
@@ -2225,11 +2244,54 @@ fn view_audio_effects<'a>(
         ]
         .align_y(Alignment::Center);
 
-        container(column![
+        // Secondary slider row (optional)
+        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label)| {
+            let s_max = *s_range.end();
+            let sec_slider = crate::gui::widgets::CustomSlider::new(
+                s_val,
+                s_range,
+                s_change,
+                move || s_reset.clone(),
+            )
+            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
+            .width(Length::Fill)
+            .height(Length::Fixed(18.0))
+            .with_colored_track(true)
+            .with_arrow_keys(true)
+            .track_color(COLOR_BG);
+            let sec_val_fmt = if s_max <= 1.0 { format!("{:.2}", s_val) } else { format!("{:.0}", s_val) };
+            row![
+                text(s_label)
+                    .size(11)
+                    .color(COLOR_TEXT_SECONDARY)
+                    .font(FONT_INTER_SANS_MEDIUM),
+                Space::new().width(Length::Fixed(10.0)),
+                sec_slider,
+                Space::new().width(Length::Fixed(10.0)),
+                container(
+                    text(sec_val_fmt)
+                        .size(11)
+                        .color(COLOR_TEXT_PRIMARY)
+                        .font(FONT_INTER_SANS_MEDIUM)
+                )
+                .padding([2, 4])
+                .width(Length::Fixed(39.0))
+            ]
+            .align_y(Alignment::Center)
+            .into()
+        });
+
+        let mut col = column![
             top_row,
-            Space::new().height(Length::Fixed(15.0)),
+            Space::new().height(Length::Fixed(8.0)),
             bottom_row
-        ])
+        ];
+        if let Some(sr) = secondary_row {
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            col = col.push(sr);
+        }
+
+        container(col)
         .padding([12, 10])
         .style(move |_t: &Theme| {
             container::Style::default()
@@ -2338,7 +2400,7 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        view_effect(
+        view_effect_with_secondary(
             "Compresor",
             "Umbral (dB)",
             compressor_threshold,
@@ -2357,48 +2419,17 @@ fn view_audio_effects<'a>(
                 DspEffect::Compressor,
                 -3.0
             )),
-            None
-        ),
-        // Secondary slider: Intensidad (always visible)
-        {
-            let label = text("Intensidad (%)")
-                .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
-            let slider = crate::gui::widgets::CustomSlider::new(
-                compressor_intensity * 100.0,
-                0.0..=100.0,
-                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+            None,
+            Some((compressor_intensity * 100.0, 0.0..=100.0,
+                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, v
-                )),
-                || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                ))),
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, 50.0
                 )),
-            )
-            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
-            .width(Length::Fill)
-            .height(Length::Fixed(18.0))
-            .with_colored_track(true)
-            .with_arrow_keys(true)
-            .track_color(COLOR_BG);
-            let val_disp = container(
-                text(format!("{:.0}", compressor_intensity * 100.0))
-                    .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-            )
-            .padding([2, 4])
-            .style(|_t: &Theme| container::Style::default()
-                .background(COLOR_BG)
-                .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
-            let row_el: Element<_> = container(
-                row![label, Space::new().width(Length::Fixed(10.0)), slider,
-                     Space::new().width(Length::Fixed(10.0)), val_disp]
-                .align_y(Alignment::Center)
-            )
-            .padding(iced::Padding { top: 4.0, right: 10.0, bottom: 8.0, left: 10.0 })
-            .style(|_t: &Theme| container::Style::default()
-                .background(COLOR_CONTRAST)
-                .border(iced::Border { color: COLOR_ACCENT, width: 1.0, radius: 8.0.into() }))
-            .into();
-            row_el
-        },
+                "Intensidad",
+            )),
+        ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
@@ -2597,9 +2628,9 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        view_effect(
+        view_effect_with_secondary(
             "Reverberación",
-            "Nivel | Wet",
+            "Mix",
             reverb_wet,
             0.0..=1.0,
             reverb_enabled,
@@ -2616,48 +2647,17 @@ fn view_audio_effects<'a>(
                 DspEffect::Reverb,
                 0.5
             )),
-            None
-        ),
-        // Secondary slider: Tamaño (always visible)
-        {
-            let label = text("Tamaño")
-                .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
-            let slider = crate::gui::widgets::CustomSlider::new(
-                reverb_room_size,
-                0.0..=1.0,
-                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+            None,
+            Some((reverb_room_size, 0.0..=1.0,
+                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::ReverbRoomSize, v
-                )),
-                || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                ))),
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::ReverbRoomSize, 0.5
                 )),
-            )
-            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
-            .width(Length::Fill)
-            .height(Length::Fixed(18.0))
-            .with_colored_track(true)
-            .with_arrow_keys(true)
-            .track_color(COLOR_BG);
-            let val_disp = container(
-                text(format!("{:.2}", reverb_room_size))
-                    .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
-            )
-            .padding([2, 4])
-            .style(|_t: &Theme| container::Style::default()
-                .background(COLOR_BG)
-                .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
-            let row_el: Element<_> = container(
-                row![label, Space::new().width(Length::Fixed(10.0)), slider,
-                     Space::new().width(Length::Fixed(10.0)), val_disp]
-                .align_y(Alignment::Center)
-            )
-            .padding(iced::Padding { top: 4.0, right: 10.0, bottom: 8.0, left: 10.0 })
-            .style(|_t: &Theme| container::Style::default()
-                .background(COLOR_CONTRAST)
-                .border(iced::Border { color: COLOR_ACCENT, width: 1.0, radius: 8.0.into() }))
-            .into();
-            row_el
-        },
+                "Tamaño",
+            )),
+        ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))

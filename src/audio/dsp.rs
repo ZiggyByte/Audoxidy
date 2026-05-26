@@ -749,7 +749,7 @@ impl Reverb {
 
     fn update_params(&mut self) {
         let rs = self.room_size as f64;
-        self.damping_coeff = 0.1 + rs * 0.7;
+        self.damping_coeff = 0.05 + rs * 0.3;
         self.pre_delay_samples = (rs * 0.040 * self.sample_rate).round() as usize;
         self.pre_delay_l = DelayLine::new(self.pre_delay_samples.max(1));
         self.pre_delay_r = DelayLine::new(self.pre_delay_samples.max(1));
@@ -1104,12 +1104,16 @@ impl Compressor {
 
         let gain = 10.0_f64.powf(gain_reduction_db / 20.0);
         let makeup = self.makeup_gain as f64;
+        let makeup_active = if gain < 1.0 {
+            1.0 + (makeup - 1.0) * (1.0 - gain).sqrt()
+        } else {
+            1.0
+        };
 
         // Apply to front frame
         if let Some(front_frame) = self.lookahead.front_mut() {
             for s in front_frame.iter_mut() {
-                *s *= gain;
-                *s *= makeup;
+                *s *= gain * makeup_active;
                 if !s.is_finite() {
                     *s = 0.0;
                 }
@@ -1967,6 +1971,7 @@ impl Limiter {
         }
 
         let oldest = self.lookahead.front().cloned().unwrap_or_default();
+        let mut processed = oldest.clone();
 
         // True peak detection via zero-insert 4x
         let n = oldest.len();
@@ -2014,12 +2019,11 @@ impl Limiter {
         let ceiling_lin = 10.0_f64.powf((self.ceiling as f64) / 20.0);
         if self.envelope > ceiling_lin {
             let attenuation = ceiling_lin / self.envelope;
-            for s in frame.iter_mut() {
+            for s in processed.iter_mut() {
                 *s *= attenuation;
             }
-        } else {
-            frame.copy_from_slice(&oldest);
         }
+        frame.copy_from_slice(&processed);
 
         self.lookahead.pop_front();
 

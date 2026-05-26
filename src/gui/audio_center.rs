@@ -2148,7 +2148,7 @@ fn view_audio_effects<'a>(
     ) -> Element<'a, crate::gui::app::Message> {
         view_effect_with_secondary(
             title, param_label, val, range, enabled, _default_val,
-            on_toggle, on_change, on_reset, extra_widget, None, None,
+            on_toggle, on_change, on_reset, extra_widget, None, None, 0.1, "{:.1}", false,
         )
     }
 
@@ -2164,7 +2164,10 @@ fn view_audio_effects<'a>(
         on_reset: crate::gui::app::Message,
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
         fixed_height: Option<f32>,
-        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str, f32)>,
+        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str, f32, &'a str)>,
+        primary_step_size: f32,
+        primary_fmt: &'a str,
+        center_content: bool,
     ) -> Element<'a, crate::gui::app::Message> {
         let stroke_color = if enabled {
             COLOR_ACCENT
@@ -2199,12 +2202,8 @@ fn view_audio_effects<'a>(
 
         // --- NUEVO CUSTOM SLIDER ---
         let on_reset_msg = on_reset.clone();
-        let range_max = *range.end();
-        let primary_step = if range_max <= 1.0 { 0.01 } else { 0.1 };
-        let primary_opts = crate::gui::widgets::CustomSliderOptions {
-            step_size: primary_step,
-            ..crate::gui::widgets::CustomSliderOptions::default()
-        };
+        let mut primary_opts = crate::gui::widgets::CustomSliderOptions::default();
+        primary_opts.step_size = primary_step_size;
         let param_slider = crate::gui::widgets::CustomSlider::new(
             val,
             range.clone(),
@@ -2218,12 +2217,15 @@ fn view_audio_effects<'a>(
         .with_arrow_keys(true)
         .track_color(COLOR_BG)
         .options(primary_opts);
+        let param_slider = if primary_fmt == "{:.2}" {
+            param_slider.format_value(|v| format!("{:.2}", v))
+        } else {
+            param_slider
+        };
 
-        let val_format = if range_max <= 1.0 { format!("{:.2}", val) } else { format!("{:.1}", val) };
+        let val_str = if primary_fmt == "{:.2}" { format!("{:.2}", val) } else { format!("{:.1}", val) };
 
         // --- FILA INFERIOR REESTRUCTURADA ---
-        // Eliminamos el botón "R" y el texto estático,
-        // El valor ahora se gestiona internamente o mediante el input si el widget lo soporta.
         let bottom_row = row![
             text(param_label)
                 .size(11)
@@ -2232,10 +2234,8 @@ fn view_audio_effects<'a>(
             Space::new().width(Length::Fixed(10.0)),
             param_slider,
             Space::new().width(Length::Fixed(10.0)),
-            // Reemplazamos el texto estático por un visualizador de valor que
-            // parece un input (opcionalmente puedes usar iced::widget::text_input aquí)
             container(
-                text(val_format)
+                text(val_str)
                     .size(11)
                     .color(COLOR_TEXT_PRIMARY)
                     .font(FONT_INTER_SANS_MEDIUM)
@@ -2255,8 +2255,7 @@ fn view_audio_effects<'a>(
         .align_y(Alignment::Center);
 
         // Secondary slider row (optional)
-        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label, s_step)| {
-            let s_max = *s_range.end();
+        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label, s_step, s_fmt)| {
             let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
             sec_opts.step_size = s_step;
             let sec_slider = crate::gui::widgets::CustomSlider::new(
@@ -2272,7 +2271,12 @@ fn view_audio_effects<'a>(
             .with_arrow_keys(true)
             .track_color(COLOR_BG)
             .options(sec_opts);
-            let sec_val_fmt = if s_max <= 1.0 { format!("{:.2}", s_val) } else { format!("{:.0}", s_val) };
+            let sec_slider = if s_fmt == "{:.2}" {
+                sec_slider.format_value(|v| format!("{:.2}", v))
+            } else {
+                sec_slider
+            };
+            let sec_val_str = if s_fmt == "{:.2}" { format!("{:.2}", s_val) } else { format!("{:.1}", s_val) };
             row![
                 text(s_label)
                     .size(11)
@@ -2282,32 +2286,53 @@ fn view_audio_effects<'a>(
                 sec_slider,
                 Space::new().width(Length::Fixed(10.0)),
                 container(
-                    text(sec_val_fmt)
+                    text(sec_val_str)
                         .size(11)
                         .color(COLOR_TEXT_PRIMARY)
                         .font(FONT_INTER_SANS_MEDIUM)
                 )
                 .padding([2, 4])
-                .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
+                .style(|_t: &Theme| container::Style::default()
+                    .background(COLOR_BG)
+                    .border(iced::Border {
+                        color: COLOR_TEXT_SECONDARY,
+                        width: 0.0,
+                        radius: 4.0.into(),
+                    }))
                 .width(Length::Fixed(39.0))
             ]
             .align_y(Alignment::Center)
             .into()
         });
 
-        let mut col = column![
-            top_row,
-            Space::new().height(Length::Fixed(8.0)),
-            bottom_row
-        ];
-        if let Some(sr) = secondary_row {
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-            col = col.push(sr);
-        }
+        let has_secondary = secondary_row.is_some();
+        let mut col = if center_content {
+            let mut inner = column![
+                top_row,
+            ];
+            let mut bottom_col = column![bottom_row];
+            if has_secondary {
+                bottom_col = bottom_col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+                bottom_col = bottom_col.push(secondary_row.unwrap());
+            }
+            inner = inner.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
+            inner = inner.push(container(bottom_col).width(Length::Fill).align_y(Alignment::Center));
+            inner
+        } else {
+            let mut c = column![
+                top_row,
+                Space::new().height(Length::Fixed(15.0)),
+                bottom_row
+            ];
+            if has_secondary {
+                c = c.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+                c = c.push(secondary_row.unwrap());
+            }
+            c
+        };
 
         let c = container(col)
         .padding([12, 10])
-        .align_y(Alignment::Center)
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)
@@ -2316,7 +2341,7 @@ fn view_audio_effects<'a>(
                     width: 1.0,
                     radius: 8.0.into(),
                 })
-        });
+         });
         let c: Element<_> = if let Some(h) = fixed_height {
             c.height(Length::Fixed(h)).into()
         } else {
@@ -2450,11 +2475,14 @@ fn view_audio_effects<'a>(
                 )),
                 "Intensidad (%)",
                 1.0,
+                "{:.1}",
             )),
+            0.1,
+            "{:.1}",
+            false,
         ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
             top: 8.0,
@@ -2570,6 +2598,9 @@ fn view_audio_effects<'a>(
             None,
             Some(92.0),
             None,
+            0.1,
+            "{:.1}",
+            true,
         ),
         container(
             text("Volumen de canales en mezcla menor a 5.1")
@@ -2682,7 +2713,11 @@ fn view_audio_effects<'a>(
                 )),
                 "Tamaño",
                 0.01,
+                "{:.2}",
             )),
+            0.01,
+            "{:.2}",
+            false,
         ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))

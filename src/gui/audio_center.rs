@@ -1876,9 +1876,14 @@ fn view_audio_config<'a>(
     let bottom_actions = row![restart_btn, reset_btn, apply_btn].spacing(10);
 
     column![
-        Space::new().height(Length::Fixed(15.0)),
         row![
-            container(left_col).width(Length::FillPortion(6)),
+            container(left_col).width(Length::FillPortion(6))
+            .padding(iced::Padding {
+                    top: -10.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                    right: 0.0
+                }),
             container(main_divider)
                 .width(Length::Fixed(20.0))
                 .align_x(Alignment::Center)
@@ -2341,13 +2346,13 @@ fn view_audio_effects<'a>(
             None
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 12.0,
+            top: 8.0,
             right: 0.0,
-            bottom: 10.0,
+            bottom: 8.0,
             left: 0.0,
         }),
         view_effect(
@@ -2459,16 +2464,16 @@ fn view_audio_effects<'a>(
         ),
         container(
             text("Volumen de canales en mezcla menor a 5.1")
-                .size(11)
+                .size(12)
                 .color(COLOR_TEXT_SECONDARY)
                 .font(FONT_INTER_SANS_MEDIUM)
         )
         .width(Length::Fill)
         .center_x(Length::Fill)
         .padding(iced::Padding {
-            top: 12.0,
+            top: 1.0,
             right: 0.0,
-            bottom: 10.0,
+            bottom: 0.0,
             left: 0.0,
         }),
         view_effect(
@@ -2560,13 +2565,13 @@ fn view_audio_effects<'a>(
             None
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 12.0,
+            top: 8.0,
             right: 0.0,
-            bottom: 10.0,
+            bottom: 8.0,
             left: 0.0,
         }),
         view_effect(

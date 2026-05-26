@@ -50,8 +50,10 @@ pub enum DspEffect {
     StereoExpander,
     StereoBalance,
     Compressor,
+    CompressorIntensity,
     Limiter,
     Reverb,
+    ReverbRoomSize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -703,6 +705,7 @@ impl AudioCenterManager {
                     audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = enabled)
                 }
                 DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = enabled),
+                DspEffect::CompressorIntensity | DspEffect::ReverbRoomSize => {} // Secondary sliders — no independent toggle
             },
             AudioCenterMessage::DspValueChanged(effect, val) => match effect {
                 DspEffect::SubBass => audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.gain = val),
@@ -722,8 +725,15 @@ impl AudioCenterManager {
                 DspEffect::Compressor => {
                     audio_manager.with_dsp_mut(|dsp| dsp.compressor.threshold = val)
                 }
+                DspEffect::CompressorIntensity => audio_manager.with_dsp_mut(|dsp| {
+                    dsp.compressor.intensity = val / 100.0;
+                    dsp.compressor.update_intensity_params();
+                }),
                 DspEffect::Limiter => audio_manager.with_dsp_mut(|dsp| dsp.limiter.ceiling = val),
                 DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.set_wet(val)),
+                DspEffect::ReverbRoomSize => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.reverb.set_room_size(val))
+                }
             },
             AudioCenterMessage::AudioStateToggle(toggle, enabled) => {
                 let state_arc = audio_manager.state();
@@ -2248,10 +2258,12 @@ fn view_audio_effects<'a>(
         stereo_balance_balance,
         compressor_enabled,
         compressor_threshold,
+        compressor_intensity,
         limiter_enabled,
         limiter_ceiling,
         reverb_enabled,
         reverb_wet,
+        reverb_room_size,
         stereo_expander_mode,
     ) = audio_manager.with_dsp(|dsp| {
         (
@@ -2269,10 +2281,12 @@ fn view_audio_effects<'a>(
             dsp.stereo_balance.balance,
             dsp.compressor.enabled,
             dsp.compressor.threshold,
+            dsp.compressor.intensity,
             dsp.limiter.enabled,
             dsp.limiter.ceiling,
             dsp.reverb.enabled,
             dsp.reverb.wet,
+            dsp.reverb.room_size,
             dsp.stereo_expander.mode,
         )
     });
@@ -2303,48 +2317,46 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        view_effect(
-            "Reducción de Ruido",
-            "Umbral (dB)",
-            noise_gate_threshold,
-            -85.0..=-10.0,
-            noise_gate_enabled,
-            -60.0,
-            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
-                DspEffect::NoiseGate,
-                b
-            )),
-            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                DspEffect::NoiseGate,
-                v
-            )),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                DspEffect::NoiseGate,
-                -60.0
-            )),
-            None
-        ),
-        view_effect(
-            "Compresor",
-            "Umbral (dB)",
-            compressor_threshold,
-            -40.0..=0.0,
-            compressor_enabled,
-            -3.0,
-            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
-                DspEffect::Compressor,
-                b
-            )),
-            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                DspEffect::Compressor,
-                v
-            )),
-            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                DspEffect::Compressor,
-                -3.0
-            )),
-            None
-        ),
+        // Secondary slider: Intensidad (Compressor)
+        {
+            let enabled = compressor_enabled;
+            let val = compressor_intensity;
+            let label = text("Intensidad (%)")
+                .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
+            let tint_slider = crate::gui::widgets::CustomSlider::new(
+                val * 100.0,
+                0.0..=100.0,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                    DspEffect::CompressorIntensity, v
+                )),
+                || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                    DspEffect::CompressorIntensity, 50.0
+                )),
+            )
+            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
+            .width(Length::Fill)
+            .height(Length::Fixed(18.0))
+            .with_colored_track(true)
+            .with_arrow_keys(true)
+            .track_color(COLOR_BG);
+            let val_disp = container(
+                text(format!("{:.0}", val * 100.0))
+                    .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+            )
+            .padding([2, 4])
+            .style(move |_t: &Theme| container::Style::default()
+                .background(COLOR_BG)
+                .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
+            let row = row![label, Space::new().width(Length::Fixed(10.0)), tint_slider,
+                 Space::new().width(Length::Fixed(10.0)), val_disp]
+                .align_y(Alignment::Center);
+            let row_el: Element<_> = if enabled {
+                container(row).into()
+            } else {
+                Space::new().into()
+            };
+            row_el
+        },
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
@@ -2564,6 +2576,45 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
+        // Secondary slider: Tamaño (Reverb)
+        {
+            let enabled = reverb_enabled;
+            let label = text("Tamaño")
+                .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
+            let size_slider = crate::gui::widgets::CustomSlider::new(
+                reverb_room_size,
+                0.0..=1.0,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                    DspEffect::ReverbRoomSize, v
+                )),
+                || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                    DspEffect::ReverbRoomSize, 0.5
+                )),
+            )
+            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
+            .width(Length::Fill)
+            .height(Length::Fixed(18.0))
+            .with_colored_track(true)
+            .with_arrow_keys(true)
+            .track_color(COLOR_BG);
+            let val_disp = container(
+                text(format!("{:.2}", reverb_room_size))
+                    .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
+            )
+            .padding([2, 4])
+            .style(move |_t: &Theme| container::Style::default()
+                .background(COLOR_BG)
+                .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
+            let row = row![label, Space::new().width(Length::Fixed(10.0)), size_slider,
+                 Space::new().width(Length::Fixed(10.0)), val_disp]
+                .align_y(Alignment::Center);
+            let row_el: Element<_> = if enabled {
+                container(row).into()
+            } else {
+                Space::new().into()
+            };
+            row_el
+        },
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))

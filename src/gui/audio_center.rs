@@ -2148,7 +2148,7 @@ fn view_audio_effects<'a>(
     ) -> Element<'a, crate::gui::app::Message> {
         view_effect_with_secondary(
             title, param_label, val, range, enabled, _default_val,
-            on_toggle, on_change, on_reset, extra_widget, None, None, 0.1, "{:.1}", false,
+            on_toggle, on_change, on_reset, extra_widget, None, None, 0.1, "{:.1}", 0.0,
         )
     }
 
@@ -2167,7 +2167,7 @@ fn view_audio_effects<'a>(
         secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str, f32, &'a str)>,
         primary_step_size: f32,
         primary_fmt: &'a str,
-        center_content: bool,
+        extra_padding_top: f32,
     ) -> Element<'a, crate::gui::app::Message> {
         let stroke_color = if enabled {
             COLOR_ACCENT
@@ -2204,6 +2204,9 @@ fn view_audio_effects<'a>(
         let on_reset_msg = on_reset.clone();
         let mut primary_opts = crate::gui::widgets::CustomSliderOptions::default();
         primary_opts.step_size = primary_step_size;
+        primary_opts.enable_colored_track = true;
+        primary_opts.enable_arrow_keys = true;
+        primary_opts.track_color = Some(COLOR_BG);
         let param_slider = crate::gui::widgets::CustomSlider::new(
             val,
             range.clone(),
@@ -2213,9 +2216,6 @@ fn view_audio_effects<'a>(
         .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
         .width(Length::Fill)
         .height(Length::Fixed(18.0))
-        .with_colored_track(true)
-        .with_arrow_keys(true)
-        .track_color(COLOR_BG)
         .options(primary_opts);
         let param_slider = if primary_fmt == "{:.2}" {
             param_slider.format_value(|v| format!("{:.2}", v))
@@ -2258,6 +2258,9 @@ fn view_audio_effects<'a>(
         let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label, s_step, s_fmt)| {
             let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
             sec_opts.step_size = s_step;
+            sec_opts.enable_colored_track = true;
+            sec_opts.enable_arrow_keys = true;
+            sec_opts.track_color = Some(COLOR_BG);
             let sec_slider = crate::gui::widgets::CustomSlider::new(
                 s_val,
                 s_range,
@@ -2267,9 +2270,6 @@ fn view_audio_effects<'a>(
             .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
             .width(Length::Fill)
             .height(Length::Fixed(18.0))
-            .with_colored_track(true)
-            .with_arrow_keys(true)
-            .track_color(COLOR_BG)
             .options(sec_opts);
             let sec_slider = if s_fmt == "{:.2}" {
                 sec_slider.format_value(|v| format!("{:.2}", v))
@@ -2305,34 +2305,19 @@ fn view_audio_effects<'a>(
             .into()
         });
 
-        let has_secondary = secondary_row.is_some();
-        let mut col = if center_content {
-            let mut inner = column![
-                top_row,
-            ];
-            let mut bottom_col = column![bottom_row];
-            if has_secondary {
-                bottom_col = bottom_col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-                bottom_col = bottom_col.push(secondary_row.unwrap());
-            }
-            inner = inner.push(iced::widget::Space::new().height(Length::Fixed(8.0)));
-            inner = inner.push(container(bottom_col).width(Length::Fill).align_y(Alignment::Center));
-            inner
-        } else {
-            let mut c = column![
-                top_row,
-                Space::new().height(Length::Fixed(15.0)),
-                bottom_row
-            ];
-            if has_secondary {
-                c = c.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
-                c = c.push(secondary_row.unwrap());
-            }
-            c
-        };
+        // Build column - top row then spacer then slider rows
+        let mut col = column![
+            top_row,
+            Space::new().height(Length::Fixed(15.0)),
+            bottom_row
+        ];
+        if let Some(sr) = secondary_row {
+            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            col = col.push(sr);
+        }
 
         let c = container(col)
-        .padding([12, 10])
+        .padding(iced::Padding { top: 12.0 + extra_padding_top, right: 10.0, bottom: 12.0, left: 10.0 })
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)
@@ -2465,7 +2450,7 @@ fn view_audio_effects<'a>(
                 -3.0
             )),
             None,
-            Some(92.0),
+            Some(99.0),
             Some((compressor_intensity * 100.0, 0.0..=100.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, v
@@ -2479,10 +2464,11 @@ fn view_audio_effects<'a>(
             )),
             0.1,
             "{:.1}",
-            false,
+            0.0,
         ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
             top: 8.0,
@@ -2596,11 +2582,11 @@ fn view_audio_effects<'a>(
                 -1.0
             )),
             None,
-            Some(92.0),
+            Some(99.0),
             None,
             0.1,
             "{:.1}",
-            true,
+            17.0,
         ),
         container(
             text("Volumen de canales en mezcla menor a 5.1")
@@ -2703,7 +2689,7 @@ fn view_audio_effects<'a>(
                 0.5
             )),
             None,
-            Some(92.0),
+            Some(99.0),
             Some((reverb_room_size, 0.0..=1.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::ReverbRoomSize, v
@@ -2717,7 +2703,7 @@ fn view_audio_effects<'a>(
             )),
             0.01,
             "{:.2}",
-            false,
+            0.0,
         ),
         container(
             container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))

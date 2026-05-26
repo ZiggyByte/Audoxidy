@@ -547,7 +547,7 @@ impl EqBand {
         }
     }
 }
-// --- Reverb (Freeverb implementation) ---
+// --- Reverb (FDN implementation) ---
 
 #[derive(Clone)]
 struct DelayLine {
@@ -558,7 +558,7 @@ struct DelayLine {
 impl DelayLine {
     fn new(size: usize) -> Self {
         Self {
-            buffer: vec![0.0_f64; size],
+            buffer: vec![0.0_f64; size.max(1)],
             index: 0,
         }
     }
@@ -577,49 +577,6 @@ impl DelayLine {
             *s = 0.0;
         }
         self.index = 0;
-    }
-}
-
-#[derive(Clone)]
-struct CombFilter {
-    delay: DelayLine,
-    feedback: f64,
-    filter_state: f64,
-    damp: f64,
-}
-
-impl CombFilter {
-    fn new(size: usize) -> Self {
-        Self {
-            delay: DelayLine::new(size),
-            feedback: 0.5_f64,
-            filter_state: 0.0_f64,
-            damp: 0.5_f64,
-        }
-    }
-
-    fn reset(&mut self) {
-        self.delay.reset();
-        self.filter_state = 0.0;
-    }
-
-    fn set_feedback(&mut self, val: f64) {
-        self.feedback = val;
-    }
-
-    fn set_damp(&mut self, val: f64) {
-        self.damp = val;
-    }
-
-    fn process(&mut self, input: f64) -> f64 {
-        let output = self.delay.read();
-
-        self.filter_state = output * (1.0_f64 - self.damp) + self.filter_state * self.damp;
-
-        let input_combined = input + self.filter_state * self.feedback;
-        self.delay.write(input_combined);
-
-        output
     }
 }
 
@@ -645,154 +602,272 @@ impl AllPassFilter {
         let buffered_val = self.delay.read();
         let input_combined = input + buffered_val * self.feedback;
         self.delay.write(input_combined);
-
-        buffered_val - input_combined // Standard AllPass formula
+        buffered_val - input_combined
     }
 }
 
-/// Tamaños base de los delay lines del reverb (diseñados para 44,100 Hz)
-const COMB_TUNINGS_BASE: [usize; 8] = [1617, 1693, 1781, 1867, 1951, 2053, 2153, 2251];
-const ALLPASS_TUNINGS_BASE: [usize; 4] = [556, 441, 341, 225];
-const REVERB_BASE_SAMPLE_RATE: f32 = 44100.0;
+/// Prime-power delay lengths for FDN (16 lines, L channel).
+const FDN_DELAY_LENGTHS_L: [usize; 16] = [
+    2048, 729, 625, 343, 1331, 2197, 289, 361,
+    529, 841, 961, 1369, 1681, 1849, 2209, 2809,
+];
 
-/// Efecto de reverberación tipo Freeverb con 8 filtros comb y 4 all-pass.
+/// Prime-power delay lengths for FDN (R channel, different exponents for decorrelation).
+const FDN_DELAY_LENGTHS_R: [usize; 16] = [
+    4096, 2187, 1250, 343, 2662, 2197, 578, 361,
+    1058, 841, 1922, 1369, 1681, 3698, 2209, 2809,
+];
+
+/// Construye la matriz de Hadamard 16×16 normalizada (entradas ±0.25).
+fn hadamard_16() -> [[f64; 16]; 16] {
+    let mut h = [[0.0_f64; 16]; 16];
+    h[0][0] = 1.0;
+    let mut size = 1;
+    while size < 16 {
+        for i in 0..size {
+            for j in 0..size {
+                let v = h[i][j];
+                h[i][j + size] = v;
+                h[i + size][j] = v;
+                h[i + size][j + size] = -v;
+            }
+        }
+        size *= 2;
+    }
+    // Normalize: divide by sqrt(16) = 4.0
+    for row in h.iter_mut() {
+        for v in row.iter_mut() {
+            *v *= 0.25;
+        }
+    }
+    h
+}
+
+/// Efecto de reverberación FDN (Feedback Delay Network) con 16 líneas de delay.
 #[derive(Clone)]
 pub struct Reverb {
-    combs: Vec<CombFilter>,
-    allpasses: Vec<AllPassFilter>,
     pub enabled: bool,
+    pub wet: f32,
     pub room_size: f32,
-    pub damping: f32,
     #[allow(dead_code)]
     pub width: f32,
-    pub wet: f32,
+    #[allow(dead_code)]
     pub dry: f32,
     gain: f32,
+    // FDN L channel
+    delay_lines_l: Vec<DelayLine>,
+    damping_states_l: Vec<f64>,
+    pre_delay_l: DelayLine,
+    // FDN R channel
+    delay_lines_r: Vec<DelayLine>,
+    damping_states_r: Vec<f64>,
+    pre_delay_r: DelayLine,
+    // Params
+    hadamard: [[f64; 16]; 16],
+    damping_coeff: f64,
+    pre_delay_samples: usize,
+    feedback_gain: f64,
+    sample_rate: f64,
 }
 
 #[allow(dead_code)]
 impl Reverb {
-    /// Crea un nuevo reverb con valores predeterminados (hall grande).
     pub fn new() -> Self {
-        // Peines un 50% más amplios para un efecto "Hall" Premium mucho más notorio
-        let comb_tunings = [1617, 1693, 1781, 1867, 1951, 2053, 2153, 2251];
-        let allpass_tunings = [556, 441, 341, 225];
+        let sr: f64 = 44100.0;
+        let hadamard = hadamard_16();
+        let scale = sr / 44100.0;
 
-        let combs = comb_tunings
+        let delay_lines_l: Vec<DelayLine> = FDN_DELAY_LENGTHS_L
             .iter()
-            .map(|&size| CombFilter::new(size))
+            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
             .collect();
-        let allpasses = allpass_tunings
+        let delay_lines_r: Vec<DelayLine> = FDN_DELAY_LENGTHS_R
             .iter()
-            .map(|&size| AllPassFilter::new(size))
+            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
             .collect();
+        let damping_states_l = vec![0.0_f64; 16];
+        let damping_states_r = vec![0.0_f64; 16];
 
         let mut r = Self {
-            combs,
-            allpasses,
             enabled: false,
-            room_size: 0.5,
-            damping: 0.35,
-            width: 1.0,
             wet: 0.5,
-            dry: 0.6,
-            gain: 0.025, // Mayor ganancia de la señal húmeda
+            room_size: 0.5,
+            width: 1.0,
+            dry: 0.5,
+            gain: 0.015,
+            delay_lines_l,
+            damping_states_l,
+            pre_delay_l: DelayLine::new(1),
+            delay_lines_r,
+            damping_states_r,
+            pre_delay_r: DelayLine::new(1),
+            hadamard,
+            damping_coeff: 0.0,
+            pre_delay_samples: 1,
+            feedback_gain: 0.0,
+            sample_rate: sr,
         };
         r.update_params();
         r
     }
 
-    /// Recalcula las líneas de delay para el sample rate dado.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         if sample_rate <= 0.0 {
             return;
         }
-        let scale = (sample_rate as f64) / (REVERB_BASE_SAMPLE_RATE as f64);
+        self.sample_rate = sample_rate as f64;
+        let scale = self.sample_rate / 44100.0;
 
-        self.combs = COMB_TUNINGS_BASE
+        self.delay_lines_l = FDN_DELAY_LENGTHS_L
             .iter()
-            .map(|&base_size| {
-                let scaled = (base_size as f64 * scale).round() as usize;
-                CombFilter::new(scaled.max(1))
-            })
+            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
             .collect();
-
-        self.allpasses = ALLPASS_TUNINGS_BASE
+        self.delay_lines_r = FDN_DELAY_LENGTHS_R
             .iter()
-            .map(|&base_size| {
-                let scaled = (base_size as f64 * scale).round() as usize;
-                AllPassFilter::new(scaled.max(1))
-            })
+            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
             .collect();
-
         self.update_params();
     }
 
-    /// Establece el tamaño de la habitación (0.0 a 1.0).
     pub fn set_room_size(&mut self, value: f32) {
         self.room_size = value.clamp(0.0, 1.0);
         self.update_params();
     }
 
-    /// Establece el damping (amortiguación) del reverb (0.0 a 1.0).
-    pub fn set_damping(&mut self, value: f32) {
-        self.damping = value.clamp(0.0, 1.0);
-        self.update_params();
-    }
-
-    /// Establece el nivel de señal procesada (wet) (0.0 a 1.0).
     pub fn set_wet(&mut self, value: f32) {
         self.wet = value.clamp(0.0, 1.0);
     }
 
-    /// Establece el nivel de señal seca (dry) (0.0 a 1.0).
     pub fn set_dry(&mut self, value: f32) {
         self.dry = value.clamp(0.0, 1.0);
     }
 
-    fn update_params(&mut self) {
-        // Freeverb scale factors
-        let feedback = (self.room_size as f64) * 0.28_f64 + 0.7_f64;
-        let damp = (self.damping as f64) * 0.4_f64;
+    pub fn set_damping(&mut self, _value: f32) {
+        // Damping is now auto-derived from room_size.
+        // Kept for backward compat — call update_params() to apply.
+    }
 
-        for comb in &mut self.combs {
-            comb.set_feedback(feedback);
-            comb.set_damp(damp);
+    fn update_params(&mut self) {
+        let rs = self.room_size as f64;
+        self.damping_coeff = 0.1 + rs * 0.7;
+        self.pre_delay_samples = (rs * 0.080 * self.sample_rate).round() as usize;
+        self.pre_delay_l = DelayLine::new(self.pre_delay_samples.max(1));
+        self.pre_delay_r = DelayLine::new(self.pre_delay_samples.max(1));
+        self.feedback_gain = 0.7 + rs * 0.25;
+    }
+
+    fn process_channel(
+        delay_lines: &mut [DelayLine],
+        damping_states: &mut [f64],
+        pre_delay: &mut DelayLine,
+        hadamard: &[[f64; 16]; 16],
+        damping_coeff: f64,
+        feedback_gain: f64,
+        sample: &mut f64,
+        gain: f64,
+        wet: f64,
+    ) {
+        let input_orig = *sample;
+        let input_scaled = input_orig * gain as f64;
+
+        let fdn_input = pre_delay.read();
+        pre_delay.write(input_scaled);
+
+        let mut delay_outs = [0.0_f64; 16];
+        for i in 0..16 {
+            let dout = delay_lines[i].read();
+            damping_states[i] = (1.0 - damping_coeff) * dout + damping_coeff * damping_states[i];
+            delay_outs[i] = damping_states[i];
+        }
+
+        let mut feedback = [0.0_f64; 16];
+        for i in 0..16 {
+            let mut sum = 0.0_f64;
+            for j in 0..16 {
+                sum += hadamard[i][j] * delay_outs[j];
+            }
+            feedback[i] = sum;
+        }
+
+        for i in 0..16 {
+            delay_lines[i].write(fdn_input + feedback[i] * feedback_gain);
+        }
+
+        let reverb_out = delay_outs.iter().sum::<f64>() / 16.0;
+
+        let wet_rad = (wet as f64) * std::f64::consts::FRAC_PI_2;
+        let dry_gain = wet_rad.cos();
+        let wet_gain = wet_rad.sin();
+        *sample = reverb_out * wet_gain + input_orig * dry_gain;
+
+        if !sample.is_finite() {
+            *sample = 0.0;
         }
     }
 
-    /// Procesa un frame de audio aplicando el efecto de reverberación.
     pub fn process(&mut self, frame: &mut [f64]) {
         if !self.enabled {
             return;
         }
 
-        for sample in frame.iter_mut() {
-            let input = *sample * (self.gain as f64);
-            let mut out = 0.0_f64;
+        let Self {
+            delay_lines_l,
+            damping_states_l,
+            pre_delay_l,
+            delay_lines_r,
+            damping_states_r,
+            pre_delay_r,
+            hadamard,
+            damping_coeff,
+            feedback_gain,
+            gain,
+            wet,
+            ..
+        } = self;
 
-            for comb in &mut self.combs {
-                out += comb.process(input);
+        for (ch, sample) in frame.iter_mut().enumerate() {
+            if ch == 0 {
+                Self::process_channel(
+                    delay_lines_l,
+                    damping_states_l,
+                    pre_delay_l,
+                    hadamard,
+                    *damping_coeff,
+                    *feedback_gain,
+                    sample,
+                    *gain as f64,
+                    *wet as f64,
+                );
+            } else {
+                Self::process_channel(
+                    delay_lines_r,
+                    damping_states_r,
+                    pre_delay_r,
+                    hadamard,
+                    *damping_coeff,
+                    *feedback_gain,
+                    sample,
+                    *gain as f64,
+                    *wet as f64,
+                );
             }
-
-            for allpass in &mut self.allpasses {
-                out = allpass.process(out);
-            }
-
-            let wet_rad = (self.wet as f64) * std::f64::consts::FRAC_PI_2;
-            let dry_gain = wet_rad.cos();
-            let wet_gain = wet_rad.sin();
-            *sample = out * wet_gain + *sample * dry_gain;
         }
     }
 
-    /// Resetea el estado interno del reverb (líneas de delay).
     pub fn reset_state(&mut self) {
-        for comb in &mut self.combs {
-            comb.reset();
+        for dl in self.delay_lines_l.iter_mut() {
+            dl.reset();
         }
-        for allpass in &mut self.allpasses {
-            allpass.reset();
+        for dl in self.delay_lines_r.iter_mut() {
+            dl.reset();
+        }
+        self.pre_delay_l.reset();
+        self.pre_delay_r.reset();
+        for s in self.damping_states_l.iter_mut() {
+            *s = 0.0;
+        }
+        for s in self.damping_states_r.iter_mut() {
+            *s = 0.0;
         }
     }
 }

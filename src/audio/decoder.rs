@@ -523,7 +523,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 output_accumulator_f32.clear();
             }
             if custom_eof {
-                let _ = engine.purge_buffers();
+                // No purge_buffers aquí — eso recrea el stream. Solo limpiar estado del decoder.
                 current_format = None;
                 *engine.custom_decoder.lock() = None;
             }
@@ -559,7 +559,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     let s = state.read();
                     if !s.is_playing {
                         drop(s);
-                        // --- PURGA EN EOF ---
+                        // --- PURGA EN EOF (solo estado, no stream) ---
                         resampler = None;
                         resampler_rates = None;
                         resampler_in_buf.clear();
@@ -572,7 +572,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 dsp_lock.reset_state();
                             }
                         }
-                        let _ = engine.purge_buffers();
                         current_decoder = None;
                         current_format = None;
                         tracing::info!("Audio Engine State Purged (EOF).");

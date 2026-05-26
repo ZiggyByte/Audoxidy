@@ -689,10 +689,10 @@ impl Reverb {
             combs,
             allpasses,
             enabled: false,
-            room_size: 0.92, // Tamaño muy grande de habitación
+            room_size: 0.5,
             damping: 0.35,
             width: 1.0,
-            wet: 0.85, // Altamente presente en la mezcla
+            wet: 0.5,
             dry: 0.6,
             gain: 0.025, // Mayor ganancia de la señal húmeda
         };
@@ -777,7 +777,10 @@ impl Reverb {
                 out = allpass.process(out);
             }
 
-            *sample = out * (self.wet as f64) + *sample * (self.dry as f64);
+            let wet_rad = (self.wet as f64) * std::f64::consts::FRAC_PI_2;
+            let dry_gain = wet_rad.cos();
+            let wet_gain = wet_rad.sin();
+            *sample = out * wet_gain + *sample * dry_gain;
         }
     }
 
@@ -814,7 +817,7 @@ impl Compressor {
     pub fn new() -> Self {
         Self {
             enabled: false,
-            threshold: -10.0,
+            threshold: -3.0,
             ratio: 4.0,
             attack: 0.005,
             release: 0.1,
@@ -1634,7 +1637,7 @@ impl Default for Limiter {
     fn default() -> Self {
         Self {
             enabled: false,
-            ceiling: -0.1,
+            ceiling: -1.0,
             release: 0.05,
             envelope: 0.0,
             sample_rate: 44100.0,

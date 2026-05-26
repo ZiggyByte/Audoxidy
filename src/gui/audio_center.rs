@@ -827,7 +827,7 @@ pub fn view<'a>(
         .align_y(Alignment::Center)
         .padding(iced::Padding {
             top: 0.0,
-            right: 5.0,
+            right: 6.0,
             bottom: 0.0,
             left: 15.0,
         });
@@ -2148,7 +2148,7 @@ fn view_audio_effects<'a>(
                 .size(13)
                 .color(COLOR_TEXT_PRIMARY)
                 .font(FONT_INTER_SANS_MEDIUM),
-            Space::new().width(Length::Fixed(10.0)),
+            Space::new().width(Length::Fixed(6.0)),
             if let Some(w) = extra_widget {
                 w
             } else {
@@ -2330,7 +2330,7 @@ fn view_audio_effects<'a>(
             compressor_threshold,
             -40.0..=0.0,
             compressor_enabled,
-            -10.0,
+            -3.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
                 DspEffect::Compressor,
                 b
@@ -2341,7 +2341,7 @@ fn view_audio_effects<'a>(
             )),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                 DspEffect::Compressor,
-                -10.0
+                -3.0
             )),
             None
         ),
@@ -2447,7 +2447,7 @@ fn view_audio_effects<'a>(
             limiter_ceiling,
             -12.0..=0.0,
             limiter_enabled,
-            -6.0,
+            -1.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
                 DspEffect::Limiter,
                 b
@@ -2458,7 +2458,7 @@ fn view_audio_effects<'a>(
             )),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                 DspEffect::Limiter,
-                -6.0
+                -1.0
             )),
             None
         ),

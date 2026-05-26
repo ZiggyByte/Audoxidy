@@ -136,9 +136,9 @@ mod tests {
     #[test]
     fn test_reverb_default_values() {
         let r = Reverb::new();
-        assert!((r.room_size - 0.92).abs() < 1e-6);
+        assert!((r.room_size - 0.5).abs() < 1e-6);
         assert!((r.damping - 0.35).abs() < 1e-6);
-        assert!((r.wet - 0.85).abs() < 1e-6);
+        assert!((r.wet - 0.5).abs() < 1e-6);
         assert!((r.dry - 0.6).abs() < 1e-6);
     }
 
@@ -192,7 +192,7 @@ mod tests {
     #[test]
     fn test_compressor_params_defaults() {
         let c = Compressor::new();
-        assert!((c.threshold - (-10.0)).abs() < 1e-6);
+        assert!((c.threshold - (-3.0)).abs() < 1e-6);
         assert!((c.ratio - 4.0).abs() < 1e-6);
         assert!((c.attack - 0.005).abs() < 1e-6);
         assert!((c.release - 0.1).abs() < 1e-6);
@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_limiter_ceiling_default() {
         let l = Limiter::default();
-        assert!((l.ceiling - (-0.1)).abs() < 1e-4);
+        assert!((l.ceiling - (-1.0)).abs() < 1e-4);
     }
 
     #[test]
@@ -396,5 +396,49 @@ mod tests {
     fn test_stereo_expander_reset_state() {
         let mut exp = MultiBandStereoExpander::default();
         exp.reset_state();
+    }
+
+    // ========================================================================
+    // Equal-power reverb tests (D-04)
+    // ========================================================================
+
+    #[test]
+    fn test_reverb_equal_power_bypass() {
+        let mut r = Reverb::new();
+        r.enabled = true;
+        r.set_wet(0.0);
+        let mut frame = [1.0_f64, -0.8_f64];
+        let original = frame;
+        r.process(&mut frame);
+        for (out, orig) in frame.iter().zip(original.iter()) {
+            assert!((out - orig).abs() < 1e-6, "wet=0.0 should bypass: out={} orig={}", out, orig);
+        }
+    }
+
+    #[test]
+    fn test_reverb_equal_power_rms() {
+        let mut r = Reverb::new();
+        r.enabled = true;
+        r.set_wet(0.5);
+        let frame: [f64; 2] = [0.5, -0.3];
+        let input_rms = (frame.iter().map(|s| s * s).sum::<f64>() / frame.len() as f64).sqrt();
+        let mut out_frame = frame;
+        r.process(&mut out_frame);
+        let output_rms = (out_frame.iter().map(|s| s * s).sum::<f64>() / out_frame.len() as f64).sqrt();
+        assert!(output_rms > 0.0, "Reverb wet=0.5 should produce output");
+        assert!((output_rms - input_rms).abs() < 0.3, "RMS should not change drastically; input={} output={}", input_rms, output_rms);
+    }
+
+    #[test]
+    fn test_reverb_equal_power_full_wet() {
+        let mut r = Reverb::new();
+        r.enabled = true;
+        r.set_wet(1.0);
+        let mut frame = [1.0_f64, -0.5_f64];
+        r.process(&mut frame);
+        assert!(
+            (frame[0] - 1.0).abs() > 1e-3 || (frame[1] + 0.5).abs() > 1e-3,
+            "wet=1.0 should alter the signal (pure wet output, no dry)"
+        );
     }
 }

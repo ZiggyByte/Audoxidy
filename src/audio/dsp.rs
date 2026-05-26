@@ -793,12 +793,14 @@ impl Reverb {
             delay_lines[i].write(fdn_input + feedback[i] * feedback_gain);
         }
 
-        let reverb_out = delay_outs.iter().sum::<f64>() / 8.0; // Divide by 8 (not 16) for stronger output
+        let reverb_out = delay_outs.iter().sum::<f64>() / 8.0;
 
-        let wet_rad = (wet as f64) * std::f64::consts::FRAC_PI_2;
-        let dry_gain = wet_rad.cos();
-        let wet_gain = wet_rad.sin();
-        *sample = reverb_out * wet_gain * 0.8 + input_orig * dry_gain;
+        // Linear crossfade with auto RMS compensation
+        let wet_mix = (wet as f64).clamp(0.0, 1.0);
+        let dry_mix = 1.0 - wet_mix;
+        let wet_level = 0.5;
+        let comp = 1.0 / (dry_mix + wet_mix * wet_level).max(0.1);
+        *sample = (reverb_out * wet_mix + input_orig * dry_mix) * comp;
 
         if !sample.is_finite() {
             *sample = 0.0;

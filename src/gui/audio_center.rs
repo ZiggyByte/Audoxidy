@@ -2317,14 +2317,54 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        // Secondary slider: Intensidad (Compressor)
+        view_effect(
+            "Reducción de Ruido",
+            "Umbral (dB)",
+            noise_gate_threshold,
+            -85.0..=-10.0,
+            noise_gate_enabled,
+            -60.0,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
+                DspEffect::NoiseGate,
+                b
+            )),
+            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                DspEffect::NoiseGate,
+                v
+            )),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                DspEffect::NoiseGate,
+                -60.0
+            )),
+            None
+        ),
+        view_effect(
+            "Compresor",
+            "Umbral (dB)",
+            compressor_threshold,
+            -40.0..=0.0,
+            compressor_enabled,
+            -3.0,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
+                DspEffect::Compressor,
+                b
+            )),
+            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                DspEffect::Compressor,
+                v
+            )),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
+                DspEffect::Compressor,
+                -3.0
+            )),
+            None
+        ),
+        // Secondary slider: Intensidad (always visible)
         {
-            let enabled = compressor_enabled;
-            let val = compressor_intensity;
             let label = text("Intensidad (%)")
                 .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
-            let tint_slider = crate::gui::widgets::CustomSlider::new(
-                val * 100.0,
+            let slider = crate::gui::widgets::CustomSlider::new(
+                compressor_intensity * 100.0,
                 0.0..=100.0,
                 |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, v
@@ -2340,21 +2380,23 @@ fn view_audio_effects<'a>(
             .with_arrow_keys(true)
             .track_color(COLOR_BG);
             let val_disp = container(
-                text(format!("{:.0}", val * 100.0))
+                text(format!("{:.0}", compressor_intensity * 100.0))
                     .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
             )
             .padding([2, 4])
-            .style(move |_t: &Theme| container::Style::default()
+            .style(|_t: &Theme| container::Style::default()
                 .background(COLOR_BG)
                 .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
-            let row = row![label, Space::new().width(Length::Fixed(10.0)), tint_slider,
-                 Space::new().width(Length::Fixed(10.0)), val_disp]
-                .align_y(Alignment::Center);
-            let row_el: Element<_> = if enabled {
-                container(row).into()
-            } else {
-                Space::new().into()
-            };
+            let row_el: Element<_> = container(
+                row![label, Space::new().width(Length::Fixed(10.0)), slider,
+                     Space::new().width(Length::Fixed(10.0)), val_disp]
+                .align_y(Alignment::Center)
+            )
+            .padding(iced::Padding { top: 4.0, right: 10.0, bottom: 8.0, left: 10.0 })
+            .style(|_t: &Theme| container::Style::default()
+                .background(COLOR_CONTRAST)
+                .border(iced::Border { color: COLOR_ACCENT, width: 1.0, radius: 8.0.into() }))
+            .into();
             row_el
         },
         container(
@@ -2576,12 +2618,11 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        // Secondary slider: Tamaño (Reverb)
+        // Secondary slider: Tamaño (always visible)
         {
-            let enabled = reverb_enabled;
             let label = text("Tamaño")
                 .size(11).color(COLOR_TEXT_SECONDARY).font(FONT_INTER_SANS_MEDIUM);
-            let size_slider = crate::gui::widgets::CustomSlider::new(
+            let slider = crate::gui::widgets::CustomSlider::new(
                 reverb_room_size,
                 0.0..=1.0,
                 |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
@@ -2602,17 +2643,19 @@ fn view_audio_effects<'a>(
                     .size(11).color(COLOR_TEXT_PRIMARY).font(FONT_INTER_SANS_MEDIUM)
             )
             .padding([2, 4])
-            .style(move |_t: &Theme| container::Style::default()
+            .style(|_t: &Theme| container::Style::default()
                 .background(COLOR_BG)
                 .border(iced::Border { color: COLOR_TEXT_SECONDARY, width: 1.0, radius: 4.0.into() }));
-            let row = row![label, Space::new().width(Length::Fixed(10.0)), size_slider,
-                 Space::new().width(Length::Fixed(10.0)), val_disp]
-                .align_y(Alignment::Center);
-            let row_el: Element<_> = if enabled {
-                container(row).into()
-            } else {
-                Space::new().into()
-            };
+            let row_el: Element<_> = container(
+                row![label, Space::new().width(Length::Fixed(10.0)), slider,
+                     Space::new().width(Length::Fixed(10.0)), val_disp]
+                .align_y(Alignment::Center)
+            )
+            .padding(iced::Padding { top: 4.0, right: 10.0, bottom: 8.0, left: 10.0 })
+            .style(|_t: &Theme| container::Style::default()
+                .background(COLOR_CONTRAST)
+                .border(iced::Border { color: COLOR_ACCENT, width: 1.0, radius: 8.0.into() }))
+            .into();
             row_el
         },
         container(

@@ -694,7 +694,7 @@ impl Reverb {
             room_size: 0.5,
             width: 1.0,
             dry: 0.5,
-            gain: 0.015,
+            gain: 0.12,
             delay_lines_l,
             damping_states_l,
             pre_delay_l: DelayLine::new(1),
@@ -750,7 +750,7 @@ impl Reverb {
     fn update_params(&mut self) {
         let rs = self.room_size as f64;
         self.damping_coeff = 0.1 + rs * 0.7;
-        self.pre_delay_samples = (rs * 0.080 * self.sample_rate).round() as usize;
+        self.pre_delay_samples = (rs * 0.040 * self.sample_rate).round() as usize;
         self.pre_delay_l = DelayLine::new(self.pre_delay_samples.max(1));
         self.pre_delay_r = DelayLine::new(self.pre_delay_samples.max(1));
         self.feedback_gain = 0.7 + rs * 0.25;
@@ -793,12 +793,12 @@ impl Reverb {
             delay_lines[i].write(fdn_input + feedback[i] * feedback_gain);
         }
 
-        let reverb_out = delay_outs.iter().sum::<f64>() / 16.0;
+        let reverb_out = delay_outs.iter().sum::<f64>() / 8.0; // Divide by 8 (not 16) for stronger output
 
         let wet_rad = (wet as f64) * std::f64::consts::FRAC_PI_2;
         let dry_gain = wet_rad.cos();
         let wet_gain = wet_rad.sin();
-        *sample = reverb_out * wet_gain + input_orig * dry_gain;
+        *sample = reverb_out * wet_gain * 0.8 + input_orig * dry_gain;
 
         if !sample.is_finite() {
             *sample = 0.0;

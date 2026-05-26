@@ -2293,6 +2293,7 @@ fn view_audio_effects<'a>(
 
         container(col)
         .padding([12, 10])
+        .height(Length::Fixed(92.0))
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)

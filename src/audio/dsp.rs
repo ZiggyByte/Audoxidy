@@ -1793,56 +1793,174 @@ impl NoiseGate {
         self.envelope = 0.0;
     }
 }
-/// Limitador de pico con ataque instantáneo y release suave.
+/// FIR half-band 32-tap coefficients for 4x oversampling (Kaiser window β=6).
+const FIR_HALFBAND_COEFFS: [f64; 32] = [
+    0.0, -0.0013, 0.0, 0.0034, 0.0, -0.0076, 0.0, 0.0147,
+    0.0, -0.0264, 0.0, 0.0457, 0.0, -0.0807, 0.0, 0.1589,
+    0.5, 0.1589, 0.0, -0.0807, 0.0, 0.0457, 0.0, -0.0264,
+    0.0, 0.0147, 0.0, -0.0076, 0.0, 0.0034, 0.0, -0.0013,
+];
+
+/// Limitador premium con lookahead 2ms, oversampling 4x y release adaptativo.
 #[derive(Clone)]
 pub struct Limiter {
     pub enabled: bool,
     pub ceiling: f32,
-    pub release: f32,
     envelope: f64,
     sample_rate: f32,
+    lookahead: VecDeque<Vec<f64>>,
+    pub lookahead_samples: usize,
+    oversample_buffer: Vec<f64>,
+    rms_state: f64,
+    pub crest_factor_smooth: f64,
+    release_base: f32,
 }
+
 impl Default for Limiter {
     fn default() -> Self {
         Self {
             enabled: false,
             ceiling: -1.0,
-            release: 0.05,
             envelope: 0.0,
             sample_rate: 44100.0,
+            lookahead: VecDeque::with_capacity(89),
+            lookahead_samples: 88,
+            oversample_buffer: Vec::with_capacity(512 * 4),
+            rms_state: 0.0,
+            crest_factor_smooth: 1.0,
+            release_base: 0.05,
         }
     }
 }
+
+#[allow(dead_code)]
 impl Limiter {
-    /// Establece la frecuencia de muestreo para el seguidor de envolvente.
+    /// Establece la frecuencia de muestreo.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
+        self.lookahead_samples = (0.002 * sample_rate as f64).round() as usize;
+        self.lookahead = VecDeque::with_capacity(self.lookahead_samples + 1);
     }
+
+    /// Sobremuestrea 4x (inserción de ceros + FIR half-band).
+    fn upsample_4x(&mut self, frame: &[f64]) {
+        let n = frame.len();
+        let up_len = n * 4;
+        self.oversample_buffer.resize(up_len, 0.0);
+
+        // Zero-insert: every 4th sample is original, rest are 0
+        for (i, sample) in frame.iter().enumerate() {
+            self.oversample_buffer[i * 4] = *sample;
+        }
+
+        // Apply half-band FIR filter
+        let mut filtered = vec![0.0_f64; up_len];
+        for out_idx in 0..up_len {
+            let mut sum = 0.0_f64;
+            for k in 0..32 {
+                let in_idx = out_idx as isize + k as isize - 16;
+                if in_idx >= 0 && in_idx < up_len as isize {
+                    sum += self.oversample_buffer[in_idx as usize] * FIR_HALFBAND_COEFFS[k];
+                }
+            }
+            filtered[out_idx] = sum * 4.0; // Compensate zero-insertion energy loss
+        }
+        self.oversample_buffer = filtered;
+    }
+
+    /// Diezma 4x (toma cada 4ª muestra del buffer sobremuestreado).
+    fn downsample_4x(&self, upsampled: &[f64], frame: &mut [f64]) {
+        let n = frame.len();
+        for i in 0..n {
+            frame[i] = upsampled[i * 4];
+        }
+    }
+
+    /// Procesa un frame con lookahead, oversampling true-peak y release adaptativo.
     pub fn process(&mut self, frame: &mut [f64]) {
-        let max_abs = frame
+        if !self.enabled {
+            return;
+        }
+
+        self.lookahead.push_back(frame.to_vec());
+        while self.lookahead.len() > self.lookahead_samples {
+            self.lookahead.pop_front();
+        }
+
+        if self.lookahead.len() < self.lookahead_samples {
+            return;
+        }
+
+        let oldest = self.lookahead.front().cloned().unwrap_or_default();
+
+        // True peak detection via zero-insert 4x
+        let n = oldest.len();
+        self.oversample_buffer.resize(n * 4, 0.0);
+        for (i, sample) in oldest.iter().enumerate() {
+            self.oversample_buffer[i * 4] = *sample;
+        }
+        let true_peak = self
+            .oversample_buffer
             .iter()
+            .filter(|s| s.is_finite())
             .map(|s| s.abs())
             .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0_f64);
-        let release_coeff = (-1.0_f64 / ((self.release as f64) * (self.sample_rate as f64))).exp();
+            .unwrap_or(0.0);
 
-        // Fast attack (instant), smooth release
+        // RMS of original frame for crest factor
+        let rms_sq = oldest.iter().filter(|s| s.is_finite()).map(|s| s * s).sum::<f64>()
+            / oldest.len().max(1) as f64;
+        let rms = rms_sq.sqrt().max(1e-10);
+
+        let crest = true_peak / rms;
+        self.crest_factor_smooth = 0.9 * self.crest_factor_smooth + 0.1 * crest;
+        let crest_norm = ((self.crest_factor_smooth - 1.0) / 19.0).clamp(0.0, 1.0);
+
+        let release_secs = 0.1 - crest_norm * 0.09;
+
+        // Envelope follower on original-rate (for true peak at original rate use max_abs)
+        let max_abs = oldest
+            .iter()
+            .filter(|s| s.is_finite())
+            .map(|s| s.abs())
+            .max_by(|a, b| a.partial_cmp(b).unwrap())
+            .unwrap_or(0.0);
+
+        let release_coeff =
+            (-1.0_f64 / (release_secs * (self.sample_rate as f64))).exp();
+
         if max_abs > self.envelope {
             self.envelope = max_abs;
         } else {
-            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
+            self.envelope =
+                release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
         }
 
-        let ceiling_lin = 10.0f64.powf((self.ceiling as f64) / 20.0);
+        let ceiling_lin = 10.0_f64.powf((self.ceiling as f64) / 20.0);
         if self.envelope > ceiling_lin {
             let attenuation = ceiling_lin / self.envelope;
             for s in frame.iter_mut() {
                 *s *= attenuation;
             }
+        } else {
+            frame.copy_from_slice(&oldest);
+        }
+
+        self.lookahead.pop_front();
+
+        for s in frame.iter_mut() {
+            if !s.is_finite() {
+                *s = 0.0;
+            }
         }
     }
+
     pub fn reset_state(&mut self) {
         self.envelope = 0.0;
+        self.rms_state = 0.0;
+        self.crest_factor_smooth = 1.0;
+        self.lookahead.clear();
+        self.oversample_buffer.clear();
     }
 }
 

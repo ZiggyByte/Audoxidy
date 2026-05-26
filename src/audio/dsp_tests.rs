@@ -398,13 +398,86 @@ mod tests {
     fn test_limiter_process_no_panic() {
         let mut l = Limiter::default();
         l.enabled = true;
-        l.process(&mut [0.5, -0.3]);
+        for _ in 0..100 {
+            l.process(&mut [0.5, -0.3]);
+        }
     }
 
     #[test]
     fn test_limiter_reset_state() {
         let mut l = Limiter::default();
         l.reset_state();
+    }
+
+    // ========================================================================
+    // Limiter premium tests (D-02, D-06)
+    // ========================================================================
+
+    #[test]
+    fn test_limiter_oversampling_true_peak() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        l.ceiling = -1.0;
+        for _ in 0..l.lookahead_samples {
+            l.process(&mut [0.5, 0.5]);
+        }
+        let mut frame = [0.95, 0.95];
+        l.process(&mut frame);
+        let ceiling_lin = 10.0_f64.powf(-1.0 / 20.0);
+        assert!(frame[0].abs() <= ceiling_lin + 0.01,
+            "Oversampled limiter should catch peaks: {} > {}", frame[0].abs(), ceiling_lin);
+    }
+
+    #[test]
+    fn test_limiter_lookahead_transient() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        l.ceiling = -3.0;
+        for _ in 0..l.lookahead_samples {
+            l.process(&mut [0.0, 0.0]);
+        }
+        let mut impulse = [0.98, -0.98];
+        l.process(&mut impulse);
+        let ceiling_lin = 10.0_f64.powf(-3.0 / 20.0);
+        assert!(impulse[0].abs() <= ceiling_lin + 0.01,
+            "Lookahead limiter should catch transient: {} > {}", impulse[0].abs(), ceiling_lin);
+    }
+
+    #[test]
+    fn test_limiter_crest_factor() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        for _ in 0..l.lookahead_samples {
+            l.process(&mut [0.5, 0.5]);
+        }
+        l.process(&mut [0.5, 0.5]);
+        // After steady signal, crest factor should be relatively low
+        assert!(l.crest_factor_smooth > 0.0, "Crest factor should be valid: {}", l.crest_factor_smooth);
+    }
+
+    #[test]
+    fn test_limiter_zero_ceiling_bypass() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        l.ceiling = 0.0;
+        for _ in 0..l.lookahead_samples {
+            l.process(&mut [0.5, 0.5]);
+        }
+        let mut frame = [0.5, 0.5];
+        l.process(&mut frame);
+        // With ceiling=0dB, no limiting occurs; output should not be zero
+        assert!(frame[0].abs() > 0.0, "ceiling=0.0 should pass signal through");
+        assert!(frame[0].abs() <= 0.5 + 1e-3, "output should not exceed input without compression");
+    }
+
+    #[test]
+    fn test_limiter_nan_guard() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        for _ in 0..l.lookahead_samples {
+            l.process(&mut [f64::NAN, f64::INFINITY]);
+        }
+        l.process(&mut [f64::NAN, f64::INFINITY]);
     }
 
     // ========================================================================

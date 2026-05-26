@@ -785,6 +785,14 @@ pub fn view<'a>(
     ]
     .spacing(0);
 
+    // Logo con padding-top 9px
+    let logo = container(logo).padding(iced::Padding {
+        top: 9.0,
+        right: 0.0,
+        bottom: 0.0,
+        left: 0.0,
+    });
+
     // 2. Botón de cerrar con icono SVG "close-big.svg" de 24px
     let close_icon = svg(iced::widget::svg::Handle::from_path(
         "assets/icons/close-big.svg",
@@ -817,7 +825,12 @@ pub fn view<'a>(
     // 3. Contenido de la cabecera con espacio y alineación vertical centrada
     let header_content = row![logo, Space::new().width(Length::Fill), close_btn,]
         .align_y(Alignment::Center)
-        .padding([0, 15]);
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 5.0,
+            bottom: 0.0,
+            left: 15.0,
+        });
 
     let centered_title = container(
         text("Centro de Audio Avanzado")
@@ -830,21 +843,21 @@ pub fn view<'a>(
     .center_x(iced::Fill)
     .center_y(iced::Fill);
 
-    // Cabecera con 34px de altura, con esquinas superiores redondeadas (4px) para acoplarse al contenedor principal
+    // Cabecera con 40px de altura, con esquinas superiores redondeadas (8px) para acoplarse al contenedor principal
     let header = container(
         iced::widget::Stack::new()
             .push(centered_title)
             .push(header_content),
     )
-    .height(Length::Fixed(34.0))
+    .height(Length::Fixed(40.0))
     .width(Length::Fill)
     .style(|_t: &Theme| {
         container::Style::default()
             .background(COLOR_BG)
             .border(iced::Border {
                 radius: iced::border::Radius {
-                    top_left: 4.0,
-                    top_right: 4.0,
+                    top_left: 8.0,
+                    top_right: 8.0,
                     bottom_left: 0.0,
                     bottom_right: 0.0,
                 },
@@ -914,11 +927,10 @@ pub fn view<'a>(
         _ => Space::new().into(),
     };
 
-    // Contenido interno con padding de 15px en laterales y fondo, y 0px de espacio con la cabecera (top)
+    // Contenido interno con padding de 15px en laterales y fondo
     let inner_content = column![
         tab_row,
         divider,
-        Space::new().height(Length::Fixed(15.0)),
         content,
     ]
     .padding(iced::Padding {
@@ -939,7 +951,7 @@ pub fn view<'a>(
     let non_pass_through_window = mouse_area(
         container(window_layout)
             .width(Length::Fixed(940.0))
-            .height(Length::Fixed(474.0))
+            .height(Length::Fixed(480.0))
             .padding(2.0) // Inset de 2px para que el borde del contenedor principal no sea tapado por los hijos
             .style(|_t: &Theme| {
                 container::Style::default()
@@ -947,7 +959,7 @@ pub fn view<'a>(
                     .border(iced::Border {
                         color: COLOR_ACCENT,
                         width: 2.0,
-                        radius: 4.0.into(),
+                        radius: 8.0.into(),
                     })
             }),
     )
@@ -1864,6 +1876,7 @@ fn view_audio_config<'a>(
     let bottom_actions = row![restart_btn, reset_btn, apply_btn].spacing(10);
 
     column![
+        Space::new().height(Length::Fixed(15.0)),
         row![
             container(left_col).width(Length::FillPortion(6)),
             container(main_divider)
@@ -2081,6 +2094,7 @@ fn view_equalizer<'a>(
     .align_x(Alignment::Center);
 
     column![
+        Space::new().height(Length::Fixed(15.0)),
         top_row,
         Space::new().height(Length::Fixed(20.0)),
         row![
@@ -2326,12 +2340,16 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Canal Central")
-            .size(12)
-            .color(COLOR_TEXT_PRIMARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(5.0)),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding {
+            top: 12.0,
+            right: 0.0,
+            bottom: 10.0,
+            left: 0.0,
+        }),
         view_effect(
             "Canal Central",
             "Nivel (%)",
@@ -2439,12 +2457,20 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen de canales en mezcla menor a 5.1")
-            .size(11)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(5.0)),
+        container(
+            text("Volumen de canales en mezcla menor a 5.1")
+                .size(11)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM)
+        )
+        .width(Length::Fill)
+        .center_x(Length::Fill)
+        .padding(iced::Padding {
+            top: 12.0,
+            right: 0.0,
+            bottom: 10.0,
+            left: 0.0,
+        }),
         view_effect(
             "Canal de Subwoofer",
             "Nivel (%)",
@@ -2533,12 +2559,16 @@ fn view_audio_effects<'a>(
             )),
             None
         ),
-        container(Space::new().height(Length::Fixed(15.0))),
-        text("Volumen Surround (SL/SR SBL/SBR)")
-            .size(12)
-            .color(COLOR_TEXT_PRIMARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(5.0)),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding {
+            top: 12.0,
+            right: 0.0,
+            bottom: 10.0,
+            left: 0.0,
+        }),
         view_effect(
             "Canales Surround",
             "Nivel (%)",
@@ -2564,6 +2594,7 @@ fn view_audio_effects<'a>(
     .width(Length::FillPortion(1));
 
     column![
+        Space::new().height(Length::Fixed(15.0)),
         iced::widget::scrollable(
             row![
                 col1,

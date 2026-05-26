@@ -185,7 +185,7 @@ impl Equalizer {
 
         Self {
             bands: active,
-            enabled: true,
+            enabled: false,
             saved_bands_20: bands_20,
             saved_bands_31: bands_31,
             last_sample_rate: 44100.0, // Default

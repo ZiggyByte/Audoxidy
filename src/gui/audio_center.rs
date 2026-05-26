@@ -2308,7 +2308,7 @@ fn view_audio_effects<'a>(
         // Build column - top row then spacer then slider rows
         let mut col = column![
             top_row,
-            Space::new().height(Length::Fixed(15.0)),
+            Space::new().height(Length::Fixed(15.0 + extra_padding_top)),
             bottom_row
         ];
         if let Some(sr) = secondary_row {
@@ -2317,7 +2317,7 @@ fn view_audio_effects<'a>(
         }
 
         let c = container(col)
-        .padding(iced::Padding { top: 12.0 + extra_padding_top, right: 10.0, bottom: 12.0, left: 10.0 })
+        .padding([12, 10])
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)

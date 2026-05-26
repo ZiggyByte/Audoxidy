@@ -2143,12 +2143,12 @@ fn view_audio_effects<'a>(
         _default_val: f32,
         on_toggle: impl Fn(bool) -> crate::gui::app::Message + 'a,
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
-        on_reset: crate::gui::app::Message, // Ahora se usará para el clic derecho
+        on_reset: crate::gui::app::Message,
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
     ) -> Element<'a, crate::gui::app::Message> {
         view_effect_with_secondary(
             title, param_label, val, range, enabled, _default_val,
-            on_toggle, on_change, on_reset, extra_widget, None,
+            on_toggle, on_change, on_reset, extra_widget, None, None,
         )
     }
 
@@ -2163,7 +2163,8 @@ fn view_audio_effects<'a>(
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
         on_reset: crate::gui::app::Message,
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
-        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str)>,
+        fixed_height: Option<f32>,
+        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str, f32)>,
     ) -> Element<'a, crate::gui::app::Message> {
         let stroke_color = if enabled {
             COLOR_ACCENT
@@ -2198,6 +2199,12 @@ fn view_audio_effects<'a>(
 
         // --- NUEVO CUSTOM SLIDER ---
         let on_reset_msg = on_reset.clone();
+        let range_max = *range.end();
+        let primary_step = if range_max <= 1.0 { 0.01 } else { 0.1 };
+        let primary_opts = crate::gui::widgets::CustomSliderOptions {
+            step_size: primary_step,
+            ..crate::gui::widgets::CustomSliderOptions::default()
+        };
         let param_slider = crate::gui::widgets::CustomSlider::new(
             val,
             range.clone(),
@@ -2209,7 +2216,10 @@ fn view_audio_effects<'a>(
         .height(Length::Fixed(18.0))
         .with_colored_track(true)
         .with_arrow_keys(true)
-        .track_color(COLOR_BG);
+        .track_color(COLOR_BG)
+        .options(primary_opts);
+
+        let val_format = if range_max <= 1.0 { format!("{:.2}", val) } else { format!("{:.1}", val) };
 
         // --- FILA INFERIOR REESTRUCTURADA ---
         // Eliminamos el botón "R" y el texto estático,
@@ -2225,7 +2235,7 @@ fn view_audio_effects<'a>(
             // Reemplazamos el texto estático por un visualizador de valor que
             // parece un input (opcionalmente puedes usar iced::widget::text_input aquí)
             container(
-                text(format!("{:.1}", val))
+                text(val_format)
                     .size(11)
                     .color(COLOR_TEXT_PRIMARY)
                     .font(FONT_INTER_SANS_MEDIUM)
@@ -2245,8 +2255,10 @@ fn view_audio_effects<'a>(
         .align_y(Alignment::Center);
 
         // Secondary slider row (optional)
-        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label)| {
+        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label, s_step)| {
             let s_max = *s_range.end();
+            let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
+            sec_opts.step_size = s_step;
             let sec_slider = crate::gui::widgets::CustomSlider::new(
                 s_val,
                 s_range,
@@ -2258,7 +2270,8 @@ fn view_audio_effects<'a>(
             .height(Length::Fixed(18.0))
             .with_colored_track(true)
             .with_arrow_keys(true)
-            .track_color(COLOR_BG);
+            .track_color(COLOR_BG)
+            .options(sec_opts);
             let sec_val_fmt = if s_max <= 1.0 { format!("{:.2}", s_val) } else { format!("{:.0}", s_val) };
             row![
                 text(s_label)
@@ -2275,6 +2288,7 @@ fn view_audio_effects<'a>(
                         .font(FONT_INTER_SANS_MEDIUM)
                 )
                 .padding([2, 4])
+                .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
                 .width(Length::Fixed(39.0))
             ]
             .align_y(Alignment::Center)
@@ -2291,9 +2305,9 @@ fn view_audio_effects<'a>(
             col = col.push(sr);
         }
 
-        container(col)
+        let c = container(col)
         .padding([12, 10])
-        .height(Length::Fixed(92.0))
+        .align_y(Alignment::Center)
         .style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)
@@ -2302,8 +2316,13 @@ fn view_audio_effects<'a>(
                     width: 1.0,
                     radius: 8.0.into(),
                 })
-        })
-        .into()
+        });
+        let c: Element<_> = if let Some(h) = fixed_height {
+            c.height(Length::Fixed(h)).into()
+        } else {
+            c.into()
+        };
+        c
     }
 
     let (
@@ -2421,6 +2440,7 @@ fn view_audio_effects<'a>(
                 -3.0
             )),
             None,
+            Some(92.0),
             Some((compressor_intensity * 100.0, 0.0..=100.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, v
@@ -2428,7 +2448,8 @@ fn view_audio_effects<'a>(
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, 50.0
                 )),
-                "Intensidad",
+                "Intensidad (%)",
+                1.0,
             )),
         ),
         container(
@@ -2527,7 +2548,7 @@ fn view_audio_effects<'a>(
                 .into()
             )
         ),
-        view_effect(
+        view_effect_with_secondary(
             "Limitador",
             "Techo (dB)",
             limiter_ceiling,
@@ -2546,7 +2567,9 @@ fn view_audio_effects<'a>(
                 DspEffect::Limiter,
                 -1.0
             )),
-            None
+            None,
+            Some(92.0),
+            None,
         ),
         container(
             text("Volumen de canales en mezcla menor a 5.1")
@@ -2649,6 +2672,7 @@ fn view_audio_effects<'a>(
                 0.5
             )),
             None,
+            Some(92.0),
             Some((reverb_room_size, 0.0..=1.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::ReverbRoomSize, v
@@ -2657,6 +2681,7 @@ fn view_audio_effects<'a>(
                     DspEffect::ReverbRoomSize, 0.5
                 )),
                 "Tamaño",
+                0.01,
             )),
         ),
         container(

@@ -364,4 +364,68 @@ mod tests {
         );
         assert_eq!(out_silent.len(), 2);
     }
+
+    #[test]
+    fn test_downmix_coefficients_independent() {
+        // Verifica que dm_conf.1 (LFE) solo afecta al canal LFE, no a los demas.
+        // Con entrada que tiene LFE != 0, comparamos output con lfe_coeff=1.0 vs lfe_coeff=0.0
+        // La unica diferencia debe ser la contribucion del LFE.
+        let frames = 1;
+        let in_channels = 6;
+        let out_channels = 2;
+
+        let input = vec![
+            vec![0.5], // FL
+            vec![0.3], // FR
+            vec![0.8], // C
+            vec![1.0], // LFE (fuerte)
+            vec![0.2], // SL
+            vec![0.2], // SR
+        ];
+
+        let map = crate::audio::engine::ChannelMap {
+            fl: Some(0),
+            fr: Some(1),
+            c: Some(2),
+            lfe: Some(3),
+            sl: Some(4),
+            sr: Some(5),
+            ..Default::default()
+        };
+
+        // Con LFE activo (coeff=1.0) vs LFE silenciado (coeff=0.0)
+        let mut out_full = Vec::new();
+        crate::audio::engine::AudioEngine::mix_channels_planar(
+            &input, frames, in_channels, out_channels, &map,
+            (1.0, 1.0, 1.0, 1.0), &mut out_full,
+        );
+
+        let mut out_no_lfe = Vec::new();
+        crate::audio::engine::AudioEngine::mix_channels_planar(
+            &input, frames, in_channels, out_channels, &map,
+            (1.0, 0.0, 1.0, 1.0), &mut out_no_lfe,
+        );
+
+        assert_eq!(out_full.len(), 2);
+        assert_eq!(out_no_lfe.len(), 2);
+
+        // La diferencia debe ser exactamente LFE (1.0 * coeff_diff = 1.0)
+        // LFE se suma por igual a L y R: out_full = out_no_lfe + LFE * (1.0 - 0.0) para cada canal
+        for ch in 0..2 {
+            let diff = (out_full[ch] - out_no_lfe[ch] - 1.0).abs();
+            assert!(diff < 1e-6, "LFE contribution should be exactly 1.0 per channel: {}", diff);
+        }
+
+        // Con center coeff=0.0, la contribucion del centro debe desaparecer
+        let mut out_no_center = Vec::new();
+        crate::audio::engine::AudioEngine::mix_channels_planar(
+            &input, frames, in_channels, out_channels, &map,
+            (0.0, 1.0, 1.0, 1.0), &mut out_no_center,
+        );
+
+        for ch in 0..2 {
+            let diff = (out_full[ch] - out_no_center[ch] - 0.8).abs();
+            assert!(diff < 1e-6, "Center contribution should be exactly 0.8: {}", diff);
+        }
+    }
 }

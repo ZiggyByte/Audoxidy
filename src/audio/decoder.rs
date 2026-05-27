@@ -685,27 +685,24 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     let downmix_conf = {
                         let s = state.read();
+                        let side_val = if s.downmix_surround_enabled {
+                            s.downmix_surround as f64
+                        } else {
+                            0.81
+                        };
                         (
                             if s.downmix_center_enabled {
                                 s.downmix_center as f64
                             } else {
-                                0.7071
+                                0.74
                             },
                             if s.downmix_lfe_enabled {
                                 s.downmix_lfe as f64
                             } else {
-                                0.6666
+                                0.66
                             },
-                            if s.downmix_surround_enabled {
-                                s.downmix_surround as f64
-                            } else {
-                                0.7671
-                            },
-                            if s.downmix_surround_enabled {
-                                s.downmix_surround as f64
-                            } else {
-                                0.8071
-                            },
+                            side_val,
+                            (side_val + 0.10).min(2.0),
                         )
                     };
 

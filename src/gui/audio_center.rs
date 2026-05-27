@@ -2308,7 +2308,7 @@ fn view_audio_effects<'a>(
         // Build column - top row then spacer then slider rows
         let mut col = column![
             top_row,
-            Space::new().height(Length::Fixed(15.0 + extra_padding_top)),
+            Space::new().height(Length::Fixed(9.0 + extra_padding_top)),
             bottom_row
         ];
         if let Some(sr) = secondary_row {
@@ -2434,7 +2434,7 @@ fn view_audio_effects<'a>(
             "Compresor",
             "Umbral (dB)",
             compressor_threshold,
-            -40.0..=0.0,
+            -24.0..=0.0,
             compressor_enabled,
             -3.0,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspToggle(
@@ -2450,7 +2450,7 @@ fn view_audio_effects<'a>(
                 -3.0
             )),
             None,
-            Some(99.0),
+            Some(92.0),
             Some((compressor_intensity * 100.0, 0.0..=100.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, v
@@ -2476,27 +2476,32 @@ fn view_audio_effects<'a>(
             bottom: 8.0,
             left: 0.0,
         }),
-        view_effect(
-            "Canal Central",
+        view_effect_with_secondary(
+            "Canal de Subwoofer",
             "Nivel (%)",
-            audio_s.downmix_center,
+            audio_s.downmix_lfe,
             0.0..=2.0,
-            audio_s.downmix_center_enabled,
-            0.81,
+            audio_s.downmix_lfe_enabled,
+            0.66,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(
-                AudioStateToggle::DownmixCenter,
+                AudioStateToggle::DownmixLfe,
                 b
             )),
             |v| crate::gui::app::Message::AudioCenterMsg(
-                AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixCenter, v)
+                AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixLfe, v)
             ),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(
-                AudioStateToggle::DownmixCenter,
-                0.81
+                AudioStateToggle::DownmixLfe,
+                0.66
             )),
-            None
+            None,
+            None,
+            None,
+            0.01,
+            "{:.2}",
+            0.0,
         )
-    ]
+    ]        
     .spacing(15)
     .width(Length::FillPortion(1));
 
@@ -2582,16 +2587,16 @@ fn view_audio_effects<'a>(
                 -1.0
             )),
             None,
-            Some(99.0),
+            Some(92.0),
             None,
             0.1,
             "{:.1}",
-            17.0,
+            12.0,
         ),
         container(
             text("Volumen de canales en mezcla menor a 5.1")
                 .size(12)
-                .color(COLOR_TEXT_SECONDARY)
+                .color(COLOR_TEXT_PRIMARY)
                 .font(FONT_INTER_SANS_MEDIUM)
         )
         .width(Length::Fill)
@@ -2602,25 +2607,30 @@ fn view_audio_effects<'a>(
             bottom: 0.0,
             left: 0.0,
         }),
-        view_effect(
-            "Canal de Subwoofer",
+        view_effect_with_secondary(
+            "Canal Central",
             "Nivel (%)",
-            audio_s.downmix_lfe,
+            audio_s.downmix_center,
             0.0..=2.0,
-            audio_s.downmix_lfe_enabled,
-            0.66,
+            audio_s.downmix_center_enabled,
+            0.74,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(
-                AudioStateToggle::DownmixLfe,
+                AudioStateToggle::DownmixCenter,
                 b
             )),
             |v| crate::gui::app::Message::AudioCenterMsg(
-                AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixLfe, v)
+                AudioCenterMessage::AudioStateValueChanged(AudioStateToggle::DownmixCenter, v)
             ),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(
-                AudioStateToggle::DownmixLfe,
-                0.66
+                AudioStateToggle::DownmixCenter,
+                0.74
             )),
-            None
+            None,
+            None,
+            None,
+            0.01,
+            "{:.2}",
+            0.0,
         )
     ]
     .spacing(15)
@@ -2689,7 +2699,7 @@ fn view_audio_effects<'a>(
                 0.5
             )),
             None,
-            Some(99.0),
+            Some(92.0),
             Some((reverb_room_size, 0.0..=1.0,
                 Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::ReverbRoomSize, v
@@ -2715,13 +2725,13 @@ fn view_audio_effects<'a>(
             bottom: 8.0,
             left: 0.0,
         }),
-        view_effect(
+        view_effect_with_secondary(
             "Canales Surround",
             "Nivel (%)",
             audio_s.downmix_surround,
             0.0..=2.0,
             audio_s.downmix_surround_enabled,
-            0.73,
+            0.81,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(
                 AudioStateToggle::DownmixSurround,
                 b
@@ -2731,9 +2741,14 @@ fn view_audio_effects<'a>(
             ),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(
                 AudioStateToggle::DownmixSurround,
-                0.73
+                0.81
             )),
-            None
+            None,
+            None,
+            None,
+            0.01,
+            "{:.2}",
+            0.0,
         )
     ]
     .spacing(15)

@@ -635,6 +635,9 @@ impl AudioCenterManager {
             AudioCenterMessage::EqToggleSelected(b) => {
                 self.equalizer_enabled = b;
                 audio_manager.set_eq_enabled(b);
+                if b {
+                    audio_manager.set_preamp_gain(self.preamp_gain);
+                }
             }
             AudioCenterMessage::EqBandsSelected(is_31) => {
                 self.equalizer_bands_31 = is_31;
@@ -2390,7 +2393,7 @@ fn view_audio_effects<'a>(
     let col1 = column![
         view_effect(
             "Refuerzo de Sub-Graves",
-            "Nivel (dB)",
+            "Nivel dB",
             sub_bass_gain,
             -4.0..=24.0,
             sub_bass_enabled,
@@ -2411,7 +2414,7 @@ fn view_audio_effects<'a>(
         ),
         view_effect(
             "Reducción de Ruido",
-            "Umbral (dB)",
+            "Umbral dB",
             noise_gate_threshold,
             -85.0..=-10.0,
             noise_gate_enabled,
@@ -2432,7 +2435,7 @@ fn view_audio_effects<'a>(
         ),
         view_effect_with_secondary(
             "Compresor",
-            "Umbral (dB)",
+            "Umbral dB",
             compressor_threshold,
             -24.0..=0.0,
             compressor_enabled,
@@ -2458,7 +2461,7 @@ fn view_audio_effects<'a>(
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
                     DspEffect::CompressorIntensity, 50.0
                 )),
-                "Intensidad (%)",
+                "Intensidad %",
                 1.0,
                 "{:.1}",
             )),
@@ -2478,7 +2481,7 @@ fn view_audio_effects<'a>(
         }),
         view_effect_with_secondary(
             "Canal de Subwoofer",
-            "Nivel (%)",
+            "Mix %",
             audio_s.downmix_lfe,
             0.0..=2.0,
             audio_s.downmix_lfe_enabled,
@@ -2508,7 +2511,7 @@ fn view_audio_effects<'a>(
     let col2 = column![
         view_effect(
             "Refuerzo de Graves",
-            "Nivel (dB)",
+            "Nivel dB",
             mid_bass_gain,
             -4.0..=15.0,
             mid_bass_enabled,
@@ -2529,7 +2532,7 @@ fn view_audio_effects<'a>(
         ),
         view_effect(
             "Expansor Estéreo",
-            "Ancho (%)",
+            "Ancho %",
             stereo_expander_width * 100.0,
             0.0..=260.0,
             stereo_expander_enabled,
@@ -2569,7 +2572,7 @@ fn view_audio_effects<'a>(
         ),
         view_effect_with_secondary(
             "Limitador",
-            "Techo (dB)",
+            "Techo dB",
             limiter_ceiling,
             -12.0..=0.0,
             limiter_enabled,
@@ -2609,7 +2612,7 @@ fn view_audio_effects<'a>(
         }),
         view_effect_with_secondary(
             "Canal Central",
-            "Nivel (%)",
+            "Mix %",
             audio_s.downmix_center,
             0.0..=2.0,
             audio_s.downmix_center_enabled,
@@ -2639,7 +2642,7 @@ fn view_audio_effects<'a>(
     let col3 = column![
         view_effect(
             "Refuerzo de Voces",
-            "Nivel (dB)",
+            "Nivel dB",
             voice_boost_gain,
             -4.0..=13.0,
             voice_boost_enabled,
@@ -2726,8 +2729,8 @@ fn view_audio_effects<'a>(
             left: 0.0,
         }),
         view_effect_with_secondary(
-            "Canales Surround",
-            "Nivel (%)",
+            "Canales Surround  SL/SR | SBL/SBR",
+            "Mix %",
             audio_s.downmix_surround,
             0.0..=2.0,
             audio_s.downmix_surround_enabled,

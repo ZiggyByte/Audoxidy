@@ -50,13 +50,12 @@ impl DspChain {
             return;
         }
 
-        // Apply Preamp (always, regardless of EQ state)
-        for s in frame.iter_mut() {
-            *s *= self.preamp_gain as f64;
-        }
-
-        // Apply EQ — procesa frame completo con SIMD (x86_64)
+        // Apply Preamp (Only if Equalizer module is active/enabled)
         if self.equalizer.enabled {
+            for s in frame.iter_mut() {
+                *s *= self.preamp_gain as f64;
+            }
+            // Apply EQ — procesa frame completo con SIMD (x86_64)
             self.equalizer.process_frame(frame);
         }
 

@@ -2837,9 +2837,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             // Clic izquierdo: input, slider, o desactivación
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 if self.options.enable_keyboard_input && in_input {
-                    // Desactivar hover del slider (sin callback — AppFocus se queda)
                     state.is_hover_active = false;
                     state.keyboard_focused = false;
+                    if let Some(ref cb) = self.on_hover_state_change {
+                        shell.publish(cb(true));
+                    }
                     state.is_input_editing = true;
                     state.input_value_text = self.format_display_value(self.value);
                     state.input_has_focus = true;

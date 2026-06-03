@@ -3677,7 +3677,9 @@ impl AudoxidyApp {
             Message::AudioCenterMsg(ac_msg) => {
                 match &ac_msg {
                     crate::gui::audio_center::AudioCenterMessage::SliderHoverActive(true) => {
-                        self.previous_focus = self.focus;
+                        if self.focus != AppFocus::AudioCenter {
+                            self.previous_focus = self.focus;
+                        }
                         self.focus = AppFocus::AudioCenter;
                     }
                     crate::gui::audio_center::AudioCenterMessage::SliderHoverActive(false) => {

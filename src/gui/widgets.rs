@@ -2347,7 +2347,7 @@ impl Default for CustomSliderOptions {
             input_font_size: 11.0,
             input_font_color: Some(COLOR_TEXT_PRIMARY),
             input_align: InputAlign::Left,
-            input_padding_h: 4.0,
+            input_padding_h: 0.0,
             input_padding_v: 2.0,
             input_fixed_height: None,
         }
@@ -2509,12 +2509,6 @@ impl<'a, Message> CustomSlider<'a, Message> {
     /// Alto fijo del input en píxeles (None = automático desde font_size + padding)
     pub fn input_height_fixed(mut self, height: f32) -> Self {
         self.options.input_fixed_height = Some(height);
-        self
-    }
-
-    /// Color del borde del input (None = COLOR_TEXT_SECONDARY, COLOR_BG para invisible)
-    pub fn input_border_color(mut self, color: Color) -> Self {
-        self.options.input_border_color = Some(color);
         self
     }
 
@@ -2884,12 +2878,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     let new_value = self.percent_to_value(percent);
                     self.value = new_value;
                     shell.publish((self.on_change)(new_value));
-                } else if state.is_hover_active {
-                    state.is_hover_active = false;
-                    state.keyboard_focused = false;
-                    if let Some(ref cb) = self.on_hover_state_change {
-                        shell.publish(cb(false));
-                    }
                 } else if state.input_has_focus {
                     // Clic fuera del input y del slider: confirmar
                     let parsed = state.input_value_text.parse::<f32>();
@@ -2903,6 +2891,15 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     if let Some(ref cb) = self.on_hover_state_change {
                         shell.publish(cb(false));
                     }
+                }
+            }
+
+            // Cualquier clic del mouse fuera del slider desactiva hover
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_hover_active => {
+                state.is_hover_active = false;
+                state.keyboard_focused = false;
+                if let Some(ref cb) = self.on_hover_state_change {
+                    shell.publish(cb(false));
                 }
             }
 
@@ -3011,6 +3008,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             {
                 match key {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        shell.capture_event();
                         let parsed = state.input_value_text.parse::<f32>();
                         if let Ok(v) = parsed {
                             let clamped = v.clamp(*self.range.start(), *self.range.end());
@@ -3024,6 +3022,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         }
                     }
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                        shell.capture_event();
                         state.is_input_editing = false;
                         state.input_has_focus = false;
                         if let Some(ref cb) = self.on_hover_state_change {

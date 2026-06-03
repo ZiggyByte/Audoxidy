@@ -2512,9 +2512,9 @@ impl<'a, Message> CustomSlider<'a, Message> {
         self
     }
 
-    /// Posición del input de teclado
-    pub fn input_position(mut self, pos: InputPosition) -> Self {
-        self.options.input_position = pos;
+    /// Color del borde del input (None = COLOR_TEXT_SECONDARY, COLOR_BG para invisible)
+    pub fn input_border_color(mut self, color: Color) -> Self {
+        self.options.input_border_color = Some(color);
         self
     }
 

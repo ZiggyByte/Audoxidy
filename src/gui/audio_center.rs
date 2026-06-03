@@ -2025,10 +2025,10 @@ fn view_equalizer<'a>(
         let slider = if eq_disabled {
             slider_base
                 .handle_color(COLOR_CONTRAST)
-                .border(2.0, COLOR_ACCENT)
+                .border(0.0, COLOR_ACCENT)
                 .handle_focus_color(COLOR_ACCENT)
                 .handle_hover_color(COLOR_CONTRAST)
-                .border_hover(2.0, COLOR_TEXT_SECONDARY)
+                .border_hover(1.0, COLOR_TEXT_SECONDARY)
         } else {
             slider_base
         };
@@ -2120,12 +2120,12 @@ fn view_equalizer<'a>(
             .size(11)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(92.0)),
+        Space::new().height(Length::Fixed(97.0)),
         text("0")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(92.0)),
+        Space::new().height(Length::Fixed(97.0)),
         text("-9")
             .size(11)
             .color(COLOR_TEXT_SECONDARY)
@@ -2246,6 +2246,7 @@ fn view_audio_effects<'a>(
         .input_width_fixed(40.0)
         .input_height_fixed(18.0)
         .input_align(crate::gui::widgets::InputAlign::Center)
+        .input_border_color(COLOR_BG)
         .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
         let param_slider = if primary_fmt == "{:.2}" {
             param_slider.format_value(|v| format!("{:.2}", v))
@@ -2285,6 +2286,7 @@ fn view_audio_effects<'a>(
             .input_width_fixed(40.0)
             .input_height_fixed(18.0)
             .input_align(crate::gui::widgets::InputAlign::Center)
+            .input_border_color(COLOR_BG)
             .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
             let sec_slider = if s_fmt == "{:.2}" {
                 sec_slider.format_value(|v| format!("{:.2}", v))

@@ -39,6 +39,7 @@ pub enum AudioCenterMessage {
     AudioStateToggle(AudioStateToggle, bool),
     AudioStateValueChanged(AudioStateToggle, f32),
     StereoExpanderModeToggled(bool),
+    SliderHoverActive(bool),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -764,6 +765,9 @@ impl AudioCenterManager {
                         crate::audio::dsp::ExpanderMode::Hybrid
                     };
                 });
+            }
+            AudioCenterMessage::SliderHoverActive(_) => {
+                // Manejado en app.rs para AppFocus routing
             }
         }
     }
@@ -2004,8 +2008,10 @@ fn view_equalizer<'a>(
         value: f32,
         on_change: impl Fn(f32) -> crate::gui::app::Message + 'a,
         on_right_click: impl Fn() -> crate::gui::app::Message + 'a,
+        on_hover: impl Fn(bool) -> crate::gui::app::Message + 'a,
+        eq_disabled: bool,
     ) -> Element<'a, crate::gui::app::Message> {
-        let slider =
+        let slider_base =
             crate::gui::widgets::CustomSlider::new(value, -9.0..=9.0, on_change, on_right_click)
                 .orientation(crate::gui::widgets::SliderOrientation::Vertical)
                 .with_arrow_keys(true)
@@ -2013,7 +2019,19 @@ fn view_equalizer<'a>(
                 .show_tooltip(true)
                 .tooltip_font_size(12.0)
                 .width(Length::Fixed(24.0))
-                .height(Length::Fixed(250.0));
+                .height(Length::Fixed(240.0))
+                .on_hover_state_change(on_hover);
+
+        let slider = if eq_disabled {
+            slider_base
+                .handle_color(COLOR_CONTRAST)
+                .border(2.0, COLOR_ACCENT)
+                .handle_focus_color(COLOR_ACCENT)
+                .handle_hover_color(COLOR_CONTRAST)
+                .border_hover(2.0, COLOR_TEXT_SECONDARY)
+        } else {
+            slider_base
+        };
 
         column![
             text(label_top)
@@ -2038,6 +2056,8 @@ fn view_equalizer<'a>(
         manager.preamp_gain,
         |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPreampChanged(v)),
         || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPreampChanged(0.0)),
+        |active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)),
+        !manager.equalizer_enabled,
     );
 
     // Bandas
@@ -2081,6 +2101,8 @@ fn view_equalizer<'a>(
             move || {
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandChanged(i, 0.0))
             },
+            |active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)),
+            !manager.equalizer_enabled,
         ));
     }
 
@@ -2098,12 +2120,12 @@ fn view_equalizer<'a>(
             .size(11)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(102.0)),
+        Space::new().height(Length::Fixed(92.0)),
         text("0")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().height(Length::Fixed(102.0)),
+        Space::new().height(Length::Fixed(92.0)),
         text("-9")
             .size(11)
             .color(COLOR_TEXT_SECONDARY)
@@ -2114,7 +2136,7 @@ fn view_equalizer<'a>(
     column![
         Space::new().height(Length::Fixed(15.0)),
         top_row,
-        Space::new().height(Length::Fixed(20.0)),
+        Space::new().height(Length::Fixed(25.0)),
         row![
             preamp_col,
             Space::new().width(Length::Fixed(2.0)),
@@ -2219,14 +2241,17 @@ fn view_audio_effects<'a>(
         .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
         .width(Length::Fill)
         .height(Length::Fixed(18.0))
-        .options(primary_opts);
+        .options(primary_opts)
+        .with_keyboard_input(true)
+        .input_width_fixed(40.0)
+        .input_height_fixed(18.0)
+        .input_align(crate::gui::widgets::InputAlign::Center)
+        .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
         let param_slider = if primary_fmt == "{:.2}" {
             param_slider.format_value(|v| format!("{:.2}", v))
         } else {
             param_slider
         };
-
-        let val_str = if primary_fmt == "{:.2}" { format!("{:.2}", val) } else { format!("{:.1}", val) };
 
         // --- FILA INFERIOR REESTRUCTURADA ---
         let bottom_row = row![
@@ -2236,24 +2261,6 @@ fn view_audio_effects<'a>(
                 .font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fixed(10.0)),
             param_slider,
-            Space::new().width(Length::Fixed(10.0)),
-            container(
-                text(val_str)
-                    .size(11)
-                    .color(COLOR_TEXT_PRIMARY)
-                    .font(FONT_INTER_SANS_MEDIUM)
-            )
-            .padding([2, 4])
-            .style(move |_t: &Theme| {
-                container::Style::default()
-                    .background(COLOR_BG)
-                    .border(iced::Border {
-                        color: COLOR_TEXT_SECONDARY,
-                        width: 0.0,
-                        radius: 4.0.into(),
-                    })
-            })
-            .width(Length::Fixed(39.0)),
         ]
         .align_y(Alignment::Center);
 
@@ -2273,13 +2280,17 @@ fn view_audio_effects<'a>(
             .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
             .width(Length::Fill)
             .height(Length::Fixed(18.0))
-            .options(sec_opts);
+            .options(sec_opts)
+            .with_keyboard_input(true)
+            .input_width_fixed(40.0)
+            .input_height_fixed(18.0)
+            .input_align(crate::gui::widgets::InputAlign::Center)
+            .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
             let sec_slider = if s_fmt == "{:.2}" {
                 sec_slider.format_value(|v| format!("{:.2}", v))
             } else {
                 sec_slider
             };
-            let sec_val_str = if s_fmt == "{:.2}" { format!("{:.2}", s_val) } else { format!("{:.1}", s_val) };
             row![
                 text(s_label)
                     .size(11)
@@ -2287,22 +2298,6 @@ fn view_audio_effects<'a>(
                     .font(FONT_INTER_SANS_MEDIUM),
                 Space::new().width(Length::Fixed(10.0)),
                 sec_slider,
-                Space::new().width(Length::Fixed(10.0)),
-                container(
-                    text(sec_val_str)
-                        .size(11)
-                        .color(COLOR_TEXT_PRIMARY)
-                        .font(FONT_INTER_SANS_MEDIUM)
-                )
-                .padding([2, 4])
-                .style(|_t: &Theme| container::Style::default()
-                    .background(COLOR_BG)
-                    .border(iced::Border {
-                        color: COLOR_TEXT_SECONDARY,
-                        width: 0.0,
-                        radius: 4.0.into(),
-                    }))
-                .width(Length::Fixed(39.0))
             ]
             .align_y(Alignment::Center)
             .into()

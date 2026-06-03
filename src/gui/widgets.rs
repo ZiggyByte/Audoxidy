@@ -2247,6 +2247,31 @@ pub enum SliderOrientation {
     Horizontal,
 }
 
+/// Posición del input de texto relativa al slider
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputPosition {
+    Auto,
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+/// Modo de ancho del input de texto
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum InputWidth {
+    Auto,
+    Fixed(f32),
+}
+
+/// Alineación del texto dentro del input
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputAlign {
+    Left,
+    Center,
+    Right,
+}
+
 /// Configuración de opciones opcionales del slider
 #[derive(Debug, Clone)]
 pub struct CustomSliderOptions {
@@ -2256,13 +2281,39 @@ pub struct CustomSliderOptions {
     pub show_tooltip: bool,
     pub step_size: f32,
     pub tooltip_font_size: f32,
-    // --- NUEVAS OPCIONES DE COLOR ---
     pub track_color: Option<Color>,
     pub active_track_color: Option<Color>,
     pub handle_color: Option<Color>,
+    /// Color del handle en focus (mouse sobre slider, sin clic)
+    pub handle_focus_color: Option<Color>,
+    /// Color del handle en hover activo (después de clic)
     pub handle_hover_color: Option<Color>,
     pub border_color: Option<Color>,
     pub border_width: f32,
+    /// Color del borde en estado focus
+    pub border_focus_color: Option<Color>,
+    /// Ancho del borde en estado focus
+    pub border_focus_width: f32,
+    /// Color del borde en estado hover activo
+    pub border_hover_color: Option<Color>,
+    /// Ancho del borde en estado hover activo
+    pub border_hover_width: f32,
+    // Opciones de input de teclado
+    pub input_position: InputPosition,
+    pub input_gap: f32,
+    pub input_width: InputWidth,
+    pub input_bg_color: Option<Color>,
+    pub input_border_color: Option<Color>,
+    pub input_border_focus_color: Option<Color>,
+    pub input_border_width: f32,
+    pub input_border_radius: f32,
+    pub input_font_size: f32,
+    pub input_font_color: Option<Color>,
+    pub input_align: InputAlign,
+    pub input_padding_h: f32,
+    pub input_padding_v: f32,
+    /// Alto fijo del input (None = automático desde font_size + padding)
+    pub input_fixed_height: Option<f32>,
 }
 
 impl Default for CustomSliderOptions {
@@ -2277,19 +2328,43 @@ impl Default for CustomSliderOptions {
             track_color: None,
             active_track_color: None,
             handle_color: None,
+            handle_focus_color: None,
             handle_hover_color: None,
             border_color: None,
             border_width: 0.0,
+            border_focus_color: None,
+            border_focus_width: 0.0,
+            border_hover_color: None,
+            border_hover_width: 0.0,
+            input_position: InputPosition::Auto,
+            input_gap: 10.0,
+            input_width: InputWidth::Auto,
+            input_bg_color: Some(COLOR_BG),
+            input_border_color: Some(COLOR_TEXT_SECONDARY),
+            input_border_focus_color: Some(COLOR_ACCENT),
+            input_border_width: 1.0,
+            input_border_radius: 4.0,
+            input_font_size: 11.0,
+            input_font_color: Some(COLOR_TEXT_PRIMARY),
+            input_align: InputAlign::Left,
+            input_padding_h: 4.0,
+            input_padding_v: 2.0,
+            input_fixed_height: None,
         }
     }
 }
 
-/// Estado interno del slider (arrastre, foco, tooltip)
+/// Estado interno del slider (arrastre, hover, foco, tooltip, input)
 #[derive(Debug, Clone, Default)]
 struct CustomSliderState {
     is_dragging: bool,
+    is_hover_active: bool,
     keyboard_focused: bool,
     tooltip_pos: Option<iced::Point>,
+    is_input_editing: bool,
+    input_value_text: String,
+    input_has_focus: bool,
+    input_cursor_pos: usize,
 }
 
 /// Widget de slider personalizado global
@@ -2305,6 +2380,7 @@ pub struct CustomSlider<'a, Message> {
     track_width: f32,
     handle_size: f32,
     format_fn: Option<Box<dyn Fn(f32) -> String + 'a>>,
+    on_hover_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
 }
 
 impl<'a, Message> CustomSlider<'a, Message> {
@@ -2327,6 +2403,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
             track_width: 8.0,
             handle_size: 16.0,
             format_fn: None,
+            on_hover_state_change: None,
         }
     }
 
@@ -2388,6 +2465,83 @@ impl<'a, Message> CustomSlider<'a, Message> {
     pub fn border(mut self, width: f32, color: Color) -> Self {
         self.options.border_width = width;
         self.options.border_color = Some(color);
+        self
+    }
+
+    /// Color del handle en estado focus (mouse sobre slider, sin clic)
+    pub fn handle_focus_color(mut self, color: Color) -> Self {
+        self.options.handle_focus_color = Some(color);
+        self
+    }
+
+    /// Establecer borde en estado focus
+    pub fn border_focus(mut self, width: f32, color: Color) -> Self {
+        self.options.border_focus_width = width;
+        self.options.border_focus_color = Some(color);
+        self
+    }
+
+    /// Establecer borde en estado hover activo
+    pub fn border_hover(mut self, width: f32, color: Color) -> Self {
+        self.options.border_hover_width = width;
+        self.options.border_hover_color = Some(color);
+        self
+    }
+
+    /// Callback opcional que se dispara cuando el hover activo cambia (true = activado, false = desactivado)
+    pub fn on_hover_state_change(mut self, f: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_hover_state_change = Some(Box::new(f));
+        self
+    }
+
+    /// Espacio entre slider e input de teclado
+    pub fn input_gap(mut self, gap: f32) -> Self {
+        self.options.input_gap = gap;
+        self
+    }
+
+    /// Ancho fijo del input en píxeles (None/Auto = automático desde el contenido)
+    pub fn input_width_fixed(mut self, width: f32) -> Self {
+        self.options.input_width = InputWidth::Fixed(width);
+        self
+    }
+
+    /// Alto fijo del input en píxeles (None = automático desde font_size + padding)
+    pub fn input_height_fixed(mut self, height: f32) -> Self {
+        self.options.input_fixed_height = Some(height);
+        self
+    }
+
+    /// Posición del input de teclado
+    pub fn input_position(mut self, pos: InputPosition) -> Self {
+        self.options.input_position = pos;
+        self
+    }
+
+    /// Alineación del texto dentro del input
+    pub fn input_align(mut self, align: InputAlign) -> Self {
+        self.options.input_align = align;
+        self
+    }
+
+    /// Estilo completo del input de teclado
+    pub fn input_style(
+        mut self,
+        bg: Option<Color>,
+        border: Option<Color>,
+        border_focus: Option<Color>,
+        border_width: f32,
+        border_radius: f32,
+        font_size: f32,
+        font_color: Option<Color>,
+    ) -> Self {
+        self.options.input_bg_color = bg;
+        self.options.input_border_color = border;
+        self.options.input_border_focus_color = border_focus;
+        self.options.input_border_width = border_width;
+        self.options.input_border_radius = border_radius;
+        self.options.input_font_size = font_size;
+        self.options.input_font_color = font_color;
         self
     }
 
@@ -2457,6 +2611,73 @@ impl<'a, Message> CustomSlider<'a, Message> {
             format!("{:.1}", val)
         }
     }
+
+    /// Calcular dimensiones del input (ancho, alto)
+    fn compute_input_size(&self) -> (f32, f32) {
+        let font_size = self.options.input_font_size;
+        let pad_h = self.options.input_padding_h;
+        let pad_v = self.options.input_padding_v;
+        let input_height = self.options.input_fixed_height.unwrap_or(font_size + pad_v * 2.0);
+        let display_text = self.format_display_value(self.value);
+        let input_width = match self.options.input_width {
+            InputWidth::Fixed(w) => w,
+            InputWidth::Auto => {
+                let char_w = font_size * 0.6;
+                (display_text.len() as f32 * char_w + pad_h * 2.0).ceil().max(40.0)
+            }
+        };
+        (input_width, input_height)
+    }
+
+    /// Calcular rectángulo del input para hit testing
+    fn input_bounds(&self, slider_bounds: Rectangle) -> Option<Rectangle> {
+        if !self.options.enable_keyboard_input {
+            return None;
+        }
+        let (input_width, input_height) = self.compute_input_size();
+        let gap = self.options.input_gap;
+
+        let pos = self.options.input_position;
+        let resolved_pos = if pos == InputPosition::Auto {
+            match self.orientation {
+                SliderOrientation::Horizontal => InputPosition::Right,
+                SliderOrientation::Vertical => InputPosition::Bottom,
+            }
+        } else {
+            pos
+        };
+
+        let (input_x, input_y) = match resolved_pos {
+            InputPosition::Right => {
+                let x = slider_bounds.x + slider_bounds.width + gap;
+                let y = slider_bounds.y + (slider_bounds.height - input_height) / 2.0;
+                (x, y)
+            }
+            InputPosition::Bottom => {
+                let x = slider_bounds.x + (slider_bounds.width - input_width) / 2.0;
+                let y = slider_bounds.y + slider_bounds.height + gap;
+                (x, y)
+            }
+            InputPosition::Left => {
+                let x = slider_bounds.x - input_width - gap;
+                let y = slider_bounds.y + (slider_bounds.height - input_height) / 2.0;
+                (x, y)
+            }
+            InputPosition::Top => {
+                let x = slider_bounds.x + (slider_bounds.width - input_width) / 2.0;
+                let y = slider_bounds.y - input_height - gap;
+                (x, y)
+            }
+            InputPosition::Auto => unreachable!(),
+        };
+
+        Some(Rectangle {
+            x: input_x,
+            y: input_y,
+            width: input_width,
+            height: input_height,
+        })
+    }
 }
 
 // ── Tooltip overlay para renderizar SIEMPRE por encima de otros widgets ──
@@ -2486,7 +2707,7 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
         use iced::advanced::text::Renderer as _;
 
         let val_display = &self.value_text;
-        let font_size = 12.0;
+        let font_size = self.font_size;
         let padding: f32 = 4.0;
         let border_radius = 4.0;
 
@@ -2560,7 +2781,25 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        let size = limits.resolve(self.width, self.height, iced::Size::ZERO);
+        let mut size = limits.resolve(self.width, self.height, iced::Size::ZERO);
+
+        if self.options.enable_keyboard_input {
+            let pos = self.options.input_position;
+            let resolved_pos = if pos == InputPosition::Auto {
+                match self.orientation {
+                    SliderOrientation::Horizontal => InputPosition::Right,
+                    SliderOrientation::Vertical => InputPosition::Bottom,
+                }
+            } else {
+                pos
+            };
+
+            if matches!(resolved_pos, InputPosition::Right | InputPosition::Left) {
+                let (input_w, _input_h) = self.compute_input_size();
+                size.width = (size.width - input_w - self.options.input_gap).max(20.0);
+            }
+        }
+
         iced::advanced::layout::Node::new(size)
     }
 
@@ -2577,25 +2816,60 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
     ) {
         let bounds = layout.bounds();
         let Some(cursor_pos) = cursor.position() else {
-            // Si no hay posición del cursor, detener arrastre
             tree.state.downcast_mut::<CustomSliderState>().is_dragging = false;
             return;
         };
 
-        let is_hovered = bounds.contains(cursor_pos);
+        let is_focus = bounds.contains(cursor_pos);
         let state = tree.state.downcast_mut::<CustomSliderState>();
 
         // Almacenar posición del cursor para tooltip overlay
-        state.tooltip_pos = if (is_hovered || state.is_dragging) && self.options.show_tooltip {
+        state.tooltip_pos = if (is_focus || state.is_dragging || state.is_hover_active) && self.options.show_tooltip {
             Some(cursor_pos)
         } else {
             None
         };
 
+        let input_bounds_opt = self.input_bounds(bounds);
+        let in_input = input_bounds_opt.map(|b| b.contains(cursor_pos)).unwrap_or(false);
+
         match event {
-            // Clic izquierdo para iniciar arrastre
+            // Clic izquierdo: input, slider, o desactivación
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-                if is_hovered {
+                if self.options.enable_keyboard_input && in_input {
+                    // Desactivar hover del slider (sin callback — AppFocus se queda)
+                    state.is_hover_active = false;
+                    state.keyboard_focused = false;
+                    state.is_input_editing = true;
+                    state.input_value_text = self.format_display_value(self.value);
+                    state.input_has_focus = true;
+                    if let Some(input_b) = input_bounds_opt {
+                        let rel_x = cursor_pos.x - input_b.x;
+                        let char_w = self.options.input_font_size * 0.6;
+                        let pos = (rel_x / char_w).round() as usize;
+                        state.input_cursor_pos = pos.min(state.input_value_text.len());
+                    } else {
+                        state.input_cursor_pos = state.input_value_text.len();
+                    }
+                } else if is_focus {
+                    if state.input_has_focus && state.is_input_editing {
+                        // Confirmar input al hacer clic fuera del input
+                        let parsed = state.input_value_text.parse::<f32>();
+                        if let Ok(v) = parsed {
+                            let clamped = v.clamp(*self.range.start(), *self.range.end());
+                            self.value = clamped;
+                            shell.publish((self.on_change)(clamped));
+                        }
+                        state.is_input_editing = false;
+                        state.input_has_focus = false;
+                    }
+                    if !state.is_hover_active {
+                        state.is_hover_active = true;
+                        state.keyboard_focused = true;
+                        if let Some(ref cb) = self.on_hover_state_change {
+                            shell.publish(cb(true));
+                        }
+                    }
                     state.is_dragging = true;
                     let percent = match self.orientation {
                         SliderOrientation::Vertical => {
@@ -2608,16 +2882,45 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     let new_value = self.percent_to_value(percent);
                     self.value = new_value;
                     shell.publish((self.on_change)(new_value));
+                } else if state.is_hover_active {
+                    state.is_hover_active = false;
+                    state.keyboard_focused = false;
+                    if let Some(ref cb) = self.on_hover_state_change {
+                        shell.publish(cb(false));
+                    }
+                } else if state.input_has_focus {
+                    // Clic fuera del input y del slider: confirmar
+                    let parsed = state.input_value_text.parse::<f32>();
+                    if let Ok(v) = parsed {
+                        let clamped = v.clamp(*self.range.start(), *self.range.end());
+                        self.value = clamped;
+                        shell.publish((self.on_change)(clamped));
+                    }
+                    state.is_input_editing = false;
+                    state.input_has_focus = false;
+                    if let Some(ref cb) = self.on_hover_state_change {
+                        shell.publish(cb(false));
+                    }
                 }
             }
 
-            // Liberación de botón izquierdo
+            // Liberación de botón izquierdo: snap a grid
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.is_dragging = false;
+                if state.is_hover_active {
+                    let step = self.options.step_size;
+                    if step > 0.0 {
+                        let snapped = (self.value / step).round() * step;
+                        let clamped = snapped.clamp(*self.range.start(), *self.range.end());
+                        if (clamped - self.value).abs() > f32::EPSILON {
+                            self.value = clamped;
+                            shell.publish((self.on_change)(clamped));
+                        }
+                    }
+                }
             }
 
-            // Movimiento del mouse (arrastre continuo si está siendo arrastrado)
-            // Permite drag incluso fuera de bounds mientras is_dragging sea true
+            // Movimiento del mouse (arrastre continuo)
             iced::Event::Mouse(iced::mouse::Event::CursorMoved { .. }) => {
                 if state.is_dragging {
                     let percent = match self.orientation {
@@ -2636,20 +2939,15 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
             // Clic derecho para reset
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
-                if is_hovered {
+                if is_focus {
                     shell.publish((self.on_right_click)());
                 }
             }
 
-            // Navegación con teclado (flechas) - solo si este slider tiene foco de teclado
+            // Navegación con teclado (flechas) - solo si keyboard_focused está activo
             iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
-                if self.options.enable_arrow_keys && (state.keyboard_focused || is_hovered) =>
+                if self.options.enable_arrow_keys && state.keyboard_focused =>
             {
-                // Dar foco de teclado si está hovered
-                if is_hovered && !state.keyboard_focused {
-                    state.keyboard_focused = true;
-                }
-
                 let step = self.options.step_size;
 
                 let should_change = match (self.orientation, key) {
@@ -2685,8 +2983,16 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                             (self.value - step).clamp(*self.range.start(), *self.range.end());
                         true
                     }
+                    (_, iced::keyboard::Key::Named(
+                        iced::keyboard::key::Named::ArrowUp
+                        | iced::keyboard::key::Named::ArrowDown
+                        | iced::keyboard::key::Named::ArrowLeft
+                        | iced::keyboard::key::Named::ArrowRight
+                    )) => {
+                        // Flecha que no corresponde a la orientación — no limpiar foco
+                        false
+                    }
                     _ => {
-                        // Limpiar foco si se presiona una tecla que no es flecha
                         state.keyboard_focused = false;
                         false
                     }
@@ -2697,8 +3003,59 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 }
             }
 
-            // Limpiar foco de teclado en otras teclas
-            iced::Event::Keyboard(_) if state.keyboard_focused => {
+            // Input de teclado (cuando el input tiene foco)
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
+                if self.options.enable_keyboard_input && state.input_has_focus =>
+            {
+                match key {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        let parsed = state.input_value_text.parse::<f32>();
+                        if let Ok(v) = parsed {
+                            let clamped = v.clamp(*self.range.start(), *self.range.end());
+                            self.value = clamped;
+                            shell.publish((self.on_change)(clamped));
+                        }
+                        state.is_input_editing = false;
+                        state.input_has_focus = false;
+                        if let Some(ref cb) = self.on_hover_state_change {
+                            shell.publish(cb(false));
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                        state.is_input_editing = false;
+                        state.input_has_focus = false;
+                        if let Some(ref cb) = self.on_hover_state_change {
+                            shell.publish(cb(false));
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
+                        if state.input_cursor_pos > 0 {
+                            state.input_cursor_pos -= 1;
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
+                        if state.input_cursor_pos < state.input_value_text.len() {
+                            state.input_cursor_pos += 1;
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                        if state.input_cursor_pos > 0 && !state.input_value_text.is_empty() {
+                            state.input_value_text.remove(state.input_cursor_pos - 1);
+                            state.input_cursor_pos -= 1;
+                        }
+                    }
+                    iced::keyboard::Key::Character(c) => {
+                        if state.input_value_text.len() < 20 {
+                            state.input_value_text.insert(state.input_cursor_pos, c.chars().next().unwrap_or(' '));
+                            state.input_cursor_pos += 1;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            // Limpiar foco de teclado en otras teclas (solo KeyPressed, no KeyReleased)
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { .. }) if state.keyboard_focused => {
                 state.keyboard_focused = false;
             }
 
@@ -2708,7 +3065,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
     fn draw(
         &self,
-        _tree: &iced::advanced::widget::Tree,
+        tree: &iced::advanced::widget::Tree,
         renderer: &mut iced::Renderer,
         _theme: &Theme,
         _style: &iced::advanced::renderer::Style,
@@ -2717,22 +3074,27 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _viewport: &iced::Rectangle,
     ) {
         let bounds = layout.bounds();
-        let is_hovered = cursor
+        let is_focus = cursor
             .position()
             .map(|p| bounds.contains(p))
             .unwrap_or(false);
+        let state = tree.state.downcast_ref::<CustomSliderState>();
+        let is_hover = state.is_hover_active;
 
         let percent = self.calculate_percent();
 
         match self.orientation {
             SliderOrientation::Vertical => {
-                self.draw_vertical_slider(renderer, bounds, is_hovered, percent);
+                self.draw_vertical_slider(renderer, bounds, is_focus, is_hover, percent);
             }
             SliderOrientation::Horizontal => {
-                self.draw_horizontal_slider(renderer, bounds, is_hovered, percent);
+                self.draw_horizontal_slider(renderer, bounds, is_focus, is_hover, percent);
             }
         }
 
+        if self.options.enable_keyboard_input {
+            self.draw_input(renderer, bounds, state);
+        }
     }
 
     fn overlay<'b>(
@@ -2767,16 +3129,16 @@ impl<'a, Message> CustomSlider<'a, Message> {
         &self,
         renderer: &mut iced::Renderer,
         bounds: Rectangle,
-        _is_hovered: bool,
+        is_focus: bool,
+        is_hover: bool,
         percent: f32,
     ) {
         use iced::advanced::Renderer as _;
 
         let track_color = self.options.track_color.unwrap_or(COLOR_CONTRAST);
         let active_color = self.options.active_track_color.unwrap_or(COLOR_ACCENT);
-        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
 
-        // Dibujar track completo (fondo)
+        // Dibujar track completo (fondo) — SIN borde (borde solo para handle)
         let track_x = bounds.x + (bounds.width - self.track_width) / 2.0;
         let track_rect = Rectangle {
             x: track_x,
@@ -2790,8 +3152,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 bounds: track_rect,
                 border: iced::Border {
                     radius: (self.track_width / 2.0).into(),
-                    width: self.options.border_width,
-                    color: border_color,
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
                 },
                 ..Default::default()
             },
@@ -2829,15 +3191,28 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let handle_y = bounds.y + bounds.height - (percent * bounds.height) - handle_height / 2.0;
         let handle_x = bounds.x + (bounds.width - handle_width) / 2.0;
 
-        // Usar colores configurables (mismo que horizontal)
-        let handle_color = if _is_hovered {
-            self.options
-                .handle_hover_color
-                .unwrap_or(COLOR_TEXT_PRIMARY)
+        // Seleccionar color y borde según estado
+        let handle_color = if is_hover {
+            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_SECONDARY)
+        } else if is_focus {
+            self.options.handle_focus_color.unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
-        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+
+        let (brd_color, brd_width) = if is_hover {
+            let bw = self.options.border_hover_width;
+            let bc = self.options.border_hover_color.unwrap_or(COLOR_ACCENT);
+            (bc, bw)
+        } else if is_focus {
+            let bw = self.options.border_focus_width;
+            let bc = self.options.border_focus_color.unwrap_or(Color::TRANSPARENT);
+            (bc, bw)
+        } else {
+            let bw = self.options.border_width;
+            let bc = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+            (bc, bw)
+        };
 
         let handle_rect = Rectangle {
             x: handle_x,
@@ -2846,18 +3221,53 @@ impl<'a, Message> CustomSlider<'a, Message> {
             height: handle_height,
         };
 
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad {
-                bounds: handle_rect,
-                border: iced::Border {
-                    radius: 2.0.into(),
-                    width: self.options.border_width,
-                    color: border_color,
+        if brd_width > 0.0 {
+            // Borde inset: dibujar borde exterior primero
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: handle_rect,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
                 },
-                ..Default::default()
-            },
-            handle_color,
-        );
+                brd_color,
+            );
+            // Luego el interior reducido
+            let inset = brd_width;
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: Rectangle {
+                        x: handle_rect.x + inset,
+                        y: handle_rect.y + inset,
+                        width: handle_rect.width - 2.0 * inset,
+                        height: handle_rect.height - 2.0 * inset,
+                    },
+                    border: iced::Border {
+                        radius: (2.0 - inset * 0.5).max(0.0).into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                handle_color,
+            );
+        } else {
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: handle_rect,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                handle_color,
+            );
+        }
     }
 
     /// Renderizar slider en orientación horizontal
@@ -2865,24 +3275,16 @@ impl<'a, Message> CustomSlider<'a, Message> {
         &self,
         renderer: &mut iced::Renderer,
         bounds: Rectangle,
-        is_hovered: bool,
+        is_focus: bool,
+        is_hover: bool,
         percent: f32,
     ) {
         use iced::advanced::Renderer as _;
 
-        // 1. Determinar colores (usar personalizado o constante global)
         let track_color = self.options.track_color.unwrap_or(COLOR_CONTRAST);
         let active_color = self.options.active_track_color.unwrap_or(COLOR_ACCENT);
-        let handle_color = if is_hovered {
-            self.options
-                .handle_hover_color
-                .unwrap_or(COLOR_TEXT_PRIMARY)
-        } else {
-            self.options.handle_color.unwrap_or(COLOR_ACCENT)
-        };
-        let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
 
-        // 2. Dibujar track fondo
+        // Dibujar track fondo
         let track_y = bounds.y + (bounds.height - self.track_width) / 2.0;
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
@@ -2894,15 +3296,15 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 },
                 border: iced::Border {
                     radius: (self.track_width / 2.0).into(),
-                    width: self.options.border_width,
-                    color: border_color,
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
                 },
                 ..Default::default()
             },
             track_color,
         );
 
-        // 3. Dibujar track activo (si habilitado)
+        // Dibujar track activo (si habilitado)
         if self.options.enable_colored_track {
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
@@ -2922,23 +3324,217 @@ impl<'a, Message> CustomSlider<'a, Message> {
             );
         }
 
-        // 4. Dibujar handle
-        let handle_x = bounds.x + (percent * bounds.width) - self.handle_size / 2.0;
+        // Dibujar handle
+        let handle_size = self.handle_size;
+        let handle_x = bounds.x + (percent * bounds.width) - handle_size / 2.0;
+        let handle_y = bounds.y + (bounds.height - handle_size) / 2.0;
+        let handle_clamped_x = handle_x.clamp(bounds.x, bounds.x + bounds.width - handle_size);
+
+        // Seleccionar color y borde según estado
+        let handle_color = if is_hover {
+            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_SECONDARY)
+        } else if is_focus {
+            self.options.handle_focus_color.unwrap_or(COLOR_TEXT_PRIMARY)
+        } else {
+            self.options.handle_color.unwrap_or(COLOR_ACCENT)
+        };
+
+        let (brd_color, brd_width) = if is_hover {
+            let bw = self.options.border_hover_width;
+            let bc = self.options.border_hover_color.unwrap_or(COLOR_ACCENT);
+            (bc, bw)
+        } else if is_focus {
+            let bw = self.options.border_focus_width;
+            let bc = self.options.border_focus_color.unwrap_or(Color::TRANSPARENT);
+            (bc, bw)
+        } else {
+            let bw = self.options.border_width;
+            let bc = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+            (bc, bw)
+        };
+
+        let handle_rect = Rectangle {
+            x: handle_clamped_x,
+            y: handle_y,
+            width: handle_size,
+            height: handle_size,
+        };
+
+        if brd_width > 0.0 {
+            // Borde inset: borde exterior
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: handle_rect,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                brd_color,
+            );
+            // Interior reducido
+            let inset = brd_width;
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: Rectangle {
+                        x: handle_rect.x + inset,
+                        y: handle_rect.y + inset,
+                        width: handle_rect.width - 2.0 * inset,
+                        height: handle_rect.height - 2.0 * inset,
+                    },
+                    border: iced::Border {
+                        radius: (2.0 - inset * 0.5).max(0.0).into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                handle_color,
+            );
+        } else {
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: handle_rect,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                    ..Default::default()
+                },
+                handle_color,
+            );
+        }
+    }
+
+    /// Renderizar input de texto junto al slider
+    fn draw_input(
+        &self,
+        renderer: &mut iced::Renderer,
+        slider_bounds: Rectangle,
+        state: &CustomSliderState,
+    ) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let font_size = self.options.input_font_size;
+        let pad_h = self.options.input_padding_h;
+        let pad_v = self.options.input_padding_v;
+        let (input_width, input_height) = self.compute_input_size();
+        let gap = self.options.input_gap;
+
+        let display_text = if state.is_input_editing {
+            state.input_value_text.clone()
+        } else {
+            self.format_display_value(self.value)
+        };
+
+        let pos = self.options.input_position;
+        let resolved_pos = if pos == InputPosition::Auto {
+            match self.orientation {
+                SliderOrientation::Horizontal => InputPosition::Right,
+                SliderOrientation::Vertical => InputPosition::Bottom,
+            }
+        } else {
+            pos
+        };
+
+        let (input_x, input_y) = match resolved_pos {
+            InputPosition::Right => {
+                let x = slider_bounds.x + slider_bounds.width + gap;
+                let y = slider_bounds.y + (slider_bounds.height - input_height) / 2.0;
+                (x, y)
+            }
+            InputPosition::Bottom => {
+                let x = slider_bounds.x + (slider_bounds.width - input_width) / 2.0;
+                let y = slider_bounds.y + slider_bounds.height + gap;
+                (x, y)
+            }
+            InputPosition::Left => {
+                let x = slider_bounds.x - input_width - gap;
+                let y = slider_bounds.y + (slider_bounds.height - input_height) / 2.0;
+                (x, y)
+            }
+            InputPosition::Top => {
+                let x = slider_bounds.x + (slider_bounds.width - input_width) / 2.0;
+                let y = slider_bounds.y - input_height - gap;
+                (x, y)
+            }
+            InputPosition::Auto => unreachable!(),
+        };
+
+        let input_rect = Rectangle {
+            x: input_x,
+            y: input_y,
+            width: input_width,
+            height: input_height,
+        };
+
+        let bg = self.options.input_bg_color.unwrap_or(COLOR_BG);
+        let border_color = if state.input_has_focus {
+            self.options.input_border_focus_color.unwrap_or(COLOR_ACCENT)
+        } else {
+            self.options.input_border_color.unwrap_or(COLOR_TEXT_SECONDARY)
+        };
+        let border_width = self.options.input_border_width;
+        let border_radius = self.options.input_border_radius;
+        let font_color = self.options.input_font_color.unwrap_or(COLOR_TEXT_PRIMARY);
+
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
-                bounds: Rectangle {
-                    x: handle_x.clamp(bounds.x, bounds.x + bounds.width - self.handle_size),
-                    y: bounds.y + (bounds.height - self.handle_size) / 2.0,
-                    width: self.handle_size,
-                    height: self.handle_size,
-                },
+                bounds: input_rect,
                 border: iced::Border {
-                    radius: 2.0.into(),
-                    ..Default::default()
+                    radius: border_radius.into(),
+                    width: border_width,
+                    color: border_color,
                 },
                 ..Default::default()
             },
-            handle_color,
+            bg,
+        );
+
+        let align_x = match self.options.input_align {
+            InputAlign::Left => iced::alignment::Horizontal::Left,
+            InputAlign::Center => iced::alignment::Horizontal::Center,
+            InputAlign::Right => iced::alignment::Horizontal::Right,
+        };
+
+        let text_x = match align_x {
+            iced::alignment::Horizontal::Left => input_x + pad_h,
+            iced::alignment::Horizontal::Center => input_x + input_width / 2.0,
+            iced::alignment::Horizontal::Right => input_x + input_width - pad_h,
+            _ => input_x + pad_h,
+        };
+
+        // Centrado vertical manual: posición Y en el centro del input menos mitad del alto de fuente
+        let text_y = input_y + (input_height - font_size) / 2.0;
+        let text_bounds_h = font_size;
+
+        let display = if state.is_input_editing {
+            let pos = state.input_cursor_pos.min(display_text.len());
+            let (before, after) = display_text.split_at(pos);
+            format!("{}|{}", before, after)
+        } else {
+            display_text
+        };
+
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: display,
+                bounds: iced::Size::new(input_width - pad_h * 2.0, text_bounds_h),
+                size: iced::Pixels(font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: align_x.into(),
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(text_x, text_y),
+            font_color,
+            input_rect,
         );
     }
 

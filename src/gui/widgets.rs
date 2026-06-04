@@ -2828,7 +2828,16 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let in_input = input_bounds_opt.map(|b| b.contains(cursor_pos)).unwrap_or(false);
 
         match event {
-            // Clic izquierdo: input, slider, o desactivación
+            // Cualquier clic del mouse fuera del slider desactiva hover (DEBE ir primero)
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_hover_active => {
+                state.is_hover_active = false;
+                state.keyboard_focused = false;
+                if let Some(ref cb) = self.on_hover_state_change {
+                    shell.publish(cb(false));
+                }
+            }
+
+            // Clic izquierdo: input o slider
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 if self.options.enable_keyboard_input && in_input {
                     state.is_hover_active = false;
@@ -2849,7 +2858,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     }
                 } else if is_focus {
                     if state.input_has_focus && state.is_input_editing {
-                        // Confirmar input al hacer clic fuera del input
                         let parsed = state.input_value_text.parse::<f32>();
                         if let Ok(v) = parsed {
                             let clamped = v.clamp(*self.range.start(), *self.range.end());
@@ -2879,7 +2887,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     self.value = new_value;
                     shell.publish((self.on_change)(new_value));
                 } else if state.input_has_focus {
-                    // Clic fuera del input y del slider: confirmar
                     let parsed = state.input_value_text.parse::<f32>();
                     if let Ok(v) = parsed {
                         let clamped = v.clamp(*self.range.start(), *self.range.end());
@@ -2894,16 +2901,16 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 }
             }
 
-            // Cualquier clic del mouse fuera del slider desactiva hover
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_hover_active => {
-                state.is_hover_active = false;
-                state.keyboard_focused = false;
-                if let Some(ref cb) = self.on_hover_state_change {
-                    shell.publish(cb(false));
+            // Clic derecho: reset en slider o en input
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
+                if is_focus {
+                    shell.publish((self.on_right_click)());
+                } else if self.options.enable_keyboard_input && in_input {
+                    shell.publish((self.on_right_click)());
                 }
             }
 
-            // Liberación de botón izquierdo: snap a grid
+            // Liberación de botón izquierdo: snap a grid (NO redundante — se ejecuta al soltar)
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.is_dragging = false;
                 if state.is_hover_active {
@@ -2933,13 +2940,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     let new_value = self.percent_to_value(percent);
                     self.value = new_value;
                     shell.publish((self.on_change)(new_value));
-                }
-            }
-
-            // Clic derecho para reset
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
-                if is_focus {
-                    shell.publish((self.on_right_click)());
                 }
             }
 

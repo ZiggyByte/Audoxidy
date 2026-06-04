@@ -2285,26 +2285,26 @@ pub struct CustomSliderOptions {
     pub active_track_color: Option<Color>,
     pub handle_color: Option<Color>,
     /// Color del handle en focus (mouse sobre slider, sin clic)
-    pub handle_focus_color: Option<Color>,
-    /// Color del handle en hover activo (después de clic)
     pub handle_hover_color: Option<Color>,
+    /// Color del handle en hover activo (después de clic)
+    pub handle_selected_color: Option<Color>,
     pub border_color: Option<Color>,
     pub border_width: f32,
     /// Color del borde en estado focus
-    pub border_focus_color: Option<Color>,
-    /// Ancho del borde en estado focus
-    pub border_focus_width: f32,
-    /// Color del borde en estado hover activo
     pub border_hover_color: Option<Color>,
-    /// Ancho del borde en estado hover activo
+    /// Ancho del borde en estado focus
     pub border_hover_width: f32,
+    /// Color del borde en estado hover activo
+    pub border_selected_color: Option<Color>,
+    /// Ancho del borde en estado hover activo
+    pub border_selected_width: f32,
     // Opciones de input de teclado
     pub input_position: InputPosition,
     pub input_gap: f32,
     pub input_width: InputWidth,
     pub input_bg_color: Option<Color>,
     pub input_border_color: Option<Color>,
-    pub input_border_focus_color: Option<Color>,
+    pub input_border_hover_color: Option<Color>,
     pub input_border_width: f32,
     pub input_border_radius: f32,
     pub input_font_size: f32,
@@ -2328,20 +2328,20 @@ impl Default for CustomSliderOptions {
             track_color: None,
             active_track_color: None,
             handle_color: None,
-            handle_focus_color: None,
             handle_hover_color: None,
+            handle_selected_color: None,
             border_color: None,
             border_width: 0.0,
-            border_focus_color: None,
-            border_focus_width: 0.0,
             border_hover_color: None,
             border_hover_width: 0.0,
+            border_selected_color: None,
+            border_selected_width: 0.0,
             input_position: InputPosition::Auto,
             input_gap: 10.0,
             input_width: InputWidth::Auto,
             input_bg_color: Some(COLOR_BG),
             input_border_color: Some(COLOR_TEXT_SECONDARY),
-            input_border_focus_color: Some(COLOR_ACCENT),
+            input_border_hover_color: Some(COLOR_ACCENT),
             input_border_width: 1.0,
             input_border_radius: 4.0,
             input_font_size: 11.0,
@@ -2358,7 +2358,7 @@ impl Default for CustomSliderOptions {
 #[derive(Debug, Clone, Default)]
 struct CustomSliderState {
     is_dragging: bool,
-    is_hover_active: bool,
+    is_selected: bool,
     keyboard_focused: bool,
     tooltip_pos: Option<iced::Point>,
     is_input_editing: bool,
@@ -2380,7 +2380,7 @@ pub struct CustomSlider<'a, Message> {
     track_width: f32,
     handle_size: f32,
     format_fn: Option<Box<dyn Fn(f32) -> String + 'a>>,
-    on_hover_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
 }
 
 impl<'a, Message> CustomSlider<'a, Message> {
@@ -2403,7 +2403,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
             track_width: 8.0,
             handle_size: 16.0,
             format_fn: None,
-            on_hover_state_change: None,
+            on_selected_state_change: None,
         }
     }
 
@@ -2456,8 +2456,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
     }
 
     /// Color para el handle cuando está en estado hover
-    pub fn handle_hover_color(mut self, color: Color) -> Self {
-        self.options.handle_hover_color = Some(color);
+    pub fn handle_selected_color(mut self, color: Color) -> Self {
+        self.options.handle_selected_color = Some(color);
         self
     }
 
@@ -2469,28 +2469,28 @@ impl<'a, Message> CustomSlider<'a, Message> {
     }
 
     /// Color del handle en estado focus (mouse sobre slider, sin clic)
-    pub fn handle_focus_color(mut self, color: Color) -> Self {
-        self.options.handle_focus_color = Some(color);
+    pub fn handle_hover_color(mut self, color: Color) -> Self {
+        self.options.handle_hover_color = Some(color);
         self
     }
 
     /// Establecer borde en estado focus
-    pub fn border_focus(mut self, width: f32, color: Color) -> Self {
-        self.options.border_focus_width = width;
-        self.options.border_focus_color = Some(color);
-        self
-    }
-
-    /// Establecer borde en estado hover activo
     pub fn border_hover(mut self, width: f32, color: Color) -> Self {
         self.options.border_hover_width = width;
         self.options.border_hover_color = Some(color);
         self
     }
 
+    /// Establecer borde en estado hover activo
+    pub fn border_selected(mut self, width: f32, color: Color) -> Self {
+        self.options.border_selected_width = width;
+        self.options.border_selected_color = Some(color);
+        self
+    }
+
     /// Callback opcional que se dispara cuando el hover activo cambia (true = activado, false = desactivado)
-    pub fn on_hover_state_change(mut self, f: impl Fn(bool) -> Message + 'a) -> Self {
-        self.on_hover_state_change = Some(Box::new(f));
+    pub fn on_selected_state_change(mut self, f: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_selected_state_change = Some(Box::new(f));
         self
     }
 
@@ -2531,7 +2531,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
     ) -> Self {
         self.options.input_bg_color = bg;
         self.options.input_border_color = border;
-        self.options.input_border_focus_color = border_focus;
+        self.options.input_border_hover_color = border_focus;
         self.options.input_border_width = border_width;
         self.options.input_border_radius = border_radius;
         self.options.input_font_size = font_size;
@@ -2818,7 +2818,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let state = tree.state.downcast_mut::<CustomSliderState>();
 
         // Almacenar posición del cursor para tooltip overlay
-        state.tooltip_pos = if (is_focus || state.is_dragging || state.is_hover_active) && self.options.show_tooltip {
+        state.tooltip_pos = if (is_focus || state.is_dragging || state.is_selected) && self.options.show_tooltip {
             Some(cursor_pos)
         } else {
             None
@@ -2829,10 +2829,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         match event {
             // Cualquier clic del mouse fuera del slider desactiva hover (DEBE ir primero)
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_hover_active => {
-                state.is_hover_active = false;
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_selected => {
+                state.is_selected = false;
                 state.keyboard_focused = false;
-                if let Some(ref cb) = self.on_hover_state_change {
+                if let Some(ref cb) = self.on_selected_state_change {
                     shell.publish(cb(false));
                 }
             }
@@ -2840,9 +2840,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             // Clic izquierdo: input o slider
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 if self.options.enable_keyboard_input && in_input {
-                    state.is_hover_active = false;
+                    state.is_selected = false;
                     state.keyboard_focused = false;
-                    if let Some(ref cb) = self.on_hover_state_change {
+                    if let Some(ref cb) = self.on_selected_state_change {
                         shell.publish(cb(true));
                     }
                     state.is_input_editing = true;
@@ -2867,10 +2867,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         state.is_input_editing = false;
                         state.input_has_focus = false;
                     }
-                    if !state.is_hover_active {
-                        state.is_hover_active = true;
+                    if !state.is_selected {
+                        state.is_selected = true;
                         state.keyboard_focused = true;
-                        if let Some(ref cb) = self.on_hover_state_change {
+                        if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(true));
                         }
                     }
@@ -2895,14 +2895,14 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     }
                     state.is_input_editing = false;
                     state.input_has_focus = false;
-                    if let Some(ref cb) = self.on_hover_state_change {
+                    if let Some(ref cb) = self.on_selected_state_change {
                         shell.publish(cb(false));
                     }
-                } else if state.is_hover_active {
+                } else if state.is_selected {
                     // Clic izquierdo fuera del slider con hover activo → desactivar
-                    state.is_hover_active = false;
+                    state.is_selected = false;
                     state.keyboard_focused = false;
-                    if let Some(ref cb) = self.on_hover_state_change {
+                    if let Some(ref cb) = self.on_selected_state_change {
                         shell.publish(cb(false));
                     }
                 }
@@ -2920,7 +2920,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             // Liberación de botón izquierdo: snap a grid (NO redundante — se ejecuta al soltar)
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.is_dragging = false;
-                if state.is_hover_active {
+                if state.is_selected {
                     let step = self.options.step_size;
                     if step > 0.0 {
                         let snapped = (self.value / step).round() * step;
@@ -3024,7 +3024,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         }
                         state.is_input_editing = false;
                         state.input_has_focus = false;
-                        if let Some(ref cb) = self.on_hover_state_change {
+                        if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(false));
                         }
                     }
@@ -3032,7 +3032,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         shell.capture_event();
                         state.is_input_editing = false;
                         state.input_has_focus = false;
-                        if let Some(ref cb) = self.on_hover_state_change {
+                        if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(false));
                         }
                     }
@@ -3087,7 +3087,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             .map(|p| bounds.contains(p))
             .unwrap_or(false);
         let state = tree.state.downcast_ref::<CustomSliderState>();
-        let is_hover = state.is_hover_active;
+        let is_hover = state.is_selected;
 
         let percent = self.calculate_percent();
 
@@ -3201,20 +3201,20 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         // Seleccionar color y borde según estado
         let handle_color = if is_hover {
-            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_SECONDARY)
+            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_SECONDARY)
         } else if is_focus {
-            self.options.handle_focus_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
 
         let (brd_color, brd_width) = if is_hover {
-            let bw = self.options.border_hover_width;
-            let bc = self.options.border_hover_color.unwrap_or(COLOR_ACCENT);
+            let bw = self.options.border_selected_width;
+            let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
             (bc, bw)
         } else if is_focus {
-            let bw = self.options.border_focus_width;
-            let bc = self.options.border_focus_color.unwrap_or(Color::TRANSPARENT);
+            let bw = self.options.border_hover_width;
+            let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
             (bc, bw)
         } else {
             let bw = self.options.border_width;
@@ -3340,20 +3340,20 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         // Seleccionar color y borde según estado
         let handle_color = if is_hover {
-            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_SECONDARY)
+            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_SECONDARY)
         } else if is_focus {
-            self.options.handle_focus_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
 
         let (brd_color, brd_width) = if is_hover {
-            let bw = self.options.border_hover_width;
-            let bc = self.options.border_hover_color.unwrap_or(COLOR_ACCENT);
+            let bw = self.options.border_selected_width;
+            let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
             (bc, bw)
         } else if is_focus {
-            let bw = self.options.border_focus_width;
-            let bc = self.options.border_focus_color.unwrap_or(Color::TRANSPARENT);
+            let bw = self.options.border_hover_width;
+            let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
             (bc, bw)
         } else {
             let bw = self.options.border_width;
@@ -3482,7 +3482,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         let bg = self.options.input_bg_color.unwrap_or(COLOR_BG);
         let border_color = if state.input_has_focus {
-            self.options.input_border_focus_color.unwrap_or(COLOR_ACCENT)
+            self.options.input_border_hover_color.unwrap_or(COLOR_ACCENT)
         } else {
             self.options.input_border_color.unwrap_or(COLOR_TEXT_SECONDARY)
         };

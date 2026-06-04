@@ -2020,15 +2020,15 @@ fn view_equalizer<'a>(
                 .tooltip_font_size(12.0)
                 .width(Length::Fixed(24.0))
                 .height(Length::Fixed(240.0))
-                .on_hover_state_change(on_hover);
+                .on_selected_state_change(on_hover);
 
         let slider = if eq_disabled {
             slider_base
                 .handle_color(COLOR_CONTRAST)
                 .border(0.0, COLOR_ACCENT)
-                .handle_focus_color(COLOR_ACCENT)
-                .handle_hover_color(COLOR_CONTRAST)
-                .border_hover(1.0, COLOR_TEXT_SECONDARY)
+                .handle_hover_color(COLOR_ACCENT)
+                .handle_selected_color(COLOR_CONTRAST)
+                .border_selected(1.0, COLOR_TEXT_SECONDARY)
         } else {
             slider_base
         };
@@ -2247,7 +2247,7 @@ fn view_audio_effects<'a>(
         .input_height_fixed(18.0)
         .input_align(crate::gui::widgets::InputAlign::Center)
         .input_style(Some(COLOR_BG), Some(COLOR_BG), Some(COLOR_ACCENT), 1.0, 4.0, 11.0, Some(COLOR_TEXT_PRIMARY))
-        .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
+        .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
         let param_slider = if primary_fmt == "{:.2}" {
             param_slider.format_value(|v| format!("{:.2}", v))
         } else {
@@ -2287,7 +2287,7 @@ fn view_audio_effects<'a>(
             .input_height_fixed(18.0)
             .input_align(crate::gui::widgets::InputAlign::Center)
             .input_style(Some(COLOR_BG), Some(COLOR_BG), Some(COLOR_ACCENT), 1.0, 4.0, 11.0, Some(COLOR_TEXT_PRIMARY))
-            .on_hover_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
+            .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
             let sec_slider = if s_fmt == "{:.2}" {
                 sec_slider.format_value(|v| format!("{:.2}", v))
             } else {
@@ -2308,7 +2308,7 @@ fn view_audio_effects<'a>(
         // Build column - top row then spacer then slider rows
         let mut col = column![
             top_row,
-            Space::new().height(Length::Fixed(9.0 + extra_padding_top)),
+            Space::new().height(Length::Fixed(10.0 + extra_padding_top)),
             bottom_row
         ];
         if let Some(sr) = secondary_row {
@@ -2467,14 +2467,14 @@ fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 8.0,
-            right: 0.0,
-            bottom: 8.0,
-            left: 0.0,
+            top: 7.0,
+            right: 15.0,
+            bottom: 7.0,
+            left: 15.0,
         }),
         view_effect_with_secondary(
             "Canal de Subwoofer",
@@ -2602,7 +2602,7 @@ fn view_audio_effects<'a>(
         .width(Length::Fill)
         .center_x(Length::Fill)
         .padding(iced::Padding {
-            top: 1.0,
+            top: 0.0,
             right: 0.0,
             bottom: 0.0,
             left: 0.0,
@@ -2716,14 +2716,14 @@ fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 8.0,
-            right: 0.0,
-            bottom: 8.0,
-            left: 0.0,
+            top: 7.0,
+            right: 15.0,
+            bottom: 7.0,
+            left: 15.0,
         }),
         view_effect_with_secondary(
             "Canales Surround  SL/SR | SBL/SBR",

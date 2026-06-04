@@ -16,7 +16,7 @@ pub const FONT_INTER_SANS_MEDIUM: Font = Font {
     stretch: Stretch::ExtraExpanded,
     style: Style::Normal,
 };
-
+// alternate accent color: 0xE50039
 pub const COLOR_ACCENT: Color = color!(0xFF003D);
 pub const COLOR_BG: Color = color!(0x000000);
 pub const COLOR_CONTRAST: Color = color!(0x111111);

@@ -2898,6 +2898,13 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     if let Some(ref cb) = self.on_hover_state_change {
                         shell.publish(cb(false));
                     }
+                } else if state.is_hover_active {
+                    // Clic izquierdo fuera del slider con hover activo → desactivar
+                    state.is_hover_active = false;
+                    state.keyboard_focused = false;
+                    if let Some(ref cb) = self.on_hover_state_change {
+                        shell.publish(cb(false));
+                    }
                 }
             }
 

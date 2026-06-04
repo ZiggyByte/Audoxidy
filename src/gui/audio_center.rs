@@ -2756,17 +2756,14 @@ fn view_audio_effects<'a>(
 
     column![
         Space::new().height(Length::Fixed(15.0)),
-        iced::widget::scrollable(
-            row![
-                col1,
-                Space::new().width(Length::Fixed(15.0)),
-                col2,
-                Space::new().width(Length::Fixed(15.0)),
-                col3
-            ]
-            .width(Length::Fill)
-        )
-        .height(Length::Fill)
+        row![
+            col1,
+            Space::new().width(Length::Fixed(15.0)),
+            col2,
+            Space::new().width(Length::Fixed(15.0)),
+            col3
+        ]
+        .width(Length::Fill),
     ]
     .padding(iced::Padding {
         top: 0.0,

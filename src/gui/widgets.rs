@@ -17,6 +17,12 @@ use crate::gui::theme::{
 };
 use crate::utils::{SortColumn, format_duration, format_metadata, truncate_text};
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Flag global: true cuando algún slider tiene is_selected activo.
+/// Los demás sliders revisan esto para ocultar su tooltip en hover.
+pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
 
 // ==========================================
 // 2. Elementos de Interfaz Auxiliares
@@ -2859,7 +2865,12 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let state = tree.state.downcast_mut::<CustomSliderState>();
 
         // Almacenar posición del cursor para tooltip overlay
-        state.tooltip_pos = if (is_focus || state.is_dragging || state.is_selected) && self.options.show_tooltip {
+        let show_tooltip_hover = is_focus
+            && !state.is_selected
+            && (!GLOBAL_SLIDER_SELECTED.load(Ordering::Relaxed) || state.is_dragging);
+        state.tooltip_pos = if (show_tooltip_hover || state.is_dragging || state.is_selected)
+            && self.options.show_tooltip
+        {
             Some(cursor_pos)
         } else {
             None
@@ -2873,6 +2884,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_selected => {
                 state.is_selected = false;
                 state.keyboard_focused = false;
+                GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                 if let Some(ref cb) = self.on_selected_state_change {
                     shell.publish(cb(false));
                 }
@@ -2883,6 +2895,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 if self.options.enable_keyboard_input && in_input {
                     state.is_selected = false;
                     state.keyboard_focused = false;
+                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                     if let Some(ref cb) = self.on_selected_state_change {
                         shell.publish(cb(true));
                     }
@@ -2911,6 +2924,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     if !state.is_selected {
                         state.is_selected = true;
                         state.keyboard_focused = true;
+                        GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
                         if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(true));
                         }
@@ -2940,9 +2954,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         shell.publish(cb(false));
                     }
                 } else if state.is_selected {
-                    // Clic izquierdo fuera del slider con hover activo → desactivar
+                    // Clic izquierdo fuera del slider → deseleccionar
                     state.is_selected = false;
                     state.keyboard_focused = false;
+                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                     if let Some(ref cb) = self.on_selected_state_change {
                         shell.publish(cb(false));
                     }

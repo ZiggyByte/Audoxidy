@@ -126,9 +126,9 @@ impl Default for AudioState {
             buffer_size: 0,
             config_channels: ChannelConfig::Auto,
 
-            downmix_center: 0.74,
+            downmix_center: 0.76,
             downmix_lfe: 0.66,
-            downmix_surround: 0.81,
+            downmix_surround: 0.74,
             downmix_center_enabled: false,
             downmix_lfe_enabled: false,
             downmix_surround_enabled: false,

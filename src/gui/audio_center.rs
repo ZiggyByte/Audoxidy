@@ -1271,7 +1271,7 @@ fn view_audio_config<'a>(
             right: 0.0,
         }),
     ]
-    .spacing(15);
+    .spacing(16);
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente
     let (
@@ -1861,7 +1861,7 @@ fn view_audio_config<'a>(
         row![
             container(left_col).width(Length::FillPortion(5))
             .padding(iced::Padding {
-                    top: -38.0,
+                    top: -33.0,
                     bottom: 0.0,
                     left: 0.0,
                     right: 0.0
@@ -2448,7 +2448,7 @@ fn view_audio_effects<'a>(
         }),
         view_effect_with_secondary(
             "Canal de Subwoofer",
-            "Mix %",
+            "Mix",
             audio_s.downmix_lfe,
             0.0..=2.0,
             audio_s.downmix_lfe_enabled,
@@ -2580,11 +2580,11 @@ fn view_audio_effects<'a>(
         }),
         view_effect_with_secondary(
             "Canal Central",
-            "Mix %",
+            "Mix",
             audio_s.downmix_center,
             0.0..=2.0,
             audio_s.downmix_center_enabled,
-            0.74,
+            0.76,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(
                 AudioStateToggle::DownmixCenter,
                 b
@@ -2594,7 +2594,7 @@ fn view_audio_effects<'a>(
             ),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(
                 AudioStateToggle::DownmixCenter,
-                0.74
+                0.76
             )),
             None,
             None,
@@ -2698,11 +2698,11 @@ fn view_audio_effects<'a>(
         }),
         view_effect_with_secondary(
             "Canales Surround  SL/SR | SBL/SBR",
-            "Mix %",
+            "Mix",
             audio_s.downmix_surround,
             0.0..=2.0,
             audio_s.downmix_surround_enabled,
-            0.81,
+            0.74,
             |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateToggle(
                 AudioStateToggle::DownmixSurround,
                 b
@@ -2712,7 +2712,7 @@ fn view_audio_effects<'a>(
             ),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AudioStateValueChanged(
                 AudioStateToggle::DownmixSurround,
-                0.81
+                0.74
             )),
             None,
             None,

@@ -26,7 +26,6 @@ pub enum AudioCenterMessage {
     ApplySettings,
     RestartService,
     Close,
-    AutoUpsampleToggled(bool),
     EqToggleSelected(bool),
     EqBandsSelected(bool), // true = 31, false = 20
     EqPreampChanged(f32),
@@ -123,7 +122,6 @@ pub struct AudioCenterManager {
     pub selected_preset: Option<crate::audio::preset::EqPreset>,
 
     pub first_open: bool,
-    pub auto_upsample: bool,
 
     // Configuración del servidor de audio de sistema (Pipewire / PulseAudio)
     pub system_rate: SystemSelection<u32>,
@@ -161,7 +159,6 @@ impl Default for AudioCenterManager {
             selected_preset: None,
 
             first_open: true,
-            auto_upsample: false,
 
             system_rate: SystemSelection::Default,
             system_quantum: SystemSelection::Default,
@@ -239,8 +236,6 @@ impl AudioCenterManager {
 
         self.selected_sample_rate = Some(state_read.device_sample_rate);
         self.selected_channels_manual = state_read.channels;
-        self.auto_upsample = state_read.auto_upsample;
-
         // Eq Sync
         // Presets are now initialized in default(), but we might want to select one if active
         // let eq_presets = crate::audio::preset::EqPreset::default_presets();
@@ -380,7 +375,6 @@ impl AudioCenterManager {
                     bit_depth: Some(self.selected_bit_depth.clone()),
                     channels: ChannelConfig::Manual(self.selected_channels_manual),
                     buffer_size: self.selected_buffer_size,
-                    auto_upsample: self.auto_upsample,
                 };
                 let _ = audio_manager.apply_audio_settings(settings);
 
@@ -419,11 +413,6 @@ impl AudioCenterManager {
                                 .map(|b| b.to_string())
                                 .unwrap_or_else(|| "auto".to_string()),
                         );
-                        let _ = db.set_setting(
-                            "audio_auto_upsample",
-                            if self.auto_upsample { "true" } else { "false" },
-                        );
-
                         let sys_rate_str = match self.system_rate {
                             SystemSelection::Default => "default".to_string(),
                             SystemSelection::Automatic => "auto".to_string(),
@@ -628,10 +617,6 @@ impl AudioCenterManager {
             AudioCenterMessage::Close => {
                 self.open = false;
                 self.window_pos = None;
-            }
-            AudioCenterMessage::AutoUpsampleToggled(enabled) => {
-                self.auto_upsample = enabled;
-                self.apply_enabled = true;
             }
             AudioCenterMessage::EqToggleSelected(b) => {
                 self.equalizer_enabled = b;
@@ -1200,16 +1185,6 @@ fn view_audio_config<'a>(
     ]
     .spacing(2);
 
-    let upsampling_switch = crate::gui::widgets::standard_toggler(
-        manager.auto_upsample,
-        |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::AutoUpsampleToggled(b)),
-        16.0,
-        COLOR_ACCENT,
-        COLOR_TEXT_SECONDARY,
-        COLOR_TEXT_PRIMARY,
-        COLOR_TEXT_SECONDARY,
-    );
-
     let left_col = column![
         row![
             container(
@@ -1284,27 +1259,17 @@ fn view_audio_config<'a>(
         .align_y(Alignment::Center)
         .spacing(10),
         row![
-            container(
-                text("Frecuencia Automática:")
-                    .color(COLOR_TEXT_PRIMARY)
-                    .size(14)
-                    .font(FONT_INTER_SANS_MEDIUM)
-            )
-            .width(Length::Fixed(180.0)),
-            upsampling_switch,
-            text("Alta Fidelidad (Frecuencia Máxima del Dispositivo)")
-                .size(12)
-                .color(COLOR_TEXT_SECONDARY)
-                .font(FONT_INTER_SANS_MEDIUM)
-        ]
-        .align_y(Alignment::Center)
-        .spacing(10),
-        row![
             container(system_config_label).width(Length::Fixed(180.0)),
             row![system_rate_dropdown, system_quantum_dropdown].spacing(10)
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(10)
+        .padding(iced::Padding {
+            top: 4.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+        }),
     ]
     .spacing(15);
 
@@ -1602,7 +1567,7 @@ fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(5);
+    .spacing(8);
 
     let entrada_col = column![
         text("Entrada")
@@ -1622,13 +1587,13 @@ fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(5)
+    .spacing(8)
     .align_x(Alignment::Center);
 
     let vertical_divider = container(
         Space::new()
             .width(Length::Fixed(2.0))
-            .height(Length::Fixed(80.0)),
+            .height(Length::Fixed(90.0)),
     )
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
@@ -1650,7 +1615,7 @@ fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(5)
+    .spacing(8)
     .align_x(Alignment::Center);
 
     let table_row = row![
@@ -1676,7 +1641,7 @@ fn view_audio_config<'a>(
     .width(Length::Fill)
     .align_x(Alignment::Center);
 
-    let r_col = column![
+    let right_col = column![
         title_container,
         row![
             container(
@@ -1779,7 +1744,7 @@ fn view_audio_config<'a>(
         ]
         .align_y(Alignment::Center),
     ]
-    .spacing(10);
+    .spacing(8);
 
     let restart_btn = button(
         text("Reiniciar Servicio de Audio")
@@ -1894,21 +1859,26 @@ fn view_audio_config<'a>(
 
     column![
         row![
-            container(left_col).width(Length::FillPortion(6))
+            container(left_col).width(Length::FillPortion(5))
             .padding(iced::Padding {
-                    top: -10.0,
+                    top: -38.0,
                     bottom: 0.0,
                     left: 0.0,
                     right: 0.0
                 }),
             container(main_divider)
-                .width(Length::Fixed(20.0))
+                .width(Length::Fixed(90.0))
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center),
-            container(r_col)
+                .align_y(Alignment::Center).padding(iced::Padding {
+                    top: -3.0,
+                    bottom: 0.0,
+                    left: 30.0,
+                    right: 0.0
+                }),
+            container(right_col)
                 .width(Length::FillPortion(4))
                 .padding(iced::Padding {
-                    top: 0.0,
+                    top: -4.0,
                     bottom: 0.0,
                     left: 5.0,
                     right: 1.0
@@ -2549,14 +2519,15 @@ fn view_audio_effects<'a>(
             Some(
                 row![
                     text("Natural").size(10).color(COLOR_TEXT_SECONDARY),
-                    crate::gui::widgets::standard_toggler(
+                    crate::gui::widgets::standard_toggler_full(
                         stereo_expander_mode == crate::audio::dsp::ExpanderMode::Surround,
                         |b| crate::gui::app::Message::AudioCenterMsg(
                             AudioCenterMessage::StereoExpanderModeToggled(b)
                         ),
                         13.0,
-                        COLOR_ACCENT,
                         COLOR_TEXT_SECONDARY,
+                        COLOR_TEXT_SECONDARY,
+                        COLOR_TEXT_PRIMARY,
                         COLOR_TEXT_PRIMARY,
                         COLOR_TEXT_SECONDARY,
                     ),

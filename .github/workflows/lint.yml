@@ -18,7 +18,7 @@ jobs:
         with:
           components: clippy
       - name: Install Linux deps
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libdbus-1-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libpipewire-0.3-dev libdbus-1-dev nasm
       - name: Clippy
         run: cargo clippy -- -D warnings
 

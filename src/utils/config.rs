@@ -94,8 +94,6 @@ pub struct AudioConfig {
     pub channels: Option<u16>,
     /// Tamaño de buffer en frames (None = auto)
     pub buffer_size: Option<u32>,
-    /// Upsample automático a máxima frecuencia del DAC
-    pub auto_upsample: bool,
     /// Buffer de seguridad (segundos de audio precargado)
     pub safety_buffer_secs: f64,
 }
@@ -110,7 +108,6 @@ impl AudioConfig {
                 bit_depth: Some(BitDepthConfig::Bits32Float),
                 channels: None,
                 buffer_size: None,
-                auto_upsample: true,
                 safety_buffer_secs: 2.0,
             },
             ConfigProfile::Default => Self {
@@ -120,7 +117,6 @@ impl AudioConfig {
                 bit_depth: None,
                 channels: None,
                 buffer_size: None,
-                auto_upsample: false,
                 safety_buffer_secs: 2.0,
             },
             ConfigProfile::LowResource => Self {
@@ -130,7 +126,6 @@ impl AudioConfig {
                 bit_depth: Some(BitDepthConfig::Bits16),
                 channels: Some(2),
                 buffer_size: Some(512),
-                auto_upsample: false,
                 safety_buffer_secs: 0.5,
             },
         }

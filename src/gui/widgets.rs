@@ -350,7 +350,7 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
 }
 
 /// Interruptor (Toggler) global de diseño premium personalizado.
-/// - Permite personalizar el tamaño y los colores para adaptarse a cualquier sección.
+/// - Permite personalizar el tamaño, colores de fondo y círculo para estados activo e inactivo.
 pub fn standard_toggler<'a, Message>(
     is_active: bool,
     on_toggle: impl Fn(bool) -> Message + 'a,
@@ -359,6 +359,29 @@ pub fn standard_toggler<'a, Message>(
     inactive_color: Color,
     thumb_active_color: Color,
     thumb_inactive_color: Color,
+) -> Element<'a, Message>
+where
+    Message: Clone + 'a,
+{
+    standard_toggler_full(
+        is_active, on_toggle, size,
+        active_color, inactive_color,
+        thumb_active_color, thumb_inactive_color,
+        Color::TRANSPARENT,
+    )
+}
+
+/// Toggler con control total de colores, incluyendo fondo del estado inactivo.
+/// - `inactive_bg_color`: Color de fondo cuando está desactivado (por defecto TRANSPARENT).
+pub fn standard_toggler_full<'a, Message>(
+    is_active: bool,
+    on_toggle: impl Fn(bool) -> Message + 'a,
+    size: f32,
+    active_color: Color,
+    inactive_color: Color,
+    thumb_active_color: Color,
+    thumb_inactive_color: Color,
+    inactive_bg_color: Color,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -376,7 +399,7 @@ where
                 )
             } else {
                 (
-                    Color::TRANSPARENT.into(),
+                    inactive_bg_color.into(),
                     inactive_color,
                     1.0,
                     thumb_inactive_color.into(),
@@ -2234,11 +2257,18 @@ where
 // Widget de slider universal reutilizable con soporte para:
 // - Orientaciones vertical y horizontal
 // - Reset por clic secundario
-// - Tooltip mejorado con posicionamiento junto al mouse
-// - Navegación con flechas de teclado (solo con hover)
-// - Input de texto para modificación de valores
+// - Tooltip dinámico junto al cursor
+// - Navegación con flechas de teclado (solo en estado selected)
+// - Input de texto editable con cursor navegable
 // - Track coloreado hasta la posición del handle
-// - Arrastre continuo mejorado con estado persistente
+// - Snap a grid automático al soltar el arrastre
+// - AppFocus routing para bloquear flechas a otros módulos
+//
+// Estados del slider:
+// - Normal:     Sin interacción. Color: handle_color (defecto COLOR_ACCENT)
+// - Hover:      Mouse sobre el slider. Color: handle_hover_color (defecto COLOR_TEXT_PRIMARY)
+// - Selected:   Clic en el slider. Color: handle_selected_color (defecto COLOR_TEXT_PRIMARY)
+//               + borde inset: border_selected (defecto 2px COLOR_ACCENT). Activa teclado.
 
 /// Enumeración para la orientación del slider
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2284,20 +2314,22 @@ pub struct CustomSliderOptions {
     pub track_color: Option<Color>,
     pub active_track_color: Option<Color>,
     pub handle_color: Option<Color>,
-    /// Color del handle en focus (mouse sobre slider, sin clic)
+    /// Color del handle en estado hover (mouse sobre slider, sin clic, solo visual)
     pub handle_hover_color: Option<Color>,
-    /// Color del handle en hover activo (después de clic)
+    /// Color del handle en estado selected (clic activo, visual + teclado)
     pub handle_selected_color: Option<Color>,
     pub border_color: Option<Color>,
     pub border_width: f32,
-    /// Color del borde en estado focus
+    /// Color del borde en estado hover (mouse sobre slider, sin clic)
     pub border_hover_color: Option<Color>,
-    /// Ancho del borde en estado focus
+    /// Ancho del borde en estado hover
     pub border_hover_width: f32,
-    /// Color del borde en estado hover activo
+    /// Color del borde inset en estado selected (clic activo)
     pub border_selected_color: Option<Color>,
-    /// Ancho del borde en estado hover activo
+    /// Ancho del borde inset en estado selected
     pub border_selected_width: f32,
+    /// Radio del borde del handle (defecto: 2.0, usar handle_size / 2.0 para redondo)
+    pub handle_border_radius: f32,
     // Opciones de input de teclado
     pub input_position: InputPosition,
     pub input_gap: f32,
@@ -2336,6 +2368,7 @@ impl Default for CustomSliderOptions {
             border_hover_width: 0.0,
             border_selected_color: None,
             border_selected_width: 0.0,
+            handle_border_radius: 2.0,
             input_position: InputPosition::Auto,
             input_gap: 10.0,
             input_width: InputWidth::Auto,
@@ -2354,7 +2387,9 @@ impl Default for CustomSliderOptions {
     }
 }
 
-/// Estado interno del slider (arrastre, hover, foco, tooltip, input)
+/// Estado interno del slider (arrastre, selección, foco teclado, tooltip, input)
+/// - is_selected: true cuando el slider recibió clic (teclado activado)
+/// - keyboard_focused: true cuando el teclado está activo para este slider
 #[derive(Debug, Clone, Default)]
 struct CustomSliderState {
     is_dragging: bool,
@@ -2455,7 +2490,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
         self
     }
 
-    /// Color para el handle cuando está en estado hover
+    /// Color del handle en estado hover (mouse sobre slider, sin clic)
+    pub fn handle_hover_color(mut self, color: Color) -> Self {
+        self.options.handle_hover_color = Some(color);
+        self
+    }
+
+    /// Color del handle en estado selected (clic activo)
     pub fn handle_selected_color(mut self, color: Color) -> Self {
         self.options.handle_selected_color = Some(color);
         self
@@ -2468,27 +2509,27 @@ impl<'a, Message> CustomSlider<'a, Message> {
         self
     }
 
-    /// Color del handle en estado focus (mouse sobre slider, sin clic)
-    pub fn handle_hover_color(mut self, color: Color) -> Self {
-        self.options.handle_hover_color = Some(color);
-        self
-    }
-
-    /// Establecer borde en estado focus
+    /// Establecer borde en estado hover (mouse sobre slider, sin clic)
     pub fn border_hover(mut self, width: f32, color: Color) -> Self {
         self.options.border_hover_width = width;
         self.options.border_hover_color = Some(color);
         self
     }
 
-    /// Establecer borde en estado hover activo
+    /// Establecer borde inset en estado selected (clic activo)
     pub fn border_selected(mut self, width: f32, color: Color) -> Self {
         self.options.border_selected_width = width;
         self.options.border_selected_color = Some(color);
         self
     }
 
-    /// Callback opcional que se dispara cuando el hover activo cambia (true = activado, false = desactivado)
+    /// Radio del borde del handle (defecto: 2.0). Usar handle_size / 2.0 para forma circular.
+    pub fn handle_border_radius(mut self, radius: f32) -> Self {
+        self.options.handle_border_radius = radius;
+        self
+    }
+
+    /// Callback opcional cuando el slider se selecciona/deselecciona (true = selected, false = deselected)
     pub fn on_selected_state_change(mut self, f: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_selected_state_change = Some(Box::new(f));
         self
@@ -3082,21 +3123,21 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _viewport: &iced::Rectangle,
     ) {
         let bounds = layout.bounds();
-        let is_focus = cursor
+        let is_hover = cursor
             .position()
             .map(|p| bounds.contains(p))
             .unwrap_or(false);
         let state = tree.state.downcast_ref::<CustomSliderState>();
-        let is_hover = state.is_selected;
+        let is_selected = state.is_selected;
 
         let percent = self.calculate_percent();
 
         match self.orientation {
             SliderOrientation::Vertical => {
-                self.draw_vertical_slider(renderer, bounds, is_focus, is_hover, percent);
+                self.draw_vertical_slider(renderer, bounds, is_hover, is_selected, percent);
             }
             SliderOrientation::Horizontal => {
-                self.draw_horizontal_slider(renderer, bounds, is_focus, is_hover, percent);
+                self.draw_horizontal_slider(renderer, bounds, is_hover, is_selected, percent);
             }
         }
 
@@ -3137,8 +3178,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
         &self,
         renderer: &mut iced::Renderer,
         bounds: Rectangle,
-        is_focus: bool,
         is_hover: bool,
+        is_selected: bool,
         percent: f32,
     ) {
         use iced::advanced::Renderer as _;
@@ -3200,19 +3241,19 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let handle_x = bounds.x + (bounds.width - handle_width) / 2.0;
 
         // Seleccionar color y borde según estado
-        let handle_color = if is_hover {
-            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_SECONDARY)
-        } else if is_focus {
+        let handle_color = if is_selected {
+            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_PRIMARY)
+        } else if is_hover {
             self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
 
-        let (brd_color, brd_width) = if is_hover {
+        let (brd_color, brd_width) = if is_selected {
             let bw = self.options.border_selected_width;
             let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
             (bc, bw)
-        } else if is_focus {
+        } else if is_hover {
             let bw = self.options.border_hover_width;
             let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
             (bc, bw)
@@ -3235,7 +3276,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: handle_rect,
                     border: iced::Border {
-                        radius: 2.0.into(),
+                        radius: self.options.handle_border_radius.into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
@@ -3267,7 +3308,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: handle_rect,
                     border: iced::Border {
-                        radius: 2.0.into(),
+                        radius: self.options.handle_border_radius.into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
@@ -3283,8 +3324,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
         &self,
         renderer: &mut iced::Renderer,
         bounds: Rectangle,
-        is_focus: bool,
         is_hover: bool,
+        is_selected: bool,
         percent: f32,
     ) {
         use iced::advanced::Renderer as _;
@@ -3339,19 +3380,19 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let handle_clamped_x = handle_x.clamp(bounds.x, bounds.x + bounds.width - handle_size);
 
         // Seleccionar color y borde según estado
-        let handle_color = if is_hover {
-            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_SECONDARY)
-        } else if is_focus {
+        let handle_color = if is_selected {
+            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_PRIMARY)
+        } else if is_hover {
             self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
 
-        let (brd_color, brd_width) = if is_hover {
+        let (brd_color, brd_width) = if is_selected {
             let bw = self.options.border_selected_width;
             let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
             (bc, bw)
-        } else if is_focus {
+        } else if is_hover {
             let bw = self.options.border_hover_width;
             let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
             (bc, bw)
@@ -3374,7 +3415,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: handle_rect,
                     border: iced::Border {
-                        radius: 2.0.into(),
+                        radius: self.options.handle_border_radius.into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
@@ -3406,7 +3447,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: handle_rect,
                     border: iced::Border {
-                        radius: 2.0.into(),
+                        radius: self.options.handle_border_radius.into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },

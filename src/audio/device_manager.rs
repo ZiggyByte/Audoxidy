@@ -74,7 +74,6 @@ pub struct AudioSettings {
     pub bit_depth: Option<BitDepth>,
     pub channels: ChannelConfig,
     pub buffer_size: Option<u32>,
-    pub auto_upsample: bool,
 }
 
 /// Información de un dispositivo de audio disponible.
@@ -347,14 +346,6 @@ impl AudioDeviceManager {
             else if min <= 48000 && max >= 48000 { 48000 }
             else { max }
         });
-
-        let target_rate = if settings.auto_upsample {
-            let max_rate = best.max_sample_rate();
-            if max_rate > target_rate {
-                tracing::info!("Auto-upsample: {} Hz -> {} Hz", target_rate, max_rate);
-                max_rate
-            } else { target_rate }
-        } else { target_rate };
 
         let config = best.with_sample_rate(target_rate);
         let mut stream_config: cpal::StreamConfig = config.clone().into();

@@ -51,7 +51,6 @@ mod tests {
         assert_eq!(state.artist, "Artista desconocido");
         assert!(state.path.is_empty());
         assert!(!state.eof_reached);
-        assert!(!state.auto_upsample);
         assert_eq!(state.replay_gain_track_enabled, true);
         assert_eq!(state.replay_gain_album_enabled, true);
     }
@@ -104,7 +103,6 @@ mod tests {
         assert!(settings.sample_rate.is_none());
         assert!(settings.bit_depth.is_none());
         assert_eq!(settings.channels, ChannelConfig::Manual(2));
-        assert!(!settings.auto_upsample);
     }
 
     // --- AudioError ---

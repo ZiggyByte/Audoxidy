@@ -496,17 +496,11 @@ impl AudoxidyApp {
                     s.parse::<u32>().ok()
                 }
             });
-            let auto_upsample = db_lock
-                .get_setting("audio_auto_upsample")
-                .map(|s| s == "true")
-                .unwrap_or(false);
-
             if host_id.is_some()
                 || device_name.is_some()
                 || sample_rate.is_some()
                 || bit_depth.is_some()
                 || buffer_size.is_some()
-                || auto_upsample
             {
                 let settings = crate::audio::engine::AudioSettings {
                     host_id,
@@ -517,7 +511,6 @@ impl AudoxidyApp {
                         channels_val.unwrap_or(2),
                     ),
                     buffer_size,
-                    auto_upsample,
                 };
                 let _ = audio_manager.apply_audio_settings(settings);
             }

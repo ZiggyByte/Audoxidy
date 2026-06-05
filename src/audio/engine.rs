@@ -94,11 +94,6 @@ pub struct AudioState {
     pub downmix_lfe_enabled: bool,
     pub downmix_surround_enabled: bool,
 
-    /// Cuando está activado, el motor siempre resamplea a la tasa máxima
-    /// soportada por el dispositivo, haciendo que Rubato FFT realice la
-    /// reconstrucción de señal en software con calidad superior al DAC.
-    pub auto_upsample: bool,
-
     // ReplayGain: ganancias independientes para normalización de volumen
     /// Ganancia de la pista actual en dB (del tag ReplayGain del archivo)
     pub replay_gain_track: Option<f32>,
@@ -137,7 +132,6 @@ impl Default for AudioState {
             downmix_center_enabled: false,
             downmix_lfe_enabled: false,
             downmix_surround_enabled: false,
-            auto_upsample: false,
             replay_gain_track: None,
             replay_gain_album: None,
             replay_gain_track_enabled: true,
@@ -426,7 +420,6 @@ impl AudioEngine {
 
         {
             let mut s = self.state.write();
-            s.auto_upsample = settings.auto_upsample;
             s.config_channels = settings.channels.clone();
         }
 

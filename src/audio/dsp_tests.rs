@@ -123,6 +123,76 @@ mod tests {
         eq.set_sample_rate(96000.0);
     }
 
+    #[test]
+    fn test_apply_preset_gains_updates_active_bands() {
+        let mut eq = Equalizer::new(20);
+        let bands_20: Vec<f32> = (0..20).map(|i| i as f32 * 0.5 - 5.0).collect();
+        let bands_31: Vec<f32> = vec![0.0; 31];
+
+        eq.apply_preset_gains(&bands_20, &bands_31);
+
+        assert_eq!(eq.bands.len(), 20);
+        for (i, band) in eq.bands.iter().enumerate() {
+            assert!((band.gain - bands_20[i]).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_apply_preset_gains_preserves_switched_mode() {
+        let mut eq = Equalizer::new(20);
+        let bands_20: Vec<f32> = (0..20).map(|i| i as f32 * 0.5 - 5.0).collect();
+        let bands_31: Vec<f32> = (0..31).map(|i| i as f32 * 0.3 - 4.0).collect();
+
+        eq.apply_preset_gains(&bands_20, &bands_31);
+
+        // Switch to 31-band mode — should see bands_31 gains
+        eq.set_mode(31);
+        assert_eq!(eq.bands.len(), 31);
+        for (i, band) in eq.bands.iter().enumerate() {
+            assert!((band.gain - bands_31[i]).abs() < 0.001);
+        }
+
+        // Switch back to 20-band mode — should see bands_20 gains
+        eq.set_mode(20);
+        assert_eq!(eq.bands.len(), 20);
+        for (i, band) in eq.bands.iter().enumerate() {
+            assert!((band.gain - bands_20[i]).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn test_reset_all_clears_saved_bands() {
+        let mut eq = Equalizer::new(20);
+        let bands_20: Vec<f32> = vec![3.0; 20];
+        let bands_31: Vec<f32> = vec![3.0; 31];
+        eq.apply_preset_gains(&bands_20, &bands_31);
+
+        // Verify gains were applied
+        assert!((eq.bands[0].gain - 3.0).abs() < 0.001);
+
+        eq.reset_all();
+
+        // Active bands should be zeroed
+        for band in &eq.bands {
+            assert!((band.gain - 0.0).abs() < 0.001);
+        }
+
+        // Switch to 31 — if saved_bands_31 was reset, bands will be 0.
+        // If NOT reset, bands will still have the old 3.0 values.
+        eq.set_mode(31);
+        for band in &eq.bands {
+            assert!((band.gain - 0.0).abs() < 0.001,
+                "saved_bands_31 should have been reset: gain={}", band.gain);
+        }
+
+        // Switch back to 20 — same check for saved_bands_20
+        eq.set_mode(20);
+        for band in &eq.bands {
+            assert!((band.gain - 0.0).abs() < 0.001,
+                "saved_bands_20 should have been reset: gain={}", band.gain);
+        }
+    }
+
     // ========================================================================
     // Reverb tests
     // ========================================================================

@@ -4411,36 +4411,61 @@ impl AudoxidyApp {
                     )
                 },
                 ActiveDialog::EqPresetSave { name_input } => {
+                    let save_enabled = !name_input.is_empty();
+                    let input = iced::widget::text_input("Nombre del preset...", name_input)
+                        .id(DIALOG_TEXT_INPUT_ID.clone())
+                        .on_input(Message::UpdateDialogInput)
+                        .on_submit(Message::ConfirmDialogAction)
+                        .padding([4, 5])
+                        .size(14)
+                        .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
+                            iced::widget::text_input::Style {
+                                background: COLOR_CONTRAST.into(),
+                                border: iced::Border {
+                                    radius: 4.0.into(),
+                                    width: 1.0,
+                                    color: COLOR_ACCENT,
+                                },
+                                icon: iced::Color::TRANSPARENT,
+                                placeholder: COLOR_TEXT_SECONDARY,
+                                value: COLOR_TEXT_PRIMARY,
+                                selection: COLOR_ACCENT,
+                            }
+                        });
+
+                    let mut content = iced::widget::column![
+                        crate::gui::widgets::modal_text("Nombre del preset:".to_string()),
+                        input,
+                    ]
+                    .spacing(12);
+
+                    if !save_enabled {
+                        // Per D-06: Show visible but disabled Guardar button (no .on_press(), faded text)
+                        content = content.push(
+                            iced::widget::button(iced::widget::text("Guardar").size(14))
+                                .padding([5, 10])
+                                .style(|_t: &iced::Theme, _status| iced::widget::button::Style {
+                                    background: Some(COLOR_CONTRAST.into()),
+                                    text_color: COLOR_TEXT_SECONDARY.scale_alpha(0.5),
+                                    border: iced::Border {
+                                        radius: 6.0.into(),
+                                        width: 0.0,
+                                        color: iced::Color::TRANSPARENT,
+                                    },
+                                    ..Default::default()
+                                }),
+                        );
+                    }
+
                     crate::gui::widgets::standard_modal(
                         "Guardar Preset".to_string(),
-                        iced::widget::column![
-                            crate::gui::widgets::modal_text(
-                                "Nombre del preset:".to_string()
-                            ),
-                            iced::widget::text_input("Nombre del preset...", name_input)
-                                .on_input(Message::UpdateDialogInput)
-                                .on_submit(Message::ConfirmDialogAction)
-                                .padding([4, 5])
-                                .size(14)
-                                .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
-                                    iced::widget::text_input::Style {
-                                        background: COLOR_CONTRAST.into(),
-                                        border: iced::Border {
-                                            radius: 4.0.into(),
-                                            width: 1.0,
-                                            color: COLOR_ACCENT,
-                                        },
-                                        icon: iced::Color::TRANSPARENT,
-                                        placeholder: COLOR_TEXT_SECONDARY,
-                                        value: COLOR_TEXT_PRIMARY,
-                                        selection: COLOR_ACCENT,
-                                    }
-                                }),
-                        ]
-                        .spacing(12)
-                        .into(),
+                        content.into(),
                         Some(Message::CloseDialog),
-                        Some(Message::ConfirmDialogAction),
+                        if save_enabled {
+                            Some(Message::ConfirmDialogAction)
+                        } else {
+                            None
+                        },
                         "Guardar".to_string(),
                     )
                 },

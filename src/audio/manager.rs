@@ -3,6 +3,8 @@ use crate::audio::engine::{AudioEngine, AudioState};
 use parking_lot::RwLock;
 use std::sync::Arc;
 
+use crate::audio::preset::EqPreset;
+
 /// Fachada de alto nivel para el motor de audio.
 ///
 /// Expone una API simplificada para reproducción, control de volumen,
@@ -186,6 +188,16 @@ impl AudioManager {
         let mut dsp = self.engine.dsp.write();
         dsp.set_preamp_db(0.0);
         dsp.equalizer.reset_all();
+    }
+
+    /// Aplica un preset de EQ completo (preamp + todas las ganancias) atómicamente a través del RwLock.
+    pub fn apply_eq_preset(&self, preset: &EqPreset) {
+        let mut dsp = self.engine.dsp.write();
+        dsp.set_preamp_db(preset.preamp_gain);
+        dsp.equalizer.apply_preset_gains(
+            &preset.get_gains_20(),
+            &preset.get_gains_31(),
+        );
     }
 
     /// Devuelve una copia del estado actual del motor de audio.

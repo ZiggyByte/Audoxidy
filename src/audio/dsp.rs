@@ -310,6 +310,30 @@ impl Equalizer {
         }
     }
 
+    /// Apply gains from a preset to both saved band sets and the active bands.
+    /// bands_20 and bands_31 are the full 20/31-element gain arrays from the preset.
+    pub fn apply_preset_gains(&mut self, bands_20: &[f32], bands_31: &[f32]) {
+        // Update saved_bands_20 (always — both sets get stored)
+        for (i, &gain) in bands_20.iter().enumerate() {
+            if i < self.saved_bands_20.len() {
+                self.saved_bands_20[i].set_gain(gain);
+            }
+        }
+        // Update saved_bands_31 (always)
+        for (i, &gain) in bands_31.iter().enumerate() {
+            if i < self.saved_bands_31.len() {
+                self.saved_bands_31[i].set_gain(gain);
+            }
+        }
+        // Update active bands according to current mode (D-10: don't change mode)
+        let active_gains = if self.bands.len() == 20 { bands_20 } else { bands_31 };
+        for (i, &gain) in active_gains.iter().enumerate() {
+            if i < self.bands.len() {
+                self.bands[i].set_gain(gain);
+            }
+        }
+    }
+
     /// Resetea el estado interno de todas las bandas del ecualizador.
     pub fn reset_state(&mut self) {
         for band in &mut self.bands {

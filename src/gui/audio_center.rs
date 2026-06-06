@@ -90,6 +90,14 @@ pub enum SystemSelection<Val> {
     Fixed(Val),
 }
 
+/// Backup del estado del EQ antes de aplicar un preset en preview.
+/// Se restaura si el usuario cancela el diálogo de carga.
+#[derive(Debug, Clone)]
+pub struct EqStateBackup {
+    pub preamp_gain: f32,
+    pub eq_band_gains: Vec<f32>,
+}
+
 pub struct AudioCenterManager {
     pub open: bool,
     pub selected_tab: usize,
@@ -120,6 +128,10 @@ pub struct AudioCenterManager {
     pub eq_band_gains: Vec<f32>,
     pub equalizer_presets: Vec<crate::audio::preset::EqPreset>,
     pub selected_preset: Option<crate::audio::preset::EqPreset>,
+
+    // EQ Preset Management (Phase 02)
+    pub custom_presets: Vec<crate::audio::preset::EqPreset>,
+    pub hidden_builtins: Vec<String>,
 
     pub first_open: bool,
 
@@ -158,6 +170,9 @@ impl Default for AudioCenterManager {
             equalizer_presets: crate::audio::preset::EqPreset::default_presets(),
             selected_preset: None,
 
+            custom_presets: Vec::new(),
+            hidden_builtins: Vec::new(),
+
             first_open: true,
 
             system_rate: SystemSelection::Default,
@@ -167,6 +182,15 @@ impl Default for AudioCenterManager {
 }
 
 impl AudioCenterManager {
+    /// Load custom presets from SQLite into custom_presets vec.
+    pub fn load_custom_presets(&mut self, db: &std::sync::Mutex<crate::db::Database>) {
+        if let Ok(db_lock) = db.lock() {
+            if let Ok(presets) = db_lock.load_eq_presets() {
+                self.custom_presets = presets;
+            }
+        }
+    }
+
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
             if let Ok(db) = db_arc.try_lock() {
@@ -226,6 +250,8 @@ impl AudioCenterManager {
                     };
                 }
             }
+            // Load custom EQ presets from SQLite (Decisión D-01: persistence)
+            self.load_custom_presets(db_arc.as_ref());
         }
 
         let state = audio_manager.state();

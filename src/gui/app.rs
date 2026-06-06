@@ -338,6 +338,13 @@ pub enum ActiveDialog {
         format: ExportFormat,
         mode: ExportMode,
     },
+    EqPresetLoad {
+        selected_preset_idx: Option<usize>,
+        preview_backup: Option<crate::gui::audio_center::EqStateBackup>,
+    },
+    EqPresetSave {
+        name_input: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1363,6 +1370,19 @@ impl AudoxidyApp {
             }
 
             Message::CloseDialog => {
+                // Restore from preview backup if closing EqPresetLoad dialog
+                if let ActiveDialog::EqPresetLoad {
+                    preview_backup: Some(backup),
+                    ..
+                } = &self.active_dialog
+                {
+                    self.audio_center_manager.preamp_gain = backup.preamp_gain;
+                    self.audio_center_manager.eq_band_gains = backup.eq_band_gains.clone();
+                    self.audio_manager.set_preamp_gain(backup.preamp_gain);
+                    for (i, &val) in backup.eq_band_gains.iter().enumerate() {
+                        self.audio_manager.set_eq_band_gain(i, val);
+                    }
+                }
                 self.active_dialog = ActiveDialog::None;
                 self.dialog_pos = None;
                 Task::none()
@@ -1372,6 +1392,7 @@ impl AudoxidyApp {
                 match &mut self.active_dialog {
                     ActiveDialog::CreatePlaylist { name, .. } => *name = s,
                     ActiveDialog::RenamePlaylist { new_name, .. } => *new_name = s,
+                    ActiveDialog::EqPresetSave { name_input } => *name_input = s,
                     _ => {}
                 }
                 Task::none()
@@ -1528,6 +1549,16 @@ impl AudoxidyApp {
                                 }
                             },
                         );
+                    }
+                    ActiveDialog::EqPresetLoad { .. } => {
+                        return Task::done(Message::AudioCenterMsg(
+                            crate::gui::audio_center::AudioCenterMessage::EqPresetLoadConfirm,
+                        ));
+                    }
+                    ActiveDialog::EqPresetSave { .. } => {
+                        return Task::done(Message::AudioCenterMsg(
+                            crate::gui::audio_center::AudioCenterMessage::EqPresetSaveConfirm,
+                        ));
                     }
                     _ => {}
                 }
@@ -4291,6 +4322,112 @@ impl AudoxidyApp {
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Continuar".to_string(),
+                    )
+                },
+                ActiveDialog::EqPresetLoad { selected_preset_idx, .. } => {
+                    let presets = self.audio_center_manager.get_unified_presets();
+                    let custom_count = self.audio_center_manager.custom_presets.len();
+                    let has_default = presets.first()
+                        .map(|p| p.name == "Default")
+                        .unwrap_or(false);
+
+                    let mut preset_rows = iced::widget::column![].spacing(2);
+
+                    for (idx, preset) in presets.iter().enumerate() {
+                        // Add visual divider between custom and built-in sections
+                        if has_default && idx == 1 + custom_count {
+                            preset_rows = preset_rows.push(
+                                iced::widget::text("──────────────")
+                                    .size(12)
+                                    .color(COLOR_TEXT_SECONDARY)
+                                    .width(iced::Length::Fill)
+                                    .align_x(iced::alignment::Horizontal::Center),
+                            );
+                        }
+
+                        let is_selected = *selected_preset_idx == Some(idx);
+                        let btn = iced::widget::button(
+                            iced::widget::text(&preset.name)
+                                .size(14)
+                                .color(COLOR_TEXT_PRIMARY)
+                                .width(iced::Length::Fill),
+                        )
+                        .width(iced::Length::Fill)
+                        .padding([4, 8])
+                        .style(move |_t: &iced::Theme, _status| iced::widget::button::Style {
+                            background: if is_selected {
+                                Some(iced::Background::Color(iced::Color {
+                                    a: 0.3,
+                                    ..COLOR_ACCENT
+                                }))
+                            } else {
+                                Some(iced::Background::Color(iced::Color::TRANSPARENT))
+                            },
+                            text_color: COLOR_TEXT_PRIMARY,
+                            border: iced::Border {
+                                radius: 4.0.into(),
+                                width: 0.0,
+                                color: iced::Color::TRANSPARENT,
+                            },
+                            ..Default::default()
+                        })
+                        .on_press(crate::gui::app::Message::AudioCenterMsg(
+                            crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(
+                                Some(idx),
+                            ),
+                        ));
+                        preset_rows = preset_rows.push(btn);
+                    }
+
+                    let content = crate::gui::widgets::standard_scrollable(
+                        iced::widget::Id::new("eq-preset-load-list"),
+                        preset_rows,
+                        iced::widget::scrollable::Direction::Vertical(
+                            iced::widget::scrollable::Scrollbar::default(),
+                        ),
+                    )
+                    .height(iced::Length::Fixed(300.0));
+
+                    crate::gui::widgets::standard_modal(
+                        "Cargar Preset".to_string(),
+                        content.into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Aceptar".to_string(),
+                    )
+                },
+                ActiveDialog::EqPresetSave { name_input } => {
+                    crate::gui::widgets::standard_modal(
+                        "Guardar Preset".to_string(),
+                        iced::widget::column![
+                            crate::gui::widgets::modal_text(
+                                "Nombre del preset:".to_string()
+                            ),
+                            iced::widget::text_input("Nombre del preset...", name_input)
+                                .on_input(Message::UpdateDialogInput)
+                                .on_submit(Message::ConfirmDialogAction)
+                                .padding([4, 5])
+                                .size(14)
+                                .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
+                                    iced::widget::text_input::Style {
+                                        background: COLOR_CONTRAST.into(),
+                                        border: iced::Border {
+                                            radius: 4.0.into(),
+                                            width: 1.0,
+                                            color: COLOR_ACCENT,
+                                        },
+                                        icon: iced::Color::TRANSPARENT,
+                                        placeholder: COLOR_TEXT_SECONDARY,
+                                        value: COLOR_TEXT_PRIMARY,
+                                        selection: COLOR_ACCENT,
+                                    }
+                                }),
+                        ]
+                        .spacing(12)
+                        .into(),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Guardar".to_string(),
                     )
                 },
                 _ => iced::widget::Space::new().into(),

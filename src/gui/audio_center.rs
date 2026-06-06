@@ -105,7 +105,7 @@ pub enum SystemSelection<Val> {
 
 /// Backup del estado del EQ antes de aplicar un preset en preview.
 /// Se restaura si el usuario cancela el diálogo de carga.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EqStateBackup {
     pub preamp_gain: f32,
     pub eq_band_gains: Vec<f32>,
@@ -202,6 +202,33 @@ impl AudioCenterManager {
                 self.custom_presets = presets;
             }
         }
+    }
+
+    /// Build unified preset list for Load dialog:
+    /// 1. "Default" always first
+    /// 2. Custom presets (A-Z, case-insensitive)
+    /// 3. Built-in presets (A-Z, excluding Default and hidden)
+    pub fn get_unified_presets(&self) -> Vec<&crate::audio::preset::EqPreset> {
+        let mut all: Vec<&crate::audio::preset::EqPreset> = Vec::new();
+
+        // 1. "Default" always first
+        if let Some(default) = self.equalizer_presets.iter().find(|p| p.name == "Default") {
+            all.push(default);
+        }
+
+        // 2. Custom presets (sorted A-Z)
+        let mut custom: Vec<&crate::audio::preset::EqPreset> = self.custom_presets.iter().collect();
+        custom.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        all.extend(custom);
+
+        // 3. Built-in presets excluding Default and hidden
+        let mut builtin: Vec<&crate::audio::preset::EqPreset> = self.equalizer_presets.iter()
+            .filter(|p| p.name != "Default" && !self.hidden_builtins.contains(&p.name))
+            .collect();
+        builtin.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        all.extend(builtin);
+
+        all
     }
 
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {

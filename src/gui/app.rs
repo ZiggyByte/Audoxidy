@@ -3730,8 +3730,16 @@ impl AudoxidyApp {
                     self.dialog_pos = Some(self.last_mouse_pos);
                 }
 
+                // EqPresetIconSave opens the Save dialog in app.rs
+                if let crate::gui::audio_center::AudioCenterMessage::EqPresetIconSave = &ac_msg {
+                    self.active_dialog = ActiveDialog::EqPresetSave {
+                        name_input: String::new(),
+                    };
+                    self.dialog_pos = Some(self.last_mouse_pos);
+                }
+
                 self.audio_center_manager
-                    .update(ac_msg, &self.audio_manager);
+                    .update(ac_msg, &self.audio_manager, &self.database);
                 Task::none()
             }
             Message::PlayerHoverZone(zone) => {

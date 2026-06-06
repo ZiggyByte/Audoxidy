@@ -145,6 +145,7 @@ pub struct AudioCenterManager {
     // EQ Preset Management (Phase 02)
     pub custom_presets: Vec<crate::audio::preset::EqPreset>,
     pub hidden_builtins: Vec<String>,
+    pub pending_preset_name: String,
 
     pub first_open: bool,
 
@@ -185,6 +186,7 @@ impl Default for AudioCenterManager {
 
             custom_presets: Vec::new(),
             hidden_builtins: Vec::new(),
+            pending_preset_name: String::new(),
 
             first_open: true,
 
@@ -370,7 +372,7 @@ impl AudioCenterManager {
         }
     }
 
-    pub fn update(&mut self, message: AudioCenterMessage, audio_manager: &AudioManager) {
+    pub fn update(&mut self, message: AudioCenterMessage, audio_manager: &AudioManager, db: &std::sync::Mutex<crate::db::Database>) {
         match message {
             AudioCenterMessage::TabSelected(tab) => {
                 self.selected_tab = tab;
@@ -738,10 +740,15 @@ impl AudioCenterManager {
                 // Handled at app.rs level — opens ActiveDialog::EqPresetLoad with state backup
             }
             AudioCenterMessage::EqPresetIconSave => {
-                // TODO: implement in plan 02-03
+                // Handled at app.rs level — opens ActiveDialog::EqPresetSave
             }
             AudioCenterMessage::EqPresetIconReset => {
-                // TODO: implement in plan 02-03
+                // Per D-08: selected_preset = None, preamp = 0.0, all bands = 0.0, reset DSP
+                audio_manager.reset_dsp_defaults();
+                self.selected_preset = None;
+                self.preamp_gain = 0.0;
+                let count = if self.equalizer_bands_31 { 31 } else { 20 };
+                self.eq_band_gains = vec![0.0; count];
             }
             AudioCenterMessage::EqPresetLoadSelected(Some(idx)) => {
                 let preset_opt = {
@@ -760,17 +767,44 @@ impl AudioCenterManager {
                 // The dialog is closed at the app.rs level.
                 // Keep the current selected_preset, preamp_gain, and eq_band_gains
             }
-            AudioCenterMessage::EqPresetSaveInput(_) => {
-                // TODO: implement in plan 02-04
+            AudioCenterMessage::EqPresetSaveInput(name) => {
+                self.pending_preset_name = name;
             }
             AudioCenterMessage::EqPresetSaveConfirm => {
-                // TODO: implement in plan 02-04
+                if !self.pending_preset_name.is_empty() {
+                    let name = std::mem::take(&mut self.pending_preset_name);
+                    let preset = crate::audio::preset::EqPreset::new(
+                        &name,
+                        self.preamp_gain,
+                        if self.equalizer_bands_31 {
+                            Some(crate::audio::preset::EqPreset::convert_31_to_20(&self.eq_band_gains))
+                        } else {
+                            Some(self.eq_band_gains.clone())
+                        },
+                        if self.equalizer_bands_31 {
+                            Some(self.eq_band_gains.clone())
+                        } else {
+                            Some(crate::audio::preset::EqPreset::convert_20_to_31(&self.eq_band_gains))
+                        },
+                    );
+                    if let Ok(db_lock) = db.lock() {
+                        let _ = db_lock.save_eq_preset(&preset);
+                    }
+                    self.custom_presets.push(preset);
+                }
             }
-            AudioCenterMessage::EqPresetDelete(_) => {
-                // TODO: implement in plan 02-04
+            AudioCenterMessage::EqPresetDelete(name) => {
+                if let Ok(db_lock) = db.lock() {
+                    let _ = db_lock.delete_eq_preset(&name);
+                }
+                self.custom_presets.retain(|p| p.name != name);
             }
             AudioCenterMessage::EqPresetRestoreDefaults => {
-                // TODO: implement in plan 02-04
+                if let Ok(db_lock) = db.lock() {
+                    let _ = db_lock.clear_eq_presets();
+                }
+                self.custom_presets.clear();
+                self.hidden_builtins.clear();
             }
             AudioCenterMessage::EqPresetFileImported(_) => {
                 // TODO: implement in plan 02-04

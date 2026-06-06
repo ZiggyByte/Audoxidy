@@ -806,11 +806,59 @@ impl AudioCenterManager {
                 self.custom_presets.clear();
                 self.hidden_builtins.clear();
             }
-            AudioCenterMessage::EqPresetFileImported(_) => {
-                // TODO: implement in plan 02-04
+            AudioCenterMessage::EqPresetFileImported(Some((path, data))) => {
+                // Read file content
+                if let Ok(content) = String::from_utf8(data) {
+                    match crate::audio::preset::preset_from_json(&content) {
+                        Ok(preset) => {
+                            // Save to DB
+                            if let Ok(db_lock) = db.lock() {
+                                let _ = db_lock.save_eq_preset(&preset);
+                            }
+                            // Add to custom presets (dedup by name)
+                            if !self.custom_presets.iter().any(|p| p.name == preset.name) {
+                                self.custom_presets.push(preset.clone());
+                            }
+                            // Apply the imported preset
+                            self.apply_eq_preset_to_state(&preset, audio_manager);
+                        }
+                        Err(e) => {
+                            eprintln!("Error parsing EQ preset JSON from {:?}: {e}", path);
+                        }
+                    }
+                }
             }
-            AudioCenterMessage::EqPresetFileExported(_) => {
-                // TODO: implement in plan 02-04
+            AudioCenterMessage::EqPresetFileImported(None) => {
+                // User cancelled the dialog
+            }
+            AudioCenterMessage::EqPresetFileExported(Some(path)) => {
+                // Build preset from current state
+                let preset = crate::audio::preset::EqPreset::new(
+                    self.selected_preset
+                        .as_ref()
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("Custom"),
+                    self.preamp_gain,
+                    Some(self.eq_band_gains.clone()),
+                    if self.equalizer_bands_31 {
+                        Some(self.eq_band_gains.clone())
+                    } else {
+                        Some(crate::audio::preset::EqPreset::convert_20_to_31(
+                            &self.eq_band_gains,
+                        ))
+                    },
+                );
+                match crate::audio::preset::preset_to_json(&preset) {
+                    Ok(json) => {
+                        let _ = std::fs::write(&path, json);
+                    }
+                    Err(e) => {
+                        eprintln!("Error serializing EQ preset to JSON: {e}");
+                    }
+                }
+            }
+            AudioCenterMessage::EqPresetFileExported(None) => {
+                // User cancelled the dialog
             }
 
             // Tab 3: Effects Messages Handlers
@@ -2094,6 +2142,17 @@ fn view_equalizer<'a>(
             "restore-straight.svg",
             22,
             Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconReset)),
+        ),
+        // Import/Export buttons
+        crate::gui::widgets::icon_button(
+            "import-straight.svg",
+            18,
+            Some(crate::gui::app::Message::EqPresetImportFile),
+        ),
+        crate::gui::widgets::icon_button(
+            "export-straight.svg",
+            18,
+            Some(crate::gui::app::Message::EqPresetExportFile(None)),
         ),
     ]
     .spacing(4)

@@ -353,3 +353,53 @@ impl std::fmt::Display for EqPreset {
         write!(f, "{}", self.name)
     }
 }
+
+/// Formato de archivo JSON para exportar/importar presets de ecualizador.
+/// Siempre incluye ambos sets de bandas (20 y 31) en export,
+/// pero puede aceptar uno solo en import con conversión automática.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct EqPresetFile {
+    pub version: u32,
+    pub name: String,
+    pub preamp_gain: f32,
+    pub bands_20: Option<Vec<f32>>,
+    pub bands_31: Option<Vec<f32>>,
+}
+
+impl From<&EqPreset> for EqPresetFile {
+    fn from(preset: &EqPreset) -> Self {
+        Self {
+            version: 1,
+            name: preset.name.clone(),
+            preamp_gain: preset.preamp_gain,
+            bands_20: Some(preset.get_gains_20()), // Always include both
+            bands_31: Some(preset.get_gains_31()),
+        }
+    }
+}
+
+/// Serializa un preset a JSON string para exportar a archivo.
+pub fn preset_to_json(preset: &EqPreset) -> Result<String, serde_json::Error> {
+    let file: EqPresetFile = preset.into();
+    serde_json::to_string_pretty(&file)
+}
+
+/// Deserializa un preset desde JSON string, con conversión automática
+/// si solo un set de bandas está presente.
+pub fn preset_from_json(json: &str) -> Result<EqPreset, serde_json::Error> {
+    let mut file: EqPresetFile = serde_json::from_str(json)?;
+    // If only one band set is present, convert from the other
+    if file.bands_20.is_none() && file.bands_31.is_some() {
+        let gains_20 = EqPreset::convert_31_to_20(file.bands_31.as_ref().unwrap());
+        file.bands_20 = Some(gains_20);
+    } else if file.bands_31.is_none() && file.bands_20.is_some() {
+        let gains_31 = EqPreset::convert_20_to_31(file.bands_20.as_ref().unwrap());
+        file.bands_31 = Some(gains_31);
+    }
+    Ok(EqPreset::new(
+        &file.name,
+        file.preamp_gain,
+        file.bands_20,
+        file.bands_31,
+    ))
+}

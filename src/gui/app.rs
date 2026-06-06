@@ -3716,6 +3716,20 @@ impl AudoxidyApp {
                     self.audio_center_manager.drag_start = Some(self.last_mouse_pos);
                     self.audio_center_manager.is_dragging = true;
                 }
+
+                // EqPresetIconLoad opens the Load dialog in app.rs
+                if let crate::gui::audio_center::AudioCenterMessage::EqPresetIconLoad = &ac_msg {
+                    let backup = crate::gui::audio_center::EqStateBackup {
+                        preamp_gain: self.audio_center_manager.preamp_gain,
+                        eq_band_gains: self.audio_center_manager.eq_band_gains.clone(),
+                    };
+                    self.active_dialog = ActiveDialog::EqPresetLoad {
+                        selected_preset_idx: None,
+                        preview_backup: Some(backup),
+                    };
+                    self.dialog_pos = Some(self.last_mouse_pos);
+                }
+
                 self.audio_center_manager
                     .update(ac_msg, &self.audio_manager);
                 Task::none()

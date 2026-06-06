@@ -231,6 +231,19 @@ impl AudioCenterManager {
         all
     }
 
+    /// Apply an EQ preset to the manager state and AudioManager/DSP.
+    fn apply_eq_preset_to_state(&mut self, preset: &crate::audio::preset::EqPreset, audio_manager: &AudioManager) {
+        self.selected_preset = Some(preset.clone());
+        self.preamp_gain = preset.preamp_gain;
+        audio_manager.apply_eq_preset(preset);
+        let gains = if self.equalizer_bands_31 {
+            preset.get_gains_31()
+        } else {
+            preset.get_gains_20()
+        };
+        self.eq_band_gains = gains;
+    }
+
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
             if let Ok(db) = db_arc.try_lock() {
@@ -717,26 +730,12 @@ impl AudioCenterManager {
                 }
             }
             AudioCenterMessage::EqPresetSelected(preset) => {
-                self.selected_preset = Some(preset.clone());
-                self.preamp_gain = preset.preamp_gain;
-                audio_manager.set_preamp_gain(preset.preamp_gain);
-                let gains = if self.equalizer_bands_31 {
-                    preset.get_gains_31()
-                } else {
-                    preset.get_gains_20()
-                };
-                for (i, &val) in gains.iter().enumerate() {
-                    if i < self.eq_band_gains.len() {
-                        self.eq_band_gains[i] = val;
-                        audio_manager.set_eq_band_gain(i, val);
-                    }
-                }
+                self.apply_eq_preset_to_state(&preset, audio_manager);
             }
 
-            // EQ Preset Management handlers (placeholder — implemented in 02-03/02-04)
+            // EQ Preset Management handlers
             AudioCenterMessage::EqPresetIconLoad => {
-                // Handled at app.rs level — opens ActiveDialog::EqPresetLoad
-                // TODO: implement preview backup in plan 02-03
+                // Handled at app.rs level — opens ActiveDialog::EqPresetLoad with state backup
             }
             AudioCenterMessage::EqPresetIconSave => {
                 // TODO: implement in plan 02-03
@@ -744,11 +743,22 @@ impl AudioCenterManager {
             AudioCenterMessage::EqPresetIconReset => {
                 // TODO: implement in plan 02-03
             }
-            AudioCenterMessage::EqPresetLoadSelected(_idx) => {
-                // TODO: implement in plan 02-03
+            AudioCenterMessage::EqPresetLoadSelected(Some(idx)) => {
+                let preset_opt = {
+                    let presets = self.get_unified_presets();
+                    presets.get(idx).map(|&p| p.clone())
+                };
+                if let Some(preset) = preset_opt {
+                    self.apply_eq_preset_to_state(&preset, audio_manager);
+                }
+            }
+            AudioCenterMessage::EqPresetLoadSelected(None) => {
+                // No preset selected — nothing to preview
             }
             AudioCenterMessage::EqPresetLoadConfirm => {
-                // TODO: implement in plan 02-03
+                // Preset already applied as preview — the state is already committed.
+                // The dialog is closed at the app.rs level.
+                // Keep the current selected_preset, preamp_gain, and eq_band_gains
             }
             AudioCenterMessage::EqPresetSaveInput(_) => {
                 // TODO: implement in plan 02-04

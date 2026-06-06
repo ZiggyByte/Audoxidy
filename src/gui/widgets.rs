@@ -355,6 +355,55 @@ pub fn action_icon_button<'a, Message: Clone + 'a>(
         .into()
 }
 
+/// Botón icono SVG reutilizable con hover y estado deshabilitado.
+/// - action: Some(msg) = botón activo con on_press. None = deshabilitado, sin interacción.
+pub fn icon_button<'a, Message: Clone + 'a>(
+    icon_filename: &str,
+    size: u32,
+    action: Option<Message>,
+) -> Element<'a, Message> {
+    let has_action = action.is_some();
+    let icon = svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
+        .width(size)
+        .height(size)
+        .style(|_t: &Theme, status| svg::Style {
+            color: Some(match status {
+                svg::Status::Hovered => COLOR_TEXT_PRIMARY,
+                _ => COLOR_TEXT_SECONDARY,
+            }),
+        });
+
+    let btn = button(icon)
+        .padding(6)
+        .style(move |_t: &Theme, status| {
+            let is_hovered = matches!(status, button::Status::Hovered);
+            button::Style {
+                background: if has_action && is_hovered {
+                    Some(COLOR_ACCENT.into())
+                } else {
+                    Some(Color::TRANSPARENT.into())
+                },
+                text_color: if has_action {
+                    COLOR_TEXT_PRIMARY
+                } else {
+                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+                },
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                ..Default::default()
+            }
+        });
+
+    if let Some(msg) = action {
+        btn.on_press(msg).into()
+    } else {
+        btn.into()
+    }
+}
+
 /// Interruptor (Toggler) global de diseño premium personalizado.
 /// - Permite personalizar el tamaño, colores de fondo y círculo para estados activo e inactivo.
 pub fn standard_toggler<'a, Message>(

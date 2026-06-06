@@ -2,7 +2,7 @@ use crate::audio::AudioManager;
 use crate::audio::device_manager::{AudioDeviceInfo, AudioSettings, BitDepth, ChannelConfig};
 use iced::{
     Alignment, Color, Element, Length, Theme,
-    widget::{Space, button, column, container, mouse_area, opaque, pick_list, row, svg, text},
+    widget::{Space, button, column, container, mouse_area, opaque, row, svg, text},
 };
 use std::sync::Arc;
 
@@ -31,6 +31,19 @@ pub enum AudioCenterMessage {
     EqPreampChanged(f32),
     EqBandChanged(usize, f32),
     EqPresetSelected(crate::audio::preset::EqPreset),
+
+    // EQ Preset Icon Buttons
+    EqPresetIconLoad,
+    EqPresetIconSave,
+    EqPresetIconReset,
+    EqPresetLoadSelected(Option<usize>),
+    EqPresetLoadConfirm,
+    EqPresetSaveInput(String),
+    EqPresetSaveConfirm,
+    EqPresetDelete(String),
+    EqPresetRestoreDefaults,
+    EqPresetFileImported(Option<(std::path::PathBuf, Vec<u8>)>),
+    EqPresetFileExported(Option<std::path::PathBuf>),
 
     // Tab 3: Efectos
     DspToggle(DspEffect, bool),
@@ -691,6 +704,42 @@ impl AudioCenterManager {
                         audio_manager.set_eq_band_gain(i, val);
                     }
                 }
+            }
+
+            // EQ Preset Management handlers (placeholder — implemented in 02-03/02-04)
+            AudioCenterMessage::EqPresetIconLoad => {
+                // Handled at app.rs level — opens ActiveDialog::EqPresetLoad
+                // TODO: implement preview backup in plan 02-03
+            }
+            AudioCenterMessage::EqPresetIconSave => {
+                // TODO: implement in plan 02-03
+            }
+            AudioCenterMessage::EqPresetIconReset => {
+                // TODO: implement in plan 02-03
+            }
+            AudioCenterMessage::EqPresetLoadSelected(_idx) => {
+                // TODO: implement in plan 02-03
+            }
+            AudioCenterMessage::EqPresetLoadConfirm => {
+                // TODO: implement in plan 02-03
+            }
+            AudioCenterMessage::EqPresetSaveInput(_) => {
+                // TODO: implement in plan 02-04
+            }
+            AudioCenterMessage::EqPresetSaveConfirm => {
+                // TODO: implement in plan 02-04
+            }
+            AudioCenterMessage::EqPresetDelete(_) => {
+                // TODO: implement in plan 02-04
+            }
+            AudioCenterMessage::EqPresetRestoreDefaults => {
+                // TODO: implement in plan 02-04
+            }
+            AudioCenterMessage::EqPresetFileImported(_) => {
+                // TODO: implement in plan 02-04
+            }
+            AudioCenterMessage::EqPresetFileExported(_) => {
+                // TODO: implement in plan 02-04
             }
 
             // Tab 3: Effects Messages Handlers
@@ -1959,26 +2008,24 @@ fn view_equalizer<'a>(
     .spacing(10)
     .align_y(Alignment::Center);
 
-    let preset_selector = row![
-        text("Preset:")
-            .size(14)
-            .color(COLOR_TEXT_PRIMARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        pick_list(
-            manager.equalizer_presets.clone(),
-            manager.selected_preset.clone(),
-            |p| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetSelected(p))
-        )
-        .text_size(12)
-        .padding(4)
-        .font(FONT_INTER_SANS_MEDIUM),
-        button(text("Default").size(12).font(FONT_INTER_SANS_MEDIUM))
-            .style(button::secondary)
-            .on_press(crate::gui::app::Message::AudioCenterMsg(
-                AudioCenterMessage::EqPresetSelected(manager.equalizer_presets[0].clone())
-            )),
+    let preset_actions = row![
+        crate::gui::widgets::icon_button(
+            "equalizer-straight.svg",
+            22,
+            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconLoad)),
+        ),
+        crate::gui::widgets::icon_button(
+            "save-outlined-straight.svg",
+            22,
+            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconSave)),
+        ),
+        crate::gui::widgets::icon_button(
+            "restore-straight.svg",
+            22,
+            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconReset)),
+        ),
     ]
-    .spacing(10)
+    .spacing(4)
     .align_y(Alignment::Center);
 
     let top_row = row![
@@ -1988,7 +2035,7 @@ fn view_equalizer<'a>(
         container(bands_mode)
             .width(Length::FillPortion(1))
             .align_x(Alignment::Center),
-        container(preset_selector)
+        container(preset_actions)
             .width(Length::FillPortion(1))
             .align_x(Alignment::End),
     ]

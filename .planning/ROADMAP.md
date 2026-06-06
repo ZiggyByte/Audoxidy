@@ -20,11 +20,12 @@
 
 **Status:** 🔄 Planning
 
-**Plans:** 5 plans
+**Plans:** 4/5 plans executed
 
 **Plans:**
-- [ ] 02-01-PLAN.md — Backend: DB eq_presets table, DSP methods, state structs
-- [ ] 02-02-PLAN.md — UI: Icon buttons + Load dialog with preset list
-- [ ] 02-03-PLAN.md — Save dialog + Reset + Delete
-- [ ] 02-04-PLAN.md — Import/Export via JSON file I/O
+
+- [x] 02-01-PLAN.md — Backend: DB eq_presets table, DSP methods, state structs
+- [x] 02-02-PLAN.md — UI: Icon buttons + Load dialog with preset list
+- [x] 02-03-PLAN.md — Save dialog + Reset + Delete
+- [x] 02-04-PLAN.md — Import/Export via JSON file I/O
 - [ ] 02-05-PLAN.md — Tests for DB, DSP, JSON round-trip

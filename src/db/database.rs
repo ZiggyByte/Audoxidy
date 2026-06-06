@@ -2554,3 +2554,84 @@ fn deserialize_f32_blob(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
         )
     })
 }
+
+#[cfg(test)]
+mod eq_preset_tests {
+    use super::*;
+    use crate::audio::preset::EqPreset;
+
+    #[test]
+    fn test_save_and_load_eq_presets() {
+        let db = Database::new_memory().unwrap();
+        let preset = EqPreset::new(
+            "Test Preset",
+            2.5,
+            Some(vec![1.0; 20]),
+            Some(vec![2.0; 31]),
+        );
+        db.save_eq_preset(&preset).unwrap();
+
+        let loaded = db.load_eq_presets().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Test Preset");
+        assert_eq!(loaded[0].preamp_gain, 2.5);
+        assert_eq!(loaded[0].bands_20.as_ref().unwrap().len(), 20);
+        assert_eq!(loaded[0].bands_31.as_ref().unwrap().len(), 31);
+        assert_eq!(loaded[0].bands_20.as_ref().unwrap()[0], 1.0);
+        assert_eq!(loaded[0].bands_31.as_ref().unwrap()[0], 2.0);
+    }
+
+    #[test]
+    fn test_save_and_load_eq_preset_with_none_bands() {
+        let db = Database::new_memory().unwrap();
+        let preset = EqPreset::new("No Bands", 0.0, None, None);
+        db.save_eq_preset(&preset).unwrap();
+
+        let loaded = db.load_eq_presets().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "No Bands");
+        assert!(loaded[0].bands_20.is_none());
+        assert!(loaded[0].bands_31.is_none());
+    }
+
+    #[test]
+    fn test_delete_eq_preset() {
+        let db = Database::new_memory().unwrap();
+        db.save_eq_preset(&EqPreset::new("To Delete", 0.0, None, None))
+            .unwrap();
+        db.save_eq_preset(&EqPreset::new("Keep", 0.0, None, None))
+            .unwrap();
+        assert_eq!(db.load_eq_presets().unwrap().len(), 2);
+
+        db.delete_eq_preset("To Delete").unwrap();
+        let loaded = db.load_eq_presets().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].name, "Keep");
+    }
+
+    #[test]
+    fn test_clear_eq_presets() {
+        let db = Database::new_memory().unwrap();
+        db.save_eq_preset(&EqPreset::new("A", 0.0, None, None))
+            .unwrap();
+        db.save_eq_preset(&EqPreset::new("B", 0.0, None, None))
+            .unwrap();
+        assert_eq!(db.load_eq_presets().unwrap().len(), 2);
+
+        db.clear_eq_presets().unwrap();
+        assert!(db.load_eq_presets().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_insert_or_replace_eq_preset() {
+        let db = Database::new_memory().unwrap();
+        db.save_eq_preset(&EqPreset::new("Same", 1.0, None, None))
+            .unwrap();
+        db.save_eq_preset(&EqPreset::new("Same", 5.0, None, None))
+            .unwrap();
+
+        let loaded = db.load_eq_presets().unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].preamp_gain, 5.0);
+    }
+}

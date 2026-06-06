@@ -1392,7 +1392,15 @@ impl AudoxidyApp {
                 match &mut self.active_dialog {
                     ActiveDialog::CreatePlaylist { name, .. } => *name = s,
                     ActiveDialog::RenamePlaylist { new_name, .. } => *new_name = s,
-                    ActiveDialog::EqPresetSave { name_input } => *name_input = s,
+                    ActiveDialog::EqPresetSave { name_input } => {
+                        *name_input = s.clone();
+                        // Also forward to AudioCenterManager for the pending_preset_name
+                        self.audio_center_manager.update(
+                            crate::gui::audio_center::AudioCenterMessage::EqPresetSaveInput(s),
+                            &self.audio_manager,
+                            &self.database,
+                        );
+                    }
                     _ => {}
                 }
                 Task::none()

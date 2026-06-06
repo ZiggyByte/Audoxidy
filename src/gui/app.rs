@@ -252,6 +252,10 @@ pub enum Message {
     ToggleAudioCenter(Option<usize>),
     AudioCenterMsg(AudioCenterMessage),
 
+    // EQ Preset Import/Export
+    EqPresetImportFile,
+    EqPresetExportFile(Option<String>),
+
     // Player Módulo 1
     PlayerHoverZone(crate::gui::player::HoverZone),
     PlayerScroll(f32),
@@ -3705,6 +3709,41 @@ impl AudoxidyApp {
                     }
                 }
                 Task::none()
+            }
+            Message::EqPresetImportFile => {
+                return Task::perform(
+                    async {
+                        let file = rfd::AsyncFileDialog::new()
+                            .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
+                            .set_title("Importar preset de ecualizador")
+                            .pick_file()
+                            .await;
+                        if let Some(f) = file {
+                            let data = f.read().await;
+                            Some((f.path().to_path_buf(), data))
+                        } else {
+                            None
+                        }
+                    },
+                    |result| {
+                        Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileImported(result))
+                    },
+                );
+            }
+            Message::EqPresetExportFile(_preset_name) => {
+                return Task::perform(
+                    async {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
+                            .set_title("Exportar preset de ecualizador")
+                            .save_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    |result| {
+                        Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileExported(result))
+                    },
+                );
             }
             Message::AudioCenterMsg(ac_msg) => {
                 match &ac_msg {

@@ -109,6 +109,7 @@ pub enum SystemSelection<Val> {
 pub struct EqStateBackup {
     pub preamp_gain: f32,
     pub eq_band_gains: Vec<f32>,
+    pub selected_preset: Option<crate::audio::preset::EqPreset>,
 }
 
 pub struct AudioCenterManager {
@@ -794,10 +795,19 @@ impl AudioCenterManager {
                 }
             }
             AudioCenterMessage::EqPresetDelete(name) => {
-                if let Ok(db_lock) = db.lock() {
-                    let _ = db_lock.delete_eq_preset(&name);
+                let is_builtin = crate::audio::preset::EqPreset::default_presets()
+                    .iter().any(|p| p.name == name)
+                    && !self.custom_presets.iter().any(|p| p.name == name);
+                if is_builtin {
+                    if !self.hidden_builtins.contains(&name) {
+                        self.hidden_builtins.push(name.clone());
+                    }
+                } else {
+                    if let Ok(db_lock) = db.lock() {
+                        let _ = db_lock.delete_eq_preset(&name);
+                    }
+                    self.custom_presets.retain(|p| p.name != name);
                 }
-                self.custom_presets.retain(|p| p.name != name);
             }
             AudioCenterMessage::EqPresetRestoreDefaults => {
                 if let Ok(db_lock) = db.lock() {
@@ -2127,7 +2137,26 @@ fn view_equalizer<'a>(
     .spacing(10)
     .align_y(Alignment::Center);
 
+    // Preset name label — visible only when a non-Default preset is selected
+    let preset_label_text = match &manager.selected_preset {
+        Some(p) if p.name != "Default" => format!("Preset: {}", p.name),
+        _ => String::new(),
+    };
+    let preset_label: Element<'a, crate::gui::app::Message> = if !preset_label_text.is_empty() {
+        iced::widget::container(
+            iced::widget::text(preset_label_text)
+                .size(14)
+                .color(COLOR_TEXT_PRIMARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+        )
+        .padding([0, 6])
+        .into()
+    } else {
+        iced::widget::Space::new().width(Length::Fixed(0.0)).into()
+    };
+
     let preset_actions = row![
+        preset_label,
         crate::gui::widgets::icon_button(
             "equalizer-straight.svg",
             22,
@@ -2143,19 +2172,8 @@ fn view_equalizer<'a>(
             22,
             Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconReset)),
         ),
-        // Import/Export buttons
-        crate::gui::widgets::icon_button(
-            "import-straight.svg",
-            18,
-            Some(crate::gui::app::Message::EqPresetImportFile),
-        ),
-        crate::gui::widgets::icon_button(
-            "export-straight.svg",
-            18,
-            Some(crate::gui::app::Message::EqPresetExportFile(None)),
-        ),
     ]
-    .spacing(4)
+    .spacing(5)
     .align_y(Alignment::Center);
 
     let top_row = row![

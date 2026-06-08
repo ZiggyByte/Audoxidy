@@ -6,7 +6,7 @@ use crate::gui::library::{LIBRARY_SCROLL_ID, LibraryManager};
 use crate::gui::library_filters::LibraryFiltersManager;
 use crate::gui::playlist::PLAYLIST_TABS_SCROLL_ID;
 use crate::gui::playlist::PlaylistManager;
-use crate::gui::theme::{COLOR_ACCENT, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY};
+use crate::gui::theme::{COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_INTER_SANS_NORMAL};
 use crate::integrations::media_controls::SystemMediaControls;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 use iced::{Color, Element, Task, Theme};
@@ -1382,6 +1382,7 @@ impl AudoxidyApp {
                 {
                     self.audio_center_manager.preamp_gain = backup.preamp_gain;
                     self.audio_center_manager.eq_band_gains = backup.eq_band_gains.clone();
+                    self.audio_center_manager.selected_preset = backup.selected_preset.clone();
                     self.audio_manager.set_preamp_gain(backup.preamp_gain);
                     for (i, &val) in backup.eq_band_gains.iter().enumerate() {
                         self.audio_manager.set_eq_band_gain(i, val);
@@ -3769,6 +3770,7 @@ impl AudoxidyApp {
                     let backup = crate::gui::audio_center::EqStateBackup {
                         preamp_gain: self.audio_center_manager.preamp_gain,
                         eq_band_gains: self.audio_center_manager.eq_band_gains.clone(),
+                        selected_preset: self.audio_center_manager.selected_preset.clone(),
                     };
                     self.active_dialog = ActiveDialog::EqPresetLoad {
                         selected_preset_idx: None,
@@ -3777,12 +3779,21 @@ impl AudoxidyApp {
                     self.dialog_pos = Some(self.last_mouse_pos);
                 }
 
+                // EqPresetLoadSelected: update dialog state for selection persistence
+                if let crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(idx) = &ac_msg {
+                    if let ActiveDialog::EqPresetLoad { selected_preset_idx, .. } = &mut self.active_dialog {
+                        *selected_preset_idx = *idx;
+                    }
+                }
+
                 // EqPresetIconSave opens the Save dialog in app.rs
                 if let crate::gui::audio_center::AudioCenterMessage::EqPresetIconSave = &ac_msg {
+                    let focus_task = focus(DIALOG_TEXT_INPUT_ID.clone());
                     self.active_dialog = ActiveDialog::EqPresetSave {
                         name_input: String::new(),
                     };
                     self.dialog_pos = Some(self.last_mouse_pos);
+                    return focus_task;
                 }
 
                 self.audio_center_manager
@@ -4399,46 +4410,59 @@ impl AudoxidyApp {
                     let has_default = presets.first()
                         .map(|p| p.name == "Default")
                         .unwrap_or(false);
+                    let selected_name = selected_preset_idx.and_then(|idx| {
+                        presets.get(idx).map(|p| p.name.clone())
+                    });
 
-                    let mut preset_rows = iced::widget::column![].spacing(2);
+                    // --- LEFT COLUMN: Preset List ---
+                    let mut preset_rows = iced::widget::column![].spacing(0);
 
                     for (idx, preset) in presets.iter().enumerate() {
-                        // Add visual divider between custom and built-in sections
                         if has_default && idx == 1 + custom_count {
                             preset_rows = preset_rows.push(
-                                iced::widget::text("──────────────")
-                                    .size(12)
-                                    .color(COLOR_TEXT_SECONDARY)
-                                    .width(iced::Length::Fill)
-                                    .align_x(iced::alignment::Horizontal::Center),
+                                iced::widget::container(
+                                    iced::widget::Space::new()
+                                        .width(iced::Length::Fill)
+                                        .height(iced::Length::Fixed(1.0)),
+                                )
+                                .width(iced::Length::Fill)
+                                .style(|_t: &iced::Theme| iced::widget::container::Style::default()
+                                    .background(COLOR_TEXT_SECONDARY)),
                             );
                         }
 
                         let is_selected = *selected_preset_idx == Some(idx);
                         let btn = iced::widget::button(
-                            iced::widget::text(&preset.name)
-                                .size(14)
-                                .color(COLOR_TEXT_PRIMARY)
-                                .width(iced::Length::Fill),
+                            iced::widget::container(
+                                iced::widget::text(&preset.name)
+                                    .size(14)
+                                    .color(COLOR_TEXT_PRIMARY)
+                                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
+                                    .width(iced::Length::Fill)
+                                    .wrapping(iced::widget::text::Wrapping::None),
+                            )
+                            .width(iced::Length::Fill)
+                            .center_y(iced::Length::Fill),
                         )
                         .width(iced::Length::Fill)
-                        .padding([4, 8])
-                        .style(move |_t: &iced::Theme, _status| iced::widget::button::Style {
-                            background: if is_selected {
-                                Some(iced::Background::Color(iced::Color {
-                                    a: 0.3,
-                                    ..COLOR_ACCENT
-                                }))
-                            } else {
-                                Some(iced::Background::Color(iced::Color::TRANSPARENT))
-                            },
-                            text_color: COLOR_TEXT_PRIMARY,
-                            border: iced::Border {
-                                radius: 4.0.into(),
-                                width: 0.0,
-                                color: iced::Color::TRANSPARENT,
-                            },
-                            ..Default::default()
+                        .height(iced::Length::Fixed(26.0))
+                        .padding([0, 8])
+                        .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
+                            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                            iced::widget::button::Style {
+                                background: if is_selected || is_hovered {
+                                    Some(iced::Background::Color(COLOR_ACCENT))
+                                } else {
+                                    Some(iced::Background::Color(iced::Color::TRANSPARENT))
+                                },
+                                text_color: COLOR_TEXT_PRIMARY,
+                                border: iced::Border {
+                                    radius: 0.0.into(),
+                                    width: 0.0,
+                                    color: iced::Color::TRANSPARENT,
+                                },
+                                ..Default::default()
+                            }
                         })
                         .on_press(crate::gui::app::Message::AudioCenterMsg(
                             crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(
@@ -4448,25 +4472,162 @@ impl AudoxidyApp {
                         preset_rows = preset_rows.push(btn);
                     }
 
-                    let content = crate::gui::widgets::standard_scrollable(
-                        iced::widget::Id::new("eq-preset-load-list"),
-                        preset_rows,
-                        iced::widget::scrollable::Direction::Vertical(
-                            iced::widget::scrollable::Scrollbar::default(),
-                        ),
+                    let preset_list = iced::widget::container(
+                        crate::gui::widgets::standard_scrollable(
+                            iced::widget::Id::new("eq-preset-load-list"),
+                            preset_rows,
+                            iced::widget::scrollable::Direction::Vertical(
+                                iced::widget::scrollable::Scrollbar::default(),
+                            ),
+                        )
+                        .height(iced::Length::Fixed(287.0)),
                     )
-                    .height(iced::Length::Fixed(300.0));
+                    .width(iced::Length::Fixed(140.0))
+                    .height(iced::Length::Fixed(289.0))
+                    .padding(1)
+                    .style(|_t: &iced::Theme| iced::widget::container::Style::default()
+                        .background(COLOR_CONTRAST)
+                        .border(iced::Border {
+                            width: 1.0,
+                            color: COLOR_TEXT_SECONDARY,
+                            radius: 2.0.into(),
+                        }));
 
-                    crate::gui::widgets::standard_modal(
-                        "Cargar Preset".to_string(),
-                        content.into(),
-                        Some(Message::CloseDialog),
-                        Some(Message::ConfirmDialogAction),
-                        "Aceptar".to_string(),
+                    // --- RIGHT COLUMN: Vertical Buttons ---
+                    fn dialog_btn<'a>(
+                        label: &'a str,
+                        enabled: bool,
+                        msg: crate::gui::app::Message,
+                    ) -> iced::Element<'a, crate::gui::app::Message> {
+                        let mut btn = iced::widget::button(
+                            iced::widget::container(
+                                iced::widget::text(label)
+                                    .size(14)
+                                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM),
+                            )
+                            .width(iced::Length::Fill)
+                            .center_x(iced::Length::Fill)
+                            .center_y(iced::Length::Fill),
+                        )
+                        .width(iced::Length::Fixed(150.0))
+                        .height(iced::Length::Fixed(30.0))
+                        .padding(0)
+                        .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
+                            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                            iced::widget::button::Style {
+                                background: if is_hovered && enabled {
+                                    Some(iced::Background::Color(COLOR_ACCENT))
+                                } else if enabled {
+                                    Some(iced::Background::Color(COLOR_CONTRAST))
+                                } else {
+                                    Some(iced::Background::Color(COLOR_CONTRAST))
+                                },
+                                text_color: if enabled {
+                                    if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY }
+                                } else {
+                                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+                                },
+                                border: iced::Border {
+                                    radius: 6.0.into(),
+                                    width: 0.0,
+                                    color: iced::Color::TRANSPARENT,
+                                },
+                                ..Default::default()
+                            }
+                        });
+                        if enabled {
+                            btn = btn.on_press(msg);
+                        }
+                        btn.into()
+                    }
+
+                    let accept_msg = Message::ConfirmDialogAction;
+                    let cancel_msg = Message::CloseDialog;
+                    let delete_msg = selected_name.as_ref().map(|name| {
+                        Message::AudioCenterMsg(
+                            crate::gui::audio_center::AudioCenterMessage::EqPresetDelete(name.clone())
+                        )
+                    }).unwrap_or(Message::NoOp);
+                    let import_msg = Message::EqPresetImportFile;
+                    let export_msg = selected_name.as_ref().map(|name| {
+                        Message::EqPresetExportFile(Some(name.clone()))
+                    }).unwrap_or(Message::NoOp);
+                    let restore_msg = Message::AudioCenterMsg(
+                        crate::gui::audio_center::AudioCenterMessage::EqPresetRestoreDefaults
+                    );
+
+                    let right_col = iced::widget::column![
+                        dialog_btn("Aceptar", true, accept_msg),
+                        dialog_btn("Cancelar", true, cancel_msg),
+                        dialog_btn("Eliminar", true, delete_msg),
+                        dialog_btn("Importar", true, import_msg),
+                        dialog_btn("Exportar", true, export_msg),
+                        iced::widget::Space::new().height(iced::Length::Fixed(0.0)),
+                        dialog_btn("Predeterminado", true, restore_msg),
+                        iced::widget::Space::new().height(iced::Length::Fixed(0.0)),
+                        iced::widget::text("Advertencia: Se elimarán los presets personalizados y se restablecerán los presets predeterminados.")
+                            .size(11)
+                            .color(COLOR_TEXT_SECONDARY)
+                            .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM),
+                    ]
+                    .spacing(8)
+                    .align_x(iced::Alignment::Center)
+                    .width(iced::Length::Fixed(150.0));
+
+                    let content = iced::widget::row![
+                        preset_list,
+                        iced::widget::Space::new().width(iced::Length::Fixed(10.0)),
+                        right_col,
+                    ]
+                    .spacing(0)
+                    .align_y(iced::Alignment::Start);
+
+                    // Build complete dialog with title
+                    let dialog: iced::Element<'_, Message> = iced::widget::container(
+                        iced::widget::column![
+                            iced::widget::container(
+                                iced::widget::text("Cargar Preset")
+                                    .size(16)
+                                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
+                                    .color(COLOR_TEXT_PRIMARY)
+                                    .align_x(iced::alignment::Horizontal::Center),
+                            )
+                            .padding(iced::Padding {
+                                top: -2.0,
+                                bottom: 2.0,
+                                left: 0.0,
+                                right: 0.0,
+                            }),
+                            iced::widget::Space::new().height(iced::Length::Fixed(8.0)),
+                            content,
+                        ]
+                        .align_x(iced::Alignment::Center),
                     )
+                    .width(iced::Length::Fixed(330.0))
+                    .height(iced::Length::Fixed(352.0))
+                    .padding(17)
+                    .style(|_t: &iced::Theme| iced::widget::container::Style::default()
+                        .background(iced::Background::Color(COLOR_BG))
+                        .border(iced::Border {
+                            color: COLOR_ACCENT,
+                            width: 2.0,
+                            radius: 8.0.into(),
+                        })
+                        .shadow(iced::Shadow {
+                            offset: iced::Vector::new(0.0, 10.0),
+                            blur_radius: 30.0,
+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8),
+                        }))
+                    .into();
+
+                    // Wrap in mouse_area to prevent clicks inside from closing
+                    iced::widget::mouse_area(dialog)
+                        .interaction(iced::mouse::Interaction::Idle)
+                        .into()
                 },
                 ActiveDialog::EqPresetSave { name_input } => {
                     let save_enabled = !name_input.is_empty();
+
                     let input = iced::widget::text_input("Nombre del preset...", name_input)
                         .id(DIALOG_TEXT_INPUT_ID.clone())
                         .on_input(Message::UpdateDialogInput)
@@ -4488,61 +4649,163 @@ impl AudoxidyApp {
                             }
                         });
 
-                    let mut content = iced::widget::column![
-                        crate::gui::widgets::modal_text("Nombre del preset:".to_string()),
-                        input,
-                    ]
-                    .spacing(12);
-
-                    if !save_enabled {
-                        // Per D-06: Show visible but disabled Guardar button (no .on_press(), faded text)
-                        content = content.push(
-                            iced::widget::button(iced::widget::text("Guardar").size(14))
-                                .padding([5, 10])
-                                .style(|_t: &iced::Theme, _status| iced::widget::button::Style {
-                                    background: Some(COLOR_CONTRAST.into()),
-                                    text_color: COLOR_TEXT_SECONDARY.scale_alpha(0.5),
-                                    border: iced::Border {
-                                        radius: 6.0.into(),
-                                        width: 0.0,
-                                        color: iced::Color::TRANSPARENT,
-                                    },
-                                    ..Default::default()
-                                }),
-                        );
+                    fn save_dialog_btn<'a>(
+                        label: &'a str,
+                        enabled: bool,
+                        msg: Option<crate::gui::app::Message>,
+                    ) -> iced::Element<'a, crate::gui::app::Message> {
+                        let mut btn = iced::widget::button(
+                            iced::widget::container(
+                                iced::widget::text(label)
+                                    .size(14)
+                                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM),
+                            )
+                            .width(iced::Length::Fill)
+                            .center_x(iced::Length::Fill)
+                            .center_y(iced::Length::Fill),
+                        )
+                        .width(iced::Length::Fixed(74.0))
+                        .height(iced::Length::Fixed(30.0))
+                        .padding(0)
+                        .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
+                            let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
+                            iced::widget::button::Style {
+                                background: if is_hovered && enabled {
+                                    Some(iced::Background::Color(COLOR_ACCENT))
+                                } else {
+                                    Some(iced::Background::Color(COLOR_CONTRAST))
+                                },
+                                text_color: if enabled {
+                                    if is_hovered { COLOR_TEXT_PRIMARY } else { COLOR_TEXT_SECONDARY }
+                                } else {
+                                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+                                },
+                                border: iced::Border {
+                                    radius: 6.0.into(),
+                                    width: 0.0,
+                                    color: iced::Color::TRANSPARENT,
+                                },
+                                ..Default::default()
+                            }
+                        });
+                        if enabled {
+                            if let Some(m) = msg {
+                                btn = btn.on_press(m);
+                            }
+                        }
+                        btn.into()
                     }
 
-                    crate::gui::widgets::standard_modal(
-                        "Guardar Preset".to_string(),
-                        content.into(),
-                        Some(Message::CloseDialog),
-                        if save_enabled {
-                            Some(Message::ConfirmDialogAction)
-                        } else {
-                            None
-                        },
-                        "Guardar".to_string(),
+                    let mut content = iced::widget::column![
+                        iced::widget::text("Nombre del preset:")
+                            .size(14)
+                            .color(COLOR_TEXT_PRIMARY)
+                            .font(crate::gui::theme::FONT_INTER_SANS_NORMAL)
+                            .align_x(iced::alignment::Horizontal::Center),
+                        iced::widget::Space::new().height(iced::Length::Fixed(12.0)),
+                        input,
+                        iced::widget::Space::new().height(iced::Length::Fixed(15.0)),
+                        iced::widget::row![
+                            save_dialog_btn("Cancelar", true, Some(Message::CloseDialog)),
+                            iced::widget::Space::new().width(iced::Length::Fixed(8.0)),
+                            save_dialog_btn(
+                                "Guardar",
+                                save_enabled,
+                                if save_enabled { Some(Message::ConfirmDialogAction) } else { None },
+                            ),
+                        ]
+                        .spacing(0)
+                        .align_y(iced::Alignment::Center),
+                    ]
+                    .spacing(0)
+                    .align_x(iced::Alignment::Center);
+
+                    let dialog: iced::Element<'_, Message> = iced::widget::container(
+                        iced::widget::column![
+                            iced::widget::container(
+                                iced::widget::text("Guardar Preset")
+                                    .size(16)
+                                    .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
+                                    .color(COLOR_TEXT_PRIMARY)
+                                    .align_x(iced::alignment::Horizontal::Center),
+                            )
+                            .padding(iced::Padding {
+                                top: 0.0,
+                                bottom: 2.0,
+                                left: 0.0,
+                                right: 0.0,
+                            }),
+                            iced::widget::Space::new().height(iced::Length::Fixed(8.0)),
+                            content,
+                        ]
+                        .align_x(iced::Alignment::Center),
                     )
+                    .width(iced::Length::Fixed(190.0))
+                    .height(iced::Length::Fixed(162.0))
+                    .padding(15)
+                    .style(|_t: &iced::Theme| iced::widget::container::Style::default()
+                        .background(iced::Background::Color(COLOR_BG))
+                        .border(iced::Border {
+                            color: COLOR_ACCENT,
+                            width: 2.0,
+                            radius: 8.0.into(),
+                        })
+                        .shadow(iced::Shadow {
+                            offset: iced::Vector::new(0.0, 10.0),
+                            blur_radius: 30.0,
+                            color: iced::Color::from_rgba(0.0, 0.0, 0.0, 0.8),
+                        }))
+                    .into();
+
+                    iced::widget::mouse_area(dialog)
+                        .interaction(iced::mouse::Interaction::Idle)
+                        .into()
                 },
                 _ => iced::widget::Space::new().into(),
             };
 
-            // Cálculo de posición dinámica
-            let (target_x, target_y) = if let Some(pos) = self.dialog_pos {
-                let modal_w = 350.0;
-                let modal_h = 240.0;
-                let mut x = pos.x - 20.0;
-                let mut y = pos.y - 20.0;
-
-                if x + modal_w + 40.0 > self.window_size.0 as f32 {
-                    x = (self.window_size.0 as f32 - modal_w - 40.0).max(10.0);
+            // Cálculo de posición dinámica según el tipo de diálogo
+            let ac_width = 940.0;
+            let ac_height = 480.0;
+            let ac_pos = self.audio_center_manager.window_pos
+                .unwrap_or_else(|| {
+                    let win_w = self.window_size.0 as f32;
+                    let win_h = self.window_size.1 as f32;
+                    iced::Point::new(
+                        (win_w - ac_width) / 2.0,
+                        (win_h - ac_height) / 2.0,
+                    )
+                });
+            let (target_x, target_y) = match &self.active_dialog {
+                ActiveDialog::EqPresetLoad { .. } => {
+                    let dialog_w = 330.0;
+                    let dialog_h = 352.0;
+                    (
+                        ac_pos.x + (ac_width - dialog_w) / 2.0,
+                        ac_pos.y + (ac_height - dialog_h) / 2.0,
+                    )
                 }
-                if y + modal_h + 40.0 > self.window_size.1 as f32 {
-                    y = (self.window_size.1 as f32 - modal_h - 40.0).max(10.0);
+                ActiveDialog::EqPresetSave { .. } => {
+                    let dialog_w = 194.0;
+                    let x = ac_pos.x + ac_width - dialog_w - 15.0;
+                    let y = ac_pos.y + 120.0;
+                    (x, y)
                 }
-                (x, y)
-            } else {
-                (200.0, 200.0)
+                _ => {
+                    if let Some(pos) = self.dialog_pos {
+                        let mut x = pos.x - 20.0;
+                        let mut y = pos.y - 20.0;
+                        if x + 350.0 + 40.0 > self.window_size.0 as f32 {
+                            x = (self.window_size.0 as f32 - 350.0 - 40.0).max(10.0);
+                        }
+                        if y + 240.0 + 40.0 > self.window_size.1 as f32 {
+                            y = (self.window_size.1 as f32 - 240.0 - 40.0).max(10.0);
+                        }
+                        (x, y)
+                    } else {
+                        (200.0, 200.0)
+                    }
+                }
             };
 
             // Área de bloqueo invisible - Fill para asegurar cobertura total

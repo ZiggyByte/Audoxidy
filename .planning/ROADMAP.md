@@ -20,7 +20,9 @@
 
 **Status:** 🔄 Planning
 
-**Plans:** 4/5 plans executed
+**Status:** ✅ Complete
+
+**Plans:** 5/5 plans complete
 
 **Plans:**
 
@@ -28,4 +30,4 @@
 - [x] 02-02-PLAN.md — UI: Icon buttons + Load dialog with preset list
 - [x] 02-03-PLAN.md — Save dialog + Reset + Delete
 - [x] 02-04-PLAN.md — Import/Export via JSON file I/O
-- [ ] 02-05-PLAN.md — Tests for DB, DSP, JSON round-trip
+- [x] 02-05-PLAN.md — Tests for DB, DSP, JSON round-trip

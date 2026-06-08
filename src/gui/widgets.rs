@@ -374,7 +374,7 @@ pub fn icon_button<'a, Message: Clone + 'a>(
         });
 
     let btn = button(icon)
-        .padding(6)
+        .padding(2)
         .style(move |_t: &Theme, status| {
             let is_hovered = matches!(status, button::Status::Hovered);
             button::Style {

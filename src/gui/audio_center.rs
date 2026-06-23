@@ -206,7 +206,6 @@ impl AudioCenterManager {
             }
         }
     }
-
     /// Build unified preset list for Load dialog:
     /// 1. "Default" always first
     /// 2. Custom presets (A-Z, case-insensitive)
@@ -244,8 +243,76 @@ impl AudioCenterManager {
         } else {
             preset.get_gains_20()
         };
-        self.eq_band_gains = gains;
+        // Round to 1 decimal place
+        let rounded: Vec<f32> = gains.iter().map(|&g| (g * 10.0).round() / 10.0).collect();
+        self.eq_band_gains = rounded;
     }
+
+    /// Guarda todos los ajustes del ecualizador en la base de datos.
+pub fn save_eq_settings_to_db(&self, db: &std::sync::Mutex<crate::db::Database>) {
+    if let Ok(db_lock) = db.lock() {
+        let _ = db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" });
+        let _ = db_lock.set_setting("eq_bands_31", if self.equalizer_bands_31 { "1" } else { "0" });
+        let _ = db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain));
+        // Save selected preset name
+        let preset_name = self.selected_preset.as_ref().map(|p| p.name.clone()).unwrap_or_default();
+        let _ = db_lock.set_setting("eq_selected_preset", &preset_name);
+        // Guardar gains de 20 y 31 bandas como CSV
+        let bands_20_str = self.eq_band_gains.iter()
+            .take(20)
+            .map(|g| format!("{:.1}", g))
+            .collect::<Vec<_>>()
+            .join(",");
+        let _ = db_lock.set_setting("eq_band_gains_20", &bands_20_str);
+        if self.eq_band_gains.len() > 20 {
+            let bands_31_str = self.eq_band_gains.iter()
+                .map(|g| format!("{:.1}", g))
+                .collect::<Vec<_>>()
+                .join(",");
+            let _ = db_lock.set_setting("eq_band_gains_31", &bands_31_str);
+        }
+    }
+}
+
+/// Guarda todos los ajustes de efectos de audio en la base de datos.
+pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sync::Mutex<crate::db::Database>) {
+    if let Ok(db_lock) = db.lock() {
+        audio_manager.with_dsp(|dsp| {
+            // Enabled states
+            let _ = db_lock.set_setting("dsp_sub_bass_enabled", if dsp.sub_bass.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_mid_bass_enabled", if dsp.mid_bass.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_voice_boost_enabled", if dsp.voice_boost.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_noise_gate_enabled", if dsp.noise_gate.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_stereo_expander_enabled", if dsp.stereo_expander.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_stereo_balance_enabled", if dsp.stereo_balance.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_compressor_enabled", if dsp.compressor.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_limiter_enabled", if dsp.limiter.enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("dsp_reverb_enabled", if dsp.reverb.enabled { "1" } else { "0" });
+            // Slider values
+            let _ = db_lock.set_setting("dsp_sub_bass_gain", &format!("{:.1}", dsp.sub_bass.gain));
+            let _ = db_lock.set_setting("dsp_mid_bass_gain", &format!("{:.1}", dsp.mid_bass.gain));
+            let _ = db_lock.set_setting("dsp_voice_boost_gain", &format!("{:.1}", dsp.voice_boost.gain));
+            let _ = db_lock.set_setting("dsp_noise_gate_threshold", &format!("{:.1}", dsp.noise_gate.threshold));
+            let _ = db_lock.set_setting("dsp_stereo_expander_width", &format!("{:.1}", dsp.stereo_expander.width));
+            let _ = db_lock.set_setting("dsp_stereo_expander_mode", if dsp.stereo_expander.mode == crate::audio::dsp::ExpanderMode::Surround { "surround" } else { "hybrid" });
+            let _ = db_lock.set_setting("dsp_stereo_balance_balance", &format!("{:.1}", dsp.stereo_balance.balance));
+            let _ = db_lock.set_setting("dsp_compressor_threshold", &format!("{:.1}", dsp.compressor.threshold));
+            let _ = db_lock.set_setting("dsp_compressor_intensity", &format!("{:.1}", dsp.compressor.intensity));
+            let _ = db_lock.set_setting("dsp_limiter_ceiling", &format!("{:.1}", dsp.limiter.ceiling));
+            let _ = db_lock.set_setting("dsp_reverb_wet", &format!("{:.2}", dsp.reverb.wet));
+            let _ = db_lock.set_setting("dsp_reverb_room_size", &format!("{:.2}", dsp.reverb.room_size));
+        });
+
+        let state = audio_manager.state();
+        let state_read = state.read();
+        let _ = db_lock.set_setting("audio_downmix_center_enabled", if state_read.downmix_center_enabled { "1" } else { "0" });
+        let _ = db_lock.set_setting("audio_downmix_lfe_enabled", if state_read.downmix_lfe_enabled { "1" } else { "0" });
+        let _ = db_lock.set_setting("audio_downmix_surround_enabled", if state_read.downmix_surround_enabled { "1" } else { "0" });
+        let _ = db_lock.set_setting("audio_downmix_center", &format!("{:.1}", state_read.downmix_center));
+        let _ = db_lock.set_setting("audio_downmix_lfe", &format!("{:.1}", state_read.downmix_lfe));
+        let _ = db_lock.set_setting("audio_downmix_surround", &format!("{:.1}", state_read.downmix_surround));
+    }
+}
 
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
@@ -305,9 +372,170 @@ impl AudioCenterManager {
                         buf_str.parse::<u32>().ok()
                     };
                 }
+                // Load EQ settings from DB
+                if let Some(val) = db.get_setting("eq_enabled") {
+                    self.equalizer_enabled = val == "1";
+                }
+                if let Some(val) = db.get_setting("eq_bands_31") {
+                    self.equalizer_bands_31 = val == "1";
+                }
+                if let Some(val) = db.get_setting("preamp_gain") {
+                    if let Ok(g) = val.parse::<f32>() {
+                        self.preamp_gain = g;
+                    }
+                }
+                if let Some(val) = db.get_setting("eq_band_gains_20") {
+                    let gains: Vec<f32> = val.split(',')
+                        .filter_map(|s| s.parse::<f32>().ok())
+                        .collect();
+                    if gains.len() == 20 {
+                        self.eq_band_gains = gains;
+                    }
+                }
+                if self.equalizer_bands_31 {
+                    if let Some(val) = db.get_setting("eq_band_gains_31") {
+                        let gains: Vec<f32> = val.split(',')
+                            .filter_map(|s| s.parse::<f32>().ok())
+                            .collect();
+                        if gains.len() == 31 {
+                            self.eq_band_gains = gains;
+                        }
+                    }
+                }
+                // Load selected preset name from DB
+                if let Some(preset_name) = db.get_setting("eq_selected_preset") {
+                    if !preset_name.is_empty() && preset_name != "Default" {
+                        // Find the preset in the unified list and select it
+                        let all_presets = self.get_unified_presets();
+                        if let Some(p) = all_presets.iter().find(|p| p.name == preset_name) {
+                            self.selected_preset = Some((*p).clone());
+                        }
+                    } else {
+                        self.selected_preset = None;
+                    }
+                }
             }
             // Load custom EQ presets from SQLite (Decisión D-01: persistence)
             self.load_custom_presets(db_arc.as_ref());
+        }
+
+        // Apply loaded EQ settings to DSP engine
+        audio_manager.set_eq_enabled(self.equalizer_enabled);
+        audio_manager.set_preamp_gain(self.preamp_gain);
+        audio_manager.set_eq_mode(if self.equalizer_bands_31 { 31 } else { 20 });
+
+        // Apply EQ band gains to DSP (both active and saved band sets)
+        let db_arc_apply = audio_manager.get_database();
+        let (mut bands_20, mut bands_31) = (None::<Vec<f32>>, None::<Vec<f32>>);
+        if let Some(ref db_arc) = db_arc_apply {
+            if let Ok(db) = db_arc.try_lock() {
+                if let Some(val) = db.get_setting("eq_band_gains_20") {
+                    let g: Vec<f32> = val.split(',').filter_map(|s| s.parse::<f32>().ok()).collect();
+                    if g.len() == 20 { bands_20 = Some(g); }
+                }
+                if let Some(val) = db.get_setting("eq_band_gains_31") {
+                    let g: Vec<f32> = val.split(',').filter_map(|s| s.parse::<f32>().ok()).collect();
+                    if g.len() == 31 { bands_31 = Some(g); }
+                }
+            }
+        }
+        let b20 = bands_20.unwrap_or_else(|| vec![0.0; 20]);
+        let b31 = bands_31.unwrap_or_else(|| vec![0.0; 31]);
+        audio_manager.apply_eq_preset_gains(&b20, &b31);
+        // Sync active band set into self.eq_band_gains
+        let active_gains = if self.equalizer_bands_31 { &b31 } else { &b20 };
+        self.eq_band_gains = active_gains.clone();
+
+        // Load DSP and audio state settings from DB and apply
+        if let Some(db_arc) = audio_manager.get_database() {
+            if let Ok(db) = db_arc.try_lock() {
+                // DSP effects enabled states
+                if let Some(val) = db.get_setting("dsp_sub_bass_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_mid_bass_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_voice_boost_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.voice_boost.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_noise_gate_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_noise_gate_threshold") {
+                    if let Ok(t) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.threshold = t);
+                    }
+                }
+                if let Some(val) = db.get_setting("dsp_stereo_expander_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_expander.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_stereo_balance_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_balance.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_compressor_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.compressor.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_compressor_threshold") {
+                    if let Ok(t) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.compressor.threshold = t);
+                    }
+                }
+                if let Some(val) = db.get_setting("dsp_compressor_intensity") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.compressor.intensity = v);
+                    }
+                }
+                if let Some(val) = db.get_setting("dsp_limiter_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_limiter_ceiling") {
+                    if let Ok(t) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.limiter.ceiling = t);
+                    }
+                }
+                if let Some(val) = db.get_setting("dsp_reverb_enabled") {
+                    audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = val == "1");
+                }
+                if let Some(val) = db.get_setting("dsp_reverb_wet") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.reverb.wet = v);
+                    }
+                }
+                if let Some(val) = db.get_setting("dsp_reverb_room_size") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        audio_manager.with_dsp_mut(|dsp| dsp.reverb.room_size = v);
+                    }
+                }
+
+                // Audio state settings
+                let state = audio_manager.state();
+                let mut state_write = state.write();
+                if let Some(val) = db.get_setting("audio_downmix_center_enabled") {
+                    state_write.downmix_center_enabled = val == "1";
+                }
+                if let Some(val) = db.get_setting("audio_downmix_lfe_enabled") {
+                    state_write.downmix_lfe_enabled = val == "1";
+                }
+                if let Some(val) = db.get_setting("audio_downmix_surround_enabled") {
+                    state_write.downmix_surround_enabled = val == "1";
+                }
+                if let Some(val) = db.get_setting("audio_downmix_center") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        state_write.downmix_center = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("audio_downmix_lfe") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        state_write.downmix_lfe = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("audio_downmix_surround") {
+                    if let Ok(v) = val.parse::<f32>() {
+                        state_write.downmix_surround = v;
+                    }
+                }
+            }
         }
 
         let state = audio_manager.state();
@@ -697,6 +925,8 @@ impl AudioCenterManager {
                 });
             }
             AudioCenterMessage::Close => {
+                self.save_eq_settings_to_db(db);
+                self.save_dsp_settings_to_db(audio_manager, db);
                 self.open = false;
                 self.window_pos = None;
             }
@@ -719,14 +949,16 @@ impl AudioCenterManager {
                 self.eq_band_gains = bands;
             }
             AudioCenterMessage::EqPreampChanged(val) => {
-                let clamped = val.clamp(-9.0, 9.0);
+                let rounded = (val * 10.0).round() / 10.0;
+                let clamped = rounded.clamp(-9.0, 9.0);
                 self.preamp_gain = clamped;
                 if self.equalizer_enabled {
                     audio_manager.set_preamp_gain(clamped);
                 }
             }
             AudioCenterMessage::EqBandChanged(idx, val) => {
-                let clamped = val.clamp(-9.0, 9.0);
+                let rounded = (val * 10.0).round() / 10.0;
+                let clamped = rounded.clamp(-9.0, 9.0);
                 if idx < self.eq_band_gains.len() {
                     self.eq_band_gains[idx] = clamped;
                     audio_manager.set_eq_band_gain(idx, clamped);
@@ -842,21 +1074,32 @@ impl AudioCenterManager {
                 // User cancelled the dialog
             }
             AudioCenterMessage::EqPresetFileExported(Some(path)) => {
-                // Build preset from current state
+                // Extract filename from path to use as preset name (issue #4)
+                let file_name = path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("Custom")
+                    .to_string();
+                // Build preset with BOTH band sets at correct sizes (issue #3)
+                let bands_20 = if self.equalizer_bands_31 {
+                    Some(crate::audio::preset::EqPreset::convert_31_to_20(
+                        &self.eq_band_gains,
+                    ))
+                } else {
+                    Some(self.eq_band_gains.clone())
+                };
+                let bands_31 = if self.equalizer_bands_31 {
+                    Some(self.eq_band_gains.clone())
+                } else {
+                    Some(crate::audio::preset::EqPreset::convert_20_to_31(
+                        &self.eq_band_gains,
+                    ))
+                };
                 let preset = crate::audio::preset::EqPreset::new(
-                    self.selected_preset
-                        .as_ref()
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("Custom"),
+                    &file_name,
                     self.preamp_gain,
-                    Some(self.eq_band_gains.clone()),
-                    if self.equalizer_bands_31 {
-                        Some(self.eq_band_gains.clone())
-                    } else {
-                        Some(crate::audio::preset::EqPreset::convert_20_to_31(
-                            &self.eq_band_gains,
-                        ))
-                    },
+                    bands_20,
+                    bands_31,
                 );
                 match crate::audio::preset::preset_to_json(&preset) {
                     Ok(json) => {
@@ -872,34 +1115,20 @@ impl AudioCenterManager {
             }
 
             // Tab 3: Effects Messages Handlers
-            AudioCenterMessage::DspToggle(effect, enabled) => match effect {
-                DspEffect::SubBass => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.enabled = enabled)
+            AudioCenterMessage::DspToggle(effect, enabled) => {
+                match effect {
+                    DspEffect::SubBass => audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.enabled = enabled),
+                    DspEffect::MidBass => audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.enabled = enabled),
+                    DspEffect::VoiceBoost => audio_manager.with_dsp_mut(|dsp| dsp.voice_boost.enabled = enabled),
+                    DspEffect::NoiseGate => audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.enabled = enabled),
+                    DspEffect::StereoExpander => audio_manager.with_dsp_mut(|dsp| dsp.stereo_expander.enabled = enabled),
+                    DspEffect::StereoBalance => audio_manager.with_dsp_mut(|dsp| dsp.stereo_balance.enabled = enabled),
+                    DspEffect::Compressor => audio_manager.with_dsp_mut(|dsp| dsp.compressor.enabled = enabled),
+                    DspEffect::Limiter => audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = enabled),
+                    DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = enabled),
+                    DspEffect::CompressorIntensity | DspEffect::ReverbRoomSize => {}
                 }
-                DspEffect::MidBass => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.enabled = enabled)
-                }
-                DspEffect::VoiceBoost => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.voice_boost.enabled = enabled)
-                }
-                DspEffect::NoiseGate => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.enabled = enabled)
-                }
-                DspEffect::StereoExpander => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_expander.enabled = enabled)
-                }
-                DspEffect::StereoBalance => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_balance.enabled = enabled)
-                }
-                DspEffect::Compressor => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.compressor.enabled = enabled)
-                }
-                DspEffect::Limiter => {
-                    audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = enabled)
-                }
-                DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = enabled),
-                DspEffect::CompressorIntensity | DspEffect::ReverbRoomSize => {} // Secondary sliders — no independent toggle
-            },
+            }
             AudioCenterMessage::DspValueChanged(effect, val) => match effect {
                 DspEffect::SubBass => audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.gain = val),
                 DspEffect::MidBass => audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.gain = val),

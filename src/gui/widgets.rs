@@ -363,9 +363,10 @@ pub fn icon_button<'a, Message: Clone + 'a>(
     action: Option<Message>,
 ) -> Element<'a, Message> {
     let has_action = action.is_some();
+    let btn_size = (size + 4).max(26);
     let icon = svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
-        .width(size)
-        .height(size)
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
         .style(|_t: &Theme, status| svg::Style {
             color: Some(match status {
                 svg::Status::Hovered => COLOR_TEXT_PRIMARY,
@@ -374,7 +375,9 @@ pub fn icon_button<'a, Message: Clone + 'a>(
         });
 
     let btn = button(icon)
-        .padding(2)
+        .width(btn_size)
+        .height(btn_size)
+        .padding(0)
         .style(move |_t: &Theme, status| {
             let is_hovered = matches!(status, button::Status::Hovered);
             button::Style {
@@ -383,11 +386,7 @@ pub fn icon_button<'a, Message: Clone + 'a>(
                 } else {
                     Some(Color::TRANSPARENT.into())
                 },
-                text_color: if has_action {
-                    COLOR_TEXT_PRIMARY
-                } else {
-                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-                },
+                text_color: COLOR_TEXT_PRIMARY,
                 border: iced::Border {
                     radius: 6.0.into(),
                     width: 0.0,
@@ -2987,9 +2986,16 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                             ((cursor_pos.x - bounds.x) / bounds.width).clamp(0.0, 1.0)
                         }
                     };
-                    let new_value = self.percent_to_value(percent);
-                    self.value = new_value;
-                    shell.publish((self.on_change)(new_value));
+                    let raw_value = self.percent_to_value(percent);
+                    let step = self.options.step_size;
+                    let new_value = if step > 0.0 {
+                        (raw_value / step).round() * step
+                    } else {
+                        raw_value
+                    };
+                    let clamped = new_value.clamp(*self.range.start(), *self.range.end());
+                    self.value = clamped;
+                    shell.publish((self.on_change)(clamped));
                 } else if state.input_has_focus {
                     let parsed = state.input_value_text.parse::<f32>();
                     if let Ok(v) = parsed {
@@ -3049,9 +3055,16 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                             ((cursor_pos.x - bounds.x) / bounds.width).clamp(0.0, 1.0)
                         }
                     };
-                    let new_value = self.percent_to_value(percent);
-                    self.value = new_value;
-                    shell.publish((self.on_change)(new_value));
+                    let raw_value = self.percent_to_value(percent);
+                    let step = self.options.step_size;
+                    let new_value = if step > 0.0 {
+                        (raw_value / step).round() * step
+                    } else {
+                        raw_value
+                    };
+                    let clamped = new_value.clamp(*self.range.start(), *self.range.end());
+                    self.value = clamped;
+                    shell.publish((self.on_change)(clamped));
                 }
             }
 
@@ -3066,32 +3079,36 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         SliderOrientation::Vertical,
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp),
                     ) => {
-                        self.value =
-                            (self.value + step).clamp(*self.range.start(), *self.range.end());
+                        let raw = self.value + step;
+                        self.value = (raw / step).round() * step;
+                        self.value = self.value.clamp(*self.range.start(), *self.range.end());
                         true
                     }
                     (
                         SliderOrientation::Vertical,
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown),
                     ) => {
-                        self.value =
-                            (self.value - step).clamp(*self.range.start(), *self.range.end());
+                        let raw = self.value - step;
+                        self.value = (raw / step).round() * step;
+                        self.value = self.value.clamp(*self.range.start(), *self.range.end());
                         true
                     }
                     (
                         SliderOrientation::Horizontal,
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight),
                     ) => {
-                        self.value =
-                            (self.value + step).clamp(*self.range.start(), *self.range.end());
+                        let raw = self.value + step;
+                        self.value = (raw / step).round() * step;
+                        self.value = self.value.clamp(*self.range.start(), *self.range.end());
                         true
                     }
                     (
                         SliderOrientation::Horizontal,
                         iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft),
                     ) => {
-                        self.value =
-                            (self.value - step).clamp(*self.range.start(), *self.range.end());
+                        let raw = self.value - step;
+                        self.value = (raw / step).round() * step;
+                        self.value = self.value.clamp(*self.range.start(), *self.range.end());
                         true
                     }
                     (_, iced::keyboard::Key::Named(
@@ -3123,7 +3140,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         shell.capture_event();
                         let parsed = state.input_value_text.parse::<f32>();
                         if let Ok(v) = parsed {
-                            let clamped = v.clamp(*self.range.start(), *self.range.end());
+                            let step = self.options.step_size;
+                            let snapped = if step > 0.0 { (v / step).round() * step } else { v };
+                            let clamped = snapped.clamp(*self.range.start(), *self.range.end());
                             self.value = clamped;
                             shell.publish((self.on_change)(clamped));
                         }

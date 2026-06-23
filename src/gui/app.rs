@@ -591,6 +591,130 @@ impl AudoxidyApp {
             }
         }
 
+        let mut audio_center_manager = AudioCenterManager::default();
+
+        // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
+        if let Ok(db_lock) = database_arc.lock() {
+            // EQ enable / bands_31 / preamp_gain
+            let eq_enabled = db_lock.get_setting("eq_enabled").map(|v| v == "1").unwrap_or(false);
+            let eq_bands_31 = db_lock.get_setting("eq_bands_31").map(|v| v == "1").unwrap_or(false);
+            let preamp_gain: f32 = db_lock.get_setting("preamp_gain")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0);
+            // EQ band gains (20 y 31)
+            let bands_20: Vec<f32> = db_lock.get_setting("eq_band_gains_20")
+                .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
+                .filter(|v: &Vec<f32>| v.len() == 20)
+                .unwrap_or_else(|| vec![0.0; 20]);
+            let bands_31: Vec<f32> = db_lock.get_setting("eq_band_gains_31")
+                .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
+                .filter(|v: &Vec<f32>| v.len() == 31)
+                .unwrap_or_else(|| vec![0.0; 31]);
+
+            // Aplicar al motor de audio inmediatamente
+            audio_manager.set_eq_mode(if eq_bands_31 { 31 } else { 20 });
+            audio_manager.set_eq_enabled(eq_enabled);
+            audio_manager.set_preamp_gain(preamp_gain);
+            audio_manager.apply_eq_preset_gains(&bands_20, &bands_31);
+
+            // Cargar presets personalizados y el preset seleccionado
+            audio_center_manager.custom_presets = db_lock.load_eq_presets().unwrap_or_default();
+
+            // Update AudioCenterManager state
+            audio_center_manager.equalizer_enabled = eq_enabled;
+            audio_center_manager.equalizer_bands_31 = eq_bands_31;
+            audio_center_manager.preamp_gain = preamp_gain;
+            audio_center_manager.eq_band_gains = if eq_bands_31 { bands_31.clone() } else { bands_20.clone() };
+
+            // Cargar preset seleccionado
+            if let Some(preset_name) = db_lock.get_setting("eq_selected_preset") {
+                if !preset_name.is_empty() && preset_name != "Default" {
+                    // Buscar primero en custom presets, luego en default_presets
+                    let custom = audio_center_manager.custom_presets.iter()
+                        .find(|p| p.name == preset_name).cloned();
+                    let default = crate::audio::preset::EqPreset::default_presets()
+                        .into_iter().find(|p| p.name == preset_name);
+                    if let Some(p) = custom.or(default) {
+                        audio_center_manager.selected_preset = Some(p);
+                    }
+                }
+            }
+
+            // DSP effects persistence
+            let set_bool = |dsp: &mut crate::audio::dsp::DspChain, effect: &str, key: &str| {
+                if let Some(v) = db_lock.get_setting(key) {
+                    if let Some(field) = match effect {
+                        "sub_bass" => Some(&mut dsp.sub_bass.enabled),
+                        "mid_bass" => Some(&mut dsp.mid_bass.enabled),
+                        "voice_boost" => Some(&mut dsp.voice_boost.enabled),
+                        "noise_gate" => Some(&mut dsp.noise_gate.enabled),
+                        "stereo_expander" => Some(&mut dsp.stereo_expander.enabled),
+                        "stereo_balance" => Some(&mut dsp.stereo_balance.enabled),
+                        "compressor" => Some(&mut dsp.compressor.enabled),
+                        "limiter" => Some(&mut dsp.limiter.enabled),
+                        "reverb" => Some(&mut dsp.reverb.enabled),
+                        _ => None,
+                    } {
+                        *field = v == "1";
+                    }
+                }
+            };
+            audio_manager.with_dsp_mut(|dsp| {
+                set_bool(dsp, "sub_bass", "dsp_sub_bass_enabled");
+                set_bool(dsp, "mid_bass", "dsp_mid_bass_enabled");
+                set_bool(dsp, "voice_boost", "dsp_voice_boost_enabled");
+                set_bool(dsp, "noise_gate", "dsp_noise_gate_enabled");
+                set_bool(dsp, "stereo_expander", "dsp_stereo_expander_enabled");
+                set_bool(dsp, "stereo_balance", "dsp_stereo_balance_enabled");
+                set_bool(dsp, "compressor", "dsp_compressor_enabled");
+                set_bool(dsp, "limiter", "dsp_limiter_enabled");
+                set_bool(dsp, "reverb", "dsp_reverb_enabled");
+            });
+            audio_manager.with_dsp_mut(|dsp| {
+                // Slider values
+                if let Some(v) = db_lock.get_setting("dsp_sub_bass_gain") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.sub_bass.gain = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_mid_bass_gain") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.mid_bass.gain = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_voice_boost_gain") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.voice_boost.gain = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_noise_gate_threshold") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.noise_gate.threshold = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_stereo_expander_width") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.stereo_expander.width = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_stereo_expander_mode") {
+                    dsp.stereo_expander.mode = if v == "surround" {
+                        crate::audio::dsp::ExpanderMode::Surround
+                    } else {
+                        crate::audio::dsp::ExpanderMode::Hybrid
+                    };
+                }
+                if let Some(v) = db_lock.get_setting("dsp_stereo_balance_balance") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.stereo_balance.balance = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_compressor_threshold") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.compressor.threshold = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_compressor_intensity") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.compressor.intensity = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_limiter_ceiling") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.limiter.ceiling = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_reverb_wet") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.reverb.wet = t; }
+                }
+                if let Some(v) = db_lock.get_setting("dsp_reverb_room_size") {
+                    if let Ok(t) = v.parse::<f32>() { dsp.reverb.room_size = t; }
+                }
+            });
+        }
+
         (
             Self {
                 audio_manager,
@@ -600,7 +724,7 @@ impl AudoxidyApp {
                 playlist_manager,
                 filters_manager,
                 library_manager,
-                audio_center_manager: AudioCenterManager::default(),
+                audio_center_manager,
                 player_ui_state: crate::gui::player::PlayerUiState::default(),
                 window_id: None,
                 last_artist_header_click: None,
@@ -3682,6 +3806,8 @@ impl AudoxidyApp {
                         && self.audio_center_manager.selected_tab == tab_idx
                     {
                         // Si ya está abierto en la misma pestaña, lo cerramos
+                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
+                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
                         self.audio_center_manager.open = false;
                         self.audio_center_manager.window_pos = None;
                     } else {
@@ -3699,6 +3825,10 @@ impl AudoxidyApp {
                     }
                 } else {
                     // Alternancia genérica (comportamiento anterior)
+                    if self.audio_center_manager.open {
+                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
+                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                    }
                     self.audio_center_manager.open = !self.audio_center_manager.open;
                     if self.audio_center_manager.open {
                         self.audio_center_manager.window_pos = None;
@@ -3796,8 +3926,39 @@ impl AudoxidyApp {
                     return focus_task;
                 }
 
+                // Forward to audio_center_manager.update()
                 self.audio_center_manager
-                    .update(ac_msg, &self.audio_manager, &self.database);
+                    .update(ac_msg.clone(), &self.audio_manager, &self.database);
+
+                // Persistir inmediatamente cada cambio a la base de datos
+                match &ac_msg {
+                    // EQ: cualquier cambio se guarda de inmediato
+                    crate::gui::audio_center::AudioCenterMessage::EqToggleSelected(_)
+                    | crate::gui::audio_center::AudioCenterMessage::EqBandsSelected(_)
+                    | crate::gui::audio_center::AudioCenterMessage::EqPreampChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::EqBandChanged(_, _)
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetIconReset
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetLoadConfirm
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetSaveConfirm
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetDelete(_)
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetFileImported(_) => {
+                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
+                    }
+                    _ => {}
+                }
+                match &ac_msg {
+                    // DSP: cualquier cambio se guarda de inmediato
+                    crate::gui::audio_center::AudioCenterMessage::DspToggle(_, _)
+                    | crate::gui::audio_center::AudioCenterMessage::DspValueChanged(_, _)
+                    | crate::gui::audio_center::AudioCenterMessage::AudioStateToggle(_, _)
+                    | crate::gui::audio_center::AudioCenterMessage::AudioStateValueChanged(_, _)
+                    | crate::gui::audio_center::AudioCenterMessage::StereoExpanderModeToggled(_)
+                    | crate::gui::audio_center::AudioCenterMessage::EqPresetFileExported(_) => {
+                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                    }
+                    _ => {}
+                }
+
                 Task::none()
             }
             Message::PlayerHoverZone(zone) => {
@@ -4782,7 +4943,7 @@ impl AudoxidyApp {
                     let dialog_h = 352.0;
                     (
                         ac_pos.x + (ac_width - dialog_w) / 2.0,
-                        ac_pos.y + (ac_height - dialog_h) / 2.0,
+                        ac_pos.y + (ac_height - dialog_h) / 2.0 + 15.0,
                     )
                 }
                 ActiveDialog::EqPresetSave { .. } => {

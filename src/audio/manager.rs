@@ -200,6 +200,13 @@ impl AudioManager {
         );
     }
 
+    /// Aplica ganancias de bandas de EQ directamente a ambos sets (20 y 31 bandas)
+    /// sin modificar el preamplificador.
+    pub fn apply_eq_preset_gains(&self, bands_20: &[f32], bands_31: &[f32]) {
+        let mut dsp = self.engine.dsp.write();
+        dsp.equalizer.apply_preset_gains(bands_20, bands_31);
+    }
+
     /// Devuelve una copia del estado actual del motor de audio.
     pub fn get_state(&self) -> crate::audio::engine::AudioState {
         self.engine.state.read().clone()

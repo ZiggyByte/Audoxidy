@@ -52,6 +52,24 @@ pub enum AudioCenterMessage {
     AudioStateValueChanged(AudioStateToggle, f32),
     StereoExpanderModeToggled(bool),
     SliderHoverActive(bool),
+
+    // Tab 4: Volumen y Mezcla
+    VolumenFadesToggle(bool),
+    VolumenFadeInChanged(f64),
+    VolumenFadeOutChanged(f64),
+    VolumenSilenceToggle(bool),
+    VolumenSilenceDurationChanged(f64),
+    VolumenSilenceThresholdChanged(f64),
+    VolumenNormalizeToggle(bool),
+    VolumenNormalizeTargetChanged(f64),
+    VolumenNormalizeCapChanged(f64),
+    VolumenRgMasterToggle(bool),
+    VolumenRgTrackToggle(bool),
+    VolumenRgAlbumToggle(bool),
+    VolumenRgAnalyzeRtToggle(bool),
+    VolumenRgOffsetAlbumChanged(f64),
+    VolumenRgOffsetTrackChanged(f64),
+    VolumenRgOffsetRtChanged(f64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -153,6 +171,24 @@ pub struct AudioCenterManager {
     // Configuración del servidor de audio de sistema (Pipewire / PulseAudio)
     pub system_rate: SystemSelection<u32>,
     pub system_quantum: SystemSelection<u32>,
+
+    // Volumen y Mezcla state (Phase 03) — mirrors AudioState for UI display
+    pub volumen_fades_enabled: bool,
+    pub volumen_fade_in_ms: f64,
+    pub volumen_fade_out_ms: f64,
+    pub volumen_silence_enabled: bool,
+    pub volumen_silence_duration_ms: f64,
+    pub volumen_silence_threshold_db: f64,
+    pub volumen_normalize_enabled: bool,
+    pub volumen_normalize_target_db: f64,
+    pub volumen_normalize_cap_db: f64,
+    pub volumen_rg_master_enabled: bool,
+    pub volumen_rg_track_enabled: bool,
+    pub volumen_rg_album_enabled: bool,
+    pub volumen_rg_analyze_rt_enabled: bool,
+    pub volumen_rg_offset_album_db: f64,
+    pub volumen_rg_offset_track_db: f64,
+    pub volumen_rg_offset_rt_db: f64,
 }
 
 impl Default for AudioCenterManager {
@@ -193,6 +229,23 @@ impl Default for AudioCenterManager {
 
             system_rate: SystemSelection::Default,
             system_quantum: SystemSelection::Default,
+
+            volumen_fades_enabled: true,
+            volumen_fade_in_ms: 1000.0,
+            volumen_fade_out_ms: 1000.0,
+            volumen_silence_enabled: true,
+            volumen_silence_duration_ms: 1000.0,
+            volumen_silence_threshold_db: -50.0,
+            volumen_normalize_enabled: false,
+            volumen_normalize_target_db: -14.0,
+            volumen_normalize_cap_db: 6.0,
+            volumen_rg_master_enabled: true,
+            volumen_rg_track_enabled: true,
+            volumen_rg_album_enabled: true,
+            volumen_rg_analyze_rt_enabled: true,
+            volumen_rg_offset_album_db: 0.0,
+            volumen_rg_offset_track_db: 0.0,
+            volumen_rg_offset_rt_db: 0.0,
         }
     }
 }
@@ -224,7 +277,9 @@ impl AudioCenterManager {
         all.extend(custom);
 
         // 3. Built-in presets excluding Default and hidden
-        let mut builtin: Vec<&crate::audio::preset::EqPreset> = self.equalizer_presets.iter()
+        let mut builtin: Vec<&crate::audio::preset::EqPreset> = self
+            .equalizer_presets
+            .iter()
             .filter(|p| p.name != "Default" && !self.hidden_builtins.contains(&p.name))
             .collect();
         builtin.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
@@ -234,7 +289,11 @@ impl AudioCenterManager {
     }
 
     /// Apply an EQ preset to the manager state and AudioManager/DSP.
-    fn apply_eq_preset_to_state(&mut self, preset: &crate::audio::preset::EqPreset, audio_manager: &AudioManager) {
+    fn apply_eq_preset_to_state(
+        &mut self,
+        preset: &crate::audio::preset::EqPreset,
+        audio_manager: &AudioManager,
+    ) {
         self.selected_preset = Some(preset.clone());
         self.preamp_gain = preset.preamp_gain;
         audio_manager.apply_eq_preset(preset);
@@ -249,70 +308,180 @@ impl AudioCenterManager {
     }
 
     /// Guarda todos los ajustes del ecualizador en la base de datos.
-pub fn save_eq_settings_to_db(&self, db: &std::sync::Mutex<crate::db::Database>) {
-    if let Ok(db_lock) = db.lock() {
-        let _ = db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" });
-        let _ = db_lock.set_setting("eq_bands_31", if self.equalizer_bands_31 { "1" } else { "0" });
-        let _ = db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain));
-        // Save selected preset name
-        let preset_name = self.selected_preset.as_ref().map(|p| p.name.clone()).unwrap_or_default();
-        let _ = db_lock.set_setting("eq_selected_preset", &preset_name);
-        // Guardar gains de 20 y 31 bandas como CSV
-        let bands_20_str = self.eq_band_gains.iter()
-            .take(20)
-            .map(|g| format!("{:.1}", g))
-            .collect::<Vec<_>>()
-            .join(",");
-        let _ = db_lock.set_setting("eq_band_gains_20", &bands_20_str);
-        if self.eq_band_gains.len() > 20 {
-            let bands_31_str = self.eq_band_gains.iter()
+    pub fn save_eq_settings_to_db(&self, db: &std::sync::Mutex<crate::db::Database>) {
+        if let Ok(db_lock) = db.lock() {
+            let _ =
+                db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting(
+                "eq_bands_31",
+                if self.equalizer_bands_31 { "1" } else { "0" },
+            );
+            let _ = db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain));
+            // Save selected preset name
+            let preset_name = self
+                .selected_preset
+                .as_ref()
+                .map(|p| p.name.clone())
+                .unwrap_or_default();
+            let _ = db_lock.set_setting("eq_selected_preset", &preset_name);
+            // Guardar gains de 20 y 31 bandas como CSV
+            let bands_20_str = self
+                .eq_band_gains
+                .iter()
+                .take(20)
                 .map(|g| format!("{:.1}", g))
                 .collect::<Vec<_>>()
                 .join(",");
-            let _ = db_lock.set_setting("eq_band_gains_31", &bands_31_str);
+            let _ = db_lock.set_setting("eq_band_gains_20", &bands_20_str);
+            if self.eq_band_gains.len() > 20 {
+                let bands_31_str = self
+                    .eq_band_gains
+                    .iter()
+                    .map(|g| format!("{:.1}", g))
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let _ = db_lock.set_setting("eq_band_gains_31", &bands_31_str);
+            }
         }
     }
-}
 
-/// Guarda todos los ajustes de efectos de audio en la base de datos.
-pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sync::Mutex<crate::db::Database>) {
-    if let Ok(db_lock) = db.lock() {
-        audio_manager.with_dsp(|dsp| {
-            // Enabled states
-            let _ = db_lock.set_setting("dsp_sub_bass_enabled", if dsp.sub_bass.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_mid_bass_enabled", if dsp.mid_bass.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_voice_boost_enabled", if dsp.voice_boost.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_noise_gate_enabled", if dsp.noise_gate.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_stereo_expander_enabled", if dsp.stereo_expander.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_stereo_balance_enabled", if dsp.stereo_balance.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_compressor_enabled", if dsp.compressor.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_limiter_enabled", if dsp.limiter.enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("dsp_reverb_enabled", if dsp.reverb.enabled { "1" } else { "0" });
-            // Slider values
-            let _ = db_lock.set_setting("dsp_sub_bass_gain", &format!("{:.1}", dsp.sub_bass.gain));
-            let _ = db_lock.set_setting("dsp_mid_bass_gain", &format!("{:.1}", dsp.mid_bass.gain));
-            let _ = db_lock.set_setting("dsp_voice_boost_gain", &format!("{:.1}", dsp.voice_boost.gain));
-            let _ = db_lock.set_setting("dsp_noise_gate_threshold", &format!("{:.1}", dsp.noise_gate.threshold));
-            let _ = db_lock.set_setting("dsp_stereo_expander_width", &format!("{:.1}", dsp.stereo_expander.width));
-            let _ = db_lock.set_setting("dsp_stereo_expander_mode", if dsp.stereo_expander.mode == crate::audio::dsp::ExpanderMode::Surround { "surround" } else { "hybrid" });
-            let _ = db_lock.set_setting("dsp_stereo_balance_balance", &format!("{:.1}", dsp.stereo_balance.balance));
-            let _ = db_lock.set_setting("dsp_compressor_threshold", &format!("{:.1}", dsp.compressor.threshold));
-            let _ = db_lock.set_setting("dsp_compressor_intensity", &format!("{:.1}", dsp.compressor.intensity));
-            let _ = db_lock.set_setting("dsp_limiter_ceiling", &format!("{:.1}", dsp.limiter.ceiling));
-            let _ = db_lock.set_setting("dsp_reverb_wet", &format!("{:.2}", dsp.reverb.wet));
-            let _ = db_lock.set_setting("dsp_reverb_room_size", &format!("{:.2}", dsp.reverb.room_size));
-        });
+    /// Guarda todos los ajustes de efectos de audio en la base de datos.
+    pub fn save_dsp_settings_to_db(
+        &self,
+        audio_manager: &AudioManager,
+        db: &std::sync::Mutex<crate::db::Database>,
+    ) {
+        if let Ok(db_lock) = db.lock() {
+            audio_manager.with_dsp(|dsp| {
+                // Enabled states
+                let _ = db_lock.set_setting(
+                    "dsp_sub_bass_enabled",
+                    if dsp.sub_bass.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_mid_bass_enabled",
+                    if dsp.mid_bass.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_voice_boost_enabled",
+                    if dsp.voice_boost.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_noise_gate_enabled",
+                    if dsp.noise_gate.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_stereo_expander_enabled",
+                    if dsp.stereo_expander.enabled {
+                        "1"
+                    } else {
+                        "0"
+                    },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_stereo_balance_enabled",
+                    if dsp.stereo_balance.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_compressor_enabled",
+                    if dsp.compressor.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_limiter_enabled",
+                    if dsp.limiter.enabled { "1" } else { "0" },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_reverb_enabled",
+                    if dsp.reverb.enabled { "1" } else { "0" },
+                );
+                // Slider values
+                let _ =
+                    db_lock.set_setting("dsp_sub_bass_gain", &format!("{:.1}", dsp.sub_bass.gain));
+                let _ =
+                    db_lock.set_setting("dsp_mid_bass_gain", &format!("{:.1}", dsp.mid_bass.gain));
+                let _ = db_lock.set_setting(
+                    "dsp_voice_boost_gain",
+                    &format!("{:.1}", dsp.voice_boost.gain),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_noise_gate_threshold",
+                    &format!("{:.1}", dsp.noise_gate.threshold),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_stereo_expander_width",
+                    &format!("{:.1}", dsp.stereo_expander.width),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_stereo_expander_mode",
+                    if dsp.stereo_expander.mode == crate::audio::dsp::ExpanderMode::Surround {
+                        "surround"
+                    } else {
+                        "hybrid"
+                    },
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_stereo_balance_balance",
+                    &format!("{:.1}", dsp.stereo_balance.balance),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_compressor_threshold",
+                    &format!("{:.1}", dsp.compressor.threshold),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_compressor_intensity",
+                    &format!("{:.1}", dsp.compressor.intensity),
+                );
+                let _ = db_lock.set_setting(
+                    "dsp_limiter_ceiling",
+                    &format!("{:.1}", dsp.limiter.ceiling),
+                );
+                let _ = db_lock.set_setting("dsp_reverb_wet", &format!("{:.2}", dsp.reverb.wet));
+                let _ = db_lock.set_setting(
+                    "dsp_reverb_room_size",
+                    &format!("{:.2}", dsp.reverb.room_size),
+                );
+            });
 
-        let state = audio_manager.state();
-        let state_read = state.read();
-        let _ = db_lock.set_setting("audio_downmix_center_enabled", if state_read.downmix_center_enabled { "1" } else { "0" });
-        let _ = db_lock.set_setting("audio_downmix_lfe_enabled", if state_read.downmix_lfe_enabled { "1" } else { "0" });
-        let _ = db_lock.set_setting("audio_downmix_surround_enabled", if state_read.downmix_surround_enabled { "1" } else { "0" });
-        let _ = db_lock.set_setting("audio_downmix_center", &format!("{:.1}", state_read.downmix_center));
-        let _ = db_lock.set_setting("audio_downmix_lfe", &format!("{:.1}", state_read.downmix_lfe));
-        let _ = db_lock.set_setting("audio_downmix_surround", &format!("{:.1}", state_read.downmix_surround));
+            let state = audio_manager.state();
+            let state_read = state.read();
+            let _ = db_lock.set_setting(
+                "audio_downmix_center_enabled",
+                if state_read.downmix_center_enabled {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
+            let _ = db_lock.set_setting(
+                "audio_downmix_lfe_enabled",
+                if state_read.downmix_lfe_enabled {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
+            let _ = db_lock.set_setting(
+                "audio_downmix_surround_enabled",
+                if state_read.downmix_surround_enabled {
+                    "1"
+                } else {
+                    "0"
+                },
+            );
+            let _ = db_lock.set_setting(
+                "audio_downmix_center",
+                &format!("{:.1}", state_read.downmix_center),
+            );
+            let _ = db_lock.set_setting(
+                "audio_downmix_lfe",
+                &format!("{:.1}", state_read.downmix_lfe),
+            );
+            let _ = db_lock.set_setting(
+                "audio_downmix_surround",
+                &format!("{:.1}", state_read.downmix_surround),
+            );
+        }
     }
-}
 
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
@@ -385,7 +554,8 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
                     }
                 }
                 if let Some(val) = db.get_setting("eq_band_gains_20") {
-                    let gains: Vec<f32> = val.split(',')
+                    let gains: Vec<f32> = val
+                        .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())
                         .collect();
                     if gains.len() == 20 {
@@ -394,7 +564,8 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
                 }
                 if self.equalizer_bands_31 {
                     if let Some(val) = db.get_setting("eq_band_gains_31") {
-                        let gains: Vec<f32> = val.split(',')
+                        let gains: Vec<f32> = val
+                            .split(',')
                             .filter_map(|s| s.parse::<f32>().ok())
                             .collect();
                         if gains.len() == 31 {
@@ -430,12 +601,22 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
         if let Some(ref db_arc) = db_arc_apply {
             if let Ok(db) = db_arc.try_lock() {
                 if let Some(val) = db.get_setting("eq_band_gains_20") {
-                    let g: Vec<f32> = val.split(',').filter_map(|s| s.parse::<f32>().ok()).collect();
-                    if g.len() == 20 { bands_20 = Some(g); }
+                    let g: Vec<f32> = val
+                        .split(',')
+                        .filter_map(|s| s.parse::<f32>().ok())
+                        .collect();
+                    if g.len() == 20 {
+                        bands_20 = Some(g);
+                    }
                 }
                 if let Some(val) = db.get_setting("eq_band_gains_31") {
-                    let g: Vec<f32> = val.split(',').filter_map(|s| s.parse::<f32>().ok()).collect();
-                    if g.len() == 31 { bands_31 = Some(g); }
+                    let g: Vec<f32> = val
+                        .split(',')
+                        .filter_map(|s| s.parse::<f32>().ok())
+                        .collect();
+                    if g.len() == 31 {
+                        bands_31 = Some(g);
+                    }
                 }
             }
         }
@@ -601,7 +782,12 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
         }
     }
 
-    pub fn update(&mut self, message: AudioCenterMessage, audio_manager: &AudioManager, db: &std::sync::Mutex<crate::db::Database>) {
+    pub fn update(
+        &mut self,
+        message: AudioCenterMessage,
+        audio_manager: &AudioManager,
+        db: &std::sync::Mutex<crate::db::Database>,
+    ) {
         match message {
             AudioCenterMessage::TabSelected(tab) => {
                 self.selected_tab = tab;
@@ -1010,14 +1196,18 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
                         &name,
                         self.preamp_gain,
                         if self.equalizer_bands_31 {
-                            Some(crate::audio::preset::EqPreset::convert_31_to_20(&self.eq_band_gains))
+                            Some(crate::audio::preset::EqPreset::convert_31_to_20(
+                                &self.eq_band_gains,
+                            ))
                         } else {
                             Some(self.eq_band_gains.clone())
                         },
                         if self.equalizer_bands_31 {
                             Some(self.eq_band_gains.clone())
                         } else {
-                            Some(crate::audio::preset::EqPreset::convert_20_to_31(&self.eq_band_gains))
+                            Some(crate::audio::preset::EqPreset::convert_20_to_31(
+                                &self.eq_band_gains,
+                            ))
                         },
                     );
                     if let Ok(db_lock) = db.lock() {
@@ -1028,7 +1218,8 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
             }
             AudioCenterMessage::EqPresetDelete(name) => {
                 let is_builtin = crate::audio::preset::EqPreset::default_presets()
-                    .iter().any(|p| p.name == name)
+                    .iter()
+                    .any(|p| p.name == name)
                     && !self.custom_presets.iter().any(|p| p.name == name);
                 if is_builtin {
                     if !self.hidden_builtins.contains(&name) {
@@ -1115,20 +1306,34 @@ pub fn save_dsp_settings_to_db(&self, audio_manager: &AudioManager, db: &std::sy
             }
 
             // Tab 3: Effects Messages Handlers
-            AudioCenterMessage::DspToggle(effect, enabled) => {
-                match effect {
-                    DspEffect::SubBass => audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.enabled = enabled),
-                    DspEffect::MidBass => audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.enabled = enabled),
-                    DspEffect::VoiceBoost => audio_manager.with_dsp_mut(|dsp| dsp.voice_boost.enabled = enabled),
-                    DspEffect::NoiseGate => audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.enabled = enabled),
-                    DspEffect::StereoExpander => audio_manager.with_dsp_mut(|dsp| dsp.stereo_expander.enabled = enabled),
-                    DspEffect::StereoBalance => audio_manager.with_dsp_mut(|dsp| dsp.stereo_balance.enabled = enabled),
-                    DspEffect::Compressor => audio_manager.with_dsp_mut(|dsp| dsp.compressor.enabled = enabled),
-                    DspEffect::Limiter => audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = enabled),
-                    DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = enabled),
-                    DspEffect::CompressorIntensity | DspEffect::ReverbRoomSize => {}
+            AudioCenterMessage::DspToggle(effect, enabled) => match effect {
+                DspEffect::SubBass => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.enabled = enabled)
                 }
-            }
+                DspEffect::MidBass => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.enabled = enabled)
+                }
+                DspEffect::VoiceBoost => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.voice_boost.enabled = enabled)
+                }
+                DspEffect::NoiseGate => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.noise_gate.enabled = enabled)
+                }
+                DspEffect::StereoExpander => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_expander.enabled = enabled)
+                }
+                DspEffect::StereoBalance => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.stereo_balance.enabled = enabled)
+                }
+                DspEffect::Compressor => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.compressor.enabled = enabled)
+                }
+                DspEffect::Limiter => {
+                    audio_manager.with_dsp_mut(|dsp| dsp.limiter.enabled = enabled)
+                }
+                DspEffect::Reverb => audio_manager.with_dsp_mut(|dsp| dsp.reverb.enabled = enabled),
+                DspEffect::CompressorIntensity | DspEffect::ReverbRoomSize => {}
+            },
             AudioCenterMessage::DspValueChanged(effect, val) => match effect {
                 DspEffect::SubBass => audio_manager.with_dsp_mut(|dsp| dsp.sub_bass.gain = val),
                 DspEffect::MidBass => audio_manager.with_dsp_mut(|dsp| dsp.mid_bass.gain = val),
@@ -1307,7 +1512,7 @@ pub fn view<'a>(
     ));
 
     // 4. Barra de pestañas (Tab Bar)
-    let tab_names = ["Configuración de Audio", "Ecualizador", "Efectos de Audio"];
+    let tab_names = ["Configuración de Audio", "Ecualizador", "Efectos de Audio", "Volumen y Mezcla"];
     let mut tab_row = row![].spacing(10);
 
     for (i, name) in tab_names.iter().enumerate() {
@@ -1359,23 +1564,20 @@ pub fn view<'a>(
         0 => view_audio_config(manager, audio_manager),
         1 => view_equalizer(manager, audio_manager),
         2 => view_audio_effects(manager, audio_manager),
+        3 => view_volumen_mezcla(manager, audio_manager),
         _ => Space::new().into(),
     };
 
     // Contenido interno con padding de 15px en laterales y fondo
-    let inner_content = column![
-        tab_row,
-        divider,
-        content,
-    ]
-    .padding(iced::Padding {
-        top: 0.0,
-        right: 15.0,
-        bottom: 15.0,
-        left: 15.0,
-    })
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let inner_content = column![tab_row, divider, content,]
+        .padding(iced::Padding {
+            top: 0.0,
+            right: 15.0,
+            bottom: 15.0,
+            left: 15.0,
+        })
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     // Contenedor principal de la ventana
     let window_layout = column![header_block, inner_content,]
@@ -2292,8 +2494,9 @@ fn view_audio_config<'a>(
 
     column![
         row![
-            container(left_col).width(Length::FillPortion(5))
-            .padding(iced::Padding {
+            container(left_col)
+                .width(Length::FillPortion(5))
+                .padding(iced::Padding {
                     top: -33.0,
                     bottom: 0.0,
                     left: 0.0,
@@ -2302,7 +2505,8 @@ fn view_audio_config<'a>(
             container(main_divider)
                 .width(Length::Fixed(90.0))
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center).padding(iced::Padding {
+                .align_y(Alignment::Center)
+                .padding(iced::Padding {
                     top: -3.0,
                     bottom: 0.0,
                     left: 30.0,
@@ -2389,17 +2593,23 @@ fn view_equalizer<'a>(
         crate::gui::widgets::icon_button(
             "equalizer-straight.svg",
             22,
-            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconLoad)),
+            Some(crate::gui::app::Message::AudioCenterMsg(
+                AudioCenterMessage::EqPresetIconLoad
+            )),
         ),
         crate::gui::widgets::icon_button(
             "save-outlined-straight.svg",
             22,
-            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconSave)),
+            Some(crate::gui::app::Message::AudioCenterMsg(
+                AudioCenterMessage::EqPresetIconSave
+            )),
         ),
         crate::gui::widgets::icon_button(
             "restore-straight.svg",
             22,
-            Some(crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPresetIconReset)),
+            Some(crate::gui::app::Message::AudioCenterMsg(
+                AudioCenterMessage::EqPresetIconReset
+            )),
         ),
     ]
     .spacing(5)
@@ -2476,7 +2686,9 @@ fn view_equalizer<'a>(
         manager.preamp_gain,
         |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPreampChanged(v)),
         || crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqPreampChanged(0.0)),
-        |active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)),
+        |active| {
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active))
+        },
         !manager.equalizer_enabled,
     );
 
@@ -2521,7 +2733,11 @@ fn view_equalizer<'a>(
             move || {
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandChanged(i, 0.0))
             },
-            |active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)),
+            |active| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(
+                    active,
+                ))
+            },
             !manager.equalizer_enabled,
         ));
     }
@@ -2592,8 +2808,21 @@ fn view_audio_effects<'a>(
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
     ) -> Element<'a, crate::gui::app::Message> {
         view_effect_with_secondary(
-            title, param_label, val, range, enabled, _default_val,
-            on_toggle, on_change, on_reset, extra_widget, None, None, 0.1, "{:.1}", 0.0,
+            title,
+            param_label,
+            val,
+            range,
+            enabled,
+            _default_val,
+            on_toggle,
+            on_change,
+            on_reset,
+            extra_widget,
+            None,
+            None,
+            0.1,
+            "{:.1}",
+            0.0,
         )
     }
 
@@ -2609,7 +2838,15 @@ fn view_audio_effects<'a>(
         on_reset: crate::gui::app::Message,
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
         fixed_height: Option<f32>,
-        secondary: Option<(f32, std::ops::RangeInclusive<f32>, Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>, crate::gui::app::Message, &'a str, f32, &'a str)>,
+        secondary: Option<(
+            f32,
+            std::ops::RangeInclusive<f32>,
+            Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>,
+            crate::gui::app::Message,
+            &'a str,
+            f32,
+            &'a str,
+        )>,
         primary_step_size: f32,
         primary_fmt: &'a str,
         extra_padding_top: f32,
@@ -2666,8 +2903,18 @@ fn view_audio_effects<'a>(
         .input_width_fixed(40.0)
         .input_height_fixed(18.0)
         .input_align(crate::gui::widgets::InputAlign::Center)
-        .input_style(Some(COLOR_BG), Some(COLOR_BG), Some(COLOR_ACCENT), 1.0, 4.0, 11.0, Some(COLOR_TEXT_PRIMARY))
-        .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
+        .input_style(
+            Some(COLOR_BG),
+            Some(COLOR_BG),
+            Some(COLOR_ACCENT),
+            1.0,
+            4.0,
+            11.0,
+            Some(COLOR_TEXT_PRIMARY),
+        )
+        .on_selected_state_change(|active| {
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active))
+        });
         let param_slider = if primary_fmt == "{:.2}" {
             param_slider.format_value(|v| format!("{:.2}", v))
         } else {
@@ -2686,44 +2933,56 @@ fn view_audio_effects<'a>(
         .align_y(Alignment::Center);
 
         // Secondary slider row (optional)
-        let secondary_row: Option<Element<_>> = secondary.map(|(s_val, s_range, s_change, s_reset, s_label, s_step, s_fmt)| {
-            let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
-            sec_opts.step_size = s_step;
-            sec_opts.enable_colored_track = true;
-            sec_opts.enable_arrow_keys = true;
-            sec_opts.track_color = Some(COLOR_BG);
-            let sec_slider = crate::gui::widgets::CustomSlider::new(
-                s_val,
-                s_range,
-                s_change,
-                move || s_reset.clone(),
-            )
-            .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
-            .width(Length::Fill)
-            .height(Length::Fixed(18.0))
-            .options(sec_opts)
-            .with_keyboard_input(true)
-            .input_width_fixed(40.0)
-            .input_height_fixed(18.0)
-            .input_align(crate::gui::widgets::InputAlign::Center)
-            .input_style(Some(COLOR_BG), Some(COLOR_BG), Some(COLOR_ACCENT), 1.0, 4.0, 11.0, Some(COLOR_TEXT_PRIMARY))
-            .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)));
-            let sec_slider = if s_fmt == "{:.2}" {
-                sec_slider.format_value(|v| format!("{:.2}", v))
-            } else {
-                sec_slider
-            };
-            row![
-                text(s_label)
-                    .size(11)
-                    .color(COLOR_TEXT_SECONDARY)
-                    .font(FONT_INTER_SANS_MEDIUM),
-                Space::new().width(Length::Fixed(10.0)),
-                sec_slider,
-            ]
-            .align_y(Alignment::Center)
-            .into()
-        });
+        let secondary_row: Option<Element<_>> = secondary.map(
+            |(s_val, s_range, s_change, s_reset, s_label, s_step, s_fmt)| {
+                let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
+                sec_opts.step_size = s_step;
+                sec_opts.enable_colored_track = true;
+                sec_opts.enable_arrow_keys = true;
+                sec_opts.track_color = Some(COLOR_BG);
+                let sec_slider =
+                    crate::gui::widgets::CustomSlider::new(s_val, s_range, s_change, move || {
+                        s_reset.clone()
+                    })
+                    .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
+                    .width(Length::Fill)
+                    .height(Length::Fixed(18.0))
+                    .options(sec_opts)
+                    .with_keyboard_input(true)
+                    .input_width_fixed(40.0)
+                    .input_height_fixed(18.0)
+                    .input_align(crate::gui::widgets::InputAlign::Center)
+                    .input_style(
+                        Some(COLOR_BG),
+                        Some(COLOR_BG),
+                        Some(COLOR_ACCENT),
+                        1.0,
+                        4.0,
+                        11.0,
+                        Some(COLOR_TEXT_PRIMARY),
+                    )
+                    .on_selected_state_change(|active| {
+                        crate::gui::app::Message::AudioCenterMsg(
+                            AudioCenterMessage::SliderHoverActive(active),
+                        )
+                    });
+                let sec_slider = if s_fmt == "{:.2}" {
+                    sec_slider.format_value(|v| format!("{:.2}", v))
+                } else {
+                    sec_slider
+                };
+                row![
+                    text(s_label)
+                        .size(11)
+                        .color(COLOR_TEXT_SECONDARY)
+                        .font(FONT_INTER_SANS_MEDIUM),
+                    Space::new().width(Length::Fixed(10.0)),
+                    sec_slider,
+                ]
+                .align_y(Alignment::Center)
+                .into()
+            },
+        );
 
         // Build column - top row then spacer then slider rows
         let mut col = column![
@@ -2736,9 +2995,7 @@ fn view_audio_effects<'a>(
             col = col.push(sr);
         }
 
-        let c = container(col)
-        .padding([12, 10])
-        .style(move |_t: &Theme| {
+        let c = container(col).padding([12, 10]).style(move |_t: &Theme| {
             container::Style::default()
                 .background(COLOR_CONTRAST)
                 .border(iced::Border {
@@ -2746,7 +3003,7 @@ fn view_audio_effects<'a>(
                     width: 1.0,
                     radius: 8.0.into(),
                 })
-         });
+        });
         let c: Element<_> = if let Some(h) = fixed_height {
             c.height(Length::Fixed(h)).into()
         } else {
@@ -2871,12 +3128,15 @@ fn view_audio_effects<'a>(
             )),
             None,
             Some(92.0),
-            Some((compressor_intensity * 100.0, 0.0..=100.0,
-                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                    DspEffect::CompressorIntensity, v
-                ))),
+            Some((
+                compressor_intensity * 100.0,
+                0.0..=100.0,
+                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::DspValueChanged(DspEffect::CompressorIntensity, v)
+                )),
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                    DspEffect::CompressorIntensity, 50.0
+                    DspEffect::CompressorIntensity,
+                    50.0
                 )),
                 "Intensidad %",
                 1.0,
@@ -2921,7 +3181,7 @@ fn view_audio_effects<'a>(
             "{:.2}",
             0.0,
         )
-    ]        
+    ]
     .spacing(15)
     .width(Length::FillPortion(1));
 
@@ -3121,12 +3381,15 @@ fn view_audio_effects<'a>(
             )),
             None,
             Some(92.0),
-            Some((reverb_room_size, 0.0..=1.0,
-                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                    DspEffect::ReverbRoomSize, v
-                ))),
+            Some((
+                reverb_room_size,
+                0.0..=1.0,
+                Box::new(|v| crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::DspValueChanged(DspEffect::ReverbRoomSize, v)
+                )),
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DspValueChanged(
-                    DspEffect::ReverbRoomSize, 0.5
+                    DspEffect::ReverbRoomSize,
+                    0.5
                 )),
                 "Tamaño",
                 0.01,

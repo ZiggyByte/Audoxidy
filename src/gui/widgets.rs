@@ -1,13 +1,14 @@
 use iced::advanced::{
-    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
+    layout, mouse, overlay, renderer,
     widget::{Operation, Tree},
+    Clipboard, Layout, Shell, Widget,
 };
 use iced::{
-    Alignment, Color, Element, Length, Padding, Theme,
     widget::{
-        Responsive, Space, button, column, container, mouse_area, pick_list, radio, row,
-        scrollable, svg, text, text_input, toggler,
+        button, column, container, mouse_area, pick_list, radio, row, scrollable, svg, text,
+        text_input, toggler, Responsive, Space,
     },
+    Alignment, Color, Element, Length, Padding, Theme,
 };
 use iced::{Event, Rectangle, Size, Vector};
 
@@ -15,10 +16,10 @@ use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_MEDIUM, FONT_INTER_SANS_NORMAL,
 };
-use crate::utils::{SortColumn, format_duration, format_metadata, truncate_text};
+use crate::utils::{format_duration, format_metadata, truncate_text, SortColumn};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 /// Flag global: true cuando algún slider tiene is_selected activo.
 /// Los demás sliders revisan esto para ocultar su tooltip en hover.
@@ -112,28 +113,29 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let bounds = layout.bounds();
         let state = tree.state.downcast_mut::<StandardCheckboxState>();
 
-        state.is_hover = cursor.position().map_or(false, |p| bounds.contains(p));
+        let Some(cursor_pos) = cursor.position() else {
+            state.is_hover = false;
+            return;
+        };
+
+        state.is_hover = bounds.contains(cursor_pos);
 
         match event {
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-                if let Some(cursor_pos) = cursor.position() {
-                    if bounds.contains(cursor_pos) {
-                        shell.capture_event();
-                        let new_checked = !self.checked;
-                        self.checked = new_checked;
-                        shell.publish((self.on_toggle)(new_checked));
-                        if let Some(ref cb) = self.on_selected_state_change {
-                            shell.publish(cb(true));
-                        }
+                if bounds.contains(cursor_pos) {
+                    shell.capture_event();
+                    let new_checked = !self.checked;
+                    self.checked = new_checked;
+                    shell.publish((self.on_toggle)(new_checked));
+                    if let Some(ref cb) = self.on_selected_state_change {
+                        shell.publish(cb(true));
                     }
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                if let Some(cursor_pos) = cursor.position() {
-                    if !bounds.contains(cursor_pos) {
-                        if let Some(ref cb) = self.on_selected_state_change {
-                            shell.publish(cb(false));
-                        }
+                if !bounds.contains(cursor_pos) {
+                    if let Some(ref cb) = self.on_selected_state_change {
+                        shell.publish(cb(false));
                     }
                 }
             }
@@ -143,7 +145,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
     fn draw(
         &self,
-        tree: &iced::advanced::widget::Tree,
+        _tree: &iced::advanced::widget::Tree,
         renderer: &mut iced::Renderer,
         _theme: &Theme,
         _style: &iced::advanced::renderer::Style,
@@ -151,13 +153,17 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
     ) {
-        use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
+        use iced::advanced::Renderer as _;
 
         let bounds = layout.bounds();
 
         let bg = if self.checked { COLOR_ACCENT } else { COLOR_BG };
-        let border_color = if self.checked { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
+        let border_color = if self.checked {
+            COLOR_ACCENT
+        } else {
+            COLOR_TEXT_SECONDARY
+        };
 
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
@@ -235,9 +241,7 @@ impl StepperUnit {
 /// minimum 2 decimal places. Examples: -50.00 dB → "-50 dB", -14.25 dB stays, 1000.00 ms → "1000 ms".
 fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
     let formatted = format!("{:.2}", value);
-    let trimmed = formatted
-        .trim_end_matches('0')
-        .trim_end_matches('.');
+    let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
     format!(
         "{} {}",
         if trimmed.is_empty() { "0" } else { trimmed },
@@ -285,10 +289,7 @@ impl<'a, Message> NumberStepper<'a, Message> {
     }
 
     /// Set callback for focus-gating state changes (D-35).
-    pub fn on_selected_state_change(
-        mut self,
-        callback: impl Fn(bool) -> Message + 'a,
-    ) -> Self {
+    pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_selected_state_change = Some(Box::new(callback));
         self
     }
@@ -338,7 +339,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let bounds = layout.bounds();
         let state = tree.state.downcast_mut::<NumberStepperState>();
         let cursor_pos = cursor.position();
-        let is_focus = cursor_pos.map_or(false, |p| bounds.contains(p));
+        let is_focus = cursor_pos.is_some_and(|p| bounds.contains(p));
 
         // Update hover state for chevron zones
         if let Some(pos) = cursor_pos {
@@ -380,9 +381,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             width: 14.0,
             height: 14.0,
         };
-        let in_center = cursor_pos.map_or(false, |p| center_zone.contains(p));
-        let in_left = cursor_pos.map_or(false, |p| left_zone.contains(p));
-        let in_right = cursor_pos.map_or(false, |p| right_zone.contains(p));
+        let in_center = cursor_pos.is_some_and(|p| center_zone.contains(p));
+        let in_left = cursor_pos.is_some_and(|p| left_zone.contains(p));
+        let in_right = cursor_pos.is_some_and(|p| right_zone.contains(p));
 
         match event {
             // Click outside the stepper while editing → apply and exit
@@ -523,8 +524,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
     ) {
-        use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
+        use iced::advanced::Renderer as _;
 
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<NumberStepperState>();
@@ -768,16 +769,14 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
             truncate_text(&content, max_chars)
         };
 
-        let mut r = row![
-            text(display_text)
-                .size(size)
-                .font(font)
-                .color(color)
-                .wrapping(wrapping)
-                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
-                    size + 2.0
-                )))
-        ]
+        let mut r = row![text(display_text)
+            .size(size)
+            .font(font)
+            .color(color)
+            .wrapping(wrapping)
+            .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                size + 2.0
+            )))]
         .align_y(align_y)
         .spacing(0);
 
@@ -1003,15 +1002,18 @@ pub fn icon_button<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let has_action = action.is_some();
     let btn_size = (size + 4).max(26);
-    let icon = svg(svg::Handle::from_path(format!("assets/icons/{}", icon_filename)))
-        .width(iced::Length::Fill)
-        .height(iced::Length::Fill)
-        .style(|_t: &Theme, status| svg::Style {
-            color: Some(match status {
-                svg::Status::Hovered => COLOR_TEXT_PRIMARY,
-                _ => COLOR_TEXT_SECONDARY,
-            }),
-        });
+    let icon = svg(svg::Handle::from_path(format!(
+        "assets/icons/{}",
+        icon_filename
+    )))
+    .width(iced::Length::Fill)
+    .height(iced::Length::Fill)
+    .style(|_t: &Theme, status| svg::Style {
+        color: Some(match status {
+            svg::Status::Hovered => COLOR_TEXT_PRIMARY,
+            _ => COLOR_TEXT_SECONDARY,
+        }),
+    });
 
     let btn = button(icon)
         .width(btn_size)
@@ -1057,9 +1059,13 @@ where
     Message: Clone + 'a,
 {
     standard_toggler_full(
-        is_active, on_toggle, size,
-        active_color, inactive_color,
-        thumb_active_color, thumb_inactive_color,
+        is_active,
+        on_toggle,
+        size,
+        active_color,
+        inactive_color,
+        thumb_active_color,
+        thumb_inactive_color,
         Color::TRANSPARENT,
     )
 }
@@ -3345,13 +3351,18 @@ impl<'a, Message> CustomSlider<'a, Message> {
         let font_size = self.options.input_font_size;
         let pad_h = self.options.input_padding_h;
         let pad_v = self.options.input_padding_v;
-        let input_height = self.options.input_fixed_height.unwrap_or(font_size + pad_v * 2.0);
+        let input_height = self
+            .options
+            .input_fixed_height
+            .unwrap_or(font_size + pad_v * 2.0);
         let display_text = self.format_display_value(self.value);
         let input_width = match self.options.input_width {
             InputWidth::Fixed(w) => w,
             InputWidth::Auto => {
                 let char_w = font_size * 0.6;
-                (display_text.len() as f32 * char_w + pad_h * 2.0).ceil().max(40.0)
+                (display_text.len() as f32 * char_w + pad_h * 2.0)
+                    .ceil()
+                    .max(40.0)
             }
         };
         (input_width, input_height)
@@ -3419,7 +3430,11 @@ struct TooltipOverlay {
 impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Renderer>
     for TooltipOverlay
 {
-    fn layout(&mut self, _renderer: &iced::Renderer, _bounds: iced::Size) -> iced::advanced::layout::Node {
+    fn layout(
+        &mut self,
+        _renderer: &iced::Renderer,
+        _bounds: iced::Size,
+    ) -> iced::advanced::layout::Node {
         iced::advanced::layout::Node::new(iced::Size::ZERO)
     }
 
@@ -3431,8 +3446,8 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
         _layout: iced::advanced::Layout<'_>,
         _cursor: iced::advanced::mouse::Cursor,
     ) {
-        use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
+        use iced::advanced::Renderer as _;
 
         let val_display = &self.value_text;
         let font_size = self.font_size;
@@ -3473,7 +3488,10 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: val_display.clone(),
-                bounds: iced::Size::new(tooltip_width - padding * 2.0, tooltip_height - padding * 2.0),
+                bounds: iced::Size::new(
+                    tooltip_width - padding * 2.0,
+                    tooltip_height - padding * 2.0,
+                ),
                 size: iced::Pixels(font_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
@@ -3564,11 +3582,15 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         };
 
         let input_bounds_opt = self.input_bounds(bounds);
-        let in_input = input_bounds_opt.map(|b| b.contains(cursor_pos)).unwrap_or(false);
+        let in_input = input_bounds_opt
+            .map(|b| b.contains(cursor_pos))
+            .unwrap_or(false);
 
         match event {
             // Cualquier clic del mouse fuera del slider desactiva hover (DEBE ir primero)
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_)) if !is_focus && state.is_selected => {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
+                if !is_focus && state.is_selected =>
+            {
                 state.is_selected = false;
                 state.keyboard_focused = false;
                 GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
@@ -3599,7 +3621,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     }
                 } else if is_focus {
                     if state.input_has_focus && state.is_input_editing {
-                        let parsed = state.input_value_text.parse::<f32>();
+                        let parsed = strip_suffix(&state.input_value_text).parse::<f32>();
                         if let Ok(v) = parsed {
                             let clamped = v.clamp(*self.range.start(), *self.range.end());
                             self.value = clamped;
@@ -3636,7 +3658,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     self.value = clamped;
                     shell.publish((self.on_change)(clamped));
                 } else if state.input_has_focus {
-                    let parsed = state.input_value_text.parse::<f32>();
+                    let parsed = strip_suffix(&state.input_value_text).parse::<f32>();
                     if let Ok(v) = parsed {
                         let clamped = v.clamp(*self.range.start(), *self.range.end());
                         self.value = clamped;
@@ -3750,12 +3772,15 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         self.value = self.value.clamp(*self.range.start(), *self.range.end());
                         true
                     }
-                    (_, iced::keyboard::Key::Named(
-                        iced::keyboard::key::Named::ArrowUp
-                        | iced::keyboard::key::Named::ArrowDown
-                        | iced::keyboard::key::Named::ArrowLeft
-                        | iced::keyboard::key::Named::ArrowRight
-                    )) => {
+                    (
+                        _,
+                        iced::keyboard::Key::Named(
+                            iced::keyboard::key::Named::ArrowUp
+                            | iced::keyboard::key::Named::ArrowDown
+                            | iced::keyboard::key::Named::ArrowLeft
+                            | iced::keyboard::key::Named::ArrowRight,
+                        ),
+                    ) => {
                         // Flecha que no corresponde a la orientación — no limpiar foco
                         false
                     }
@@ -3777,10 +3802,14 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 match key {
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
                         shell.capture_event();
-                        let parsed = state.input_value_text.parse::<f32>();
+                        let parsed = strip_suffix(&state.input_value_text).parse::<f32>();
                         if let Ok(v) = parsed {
                             let step = self.options.step_size;
-                            let snapped = if step > 0.0 { (v / step).round() * step } else { v };
+                            let snapped = if step > 0.0 {
+                                (v / step).round() * step
+                            } else {
+                                v
+                            };
                             let clamped = snapped.clamp(*self.range.start(), *self.range.end());
                             self.value = clamped;
                             shell.publish((self.on_change)(clamped));
@@ -3815,10 +3844,18 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                             state.input_cursor_pos -= 1;
                         }
                     }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                        if state.input_cursor_pos < state.input_value_text.len() {
+                            state.input_value_text.remove(state.input_cursor_pos);
+                        }
+                    }
                     iced::keyboard::Key::Character(c) => {
                         if state.input_value_text.len() < 20 {
-                            state.input_value_text.insert(state.input_cursor_pos, c.chars().next().unwrap_or(' '));
-                            state.input_cursor_pos += 1;
+                            let ch = c.chars().next().unwrap_or(' ');
+                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
+                                state.input_value_text.insert(state.input_cursor_pos, ch);
+                                state.input_cursor_pos += 1;
+                            }
                         }
                     }
                     _ => {}
@@ -3826,7 +3863,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             }
 
             // Limpiar foco de teclado en otras teclas (solo KeyPressed, no KeyReleased)
-            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { .. }) if state.keyboard_focused => {
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { .. })
+                if state.keyboard_focused =>
+            {
                 state.keyboard_focused = false;
             }
 
@@ -3964,9 +4003,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         // Seleccionar color y borde según estado
         let handle_color = if is_selected {
-            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options
+                .handle_selected_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
         } else if is_hover {
-            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options
+                .handle_hover_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
@@ -3977,7 +4020,10 @@ impl<'a, Message> CustomSlider<'a, Message> {
             (bc, bw)
         } else if is_hover {
             let bw = self.options.border_hover_width;
-            let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
+            let bc = self
+                .options
+                .border_hover_color
+                .unwrap_or(Color::TRANSPARENT);
             (bc, bw)
         } else {
             let bw = self.options.border_width;
@@ -4103,9 +4149,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         // Seleccionar color y borde según estado
         let handle_color = if is_selected {
-            self.options.handle_selected_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options
+                .handle_selected_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
         } else if is_hover {
-            self.options.handle_hover_color.unwrap_or(COLOR_TEXT_PRIMARY)
+            self.options
+                .handle_hover_color
+                .unwrap_or(COLOR_TEXT_PRIMARY)
         } else {
             self.options.handle_color.unwrap_or(COLOR_ACCENT)
         };
@@ -4116,7 +4166,10 @@ impl<'a, Message> CustomSlider<'a, Message> {
             (bc, bw)
         } else if is_hover {
             let bw = self.options.border_hover_width;
-            let bc = self.options.border_hover_color.unwrap_or(Color::TRANSPARENT);
+            let bc = self
+                .options
+                .border_hover_color
+                .unwrap_or(Color::TRANSPARENT);
             (bc, bw)
         } else {
             let bw = self.options.border_width;
@@ -4187,8 +4240,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
         slider_bounds: Rectangle,
         state: &CustomSliderState,
     ) {
-        use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
+        use iced::advanced::Renderer as _;
 
         let font_size = self.options.input_font_size;
         let pad_h = self.options.input_padding_h;
@@ -4245,9 +4298,13 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         let bg = self.options.input_bg_color.unwrap_or(COLOR_BG);
         let border_color = if state.input_has_focus {
-            self.options.input_border_hover_color.unwrap_or(COLOR_ACCENT)
+            self.options
+                .input_border_hover_color
+                .unwrap_or(COLOR_ACCENT)
         } else {
-            self.options.input_border_color.unwrap_or(COLOR_TEXT_SECONDARY)
+            self.options
+                .input_border_color
+                .unwrap_or(COLOR_TEXT_SECONDARY)
         };
         let border_width = self.options.input_border_width;
         let border_radius = self.options.input_border_radius;
@@ -4308,7 +4365,6 @@ impl<'a, Message> CustomSlider<'a, Message> {
             input_rect,
         );
     }
-
 }
 
 impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {

@@ -1,8 +1,8 @@
 use super::AudioError;
 use crate::audio::decoder::AudioDecoder;
-use crate::audio::dsp::DspChain;
 use crate::audio::device_manager::AudioDeviceManager;
-pub use crate::audio::device_manager::{BitDepth, ChannelConfig, AudioSettings, AudioDeviceInfo};
+pub use crate::audio::device_manager::{AudioDeviceInfo, AudioSettings, BitDepth, ChannelConfig};
+use crate::audio::dsp::DspChain;
 use cpal::traits::DeviceTrait;
 use crossbeam::channel::{Sender, unbounded};
 use parking_lot::{Mutex, RwLock};
@@ -105,19 +105,19 @@ pub struct AudioState {
     pub replay_gain_album_enabled: bool,
 
     // Volumen y Mezcla — Fades (D-07 master, D-09, D-10)
-    pub fades_enabled: bool,         // default: true
-    pub fade_in_ms: f32,             // default: 1000.0 (range 0–10000, paso 50)
-    pub fade_out_ms: f32,            // default: 1000.0 (range 0–10000, paso 50)
+    pub fades_enabled: bool, // default: true
+    pub fade_in_ms: f32,     // default: 1000.0 (range 0–10000, paso 50)
+    pub fade_out_ms: f32,    // default: 1000.0 (range 0–10000, paso 50)
 
     // Volumen y Mezcla — Silence removal (D-14 master, D-16)
-    pub silence_enabled: bool,       // default: true
-    pub silence_duration_ms: f32,    // default: 1000.0 (range 100–10000, paso 50)
-    pub silence_threshold_db: f32,   // default: -50.0 (range -80..0, paso 0.25)
+    pub silence_enabled: bool,     // default: true
+    pub silence_duration_ms: f32,  // default: 1000.0 (range 100–10000, paso 50)
+    pub silence_threshold_db: f32, // default: -50.0 (range -80..0, paso 0.25)
 
     // Volumen y Mezcla — Normalization (D-21 master, D-22, D-23)
-    pub normalize_enabled: bool,     // default: false
-    pub normalize_target_db: f32,    // default: -14.0 (range -30..0, paso 0.25)
-    pub normalize_cap_db: f32,       // default: 6.0 (range 0..+12, paso 0.25)
+    pub normalize_enabled: bool,  // default: false
+    pub normalize_target_db: f32, // default: -14.0 (range -30..0, paso 0.25)
+    pub normalize_cap_db: f32,    // default: 6.0 (range 0..+12, paso 0.25)
 
     // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30 master, D-28)
     pub rg_master_enabled: bool,     // default: true (master of RG group)
@@ -194,7 +194,11 @@ impl AudioEngine {
 
         // Aumentado significativamente para evitar underruns a 384kHz 7.1ch (~2 segundos de audio)
         // Modo low-resource: reduce a ~0.5 segundos (~2 MiB máx)
-        let rb_size = if crate::utils::is_low_resource() { 2 * 1024 * 1024 } else { 8 * 1024 * 1024 };
+        let rb_size = if crate::utils::is_low_resource() {
+            2 * 1024 * 1024
+        } else {
+            8 * 1024 * 1024
+        };
         let rb = HeapRb::<f32>::new(rb_size);
         let (producer, consumer) = rb.split();
 
@@ -245,12 +249,8 @@ impl AudioEngine {
         sample_format: cpal::SampleFormat,
     ) -> Result<(), AudioError> {
         // Configurar el manager
-        self.device_manager.set_output(
-            host,
-            device.clone(),
-            stream_config.clone(),
-            sample_format,
-        );
+        self.device_manager
+            .set_output(host, device.clone(), stream_config.clone(), sample_format);
 
         let state = self.state.clone();
         let consumer_arc = self.buffer_consumer.clone();
@@ -309,7 +309,11 @@ impl AudioEngine {
         }
 
         let (_device, config, fmt) = match self.device_manager.get_device() {
-            Some(d) => (d, self.device_manager.get_stream_config().unwrap(), self.device_manager.get_sample_format().unwrap()),
+            Some(d) => (
+                d,
+                self.device_manager.get_stream_config().unwrap(),
+                self.device_manager.get_sample_format().unwrap(),
+            ),
             None => return Ok(()),
         };
 
@@ -423,7 +427,10 @@ impl AudioEngine {
                     }
                     break;
                 }
-                for (dst, &src) in output[written..written + n].iter_mut().zip(tmp_buf[..n].iter()) {
+                for (dst, &src) in output[written..written + n]
+                    .iter_mut()
+                    .zip(tmp_buf[..n].iter())
+                {
                     *dst = T::from_sample(src);
                 }
                 written += n;
@@ -446,7 +453,9 @@ impl AudioEngine {
     /// Realiza una purga profunda de los buffers y reinicia el stream con la configuración actual.
     pub fn purge_buffers(&self) -> Result<(), AudioError> {
         println!("Audoxidy Audio: Cleaning Audio Engine Buffers");
-        let (host, device, config, fmt) = self.device_manager.take_output()
+        let (host, device, config, fmt) = self
+            .device_manager
+            .take_output()
             .ok_or(AudioError::NoActiveOutput)?;
         self.recreate_stream(host, device, config, fmt)
     }
@@ -459,8 +468,9 @@ impl AudioEngine {
         self.device_manager.stop_stream();
         let current_rate = self.state.read().device_sample_rate;
 
-        let (host, device, stream_config, sample_format) =
-            self.device_manager.resolve_settings(&settings, current_rate)?;
+        let (host, device, stream_config, sample_format) = self
+            .device_manager
+            .resolve_settings(&settings, current_rate)?;
 
         {
             let mut s = self.state.write();
@@ -502,12 +512,17 @@ impl AudioEngine {
             .to_string();
         }
 
-        self.device_manager.set_output(host, device.clone(), stream_config.clone(), sample_format);
+        self.device_manager
+            .set_output(host, device.clone(), stream_config.clone(), sample_format);
 
         // Recreate RingBuffer scaled to sample rate
         let sr = stream_config.sample_rate as usize;
         let ch = stream_config.channels as usize;
-        let dur_secs = if crate::utils::is_low_resource() { 0.5 } else { 2.0 };
+        let dur_secs = if crate::utils::is_low_resource() {
+            0.5
+        } else {
+            2.0
+        };
         let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
         let rb = HeapRb::<f32>::new(rb_size.max(384_000));
         let (producer, consumer) = rb.split();
@@ -846,5 +861,24 @@ impl AudioEngine {
     /// El valor se clamp automáticamente al rango válido.
     pub fn set_volume(&self, volume: f32) {
         self.state.write().volume = volume.clamp(0.0, 1.0);
+    }
+
+    /// Force limiter on for normalization auto-on (D-25).
+    /// Returns the previous limiter enabled state for later restore.
+    pub fn force_limiter_on(&self) -> bool {
+        if let Some(mut dsp) = self.dsp.try_write() {
+            let was = dsp.limiter.enabled;
+            dsp.limiter.enabled = true;
+            was
+        } else {
+            false
+        }
+    }
+
+    /// Restore limiter to its previous user state (D-25).
+    pub fn restore_limiter(&self, was_enabled: bool) {
+        if let Some(mut dsp) = self.dsp.try_write() {
+            dsp.limiter.enabled = was_enabled;
+        }
     }
 }

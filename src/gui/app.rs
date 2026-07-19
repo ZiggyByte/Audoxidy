@@ -6,7 +6,10 @@ use crate::gui::library::{LIBRARY_SCROLL_ID, LibraryManager};
 use crate::gui::library_filters::LibraryFiltersManager;
 use crate::gui::playlist::PLAYLIST_TABS_SCROLL_ID;
 use crate::gui::playlist::PlaylistManager;
-use crate::gui::theme::{COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY, FONT_INTER_SANS_NORMAL};
+use crate::gui::theme::{
+    COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
+    FONT_INTER_SANS_NORMAL,
+};
 use crate::integrations::media_controls::SystemMediaControls;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 use iced::{Color, Element, Task, Theme};
@@ -596,17 +599,26 @@ impl AudoxidyApp {
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
         if let Ok(db_lock) = database_arc.lock() {
             // EQ enable / bands_31 / preamp_gain
-            let eq_enabled = db_lock.get_setting("eq_enabled").map(|v| v == "1").unwrap_or(false);
-            let eq_bands_31 = db_lock.get_setting("eq_bands_31").map(|v| v == "1").unwrap_or(false);
-            let preamp_gain: f32 = db_lock.get_setting("preamp_gain")
+            let eq_enabled = db_lock
+                .get_setting("eq_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            let eq_bands_31 = db_lock
+                .get_setting("eq_bands_31")
+                .map(|v| v == "1")
+                .unwrap_or(false);
+            let preamp_gain: f32 = db_lock
+                .get_setting("preamp_gain")
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(0.0);
             // EQ band gains (20 y 31)
-            let bands_20: Vec<f32> = db_lock.get_setting("eq_band_gains_20")
+            let bands_20: Vec<f32> = db_lock
+                .get_setting("eq_band_gains_20")
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 20)
                 .unwrap_or_else(|| vec![0.0; 20]);
-            let bands_31: Vec<f32> = db_lock.get_setting("eq_band_gains_31")
+            let bands_31: Vec<f32> = db_lock
+                .get_setting("eq_band_gains_31")
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 31)
                 .unwrap_or_else(|| vec![0.0; 31]);
@@ -624,16 +636,24 @@ impl AudoxidyApp {
             audio_center_manager.equalizer_enabled = eq_enabled;
             audio_center_manager.equalizer_bands_31 = eq_bands_31;
             audio_center_manager.preamp_gain = preamp_gain;
-            audio_center_manager.eq_band_gains = if eq_bands_31 { bands_31.clone() } else { bands_20.clone() };
+            audio_center_manager.eq_band_gains = if eq_bands_31 {
+                bands_31.clone()
+            } else {
+                bands_20.clone()
+            };
 
             // Cargar preset seleccionado
             if let Some(preset_name) = db_lock.get_setting("eq_selected_preset") {
                 if !preset_name.is_empty() && preset_name != "Default" {
                     // Buscar primero en custom presets, luego en default_presets
-                    let custom = audio_center_manager.custom_presets.iter()
-                        .find(|p| p.name == preset_name).cloned();
+                    let custom = audio_center_manager
+                        .custom_presets
+                        .iter()
+                        .find(|p| p.name == preset_name)
+                        .cloned();
                     let default = crate::audio::preset::EqPreset::default_presets()
-                        .into_iter().find(|p| p.name == preset_name);
+                        .into_iter()
+                        .find(|p| p.name == preset_name);
                     if let Some(p) = custom.or(default) {
                         audio_center_manager.selected_preset = Some(p);
                     }
@@ -673,19 +693,29 @@ impl AudoxidyApp {
             audio_manager.with_dsp_mut(|dsp| {
                 // Slider values
                 if let Some(v) = db_lock.get_setting("dsp_sub_bass_gain") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.sub_bass.gain = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.sub_bass.gain = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_mid_bass_gain") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.mid_bass.gain = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.mid_bass.gain = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_voice_boost_gain") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.voice_boost.gain = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.voice_boost.gain = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_noise_gate_threshold") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.noise_gate.threshold = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.noise_gate.threshold = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_stereo_expander_width") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.stereo_expander.width = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.stereo_expander.width = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_stereo_expander_mode") {
                     dsp.stereo_expander.mode = if v == "surround" {
@@ -695,22 +725,34 @@ impl AudoxidyApp {
                     };
                 }
                 if let Some(v) = db_lock.get_setting("dsp_stereo_balance_balance") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.stereo_balance.balance = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.stereo_balance.balance = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_compressor_threshold") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.compressor.threshold = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.compressor.threshold = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_compressor_intensity") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.compressor.intensity = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.compressor.intensity = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_limiter_ceiling") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.limiter.ceiling = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.limiter.ceiling = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_reverb_wet") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.reverb.wet = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.reverb.wet = t;
+                    }
                 }
                 if let Some(v) = db_lock.get_setting("dsp_reverb_room_size") {
-                    if let Ok(t) = v.parse::<f32>() { dsp.reverb.room_size = t; }
+                    if let Ok(t) = v.parse::<f32>() {
+                        dsp.reverb.room_size = t;
+                    }
                 }
             });
         }
@@ -1065,8 +1107,11 @@ impl AudoxidyApp {
                 let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
 
                 // D-06: Descargar listas inactivas (la pestaña activa siempre se conserva)
-                self.playlist_manager
-                    .unload(is_playlist_focused, is_playing || is_loaded_in_player, true);
+                self.playlist_manager.unload(
+                    is_playlist_focused,
+                    is_playing || is_loaded_in_player,
+                    true,
+                );
 
                 // Descargar biblioteca inactiva
                 self.library_manager.unload(is_library_focused);
@@ -3806,8 +3851,10 @@ impl AudoxidyApp {
                         && self.audio_center_manager.selected_tab == tab_idx
                     {
                         // Si ya está abierto en la misma pestaña, lo cerramos
-                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
-                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                        self.audio_center_manager
+                            .save_eq_settings_to_db(&*self.database);
+                        self.audio_center_manager
+                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
                         self.audio_center_manager.open = false;
                         self.audio_center_manager.window_pos = None;
                     } else {
@@ -3826,8 +3873,10 @@ impl AudoxidyApp {
                 } else {
                     // Alternancia genérica (comportamiento anterior)
                     if self.audio_center_manager.open {
-                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
-                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                        self.audio_center_manager
+                            .save_eq_settings_to_db(&*self.database);
+                        self.audio_center_manager
+                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
                     }
                     self.audio_center_manager.open = !self.audio_center_manager.open;
                     if self.audio_center_manager.open {
@@ -3910,8 +3959,14 @@ impl AudoxidyApp {
                 }
 
                 // EqPresetLoadSelected: update dialog state for selection persistence
-                if let crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(idx) = &ac_msg {
-                    if let ActiveDialog::EqPresetLoad { selected_preset_idx, .. } = &mut self.active_dialog {
+                if let crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(idx) =
+                    &ac_msg
+                {
+                    if let ActiveDialog::EqPresetLoad {
+                        selected_preset_idx,
+                        ..
+                    } = &mut self.active_dialog
+                    {
                         *selected_preset_idx = *idx;
                     }
                 }
@@ -3927,8 +3982,11 @@ impl AudoxidyApp {
                 }
 
                 // Forward to audio_center_manager.update()
-                self.audio_center_manager
-                    .update(ac_msg.clone(), &self.audio_manager, &self.database);
+                self.audio_center_manager.update(
+                    ac_msg.clone(),
+                    &self.audio_manager,
+                    &self.database,
+                );
 
                 // Persistir inmediatamente cada cambio a la base de datos
                 match &ac_msg {
@@ -3942,7 +4000,8 @@ impl AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetSaveConfirm
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetDelete(_)
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetFileImported(_) => {
-                        self.audio_center_manager.save_eq_settings_to_db(&*self.database);
+                        self.audio_center_manager
+                            .save_eq_settings_to_db(&*self.database);
                     }
                     _ => {}
                 }
@@ -3954,7 +4013,31 @@ impl AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::AudioStateValueChanged(_, _)
                     | crate::gui::audio_center::AudioCenterMessage::StereoExpanderModeToggled(_)
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetFileExported(_) => {
-                        self.audio_center_manager.save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                        self.audio_center_manager
+                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                    }
+                    _ => {}
+                }
+                match &ac_msg {
+                    // Volumen y Mezcla (D-42): cualquier cambio se guarda de inmediato
+                    crate::gui::audio_center::AudioCenterMessage::VolumenFadesToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenFadeOutChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceDurationChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceThresholdChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeTargetChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeCapChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgMasterToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgTrackToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgAlbumToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgAnalyzeRtToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetAlbumChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetTrackChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetRtChanged(_) => {
+                        self.audio_center_manager
+                            .save_volumen_settings_to_db(&*self.audio_manager, &*self.database);
                     }
                     _ => {}
                 }
@@ -4928,15 +5011,11 @@ impl AudoxidyApp {
             // Cálculo de posición dinámica según el tipo de diálogo
             let ac_width = 940.0;
             let ac_height = 480.0;
-            let ac_pos = self.audio_center_manager.window_pos
-                .unwrap_or_else(|| {
-                    let win_w = self.window_size.0 as f32;
-                    let win_h = self.window_size.1 as f32;
-                    iced::Point::new(
-                        (win_w - ac_width) / 2.0,
-                        (win_h - ac_height) / 2.0,
-                    )
-                });
+            let ac_pos = self.audio_center_manager.window_pos.unwrap_or_else(|| {
+                let win_w = self.window_size.0 as f32;
+                let win_h = self.window_size.1 as f32;
+                iced::Point::new((win_w - ac_width) / 2.0, (win_h - ac_height) / 2.0)
+            });
             let (target_x, target_y) = match &self.active_dialog {
                 ActiveDialog::EqPresetLoad { .. } => {
                     let dialog_w = 330.0;

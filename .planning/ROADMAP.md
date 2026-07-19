@@ -38,26 +38,26 @@
 
 **Goal:** Nueva pestaña "Volumen y Mezcla" en el Centro de Audio Avanzado: suavizado de volumen y fades naturales, eliminación de silencios (medio y bordes), normalización RMS en tiempo real con limiter auto-on, Replay Gain con offsets por fuente y análisis en tiempo real de fallback, 2 widgets globales reutilizables (StandardCheckbox 12px + NumberStepper 64×14), persistencia inmediata en APP_SETTINGS (incluido volumen), y fixes del flujo de audio (dropout DSP por try_write, parseo con sufijo en CustomSlider).
 
-**Status:** 🔄 Planned
+**Status:** ✅ Complete
+**Plans:** 6/6 plans executed
 
-**Plans:** 6 plans in 4 waves
 **Plans:**
 **Wave 1**
 
-- [ ] 03-01-PLAN.md — Foundation: AudioState fields + DspChain limiter helpers + AudioManager API
-- [ ] 03-02-PLAN.md — Widgets: StandardCheckbox + NumberStepper + Fix B2 (suffix stripping)
+- [x] 03-01-PLAN.md — Foundation: AudioState fields + DspChain limiter helpers + AudioManager API
+- [x] 03-02-PLAN.md — Widgets: StandardCheckbox + NumberStepper + Fix B2 (suffix stripping)
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-03-PLAN.md — Decoder engine: loudness gain, fades, silence, normalization, Fix B1
-- [ ] 03-04-PLAN.md — AudioCenter UI: messages, tab, view_volumen_mezcla, save, sync
+- [x] 03-03-PLAN.md — Decoder engine: loudness gain, fades, silence, normalization, Fix B1
+- [x] 03-04-PLAN.md — AudioCenter UI: messages, tab, view_volumen_mezcla, save, sync
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 03-05-PLAN.md — App wiring: persistence routing, volume persistence, startup loading
+- [x] 03-05-PLAN.md — App wiring: persistence routing, volume persistence, startup loading
 
 **Wave 4** *(blocked on Wave 3 completion)*
 
-- [ ] 03-06-PLAN.md — Tests: audio engine, widgets, DSP, regression
+- [x] 03-06-PLAN.md — Tests: audio engine, widgets, DSP, regression
 
 **Canonical refs:** `.planning/phases/03-volumen-y-mezcla/03-CONTEXT.md`

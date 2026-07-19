@@ -1392,6 +1392,8 @@ impl AudioCenterManager {
             AudioCenterMessage::SliderHoverActive(_) => {
                 // Manejado en app.rs para AppFocus routing
             }
+            // Volumen y Mezcla handlers — implemented in Task 3
+            _ => {}
         }
     }
 }
@@ -1604,6 +1606,421 @@ pub fn view<'a>(
 
     // Envolvemos con opaque para que no se traspase el "focus" / "hover" del puntero a la interfaz de abajo en esta área
     opaque(non_pass_through_window).into()
+}
+
+// ==========================================
+// VISTA: PESTAÑA 3 - VOLUMEN Y MEZCLA
+// ==========================================
+
+fn view_volumen_mezcla<'a>(
+    manager: &'a AudioCenterManager,
+    audio_manager: &'a Arc<AudioManager>,
+) -> Element<'a, crate::gui::app::Message> {
+    use crate::gui::widgets::{NumberStepper, StandardCheckbox, StepperUnit};
+
+    let audio_s = audio_manager.state();
+    let _state = audio_s.read();
+
+    // --- Group 1: Fades ---
+    let fades_master_on = manager.volumen_fades_enabled;
+
+    let fades_title = column![
+        text("Desvanecimiento (Fades)")
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding { top: 7.0, right: 0.0, bottom: 7.0, left: 0.0 }),
+    ]
+    .spacing(2);
+
+    let fades_checkbox = {
+        let chk: iced::Element<'_, _> = StandardCheckbox::new(
+            fades_master_on,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadesToggle(b)),
+        )
+        .into();
+        row![
+            chk,
+            Space::new().width(Length::Fixed(6.0)),
+            text("Suavizar cambio de volumen")
+                .size(12)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let fade_in_row = {
+        let label_color = if !fades_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !fades_master_on {
+            NumberStepper::new(manager.volumen_fade_in_ms, 0.0..=10000.0, StepperUnit::Milliseconds, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_fade_in_ms, 0.0..=10000.0, StepperUnit::Milliseconds,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Fade-in al iniciar")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let fade_out_row = {
+        let label_color = if !fades_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !fades_master_on {
+            NumberStepper::new(manager.volumen_fade_out_ms, 0.0..=10000.0, StepperUnit::Milliseconds, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_fade_out_ms, 0.0..=10000.0, StepperUnit::Milliseconds,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeOutChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Fade-out al finalizar")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let fades_group = column![
+        fades_title,
+        fades_checkbox,
+        fade_in_row,
+        fade_out_row,
+    ]
+    .spacing(8);
+
+    // --- Group 2: Eliminar Silencios ---
+    let silence_master_on = manager.volumen_silence_enabled;
+
+    let silence_title = column![
+        text("Eliminar Silencios")
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding { top: 7.0, right: 0.0, bottom: 7.0, left: 0.0 }),
+    ]
+    .spacing(2);
+
+    let silence_checkbox = {
+        let chk: iced::Element<'_, _> = StandardCheckbox::new(
+            silence_master_on,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceToggle(b)),
+        )
+        .into();
+        row![
+            chk,
+            Space::new().width(Length::Fixed(6.0)),
+            text("Eliminar silencio")
+                .size(12)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let silence_duration_row = {
+        let label_color = if !silence_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !silence_master_on {
+            NumberStepper::new(manager.volumen_silence_duration_ms, 100.0..=10000.0, StepperUnit::Milliseconds, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_silence_duration_ms, 100.0..=10000.0, StepperUnit::Milliseconds,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceDurationChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Duración para saltar")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let silence_threshold_row = {
+        let label_color = if !silence_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !silence_master_on {
+            NumberStepper::new(manager.volumen_silence_threshold_db, (-80.0)..=0.0, StepperUnit::Decibels, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_silence_threshold_db, (-80.0)..=0.0, StepperUnit::Decibels,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceThresholdChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Umbral de detección")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let silence_group = column![
+        silence_title,
+        silence_checkbox,
+        silence_duration_row,
+        silence_threshold_row,
+    ]
+    .spacing(8);
+
+    // --- Group 3: Normalizar Volumen ---
+    let normalize_master_on = manager.volumen_normalize_enabled;
+
+    let normalize_title = column![
+        text("Normalizar Volumen")
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding { top: 7.0, right: 0.0, bottom: 7.0, left: 0.0 }),
+    ]
+    .spacing(2);
+
+    let normalize_checkbox = {
+        let chk: iced::Element<'_, _> = StandardCheckbox::new(
+            normalize_master_on,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenNormalizeToggle(b)),
+        )
+        .into();
+        row![
+            chk,
+            Space::new().width(Length::Fixed(6.0)),
+            text("Normalizar volumen")
+                .size(12)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let normalize_target_row = {
+        let label_color = if !normalize_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !normalize_master_on {
+            NumberStepper::new(manager.volumen_normalize_target_db, (-30.0)..=0.0, StepperUnit::Decibels, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_normalize_target_db, (-30.0)..=0.0, StepperUnit::Decibels,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenNormalizeTargetChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Nivel de volumen")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let normalize_cap_row = {
+        let label_color = if !normalize_master_on { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if !normalize_master_on {
+            NumberStepper::new(manager.volumen_normalize_cap_db, 0.0..=12.0, StepperUnit::Decibels, |_| crate::gui::app::Message::NoOp)
+                .into()
+        } else {
+            NumberStepper::new(manager.volumen_normalize_cap_db, 0.0..=12.0, StepperUnit::Decibels,
+                |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenNormalizeCapChanged(v)))
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text("Pre-amplificación máxima")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+    };
+
+    let normalize_group = column![
+        normalize_title,
+        normalize_checkbox,
+        normalize_target_row,
+        normalize_cap_row,
+    ]
+    .spacing(8);
+
+    // --- Group 4: Replay Gain ---
+    let rg_master_on = manager.volumen_rg_master_enabled;
+
+    let rg_title = column![
+        text("Replay Gain")
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM),
+        container(
+            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+        )
+        .padding(iced::Padding { top: 7.0, right: 0.0, bottom: 7.0, left: 0.0 }),
+    ]
+    .spacing(2);
+
+    let rg_checkbox_row = |label: &'a str, checked: bool,
+     on_toggle_fn: fn(bool) -> crate::gui::app::Message,
+     disabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
+        let chk: iced::Element<'_, _> = if disabled {
+            StandardCheckbox::new(checked, |_| crate::gui::app::Message::NoOp).into()
+        } else {
+            StandardCheckbox::new(checked, on_toggle_fn).into()
+        };
+        let label_color = if disabled { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(6.0)),
+            text(label)
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+        .into()
+    };
+
+    let rg_stepper_row = |label: &'a str, value: f64, range: std::ops::RangeInclusive<f64>,
+                           unit: StepperUnit,
+                           on_change_fn: fn(f64) -> crate::gui::app::Message,
+                           disabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
+        let label_color = if disabled { COLOR_TEXT_SECONDARY.scale_alpha(0.5) } else { COLOR_TEXT_SECONDARY };
+        let stepper: iced::Element<'_, _> = if disabled {
+            NumberStepper::new(value, range, unit, |_| crate::gui::app::Message::NoOp).into()
+        } else {
+            NumberStepper::new(value, range, unit, on_change_fn)
+                .on_selected_state_change(|active| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(active)))
+                .into()
+        };
+        row![
+            text(label)
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+        .spacing(4)
+        .into()
+    };
+
+    let rg_group = column![
+        rg_title,
+        rg_checkbox_row("Replay Gain", rg_master_on,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgMasterToggle(b)),
+            false,
+        ),
+        rg_checkbox_row("Usar ganancia de álbum", manager.volumen_rg_album_enabled,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgAlbumToggle(b)),
+            !rg_master_on,
+        ),
+        rg_checkbox_row("Usar ganancia de pista", manager.volumen_rg_track_enabled,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgTrackToggle(b)),
+            !rg_master_on,
+        ),
+        rg_checkbox_row("Analizar en tiempo real", manager.volumen_rg_analyze_rt_enabled,
+            |b| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgAnalyzeRtToggle(b)),
+            !rg_master_on,
+        ),
+        rg_stepper_row("Offset álbum", manager.volumen_rg_offset_album_db, (-12.0)..=12.0, StepperUnit::Decibels,
+            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgOffsetAlbumChanged(v)),
+            !rg_master_on,
+        ),
+        rg_stepper_row("Offset canción", manager.volumen_rg_offset_track_db, (-12.0)..=12.0, StepperUnit::Decibels,
+            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgOffsetTrackChanged(v)),
+            !rg_master_on,
+        ),
+        rg_stepper_row("Offset análisis RT", manager.volumen_rg_offset_rt_db, (-12.0)..=12.0, StepperUnit::Decibels,
+            |v| crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgOffsetRtChanged(v)),
+            !rg_master_on,
+        ),
+    ]
+    .spacing(8);
+
+    // --- Column 1: Fades + Silence ---
+    let left_col = column![fades_group, Space::new().height(Length::Fixed(20.0)), silence_group]
+        .spacing(10)
+        .width(Length::FillPortion(1));
+
+    // --- Column 2: Normalize + ReplayGain ---
+    let right_col = column![normalize_group, Space::new().height(Length::Fixed(20.0)), rg_group]
+        .spacing(10)
+        .width(Length::FillPortion(1));
+
+    // Vertical divider
+    let main_divider = container(
+        Space::new()
+            .width(Length::Fixed(2.0))
+            .height(Length::Fixed(240.0)),
+    )
+    .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // Two-column layout (D-37): equal FillPortion(1), no bottom buttons
+    column![
+        row![
+            container(left_col)
+                .width(Length::FillPortion(1))
+                .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 10.0, right: 10.0 }),
+            container(main_divider)
+                .width(Length::Fixed(90.0))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+            container(right_col)
+                .width(Length::FillPortion(1))
+                .padding(iced::Padding { top: 0.0, bottom: 0.0, left: 10.0, right: 10.0 }),
+        ]
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    ]
+    .into()
 }
 
 // ==========================================

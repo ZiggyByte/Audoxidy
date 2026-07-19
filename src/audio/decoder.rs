@@ -437,6 +437,30 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     "Audio Engine State Purged (Load): Buffers & DSP Reset."
                                 );
 
+                                // Volumen y Mezcla: State resets + fade-in trigger (D-09, D-20)
+                                silence_samples = 0;
+                                in_silence = false;
+                                effective_end_sec = None;
+                                track_start_trimmed = false;
+
+                                let mut s = state.read();
+                                if s.fades_enabled && previous_was_natural_eof {
+                                    let sr = s.sample_rate as f64;
+                                    let fade_ms = s.fade_in_ms as f64;
+                                    if fade_ms > 0.0 && sr > 0.0 {
+                                        let step_per_sample =
+                                            1.0 / (fade_ms / 1000.0 * sr);
+                                        fade_state = FadeState::FadingIn {
+                                            coeff: 0.0,
+                                            step_per_frame: step_per_sample,
+                                        };
+                                    }
+                                } else {
+                                    fade_state = FadeState::Idle;
+                                }
+                                drop(s);
+                                previous_was_natural_eof = false;
+
                                 if let Ok(decoder) = symphonia::default::get_codecs()
                                     .make(&track.codec_params, &DecoderOptions::default())
                                 {
@@ -505,6 +529,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                         tracing::info!("Audio Engine State Purged (Seek).");
 
+                        // Volumen y Mezcla: Reset on seek (D-20)
+                        fade_state = FadeState::Idle;
+                        silence_samples = 0;
+                        in_silence = false;
+                        effective_end_sec = None;
+                        track_start_trimmed = false;
+
                         // Clear RingBuffer
                         if let Some(consumer) = engine.buffer_consumer.lock().as_mut() {
                             consumer.skip(usize::MAX);
@@ -515,6 +546,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     current_format = None;
                     state.write().is_playing = false;
                     state.write().current_pos_sec = 0.0;
+
+                    // Volumen y Mezcla: Reset on stop (D-20)
+                    fade_state = FadeState::Idle;
+                    previous_was_natural_eof = false;
+                    silence_samples = 0;
+                    in_silence = false;
+                    effective_end_sec = None;
+                    track_start_trimmed = false;
                 }
             }
         }
@@ -620,6 +659,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 if eof {
                     state.write().is_playing = false;
                     state.write().eof_reached = true;
+                    previous_was_natural_eof = true; // Signal for next track fade-in (D-09)
 
                     // Autoclean on EOF
                     let s = state.read();
@@ -933,10 +973,204 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             }
                         }
 
-                        // 1. Aplicar ReplayGain, DSP (EQ, etc.), y Volumen a `output_accumulator` en f64 nativo.
+                        // ============================================================
+                        // Volumen y Mezcla: Silence detection + Edge trimming (D-14-D-20)
+                        // Measure PRE-fade (D-19) on output_accumulator before DSP/fades.
+                        // ============================================================
+                        let current_pos_sec: f64;
+                        {
+                            let s = state.read();
+                            current_pos_sec = s.current_pos_sec;
+
+                            // Edge trimming — start (D-18): fixed -50dB threshold, no minimum duration.
+                            if !track_start_trimmed && s.silence_enabled {
+                                let edge_threshold = 10.0f64.powf(-50.0 / 20.0);
+                                let peak = output_accumulator
+                                    .iter()
+                                    .map(|sample| sample.abs())
+                                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                                    .unwrap_or(0.0);
+                                if peak < edge_threshold {
+                                    // Leading silence: discard this batch entirely.
+                                    output_accumulator.clear();
+                                    output_accumulator_f32.clear();
+                                    continue;
+                                }
+                                // First non-silent frame found.
+                                track_start_trimmed = true;
+                            }
+
+                            // Silence detection — main body (D-14-D-17)
+                            if s.silence_enabled {
+                                let silence_enter =
+                                    10.0f64.powf(s.silence_threshold_db as f64 / 20.0);
+                                let silence_exit = 10.0f64
+                                    .powf((s.silence_threshold_db as f64 + 3.0) / 20.0);
+                                let threshold = if in_silence {
+                                    silence_exit
+                                } else {
+                                    silence_enter
+                                };
+
+                                let peak = output_accumulator
+                                    .iter()
+                                    .map(|sample| sample.abs())
+                                    .max_by(|a, b| a.partial_cmp(b).unwrap())
+                                    .unwrap_or(0.0);
+
+                                if peak < threshold {
+                                    // Silent frame (D-14): accumulate and potentially drop.
+                                    let frame_samples =
+                                        output_accumulator.len() / out_channels as usize;
+                                    silence_samples += frame_samples;
+                                    let silence_duration_ms =
+                                        (silence_samples as f64 / out_rate as f64) * 1000.0;
+                                    in_silence = true;
+
+                                    if silence_duration_ms >= s.silence_duration_ms as f64 {
+                                        // Drop this batch entirely (D-14: no seeks needed).
+                                        output_accumulator.clear();
+                                        output_accumulator_f32.clear();
+                                        continue;
+                                    }
+                                } else {
+                                    // Non-silent frame: reset counter, update effective_end (D-18).
+                                    silence_samples = 0;
+                                    in_silence = false;
+                                    effective_end_sec = Some(current_pos_sec);
+                                    if !track_start_trimmed {
+                                        track_start_trimmed = true;
+                                    }
+                                }
+                            }
+
+                            // Fade-out trigger (D-10): at effective_end - fade_out_ms.
+                            if s.fades_enabled && s.fade_out_ms > 0.0 {
+                                let end_pos =
+                                    effective_end_sec.unwrap_or(s.total_duration_sec);
+                                let fade_start =
+                                    end_pos - s.fade_out_ms as f64 / 1000.0;
+                                if current_pos_sec >= fade_start
+                                    && !matches!(fade_state, FadeState::FadingOut { .. })
+                                {
+                                    let sr = out_rate as f64;
+                                    let fade_dur_samples =
+                                        s.fade_out_ms as f64 / 1000.0 * sr;
+                                    if fade_dur_samples > 0.0 {
+                                        let step_per_sample =
+                                            1.0 / fade_dur_samples;
+                                        fade_state = FadeState::FadingOut {
+                                            coeff: 1.0,
+                                            step_per_frame: step_per_sample,
+                                        };
+                                    }
+                                }
+                            }
+                        } // Release state lock
+
+                        // Volume smoothing trigger (D-08): 500ms linear ramp on volume changes.
+                        if (vol - previous_vol).abs() > 1e-10 {
+                            let sr = out_rate as f64;
+                            let smoothing_samples = 0.5 * sr; // 500ms
+                            let step = (vol - previous_vol).abs()
+                                / smoothing_samples.max(1.0);
+                            if matches!(fade_state, FadeState::Idle)
+                                || matches!(fade_state, FadeState::Smoothing { .. })
+                            {
+                                fade_state = FadeState::Smoothing {
+                                    coeff: previous_vol,
+                                    target: vol,
+                                    step_per_frame: step,
+                                };
+                            }
+                            previous_vol = vol;
+                        }
+
+                        // Fade envelope coefficient (D-12, D-13): equal-power for fades,
+                        // linear for volume smoothing.
+                        let frames_in_batch =
+                            output_accumulator.len() as f64 / out_channels as f64;
+                        let fade_coeff = match fade_state {
+                            FadeState::Idle => 1.0,
+                            FadeState::FadingIn {
+                                mut coeff,
+                                step_per_frame,
+                            } => {
+                                if coeff >= 1.0 {
+                                    fade_state = FadeState::Idle;
+                                    1.0
+                                } else {
+                                    let current = coeff;
+                                    // Equal-power fade-in (D-12): sin²(π/2 * t)
+                                    let ep_coeff =
+                                        (std::f64::consts::PI / 2.0 * current).sin().powi(2);
+                                    coeff += step_per_frame * frames_in_batch;
+                                    if coeff > 1.0 {
+                                        coeff = 1.0;
+                                    }
+                                    fade_state = FadeState::FadingIn {
+                                        coeff,
+                                        step_per_frame,
+                                    };
+                                    ep_coeff
+                                }
+                            }
+                            FadeState::FadingOut {
+                                mut coeff,
+                                step_per_frame,
+                            } => {
+                                if coeff <= 0.0 {
+                                    fade_state = FadeState::Idle;
+                                    0.0
+                                } else {
+                                    let current = coeff;
+                                    let ep_coeff =
+                                        (std::f64::consts::PI / 2.0 * current).sin().powi(2);
+                                    coeff -= step_per_frame * frames_in_batch;
+                                    if coeff < 0.0 {
+                                        coeff = 0.0;
+                                    }
+                                    fade_state = FadeState::FadingOut {
+                                        coeff,
+                                        step_per_frame,
+                                    };
+                                    ep_coeff
+                                }
+                            }
+                            FadeState::Smoothing {
+                                mut coeff,
+                                target,
+                                mut step_per_frame,
+                            } => {
+                                let step = step_per_frame * frames_in_batch;
+                                if (coeff - target).abs() < step {
+                                    fade_state = FadeState::Idle;
+                                    target
+                                } else if coeff < target {
+                                    coeff += step;
+                                    fade_state = FadeState::Smoothing {
+                                        coeff,
+                                        target,
+                                        step_per_frame,
+                                    };
+                                    coeff
+                                } else {
+                                    coeff -= step;
+                                    fade_state = FadeState::Smoothing {
+                                        coeff,
+                                        target,
+                                        step_per_frame,
+                                    };
+                                    coeff
+                                }
+                            }
+                        };
+
+                        // 1. Aplicar gain → DSP → fades×volume (D-03) al accumulator.
                         {
                             let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
                             let out_ch = out_channels as usize;
+                            let combined = vol * fade_coeff;
                             if let Some(mut dsp_lock) = engine.dsp.try_write() {
                                 for frame in output_accumulator.chunks_mut(out_ch) {
                                     for s in frame.iter_mut() {
@@ -944,14 +1178,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     }
                                     dsp_lock.process_frame(frame);
                                     for s in frame.iter_mut() {
-                                        *s *= vol;
+                                        *s *= combined;
                                     }
                                 }
                             } else {
                                 // Si el DSP está bloqueado por la UI, aplicamos ganancia y volumen sin efectos para evitar tartamudeo (Stutter)
+                                let bypass_gain = gain_linear * combined;
                                 for frame in output_accumulator.chunks_mut(out_ch) {
                                     for s in frame.iter_mut() {
-                                        *s *= gain_linear * vol;
+                                        *s *= bypass_gain;
                                     }
                                 }
                                 tracing::debug!(

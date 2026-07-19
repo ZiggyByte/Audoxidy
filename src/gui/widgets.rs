@@ -1,14 +1,13 @@
 use iced::advanced::{
-    layout, mouse, overlay, renderer,
+    Clipboard, Layout, Shell, Widget, layout, mouse, overlay, renderer,
     widget::{Operation, Tree},
-    Clipboard, Layout, Shell, Widget,
 };
 use iced::{
-    widget::{
-        button, column, container, mouse_area, pick_list, radio, row, scrollable, svg, text,
-        text_input, toggler, Responsive, Space,
-    },
     Alignment, Color, Element, Length, Padding, Theme,
+    widget::{
+        Responsive, Space, button, column, container, mouse_area, pick_list, radio, row,
+        scrollable, svg, text, text_input, toggler,
+    },
 };
 use iced::{Event, Rectangle, Size, Vector};
 
@@ -16,10 +15,10 @@ use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_MEDIUM, FONT_INTER_SANS_NORMAL,
 };
-use crate::utils::{format_duration, format_metadata, truncate_text, SortColumn};
+use crate::utils::{SortColumn, format_duration, format_metadata, truncate_text};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Flag global: true cuando algún slider tiene is_selected activo.
 /// Los demás sliders revisan esto para ocultar su tooltip en hover.
@@ -29,7 +28,7 @@ pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
 // Helper: strip unit suffixes from numeric strings before parsing (D-45)
 // Used by CustomSlider and NumberStepper for keyboard input.
 // ==============================
-fn strip_suffix(s: &str) -> &str {
+pub(crate) fn strip_suffix(s: &str) -> &str {
     s.trim()
         .trim_end_matches(" dB")
         .trim_end_matches(" ms")
@@ -153,8 +152,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
     ) {
-        use iced::advanced::text::Renderer as _;
         use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
 
         let bounds = layout.bounds();
 
@@ -524,8 +523,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _cursor: iced::advanced::mouse::Cursor,
         _viewport: &iced::Rectangle,
     ) {
-        use iced::advanced::text::Renderer as _;
         use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
 
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<NumberStepperState>();
@@ -769,14 +768,16 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
             truncate_text(&content, max_chars)
         };
 
-        let mut r = row![text(display_text)
-            .size(size)
-            .font(font)
-            .color(color)
-            .wrapping(wrapping)
-            .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
-                size + 2.0
-            )))]
+        let mut r = row![
+            text(display_text)
+                .size(size)
+                .font(font)
+                .color(color)
+                .wrapping(wrapping)
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                    size + 2.0
+                )))
+        ]
         .align_y(align_y)
         .spacing(0);
 
@@ -3446,8 +3447,8 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
         _layout: iced::advanced::Layout<'_>,
         _cursor: iced::advanced::mouse::Cursor,
     ) {
-        use iced::advanced::text::Renderer as _;
         use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
 
         let val_display = &self.value_text;
         let font_size = self.font_size;
@@ -4240,8 +4241,8 @@ impl<'a, Message> CustomSlider<'a, Message> {
         slider_bounds: Rectangle,
         state: &CustomSliderState,
     ) {
-        use iced::advanced::text::Renderer as _;
         use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
 
         let font_size = self.options.input_font_size;
         let pad_h = self.options.input_padding_h;

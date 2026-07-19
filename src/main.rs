@@ -8,6 +8,10 @@ mod utils;
 #[path = "audio/dsp_tests.rs"]
 mod dsp_tests;
 
+#[cfg(test)]
+#[path = "gui/widgets_tests.rs"]
+mod widgets_tests;
+
 use crate::audio::AudioManager;
 use crate::gui::app::AudoxidyApp;
 use std::path::PathBuf;
@@ -26,9 +30,7 @@ fn init_logging(config: &crate::utils::config::LoggingConfig) {
     std::fs::create_dir_all(&log_dir).ok();
 
     // Filtro por módulos: niveles configurables
-    let filter = EnvFilter::new(
-        config.level.as_str(),
-    )
+    let filter = EnvFilter::new(config.level.as_str())
         // Silenciar crates ruidosos en desarrollo
         .add_directive("hyper=warn".parse().unwrap())
         .add_directive("reqwest=warn".parse().unwrap())
@@ -115,8 +117,8 @@ fn cleanup_old_logs(log_dir: &PathBuf, max_history: u32) {
 
 // ── Colector de métricas de rendimiento ──────────────────────
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Métricas globales de rendimiento accesibles desde cualquier módulo.
 pub struct PerformanceMetrics {
@@ -172,7 +174,9 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for MetricsLayer {
                 let metrics = get_metrics();
                 let prev = metrics.audio_latency_peak_us.load(Ordering::Relaxed);
                 if latency_us > prev {
-                    metrics.audio_latency_peak_us.store(latency_us, Ordering::Relaxed);
+                    metrics
+                        .audio_latency_peak_us
+                        .store(latency_us, Ordering::Relaxed);
                 }
             }
         }
@@ -215,15 +219,16 @@ fn main() -> iced::Result {
     crate::utils::memory_manager::MemoryManager::init();
 
     // 4. Inicializar motor de audio
-    let audio_manager = std::sync::Arc::new(
-        AudioManager::new().expect("No se pudo inicializar el motor de audio"),
-    );
+    let audio_manager =
+        std::sync::Arc::new(AudioManager::new().expect("No se pudo inicializar el motor de audio"));
 
     let window_size = app_config.ui.window_size();
 
     tracing::info!(
         "Audoxidy listo. Ventana: {}x{}, Audio perfil: {:?}",
-        window_size.0, window_size.1, app_config.profile
+        window_size.0,
+        window_size.1,
+        app_config.profile
     );
 
     // 5. Lanzar aplicación Iced

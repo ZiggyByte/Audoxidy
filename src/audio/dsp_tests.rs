@@ -181,15 +181,21 @@ mod tests {
         // If NOT reset, bands will still have the old 3.0 values.
         eq.set_mode(31);
         for band in &eq.bands {
-            assert!((band.gain - 0.0).abs() < 0.001,
-                "saved_bands_31 should have been reset: gain={}", band.gain);
+            assert!(
+                (band.gain - 0.0).abs() < 0.001,
+                "saved_bands_31 should have been reset: gain={}",
+                band.gain
+            );
         }
 
         // Switch back to 20 — same check for saved_bands_20
         eq.set_mode(20);
         for band in &eq.bands {
-            assert!((band.gain - 0.0).abs() < 0.001,
-                "saved_bands_20 should have been reset: gain={}", band.gain);
+            assert!(
+                (band.gain - 0.0).abs() < 0.001,
+                "saved_bands_20 should have been reset: gain={}",
+                band.gain
+            );
         }
     }
 
@@ -358,7 +364,10 @@ mod tests {
         }
         let mut impulse = [0.98_f64, -0.98_f64];
         c.process(&mut impulse);
-        assert!(impulse[0].abs() < 0.98, "Lookahead should compress transient");
+        assert!(
+            impulse[0].abs() < 0.98,
+            "Lookahead should compress transient"
+        );
     }
 
     #[test]
@@ -391,7 +400,10 @@ mod tests {
         }
         let mut frame = [0.5_f64, 0.5_f64];
         c.process(&mut frame);
-        assert!(frame[0] > 0.0, "Makeup gain should produce non-zero output with heavy compression");
+        assert!(
+            frame[0] > 0.0,
+            "Makeup gain should produce non-zero output with heavy compression"
+        );
     }
 
     #[test]
@@ -494,8 +506,12 @@ mod tests {
         let mut frame = [0.95, 0.95];
         l.process(&mut frame);
         let ceiling_lin = 10.0_f64.powf(-1.0 / 20.0);
-        assert!(frame[0].abs() <= ceiling_lin + 0.01,
-            "Oversampled limiter should catch peaks: {} > {}", frame[0].abs(), ceiling_lin);
+        assert!(
+            frame[0].abs() <= ceiling_lin + 0.01,
+            "Oversampled limiter should catch peaks: {} > {}",
+            frame[0].abs(),
+            ceiling_lin
+        );
     }
 
     #[test]
@@ -509,8 +525,12 @@ mod tests {
         let mut impulse = [0.98, -0.98];
         l.process(&mut impulse);
         let ceiling_lin = 10.0_f64.powf(-3.0 / 20.0);
-        assert!(impulse[0].abs() <= ceiling_lin + 0.01,
-            "Lookahead limiter should catch transient: {} > {}", impulse[0].abs(), ceiling_lin);
+        assert!(
+            impulse[0].abs() <= ceiling_lin + 0.01,
+            "Lookahead limiter should catch transient: {} > {}",
+            impulse[0].abs(),
+            ceiling_lin
+        );
     }
 
     #[test]
@@ -522,7 +542,11 @@ mod tests {
         }
         l.process(&mut [0.5, 0.5]);
         // After steady signal, crest factor should be relatively low
-        assert!(l.crest_factor_smooth > 0.0, "Crest factor should be valid: {}", l.crest_factor_smooth);
+        assert!(
+            l.crest_factor_smooth > 0.0,
+            "Crest factor should be valid: {}",
+            l.crest_factor_smooth
+        );
     }
 
     #[test]
@@ -536,8 +560,14 @@ mod tests {
         let mut frame = [0.5, 0.5];
         l.process(&mut frame);
         // With ceiling=0dB, no limiting occurs; output should not be zero
-        assert!(frame[0].abs() > 0.0, "ceiling=0.0 should pass signal through");
-        assert!(frame[0].abs() <= 0.5 + 1e-3, "output should not exceed input without compression");
+        assert!(
+            frame[0].abs() > 0.0,
+            "ceiling=0.0 should pass signal through"
+        );
+        assert!(
+            frame[0].abs() <= 0.5 + 1e-3,
+            "output should not exceed input without compression"
+        );
     }
 
     #[test]
@@ -663,7 +693,12 @@ mod tests {
         let original = frame;
         r.process(&mut frame);
         for (out, orig) in frame.iter().zip(original.iter()) {
-            assert!((out - orig).abs() < 1e-6, "wet=0.0 should bypass: out={} orig={}", out, orig);
+            assert!(
+                (out - orig).abs() < 1e-6,
+                "wet=0.0 should bypass: out={} orig={}",
+                out,
+                orig
+            );
         }
     }
 
@@ -676,9 +711,15 @@ mod tests {
         let input_rms = (frame.iter().map(|s| s * s).sum::<f64>() / frame.len() as f64).sqrt();
         let mut out_frame = frame;
         r.process(&mut out_frame);
-        let output_rms = (out_frame.iter().map(|s| s * s).sum::<f64>() / out_frame.len() as f64).sqrt();
+        let output_rms =
+            (out_frame.iter().map(|s| s * s).sum::<f64>() / out_frame.len() as f64).sqrt();
         assert!(output_rms > 0.0, "Reverb wet=0.5 should produce output");
-        assert!((output_rms - input_rms).abs() < 0.3, "RMS should not change drastically; input={} output={}", input_rms, output_rms);
+        assert!(
+            (output_rms - input_rms).abs() < 0.3,
+            "RMS should not change drastically; input={} output={}",
+            input_rms,
+            output_rms
+        );
     }
 
     #[test]
@@ -762,6 +803,90 @@ mod tests {
                 first_nonzero_sample = Some(i);
             }
         }
-        assert!(first_nonzero_sample.unwrap_or(0) > 0, "Pre-delay should delay first output");
+        assert!(
+            first_nonzero_sample.unwrap_or(0) > 0,
+            "Pre-delay should delay first output"
+        );
+    }
+
+    // ========================================================================
+    // Limiter auto-on / restore tests (D-25)
+    // ========================================================================
+
+    #[test]
+    fn test_limiter_auto_on_restore() {
+        let mut chain = DspChain::default();
+
+        // Initially limiter is disabled (default)
+        assert!(!chain.limiter.enabled);
+
+        // force_limiter_on when disabled → returns false (was disabled), enables limiter
+        let was_enabled = chain.force_limiter_on();
+        assert!(!was_enabled, "Limiter was disabled, should return false");
+        assert!(chain.limiter.enabled, "Limiter should now be enabled");
+
+        // restore_limiter(false) → restores to disabled
+        chain.restore_limiter(false);
+        assert!(!chain.limiter.enabled, "Limiter should be restored to disabled");
+
+        // force_limiter_on when already enabled → returns true (was enabled), stays enabled
+        chain.limiter.enabled = true;
+        let was_enabled2 = chain.force_limiter_on();
+        assert!(was_enabled2, "Limiter was already enabled, should return true");
+        assert!(chain.limiter.enabled, "Limiter should stay enabled");
+
+        // restore_limiter(true) → restores to enabled
+        chain.restore_limiter(true);
+        assert!(chain.limiter.enabled, "Limiter should be restored to enabled");
+
+        // Force on again after restore to true, then restore to false
+        chain.limiter.enabled = false;
+        let was3 = chain.force_limiter_on();
+        assert!(!was3);
+        chain.restore_limiter(false);
+        assert!(!chain.limiter.enabled);
+    }
+
+    #[test]
+    fn test_dsp_chain_order_unchanged() {
+        // Verify that adding force_limiter_on/restore_limiter did NOT change
+        // DspChain::process_frame order. The bypass test should still pass.
+        let mut chain = DspChain::default();
+        chain.enabled = false;
+        let mut frame = [1.0_f64, -0.5_f64];
+        chain.process_frame(&mut frame);
+        // Bypass: frame should be unchanged
+        assert!((frame[0] - 1.0).abs() < 1e-10);
+        assert!((frame[1] + 0.5).abs() < 1e-10);
+
+        // force/restore should not affect process_frame behavior
+        let was = chain.force_limiter_on();
+        chain.restore_limiter(was);
+
+        // Process again via bypass — frame still unchanged
+        let mut frame2 = [0.8_f64, -0.3_f64];
+        chain.process_frame(&mut frame2);
+        assert!((frame2[0] - 0.8).abs() < 1e-10);
+        assert!((frame2[1] + 0.3).abs() < 1e-10);
+
+        // Enable chain and force limiter on — process should still work (no panic)
+        chain.enabled = true;
+        chain.preamp_gain = 1.0;
+        chain.equalizer.enabled = false;
+        chain.reverb.enabled = false;
+        chain.compressor.enabled = false;
+        chain.noise_gate.enabled = false;
+        chain.sub_bass.enabled = false;
+        chain.mid_bass.enabled = false;
+        chain.voice_boost.enabled = false;
+        chain.stereo_expander.enabled = false;
+        chain.stereo_balance.enabled = false;
+        chain.limiter.enabled = true;
+
+        // Process with limiter enabled — verify no panic, output is finite
+        let mut frame3 = [0.5_f64, -0.3_f64];
+        chain.process_frame(&mut frame3);
+        assert!(frame3[0].is_finite());
+        assert!(frame3[1].is_finite());
     }
 }

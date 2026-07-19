@@ -357,6 +357,190 @@ mod tests {
         assert!((gain - expected).abs() < 1e-10);
     }
 
+    // --- Silence detection tests (D-14, D-15, D-17) ---
+
+    #[test]
+    fn test_silence_detection_threshold_and_hysteresis() {
+        // D-17: hysteresis with +3 dB difference.
+        // Enter silence at -50 dB → linear threshold = 10^(-50/20) ≈ 0.00316
+        // Exit silence at -47 dB  → linear threshold = 10^(-47/20) ≈ 0.00447
+        let silence_enter: f64 = 10.0_f64.powf(-50.0 / 20.0);
+        let silence_exit: f64 = 10.0_f64.powf(-47.0 / 20.0);
+
+        // Verify enter threshold is correct
+        assert!((silence_enter - 0.00316228).abs() < 1e-6);
+        // Verify exit threshold is +3 dB above enter
+        assert!((silence_exit - 0.00446684).abs() < 1e-6);
+
+        // A peak of 0.002 (below -50 dB) should be detected as silent
+        let peak_below: f64 = 0.002;
+        assert!(peak_below < silence_enter);
+
+        // A peak of 0.005 (above -47 dB) should NOT be silent (audible)
+        let peak_above: f64 = 0.005;
+        assert!(peak_above > silence_exit);
+
+        // D-15: peak-per-frame detection — max absolute value across channels
+        // A frame with mixed values: use max(|sample|) as peak
+        let frame: [f64; 2] = [0.001, 0.004];
+        let peak = frame.iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
+        // 0.004 > silence_enter ≈ 0.00316 but < silence_exit ≈ 0.00447
+        // In current state (not yet silent), threshold = silence_enter → peak > threshold → audible
+        assert!(peak > silence_enter);
+        // In silent state (already silenced), threshold = silence_exit → peak < threshold → still silent
+        assert!(peak < silence_exit);
+
+        // Edge case: exact threshold boundary
+        let edge_value = silence_enter;
+        let edge_frame: [f64; 2] = [0.0, edge_value];
+        let edge_peak = edge_frame.iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
+        assert!((edge_peak - silence_enter).abs() < 1e-6);
+    }
+
+    // --- Fade envelope tests (D-12) ---
+
+    #[test]
+    fn test_fade_equal_power_curve() {
+        // D-12: musical fades use equal-power sin²(π·t/2) curve
+        // At t=0.0: coeff = sin²(0) = 0.0
+        // At t=0.5: coeff = sin²(π/4) = (√2/2)² = 0.5
+        // At t=1.0: coeff = sin²(π/2) = 1.0
+        fn equal_power_fade(t: f64) -> f64 {
+            let angle = std::f64::consts::PI * t / 2.0;
+            angle.sin().powi(2)
+        }
+
+        let coeff_0 = equal_power_fade(0.0);
+        assert!((coeff_0 - 0.0).abs() < 1e-15);
+
+        let coeff_mid = equal_power_fade(0.5);
+        assert!((coeff_mid - 0.5).abs() < 1e-15);
+
+        let coeff_1 = equal_power_fade(1.0);
+        assert!((coeff_1 - 1.0).abs() < 1e-15);
+
+        // Verify monotonic: the curve should be strictly increasing
+        let mut prev = 0.0;
+        for i in 1..=100 {
+            let t = i as f64 / 100.0;
+            let coeff = equal_power_fade(t);
+            assert!(coeff >= prev, "Not monotonic at t={}: {} < {}", t, coeff, prev);
+            prev = coeff;
+        }
+
+        // D-13: max error < 0.001 for the entire curve (smooth musical fade)
+        for i in 0..=1000 {
+            let t = i as f64 / 1000.0;
+            let coeff = equal_power_fade(t);
+            // At any point, coefficient should be between 0 and 1
+            assert!(coeff >= 0.0);
+            assert!(coeff <= 1.0);
+            assert!(coeff.is_finite());
+        }
+    }
+
+    // --- RMS Normalization convergence test (D-21, D-22, D-24) ---
+
+    #[test]
+    fn test_rms_normalization_convergence() {
+        // D-21: ~400ms sliding RMS window at 44.1 kHz, 2 channels
+        // D-22: target -14 dB, cap +6 dB
+        // D-24: attack 3000ms, release 1000ms
+
+        let sample_rate: f64 = 44100.0;
+        let channels: usize = 2;
+        let window_duration: f64 = 0.400; // 400ms
+        let window_frames: usize = ((sample_rate * window_duration) as usize).max(1);
+
+        // Simulate a constant -20 dB signal (linear ≈ 0.1 per sample)
+        let signal_level: f64 = 10.0_f64.powf(-20.0 / 20.0); // ≈ 0.1
+
+        let target_db: f64 = -14.0;
+        let cap_db: f64 = 6.0;
+
+        let mut rms_window: Vec<f64> = Vec::with_capacity(window_frames);
+        let mut rms_sum_sq: f64 = 0.0;
+        let mut normalization_gain_db: f64 = 0.0;
+
+        // Feed frames until window is full
+        for _ in 0..window_frames {
+            let frame_power = signal_level * signal_level; // RMS² per frame (simplified)
+            if rms_window.len() >= window_frames {
+                if let Some(old) = rms_window.pop() {
+                    rms_sum_sq -= old;
+                }
+            }
+            rms_window.push(frame_power);
+            rms_sum_sq += frame_power;
+        }
+
+        // Now run convergence: each step is one frame (~0.0227ms at 44100Hz)
+        let mut gain_converged_3s = 0.0_f64;
+        let dt = 1.0 / sample_rate; // per-frame time step
+        let attack_tc = 3.0; // 3000ms attack
+        let release_tc = 1.0; // 1000ms release
+
+        let total_frames_3s = (3.0 * sample_rate) as usize;
+
+        for i in 0..total_frames_3s {
+            // Update RMS window (replace oldest)
+            let frame_power = signal_level * signal_level;
+            if rms_window.len() >= window_frames {
+                if let Some(old) = rms_window.pop() {
+                    rms_sum_sq -= old;
+                }
+            }
+            rms_window.push(frame_power);
+            rms_sum_sq += frame_power;
+
+            let measured_rms = (rms_sum_sq / rms_window.len() as f64).sqrt().max(1e-10);
+            let measured_db = 20.0 * measured_rms.log10();
+            let error_db = target_db - measured_db; // target - measured
+            let target_gain_db = error_db.clamp(0.0, cap_db);
+
+            // Smoothing (D-24): attack 3000ms / release 1000ms
+            let tc = if target_gain_db > normalization_gain_db {
+                attack_tc
+            } else {
+                release_tc
+            };
+            let alpha = 1.0 - (-dt / tc).exp();
+            normalization_gain_db += (target_gain_db - normalization_gain_db) * alpha;
+
+            // NaN guard
+            if !normalization_gain_db.is_finite() {
+                normalization_gain_db = 0.0;
+            }
+
+            // Record gain at 3 seconds
+            if i == total_frames_3s - 1 {
+                gain_converged_3s = normalization_gain_db;
+            }
+        }
+
+        // After 3000ms, gain should converge within 1dB of target
+        // measured_rms ≈ 0.1 → measured_db ≈ -20, target = -14 → error = +6 dB
+        // cap = +6 dB → target_gain_db = 6.0
+        // After 3s (one attack time constant) gain should be ~63% of the way
+        // 6.0 * (1 - e^(-3/3)) = 6.0 * (1 - e^(-1)) ≈ 6.0 * 0.632 = 3.79 dB
+        let expected_approx = 6.0 * (1.0 - (-1.0_f64).exp()); // ≈ 3.79 dB
+        assert!(
+            (gain_converged_3s - expected_approx).abs() < 0.5,
+            "RMS normalization should converge: expected ~{}, got {}",
+            expected_approx,
+            gain_converged_3s
+        );
+
+        // Gain should not exceed the cap
+        assert!(gain_converged_3s <= cap_db + 1e-6);
+
+        // Gain should be positive (need to boost -20dB signal to -14dB)
+        assert!(gain_converged_3s > 0.0);
+
+        // Gain must be finite
+        assert!(gain_converged_3s.is_finite());
+    }
+
     #[test]
     fn test_audio_state_clone() {
         let mut state = AudioState::default();

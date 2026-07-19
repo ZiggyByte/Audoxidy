@@ -24,6 +24,185 @@ use std::sync::atomic::{AtomicBool, Ordering};
 /// Los demás sliders revisan esto para ocultar su tooltip en hover.
 pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
 
+// ==============================
+// Helper: strip unit suffixes from numeric strings before parsing (D-45)
+// Used by CustomSlider and NumberStepper for keyboard input.
+// ==============================
+fn strip_suffix(s: &str) -> &str {
+    s.trim()
+        .trim_end_matches(" dB")
+        .trim_end_matches(" ms")
+        .trim_end_matches(" Hz")
+        .trim_end_matches(" %")
+        .trim()
+}
+
+// ==============================
+// StandardCheckbox — 12×12 px custom checkbox (D-31)
+// ==============================
+
+#[derive(Debug, Clone, Default)]
+struct StandardCheckboxState {
+    is_hover: bool,
+}
+
+/// Custom checkbox widget: 12×12 px drawn via iced advanced renderer (D-31).
+/// OFF: COLOR_BG background, 1px COLOR_TEXT_SECONDARY border.
+/// ON: COLOR_ACCENT background, 1px COLOR_ACCENT border, "✓" in COLOR_TEXT_PRIMARY centered.
+pub struct StandardCheckbox<'a, Message> {
+    checked: bool,
+    on_toggle: Box<dyn Fn(bool) -> Message + 'a>,
+    on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+}
+
+impl<'a, Message> StandardCheckbox<'a, Message> {
+    /// Create a new StandardCheckbox with the given initial state and toggle callback.
+    pub fn new(checked: bool, on_toggle: impl Fn(bool) -> Message + 'a) -> Self {
+        Self {
+            checked,
+            on_toggle: Box::new(on_toggle),
+            on_selected_state_change: None,
+        }
+    }
+
+    /// Set callback for focus-gating state changes (D-35).
+    /// Called with `true` when the checkbox receives a click,
+    /// `false` when the mouse button is released outside its bounds.
+    pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
+        self.on_selected_state_change = Some(Box::new(callback));
+        self
+    }
+}
+
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
+    for StandardCheckbox<'a, Message>
+{
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size {
+            width: Length::Fixed(12.0),
+            height: Length::Fixed(12.0),
+        }
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(StandardCheckboxState::default())
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        let size = limits.resolve(Length::Fixed(12.0), Length::Fixed(12.0), iced::Size::ZERO);
+        iced::advanced::layout::Node::new(size)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let state = tree.state.downcast_mut::<StandardCheckboxState>();
+
+        state.is_hover = cursor.position().map_or(false, |p| bounds.contains(p));
+
+        match event {
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                if let Some(cursor_pos) = cursor.position() {
+                    if bounds.contains(cursor_pos) {
+                        shell.capture_event();
+                        let new_checked = !self.checked;
+                        self.checked = new_checked;
+                        shell.publish((self.on_toggle)(new_checked));
+                        if let Some(ref cb) = self.on_selected_state_change {
+                            shell.publish(cb(true));
+                        }
+                    }
+                }
+            }
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                if let Some(cursor_pos) = cursor.position() {
+                    if !bounds.contains(cursor_pos) {
+                        if let Some(ref cb) = self.on_selected_state_change {
+                            shell.publish(cb(false));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let bounds = layout.bounds();
+
+        let bg = if self.checked { COLOR_ACCENT } else { COLOR_BG };
+        let border_color = if self.checked { COLOR_ACCENT } else { COLOR_TEXT_SECONDARY };
+
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds,
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    width: 1.0,
+                    color: border_color,
+                },
+                ..Default::default()
+            },
+            bg,
+        );
+
+        if self.checked {
+            let font_size = 10.0;
+            let text_x = bounds.x + bounds.width / 2.0;
+            let text_y = bounds.y + (bounds.height - font_size) / 2.0;
+
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: "✓".to_string(),
+                    bounds: iced::Size::new(bounds.width, font_size),
+                    size: iced::Pixels(font_size),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                    font: FONT_INTER_SANS_MEDIUM,
+                    align_x: iced::alignment::Horizontal::Center.into(),
+                    align_y: iced::alignment::Vertical::Top,
+                    shaping: iced::advanced::text::Shaping::Basic,
+                    wrapping: iced::advanced::text::Wrapping::None,
+                },
+                iced::Point::new(text_x, text_y),
+                COLOR_TEXT_PRIMARY,
+                bounds,
+            );
+        }
+    }
+}
+
+impl<'a, Message: 'a> From<StandardCheckbox<'a, Message>> for Element<'a, Message> {
+    fn from(checkbox: StandardCheckbox<'a, Message>) -> Self {
+        Element::new(checkbox)
+    }
+}
+
 // ==========================================
 // 2. Elementos de Interfaz Auxiliares
 // ==========================================

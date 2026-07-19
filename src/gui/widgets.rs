@@ -203,6 +203,466 @@ impl<'a, Message: 'a> From<StandardCheckbox<'a, Message>> for Element<'a, Messag
     }
 }
 
+// ==============================
+// NumberStepper — 64×14 px with ← → chevrons + manual input (D-32, D-33, D-34, D-35)
+// ==============================
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StepperUnit {
+    /// Step 0.25, suffix "dB"
+    Decibels,
+    /// Step 50, suffix "ms"
+    Milliseconds,
+}
+
+impl StepperUnit {
+    fn step(&self) -> f64 {
+        match self {
+            StepperUnit::Decibels => 0.25,
+            StepperUnit::Milliseconds => 50.0,
+        }
+    }
+
+    fn suffix(&self) -> &'static str {
+        match self {
+            StepperUnit::Decibels => "dB",
+            StepperUnit::Milliseconds => "ms",
+        }
+    }
+}
+
+/// Format a numeric value with unit suffix, stripping trailing zeros but keeping
+/// minimum 2 decimal places. Examples: -50.00 dB → "-50 dB", -14.25 dB stays, 1000.00 ms → "1000 ms".
+fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
+    let formatted = format!("{:.2}", value);
+    let trimmed = formatted
+        .trim_end_matches('0')
+        .trim_end_matches('.');
+    format!(
+        "{} {}",
+        if trimmed.is_empty() { "0" } else { trimmed },
+        unit.suffix()
+    )
+}
+
+#[derive(Debug, Clone, Default)]
+struct NumberStepperState {
+    is_hover_left: bool,
+    is_hover_right: bool,
+    is_input_editing: bool,
+    input_value_text: String,
+    input_cursor_pos: usize,
+    input_has_focus: bool,
+}
+
+/// Custom stepper widget: 64×14 px with Unicode chevrons and manual numeric input (D-32).
+/// Left/right chevrons step the value. Center zone shows formatted value + suffix;
+/// click to enter edit mode. Enter/click-outside applies the raw parsed value
+/// (never rounded to step — D-34). Escape cancels.
+pub struct NumberStepper<'a, Message> {
+    value: f64,
+    range: std::ops::RangeInclusive<f64>,
+    unit: StepperUnit,
+    on_change: Box<dyn Fn(f64) -> Message + 'a>,
+    on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+}
+
+impl<'a, Message> NumberStepper<'a, Message> {
+    /// Create a new NumberStepper. The value is clamped to range on construction.
+    pub fn new(
+        value: f64,
+        range: std::ops::RangeInclusive<f64>,
+        unit: StepperUnit,
+        on_change: impl Fn(f64) -> Message + 'a,
+    ) -> Self {
+        Self {
+            value: value.clamp(*range.start(), *range.end()),
+            range,
+            unit,
+            on_change: Box::new(on_change),
+            on_selected_state_change: None,
+        }
+    }
+
+    /// Set callback for focus-gating state changes (D-35).
+    pub fn on_selected_state_change(
+        mut self,
+        callback: impl Fn(bool) -> Message + 'a,
+    ) -> Self {
+        self.on_selected_state_change = Some(Box::new(callback));
+        self
+    }
+
+    /// Apply a new value (clamped to range) and fire the on_change callback.
+    fn commit_value(&self, v: f64, shell: &mut iced::advanced::Shell<'_, Message>) {
+        let clamped = v.clamp(*self.range.start(), *self.range.end());
+        shell.publish((self.on_change)(clamped));
+    }
+}
+
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
+    for NumberStepper<'a, Message>
+{
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size {
+            width: Length::Fixed(64.0),
+            height: Length::Fixed(14.0),
+        }
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(NumberStepperState::default())
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        let size = limits.resolve(Length::Fixed(64.0), Length::Fixed(14.0), iced::Size::ZERO);
+        iced::advanced::layout::Node::new(size)
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: iced::advanced::mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        let bounds = layout.bounds();
+        let state = tree.state.downcast_mut::<NumberStepperState>();
+        let cursor_pos = cursor.position();
+        let is_focus = cursor_pos.map_or(false, |p| bounds.contains(p));
+
+        // Update hover state for chevron zones
+        if let Some(pos) = cursor_pos {
+            let left_zone = Rectangle {
+                x: bounds.x,
+                y: bounds.y,
+                width: 14.0,
+                height: 14.0,
+            };
+            let right_zone = Rectangle {
+                x: bounds.x + 50.0,
+                y: bounds.y,
+                width: 14.0,
+                height: 14.0,
+            };
+            state.is_hover_left = left_zone.contains(pos);
+            state.is_hover_right = right_zone.contains(pos);
+        } else {
+            state.is_hover_left = false;
+            state.is_hover_right = false;
+        }
+
+        // Determine click zones
+        let center_zone = Rectangle {
+            x: bounds.x + 14.0,
+            y: bounds.y,
+            width: 36.0,
+            height: 14.0,
+        };
+        let left_zone = Rectangle {
+            x: bounds.x,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let right_zone = Rectangle {
+            x: bounds.x + 50.0,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let in_center = cursor_pos.map_or(false, |p| center_zone.contains(p));
+        let in_left = cursor_pos.map_or(false, |p| left_zone.contains(p));
+        let in_right = cursor_pos.map_or(false, |p| right_zone.contains(p));
+
+        match event {
+            // Click outside the stepper while editing → apply and exit
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
+                if !is_focus && state.input_has_focus =>
+            {
+                // Apply current input value
+                let stripped = strip_suffix(&state.input_value_text);
+                if let Ok(v) = stripped.parse::<f64>() {
+                    self.commit_value(v, shell);
+                }
+                state.is_input_editing = false;
+                state.input_has_focus = false;
+                GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+                if let Some(ref cb) = self.on_selected_state_change {
+                    shell.publish(cb(false));
+                }
+            }
+
+            // Mouse button press
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+                if in_left {
+                    // Step down
+                    let new_val = self.value - self.unit.step();
+                    self.value = new_val.clamp(*self.range.start(), *self.range.end());
+                    shell.publish((self.on_change)(self.value));
+                    state.is_input_editing = false;
+                    state.input_has_focus = false;
+                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+                } else if in_right {
+                    // Step up
+                    let new_val = self.value + self.unit.step();
+                    self.value = new_val.clamp(*self.range.start(), *self.range.end());
+                    shell.publish((self.on_change)(self.value));
+                    state.is_input_editing = false;
+                    state.input_has_focus = false;
+                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+                } else if in_center {
+                    // Enter edit mode
+                    shell.capture_event();
+                    state.input_value_text = format_stepper_value(self.value, &self.unit);
+                    state.input_cursor_pos = state.input_value_text.len();
+                    state.is_input_editing = true;
+                    state.input_has_focus = true;
+                    GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
+                    if let Some(ref cb) = self.on_selected_state_change {
+                        shell.publish(cb(true));
+                    }
+                }
+            }
+
+            // Keyboard input (when editing)
+            iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
+                if state.input_has_focus && state.is_input_editing =>
+            {
+                match key {
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Enter) => {
+                        shell.capture_event();
+                        let stripped = strip_suffix(&state.input_value_text);
+                        if let Ok(v) = stripped.parse::<f64>() {
+                            let clamped = v.clamp(*self.range.start(), *self.range.end());
+                            self.value = clamped;
+                            shell.publish((self.on_change)(clamped));
+                        }
+                        state.is_input_editing = false;
+                        state.input_has_focus = false;
+                        GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+                        if let Some(ref cb) = self.on_selected_state_change {
+                            shell.publish(cb(false));
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape) => {
+                        shell.capture_event();
+                        state.is_input_editing = false;
+                        state.input_has_focus = false;
+                        GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+                        if let Some(ref cb) = self.on_selected_state_change {
+                            shell.publish(cb(false));
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
+                        shell.capture_event();
+                        let new_val = self.value + self.unit.step();
+                        self.value = new_val.clamp(*self.range.start(), *self.range.end());
+                        shell.publish((self.on_change)(self.value));
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
+                        shell.capture_event();
+                        let new_val = self.value - self.unit.step();
+                        self.value = new_val.clamp(*self.range.start(), *self.range.end());
+                        shell.publish((self.on_change)(self.value));
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
+                        if state.input_cursor_pos > 0 {
+                            state.input_cursor_pos -= 1;
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowRight) => {
+                        if state.input_cursor_pos < state.input_value_text.len() {
+                            state.input_cursor_pos += 1;
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Backspace) => {
+                        if state.input_cursor_pos > 0 && !state.input_value_text.is_empty() {
+                            state.input_value_text.remove(state.input_cursor_pos - 1);
+                            state.input_cursor_pos -= 1;
+                        }
+                    }
+                    iced::keyboard::Key::Named(iced::keyboard::key::Named::Delete) => {
+                        if state.input_cursor_pos < state.input_value_text.len() {
+                            state.input_value_text.remove(state.input_cursor_pos);
+                        }
+                    }
+                    iced::keyboard::Key::Character(c) => {
+                        if state.input_value_text.len() < 20 {
+                            let ch = c.chars().next().unwrap_or(' ');
+                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
+                                state.input_value_text.insert(state.input_cursor_pos, ch);
+                                state.input_cursor_pos += 1;
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            _ => {}
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let bounds = layout.bounds();
+        let state = tree.state.downcast_ref::<NumberStepperState>();
+
+        let font_size: f32 = 12.0;
+        let chevron_size: f32 = 12.0;
+        let chevron_glyph_size: f32 = 10.0;
+
+        // --- Left chevron zone ---
+        let left_zone = Rectangle {
+            x: bounds.x,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        // Background (hover highlight)
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: left_zone,
+                ..Default::default()
+            },
+            if state.is_hover_left {
+                COLOR_CONTRAST
+            } else {
+                COLOR_BG
+            },
+        );
+        // Chevron glyph: ◀ (U+25C0)
+        let chevron_left_x = left_zone.x + (left_zone.width - chevron_glyph_size) / 2.0;
+        let chevron_left_y = left_zone.y + (left_zone.height - chevron_glyph_size) / 2.0;
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: "\u{25C0}".to_string(),
+                bounds: iced::Size::new(chevron_glyph_size, chevron_glyph_size),
+                size: iced::Pixels(chevron_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(chevron_left_x, chevron_left_y),
+            COLOR_TEXT_PRIMARY,
+            left_zone,
+        );
+
+        // --- Right chevron zone ---
+        let right_zone = Rectangle {
+            x: bounds.x + 50.0,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: right_zone,
+                ..Default::default()
+            },
+            if state.is_hover_right {
+                COLOR_CONTRAST
+            } else {
+                COLOR_BG
+            },
+        );
+        let chevron_right_x = right_zone.x + (right_zone.width - chevron_glyph_size) / 2.0;
+        let chevron_right_y = right_zone.y + (right_zone.height - chevron_glyph_size) / 2.0;
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: "\u{25B6}".to_string(),
+                bounds: iced::Size::new(chevron_glyph_size, chevron_glyph_size),
+                size: iced::Pixels(chevron_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(chevron_right_x, chevron_right_y),
+            COLOR_TEXT_PRIMARY,
+            right_zone,
+        );
+
+        // --- Center value zone ---
+        let center_zone = Rectangle {
+            x: bounds.x + 14.0,
+            y: bounds.y,
+            width: 36.0,
+            height: 14.0,
+        };
+        // Background for center zone
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: center_zone,
+                ..Default::default()
+            },
+            COLOR_BG,
+        );
+
+        let display_text = if state.is_input_editing {
+            // Show edit buffer with cursor
+            let pos = state.input_cursor_pos.min(state.input_value_text.len());
+            let (before, after) = state.input_value_text.split_at(pos);
+            format!("{}|{}", before, after)
+        } else {
+            format_stepper_value(self.value, &self.unit)
+        };
+
+        // Center the text in the center zone
+        let text_x = center_zone.x + center_zone.width / 2.0;
+        let text_y = center_zone.y + (center_zone.height - font_size) / 2.0;
+
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: display_text,
+                bounds: iced::Size::new(center_zone.width - 2.0, font_size),
+                size: iced::Pixels(font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(text_x, text_y),
+            COLOR_TEXT_PRIMARY,
+            center_zone,
+        );
+    }
+}
+
+impl<'a, Message: 'a> From<NumberStepper<'a, Message>> for Element<'a, Message> {
+    fn from(stepper: NumberStepper<'a, Message>) -> Self {
+        Element::new(stepper)
+    }
+}
+
 // ==========================================
 // 2. Elementos de Interfaz Auxiliares
 // ==========================================

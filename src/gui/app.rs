@@ -1310,6 +1310,10 @@ impl AudoxidyApp {
             }
             Message::VolumeChanged(vol) => {
                 self.audio_manager.set_volume(vol);
+                // Fix B3 (D-43): persist volume across restarts
+                if let Ok(db) = self.database.lock() {
+                    let _ = db.set_setting("player_volume", &format!("{:.4}", vol));
+                }
                 Task::none()
             }
             Message::SeekTo(pos) => {

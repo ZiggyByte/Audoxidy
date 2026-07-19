@@ -38,6 +38,17 @@
 
 **Goal:** Nueva pestaña "Volumen y Mezcla" en el Centro de Audio Avanzado: suavizado de volumen y fades naturales, eliminación de silencios (medio y bordes), normalización RMS en tiempo real con limiter auto-on, Replay Gain con offsets por fuente y análisis en tiempo real de fallback, 2 widgets globales reutilizables (StandardCheckbox 12px + NumberStepper 64×14), persistencia inmediata en APP_SETTINGS (incluido volumen), y fixes del flujo de audio (dropout DSP por try_write, parseo con sufijo en CustomSlider).
 
-**Status:** 🔄 Context gathered
+**Status:** 🔄 Planned
+
+**Plans:** 6 plans in 4 waves
+
+**Plans:**
+
+- [ ] 03-01-PLAN.md — Foundation: AudioState fields + DspChain limiter helpers + AudioManager API
+- [ ] 03-02-PLAN.md — Widgets: StandardCheckbox + NumberStepper + Fix B2 (suffix stripping)
+- [ ] 03-03-PLAN.md — Decoder engine: loudness gain, fades, silence, normalization, Fix B1
+- [ ] 03-04-PLAN.md — AudioCenter UI: messages, tab, view_volumen_mezcla, save, sync
+- [ ] 03-05-PLAN.md — App wiring: persistence routing, volume persistence, startup loading
+- [ ] 03-06-PLAN.md — Tests: audio engine, widgets, DSP, regression
 
 **Canonical refs:** `.planning/phases/03-volumen-y-mezcla/03-CONTEXT.md`

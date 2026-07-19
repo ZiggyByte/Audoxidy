@@ -41,14 +41,23 @@
 **Status:** 🔄 Planned
 
 **Plans:** 6 plans in 4 waves
-
 **Plans:**
+**Wave 1**
 
 - [ ] 03-01-PLAN.md — Foundation: AudioState fields + DspChain limiter helpers + AudioManager API
 - [ ] 03-02-PLAN.md — Widgets: StandardCheckbox + NumberStepper + Fix B2 (suffix stripping)
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 03-03-PLAN.md — Decoder engine: loudness gain, fades, silence, normalization, Fix B1
 - [ ] 03-04-PLAN.md — AudioCenter UI: messages, tab, view_volumen_mezcla, save, sync
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 03-05-PLAN.md — App wiring: persistence routing, volume persistence, startup loading
+
+**Wave 4** *(blocked on Wave 3 completion)*
+
 - [ ] 03-06-PLAN.md — Tests: audio engine, widgets, DSP, regression
 
 **Canonical refs:** `.planning/phases/03-volumen-y-mezcla/03-CONTEXT.md`

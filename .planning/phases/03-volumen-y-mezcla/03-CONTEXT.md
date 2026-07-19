@@ -17,9 +17,9 @@ Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado
 
 ### Arquitectura / Gain-staging (cadena de audio)
 - **D-01:** Punto **único** de ganancia de sonoridad al frente de la cadena, suma en dominio dB: `(album_tag + offset_album) + (track_tag + offset_track) + (análisis_RT + offset_RT, solo si no hay etiquetas) + ganancia_normalización (capada por umbral superior)`. Se convierte a lineal **una sola vez** (`10^(db/20)`) y se aplica en un solo punto de multiplicación por frame, ANTES de la DspChain (posición actual del RG, `decoder.rs:800-813`).
-- **D-02:** Cada "pre-amplificador" nuevo es **independiente** de los demás y del preamp del EQ. El preamp del EQ (`dsp.rs:54-57`) **se queda acoplado al EQ como está** — NO desacoplarlo.
+- **D-02:** [informational] Cada "pre-amplificador" nuevo es **independiente** de los demás y del preamp del EQ. El preamp del EQ (`dsp.rs:54-57`) **se queda acoplado al EQ como está** — NO desacoplarlo.
 - **D-03:** Orden final de la cadena: ganancia de sonoridad (D-01) → DspChain existente (preamp EQ → EQ → efectos → **Limiter al final**) → envolvente de fades × volumen de usuario (juntos, al final, `decoder.rs:826-828`) → ringbuf. Los fades van al final para que ningún efecto los "deshaga"; todas las ganancias que suben nivel van antes del limiter (red anti-clipping).
-- **D-04:** Ringbuf se mantiene **f32** (NO migrar a f64). Todo el procesamiento ya es f64; f32 equivale a ~24 bits de precisión (≥ cualquier DAC) y CPAL raramente acepta f64 nativo. La conversión f64→f32 en el boundary (`decoder.rs:844-846`) es transparente.
+- **D-04:** [informational] Ringbuf se mantiene **f32** (NO migrar a f64). Todo el procesamiento ya es f64; f32 equivale a ~24 bits de precisión (≥ cualquier DAC) y CPAL raramente acepta f64 nativo. La conversión f64→f32 en el boundary (`decoder.rs:844-846`) es transparente.
 - **D-05:** Un **solo controlador de sonoridad compartido**: si Normalización y "Análisis RT" están ambos activos en una pista sin etiquetas, NO corren dos lazos (oscilarían). Un lazo mide post-RG y ajusta hacia el target; el offset RT se suma a su salida.
 - **D-06:** Todo el procesamiento nuevo se implementa en **f64** (coherente con el pipeline existente).
 

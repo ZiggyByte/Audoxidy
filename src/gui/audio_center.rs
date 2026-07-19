@@ -483,6 +483,34 @@ impl AudioCenterManager {
         }
     }
 
+    /// Guarda todos los ajustes de volumen y mezcla en la base de datos.
+    pub fn save_volumen_settings_to_db(
+        &self,
+        audio_manager: &AudioManager,
+        db: &std::sync::Mutex<crate::db::Database>,
+    ) {
+        if let Ok(db_lock) = db.lock() {
+            let state = audio_manager.state();
+            let s = state.read();
+            let _ = db_lock.set_setting("vol_fades_enabled", if s.fades_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_fade_in_ms", &format!("{:.0}", s.fade_in_ms));
+            let _ = db_lock.set_setting("vol_fade_out_ms", &format!("{:.0}", s.fade_out_ms));
+            let _ = db_lock.set_setting("vol_silence_enabled", if s.silence_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_silence_duration_ms", &format!("{:.0}", s.silence_duration_ms));
+            let _ = db_lock.set_setting("vol_silence_threshold_db", &format!("{:.2}", s.silence_threshold_db));
+            let _ = db_lock.set_setting("vol_normalize_enabled", if s.normalize_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_normalize_target_db", &format!("{:.2}", s.normalize_target_db));
+            let _ = db_lock.set_setting("vol_normalize_cap_db", &format!("{:.2}", s.normalize_cap_db));
+            let _ = db_lock.set_setting("vol_rg_master_enabled", if s.rg_master_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_rg_track_enabled", if s.replay_gain_track_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_rg_album_enabled", if s.replay_gain_album_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_rg_analyze_rt_enabled", if s.rg_analyze_rt_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_rg_offset_album_db", &format!("{:.2}", s.rg_offset_album_db));
+            let _ = db_lock.set_setting("vol_rg_offset_track_db", &format!("{:.2}", s.rg_offset_track_db));
+            let _ = db_lock.set_setting("vol_rg_offset_rt_db", &format!("{:.2}", s.rg_offset_rt_db));
+        }
+    }
+
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
             if let Ok(db) = db_arc.try_lock() {
@@ -714,6 +742,97 @@ impl AudioCenterManager {
                 if let Some(val) = db.get_setting("audio_downmix_surround") {
                     if let Ok(v) = val.parse::<f32>() {
                         state_write.downmix_surround = v;
+                    }
+                }
+
+                // Load Volumen y Mezcla settings
+                if let Some(val) = db.get_setting("vol_fades_enabled") {
+                    let enabled = val == "1";
+                    state_write.fades_enabled = enabled;
+                    self.volumen_fades_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_fade_in_ms") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.fade_in_ms = v as f32;
+                        self.volumen_fade_in_ms = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_fade_out_ms") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.fade_out_ms = v as f32;
+                        self.volumen_fade_out_ms = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_silence_enabled") {
+                    let enabled = val == "1";
+                    state_write.silence_enabled = enabled;
+                    self.volumen_silence_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_silence_duration_ms") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.silence_duration_ms = v as f32;
+                        self.volumen_silence_duration_ms = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_silence_threshold_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.silence_threshold_db = v as f32;
+                        self.volumen_silence_threshold_db = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_normalize_enabled") {
+                    let enabled = val == "1";
+                    state_write.normalize_enabled = enabled;
+                    self.volumen_normalize_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_normalize_target_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.normalize_target_db = v as f32;
+                        self.volumen_normalize_target_db = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_normalize_cap_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.normalize_cap_db = v as f32;
+                        self.volumen_normalize_cap_db = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_rg_master_enabled") {
+                    let enabled = val == "1";
+                    state_write.rg_master_enabled = enabled;
+                    self.volumen_rg_master_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_rg_track_enabled") {
+                    let enabled = val == "1";
+                    state_write.replay_gain_track_enabled = enabled;
+                    self.volumen_rg_track_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_rg_album_enabled") {
+                    let enabled = val == "1";
+                    state_write.replay_gain_album_enabled = enabled;
+                    self.volumen_rg_album_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_rg_analyze_rt_enabled") {
+                    let enabled = val == "1";
+                    state_write.rg_analyze_rt_enabled = enabled;
+                    self.volumen_rg_analyze_rt_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_rg_offset_album_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.rg_offset_album_db = v as f32;
+                        self.volumen_rg_offset_album_db = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_rg_offset_track_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.rg_offset_track_db = v as f32;
+                        self.volumen_rg_offset_track_db = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("vol_rg_offset_rt_db") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.rg_offset_rt_db = v as f32;
+                        self.volumen_rg_offset_rt_db = v;
                     }
                 }
             }
@@ -1392,8 +1511,71 @@ impl AudioCenterManager {
             AudioCenterMessage::SliderHoverActive(_) => {
                 // Manejado en app.rs para AppFocus routing
             }
-            // Volumen y Mezcla handlers — implemented in Task 3
-            _ => {}
+            // Tab 4: Volumen y Mezcla handlers
+            AudioCenterMessage::VolumenFadesToggle(enabled) => {
+                audio_manager.state().write().fades_enabled = enabled;
+                self.volumen_fades_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenFadeInChanged(val) => {
+                audio_manager.state().write().fade_in_ms = val as f32;
+                self.volumen_fade_in_ms = val;
+            }
+            AudioCenterMessage::VolumenFadeOutChanged(val) => {
+                audio_manager.state().write().fade_out_ms = val as f32;
+                self.volumen_fade_out_ms = val;
+            }
+            AudioCenterMessage::VolumenSilenceToggle(enabled) => {
+                audio_manager.state().write().silence_enabled = enabled;
+                self.volumen_silence_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenSilenceDurationChanged(val) => {
+                audio_manager.state().write().silence_duration_ms = val as f32;
+                self.volumen_silence_duration_ms = val;
+            }
+            AudioCenterMessage::VolumenSilenceThresholdChanged(val) => {
+                audio_manager.state().write().silence_threshold_db = val as f32;
+                self.volumen_silence_threshold_db = val;
+            }
+            AudioCenterMessage::VolumenNormalizeToggle(enabled) => {
+                audio_manager.state().write().normalize_enabled = enabled;
+                self.volumen_normalize_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenNormalizeTargetChanged(val) => {
+                audio_manager.state().write().normalize_target_db = val as f32;
+                self.volumen_normalize_target_db = val;
+            }
+            AudioCenterMessage::VolumenNormalizeCapChanged(val) => {
+                audio_manager.state().write().normalize_cap_db = val as f32;
+                self.volumen_normalize_cap_db = val;
+            }
+            AudioCenterMessage::VolumenRgMasterToggle(enabled) => {
+                audio_manager.state().write().rg_master_enabled = enabled;
+                self.volumen_rg_master_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenRgTrackToggle(enabled) => {
+                audio_manager.state().write().replay_gain_track_enabled = enabled;
+                self.volumen_rg_track_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenRgAlbumToggle(enabled) => {
+                audio_manager.state().write().replay_gain_album_enabled = enabled;
+                self.volumen_rg_album_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenRgAnalyzeRtToggle(enabled) => {
+                audio_manager.state().write().rg_analyze_rt_enabled = enabled;
+                self.volumen_rg_analyze_rt_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenRgOffsetAlbumChanged(val) => {
+                audio_manager.state().write().rg_offset_album_db = val as f32;
+                self.volumen_rg_offset_album_db = val;
+            }
+            AudioCenterMessage::VolumenRgOffsetTrackChanged(val) => {
+                audio_manager.state().write().rg_offset_track_db = val as f32;
+                self.volumen_rg_offset_track_db = val;
+            }
+            AudioCenterMessage::VolumenRgOffsetRtChanged(val) => {
+                audio_manager.state().write().rg_offset_rt_db = val as f32;
+                self.volumen_rg_offset_rt_db = val;
+            }
         }
     }
 }

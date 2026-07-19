@@ -53,6 +53,28 @@ mod tests {
         assert!(!state.eof_reached);
         assert_eq!(state.replay_gain_track_enabled, true);
         assert_eq!(state.replay_gain_album_enabled, true);
+
+        // Volumen y Mezcla — Fades (D-07, D-09, D-10)
+        assert_eq!(state.fades_enabled, true);
+        assert!((state.fade_in_ms - 1000.0).abs() < f64::EPSILON as f32);
+        assert!((state.fade_out_ms - 1000.0).abs() < f64::EPSILON as f32);
+
+        // Volumen y Mezcla — Silence removal (D-14, D-16)
+        assert_eq!(state.silence_enabled, true);
+        assert!((state.silence_duration_ms - 1000.0).abs() < f64::EPSILON as f32);
+        assert!((state.silence_threshold_db - (-50.0)).abs() < f64::EPSILON as f32);
+
+        // Volumen y Mezcla — Normalization (D-21, D-22, D-23)
+        assert_eq!(state.normalize_enabled, false);
+        assert!((state.normalize_target_db - (-14.0)).abs() < f64::EPSILON as f32);
+        assert!((state.normalize_cap_db - 6.0).abs() < f64::EPSILON as f32);
+
+        // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30, D-28)
+        assert_eq!(state.rg_master_enabled, true);
+        assert!((state.rg_offset_album_db - 0.0).abs() < f64::EPSILON as f32);
+        assert!((state.rg_offset_track_db - 0.0).abs() < f64::EPSILON as f32);
+        assert!((state.rg_offset_rt_db - 0.0).abs() < f64::EPSILON as f32);
+        assert_eq!(state.rg_analyze_rt_enabled, true);
     }
 
     #[test]

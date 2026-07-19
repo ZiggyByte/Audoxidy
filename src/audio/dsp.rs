@@ -105,6 +105,19 @@ impl DspChain {
         }
     }
 
+    /// Force limiter on. Returns the previous enabled state for restore.
+    /// Used by normalization auto-on (D-25).
+    pub fn force_limiter_on(&mut self) -> bool {
+        let was = self.limiter.enabled;
+        self.limiter.enabled = true;
+        was
+    }
+
+    /// Restore limiter to its previous user-controlled state.
+    pub fn restore_limiter(&mut self, was_enabled: bool) {
+        self.limiter.enabled = was_enabled;
+    }
+
     /// Actualiza la frecuencia de muestreo en todos los módulos DSP.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.equalizer.set_sample_rate(sample_rate);

@@ -295,4 +295,19 @@ impl AudioManager {
         let mut dsp = self.engine.dsp.write();
         f(&mut dsp);
     }
+
+    /// Force limiter on (for normalization auto-on per D-25).
+    /// Returns the previous limiter enabled state.
+    pub fn force_limiter_on(&self) -> bool {
+        let mut was_enabled = false;
+        self.with_dsp_mut(|dsp| {
+            was_enabled = dsp.force_limiter_on();
+        });
+        was_enabled
+    }
+
+    /// Restore limiter to its previous state.
+    pub fn restore_limiter(&self, was_enabled: bool) {
+        self.with_dsp_mut(|dsp| dsp.restore_limiter(was_enabled));
+    }
 }

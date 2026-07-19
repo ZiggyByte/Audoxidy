@@ -1,18 +1,21 @@
 //! Background audio decoding thread — handles format reading, resampling, DSP,
 //! and pushing decoded audio into the ring buffer shared with the CPAL callback.
 
+use audioadapter_buffers::direct::SequentialSliceOfVecs;
+use crossbeam::channel::Receiver;
+use ringbuf::traits::{Consumer, Observer, Producer};
+use rubato::{
+    Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+    WindowFunction,
+};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use symphonia::core::io::{MediaSource, MediaSourceStream};
-use symphonia::core::probe::Hint;
+use symphonia::core::audio::{AudioBuffer, Signal};
+use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::formats::{FormatOptions, FormatReader};
-use symphonia::core::meta::{MetadataOptions, Limit};
-use symphonia::core::codecs::{DecoderOptions, Decoder};
-use symphonia::core::audio::{Signal, AudioBuffer};
-use ringbuf::traits::{Consumer, Producer, Observer};
-use crossbeam::channel::Receiver;
-use rubato::{Async, FixedAsync, Resampler, SincInterpolationType, SincInterpolationParameters, WindowFunction};
-use audioadapter_buffers::direct::SequentialSliceOfVecs;
+use symphonia::core::io::{MediaSource, MediaSourceStream};
+use symphonia::core::meta::{Limit, MetadataOptions};
+use symphonia::core::probe::Hint;
 
 /// Umbral para usar memoria mapeada en lugar de File normal (> 10 MB)
 const MEMMAP_THRESHOLD: u64 = 10 * 1024 * 1024;
@@ -64,7 +67,11 @@ pub struct SymphoniaDecoder {
 impl SymphoniaDecoder {
     /// Crea un nuevo decodificador Symphonia sin estado interno.
     pub fn new() -> Self {
-        Self { format: None, decoder: None, track_id: 0 }
+        Self {
+            format: None,
+            decoder: None,
+            track_id: 0,
+        }
     }
 }
 
@@ -73,8 +80,7 @@ impl AudioDecoder for SymphoniaDecoder {
         use symphonia::core::io::MediaSourceStream;
         use symphonia::core::meta::Limit;
 
-        let source = open_audio_source(path)
-            .map_err(super::AudioError::IoError)?;
+        let source = open_audio_source(path).map_err(super::AudioError::IoError)?;
         let mss = MediaSourceStream::new(source, Default::default());
         let hint = symphonia::core::probe::Hint::new();
         let metadata_opts = symphonia::core::meta::MetadataOptions {
@@ -82,21 +88,33 @@ impl AudioDecoder for SymphoniaDecoder {
             limit_visual_bytes: Limit::Maximum(0),
         };
 
-        let probed = symphonia::default::get_probe().format(
-            &hint, mss, &symphonia::core::formats::FormatOptions::default(), &metadata_opts,
-        ).map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
+        let probed = symphonia::default::get_probe()
+            .format(
+                &hint,
+                mss,
+                &symphonia::core::formats::FormatOptions::default(),
+                &metadata_opts,
+            )
+            .map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
 
-        let track = probed.format.default_track()
+        let track = probed
+            .format
+            .default_track()
             .ok_or(super::AudioError::ConfigError("No default track".into()))?;
         self.track_id = track.id;
         let sr = track.codec_params.sample_rate.unwrap_or(44100);
-        let dur = track.codec_params.n_frames
+        let dur = track
+            .codec_params
+            .n_frames
             .map(|f| f as f64 / sr as f64)
             .unwrap_or(0.0);
         let ch_count = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
 
         let dec = symphonia::default::get_codecs()
-            .make(&track.codec_params, &symphonia::core::codecs::DecoderOptions::default())
+            .make(
+                &track.codec_params,
+                &symphonia::core::codecs::DecoderOptions::default(),
+            )
             .map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
 
         self.format = Some(probed.format);
@@ -113,16 +131,23 @@ impl AudioDecoder for SymphoniaDecoder {
     fn decode_next(&mut self) -> Result<Option<DecodedPacket>, super::AudioError> {
         use symphonia::core::audio::AudioBuffer;
 
-        let fmt = self.format.as_mut()
+        let fmt = self
+            .format
+            .as_mut()
             .ok_or(super::AudioError::ConfigError("No format loaded".into()))?;
-        let dec = self.decoder.as_mut()
+        let dec = self
+            .decoder
+            .as_mut()
             .ok_or(super::AudioError::ConfigError("No decoder loaded".into()))?;
 
         loop {
             let packet = match fmt.next_packet() {
                 Ok(p) => p,
                 Err(symphonia::core::errors::Error::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    return Ok(None);
+                }
                 Err(e) => {
                     tracing::warn!("Symphonia decode error: {}", e);
                     continue;
@@ -169,7 +194,8 @@ impl AudioDecoder for SymphoniaDecoder {
                     time: symphonia::core::units::Time::from(time_secs),
                     track_id: Some(self.track_id),
                 },
-            ).ok();
+            )
+            .ok();
         }
         Ok(())
     }
@@ -241,7 +267,17 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
     }
 }
 
-use crate::audio::engine::{AudioEngine, AudioCommand, ChannelMap};
+use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap};
+use std::time::Instant;
+
+// Volumen y Mezcla (Phase 03): Fade state machine (D-07-D-13)
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum FadeState {
+    Idle,
+    FadingIn { coeff: f64, step_per_frame: f64 },   // rising 0→1, equal-power
+    FadingOut { coeff: f64, step_per_frame: f64 },   // falling 1→0, equal-power
+    Smoothing { coeff: f64, target: f64, step_per_frame: f64 }, // linear 500ms
+}
 
 pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: AudioEngine) {
     let mut current_format: Option<Box<dyn FormatReader>> = None;
@@ -262,6 +298,31 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut resample_output_pool: Vec<Vec<f64>> = Vec::new();
     let mut output_accumulator: Vec<f64> = Vec::with_capacity(131072);
     let mut output_accumulator_f32: Vec<f32> = Vec::with_capacity(131072);
+
+    // === Volumen y Mezcla state (Phase 03) ===
+    let mut fade_state: FadeState = FadeState::Idle;
+    let mut previous_was_natural_eof: bool = false;
+    let mut previous_vol: f64 = 0.3; // match AudioState default
+
+    // Silence detection (D-14-D-20)
+    let mut silence_samples: usize = 0;
+    let mut in_silence: bool = false;
+    let mut effective_end_sec: Option<f64> = None;
+    let mut track_start_trimmed: bool = false;
+
+    // RMS Normalization (D-21-D-24): declared as 0.0 until Task 3's RMS loop is active.
+    // Task 3 replaces this with real RMS measurement.
+    let mut normalization_gain_db: f64 = 0.0;
+
+    // RG offset smoothing (D-29): ~100 ms EMA ramp to eliminate clicks on UI offset changes.
+    // Time constant computes as: alpha = 1 - exp(-dt / 0.100) where dt is batch duration.
+    let mut smoothed_rg_offset_album_db: f64 = 0.0;
+    let mut smoothed_rg_offset_track_db: f64 = 0.0;
+    let mut smoothed_rg_offset_rt_db: f64 = 0.0;
+
+    // Limiter auto-on/restore (D-25)
+    let mut limiter_was_enabled: Option<bool> = None; // None = not yet forced on
+    let mut normalization_previously_active: bool = false;
 
     // bumpalo arena para asignaciones temporales por ciclo.
     // Se resetea completo al inicio de cada iteración, liberando toda la memoria
@@ -333,8 +394,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     match open_audio_source(&path) {
                         Ok(source) => {
-                            let mss =
-                                MediaSourceStream::new(source, Default::default());
+                            let mss = MediaSourceStream::new(source, Default::default());
                             let hint = Hint::new();
                             let metadata_opts = MetadataOptions {
                                 limit_metadata_bytes: Limit::Maximum(0), // No cargar metadatos, ya los tenemos en la DB
@@ -475,7 +535,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         };
 
         if should_wait {
-            let sleep_ms = if crate::utils::is_low_resource() { 5 } else { 1 };
+            let sleep_ms = if crate::utils::is_low_resource() {
+                5
+            } else {
+                1
+            };
             std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             continue;
         }
@@ -509,7 +573,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         Ok(None) => true,
                         Err(_) => true,
                     }
-                } else { true }
+                } else {
+                    true
+                }
             };
             if custom_eof {
                 state.write().is_playing = false;
@@ -593,10 +659,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
                         .unwrap_or(true);
                     if needs_new_buf {
-                        audio_buf = Some(AudioBuffer::<f64>::new(
-                            decoded.capacity() as u64,
-                            spec,
-                        ));
+                        audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
                     }
 
                     if let Some(ref mut buf) = audio_buf {
@@ -653,13 +716,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     resampler = Some(r);
                                     resampler_rates =
                                         Some((spec.rate, out_rate, spec.channels.count()));
-                                    resampler_in_buf = (0..spec.channels.count())
-                                        .map(|_| {
-                                            std::collections::VecDeque::with_capacity(
-                                                if is_low { 1024 } else { 4096 }
-                                            )
-                                        })
-                                        .collect();
+                                    resampler_in_buf =
+                                        (0..spec.channels.count())
+                                            .map(|_| {
+                                                std::collections::VecDeque::with_capacity(
+                                                    if is_low { 1024 } else { 4096 },
+                                                )
+                                            })
+                                            .collect();
                                     tracing::info!(
                                         "Resampler initialized: {} -> {} ({} mode, 64-bit)",
                                         spec.rate,
@@ -706,8 +770,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         )
                     };
 
-                    if let (Some(rs), Some(ref buf)) = (resampler.as_mut(), audio_buf.as_ref())
-                    {
+                    if let (Some(rs), Some(ref buf)) = (resampler.as_mut(), audio_buf.as_ref()) {
                         let planes = buf.planes();
                         let frames = buf.frames();
                         let src_channels = spec.channels.count();
@@ -728,8 +791,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                         loop {
                             let needed = rs.input_frames_next();
-                            if resampler_in_buf.is_empty() || resampler_in_buf[0].len() < needed
-                            {
+                            if resampler_in_buf.is_empty() || resampler_in_buf[0].len() < needed {
                                 break;
                             }
 
@@ -761,16 +823,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             )
                             .unwrap();
 
-                            if let Ok(_) = rs.process_into_buffer(
-                                &input_adapter,
-                                &mut output_adapter,
-                                None,
-                            ) {
-                                tracing::trace!(
-                                    "Resampled: {} -> {} frames",
-                                    needed,
-                                    out_frames
-                                );
+                            if let Ok(_) =
+                                rs.process_into_buffer(&input_adapter, &mut output_adapter, None)
+                            {
+                                tracing::trace!("Resampled: {} -> {} frames", needed, out_frames);
                                 AudioEngine::mix_channels_planar(
                                     &resample_output_pool,
                                     out_frames,
@@ -796,54 +852,117 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     if !output_accumulator.is_empty() {
                         output_accumulator_f32.clear();
+
+                        // Single loudness gain point (D-01): sum all sources in dB,
+                        // convert to linear once, apply before DspChain.
+                        let gain_linear: f64;
+                        let vol: f64;
                         {
                             let s = state.read();
                             let mut gain_db: f64 = 0.0;
-                            if s.replay_gain_track_enabled {
-                                if let Some(tg) = s.replay_gain_track {
-                                    gain_db += tg as f64;
+
+                            // 1. ReplayGain base from tags (D-27: album + track sum)
+                            if s.rg_master_enabled {
+                                if s.replay_gain_track_enabled {
+                                    if let Some(tg) = s.replay_gain_track {
+                                        gain_db += tg as f64;
+                                    }
                                 }
-                            }
-                            if s.replay_gain_album_enabled {
-                                if let Some(ag) = s.replay_gain_album {
-                                    gain_db += ag as f64;
+                                if s.replay_gain_album_enabled {
+                                    if let Some(ag) = s.replay_gain_album {
+                                        gain_db += ag as f64;
+                                    }
+                                }
+
+                                // 2. RG offsets per source (D-26, D-29):
+                                //    Use EMA-smoothed values to avoid clicks.
+                                gain_db += smoothed_rg_offset_album_db;
+                                gain_db += smoothed_rg_offset_track_db;
+
+                                // 3. RT Analysis fallback (D-28):
+                                //    Only when no tags AND analyze enabled
+                                let has_tags =
+                                    s.replay_gain_track.is_some()
+                                        || s.replay_gain_album.is_some();
+                                if !has_tags && s.rg_analyze_rt_enabled {
+                                    gain_db += smoothed_rg_offset_rt_db;
                                 }
                             }
 
-                            let gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
-                            let vol = s.volume as f64;
+                            // 4. RMS Normalization output (shared controller per D-05)
+                            //    normalization_gain_db is computed per-batch in Task 3's RMS loop.
+                            gain_db += normalization_gain_db;
 
-                            // 1. Aplicar ReplayGain, DSP (EQ, etc.), y Volumen a `output_accumulator` en f64 nativo.
+                            // 5. Clamp to safety ceiling (+12 dB existing, D-26)
+                            gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
+                            vol = s.volume as f64;
+                        } // Release AudioState lock before DSP processing
+
+                        // D-29: ~100 ms EMA anti-click ramp for RG offsets.
+                        // alpha = 1 - exp(-dt / tau) where tau = 0.100s
+                        let batch_dt =
+                            output_accumulator.len() as f64
+                                / out_channels as f64
+                                / out_rate as f64;
+                        if batch_dt > 0.0 {
+                            let alpha = 1.0 - (-batch_dt / 0.100).exp();
+                            // Re-read target values from AudioState (brief lock).
                             {
-                                let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
-                                let out_ch = out_channels as usize;
-                                if let Some(mut dsp_lock) = engine.dsp.try_write() {
-                                    for frame in output_accumulator.chunks_mut(out_ch) {
-                                        for s in frame.iter_mut() {
-                                            *s *= gain_linear;
-                                        }
-                                        dsp_lock.process_frame(frame);
-                                        for s in frame.iter_mut() {
-                                            *s *= vol;
-                                        }
-                                    }
-                                } else {
-                                    // Si el DSP está bloqueado por la UI, aplicamos ganancia y volumen sin efectos para evitar tartamudeo (Stutter)
-                                    for frame in output_accumulator.chunks_mut(out_ch) {
-                                        for s in frame.iter_mut() {
-                                            *s *= gain_linear * vol;
-                                        }
-                                    }
-                                    tracing::debug!(
-                                        "DSP Lock busy: skipping effects to maintain real-time playback."
-                                    );
+                                let s = state.read();
+                                let diff_album = s.rg_offset_album_db as f64
+                                    - smoothed_rg_offset_album_db;
+                                let diff_track = s.rg_offset_track_db as f64
+                                    - smoothed_rg_offset_track_db;
+                                let diff_rt = s.rg_offset_rt_db as f64
+                                    - smoothed_rg_offset_rt_db;
+
+                                smoothed_rg_offset_album_db += diff_album * alpha;
+                                smoothed_rg_offset_track_db += diff_track * alpha;
+                                smoothed_rg_offset_rt_db += diff_rt * alpha;
+
+                                // NaN guard: reset to 0.0 on corrupted state.
+                                if !smoothed_rg_offset_album_db.is_finite() {
+                                    smoothed_rg_offset_album_db = 0.0;
+                                }
+                                if !smoothed_rg_offset_track_db.is_finite() {
+                                    smoothed_rg_offset_track_db = 0.0;
+                                }
+                                if !smoothed_rg_offset_rt_db.is_finite() {
+                                    smoothed_rg_offset_rt_db = 0.0;
                                 }
                             }
+                        }
 
-                            // Conversión limpia de f64 a f32 (Zero-Allocation pool)
-                            for &sample in output_accumulator.iter() {
-                                output_accumulator_f32.push(sample.clamp(-1.0, 1.0) as f32);
+                        // 1. Aplicar ReplayGain, DSP (EQ, etc.), y Volumen a `output_accumulator` en f64 nativo.
+                        {
+                            let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
+                            let out_ch = out_channels as usize;
+                            if let Some(mut dsp_lock) = engine.dsp.try_write() {
+                                for frame in output_accumulator.chunks_mut(out_ch) {
+                                    for s in frame.iter_mut() {
+                                        *s *= gain_linear;
+                                    }
+                                    dsp_lock.process_frame(frame);
+                                    for s in frame.iter_mut() {
+                                        *s *= vol;
+                                    }
+                                }
+                            } else {
+                                // Si el DSP está bloqueado por la UI, aplicamos ganancia y volumen sin efectos para evitar tartamudeo (Stutter)
+                                for frame in output_accumulator.chunks_mut(out_ch) {
+                                    for s in frame.iter_mut() {
+                                        *s *= gain_linear * vol;
+                                    }
+                                }
+                                tracing::debug!(
+                                    "DSP Lock busy: skipping effects to maintain real-time playback."
+                                );
                             }
+                        }
+
+                        // Conversión limpia de f64 a f32 (Zero-Allocation pool)
+                        for &sample in output_accumulator.iter() {
+                            output_accumulator_f32.push(sample.clamp(-1.0, 1.0) as f32);
                         }
                         if !output_accumulator_f32.is_empty() {
                             // Push al RingBuffer (lock breve por iteración)
@@ -859,8 +978,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         producer.capacity().get() - producer.occupied_len();
 
                                     let max_frames = available / out_ch_usize;
-                                    let frames_to_push =
-                                        (remaining / out_ch_usize).min(max_frames);
+                                    let frames_to_push = (remaining / out_ch_usize).min(max_frames);
 
                                     if frames_to_push > 0 {
                                         pushed = producer.push_slice(
@@ -875,8 +993,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     tracing::trace!(
                                         "Push stalled: available < out_channels. Waiting..."
                                     );
-                                    let backoff_ms = if crate::utils::is_low_resource() { 10 } else { 2 };
-                                    std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+                                    let backoff_ms = if crate::utils::is_low_resource() {
+                                        10
+                                    } else {
+                                        2
+                                    };
+                                    std::thread::sleep(std::time::Duration::from_millis(
+                                        backoff_ms,
+                                    ));
                                     if !state.read().is_playing {
                                         break;
                                     }
@@ -890,7 +1014,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             }
         } else {
             // Si el buffer está suficientemente lleno, dormimos poco para reaccionar rápido
-            let idle_ms = if crate::utils::is_low_resource() { 5 } else { 2 };
+            let idle_ms = if crate::utils::is_low_resource() {
+                5
+            } else {
+                2
+            };
             std::thread::sleep(std::time::Duration::from_millis(idle_ms));
         }
     }

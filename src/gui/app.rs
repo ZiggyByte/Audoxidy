@@ -598,6 +598,13 @@ impl AudoxidyApp {
 
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
         if let Ok(db_lock) = database_arc.lock() {
+            // Cargar volumen del player desde APP_SETTINGS (Fix B3, D-43)
+            if let Some(vol_str) = db_lock.get_setting("player_volume") {
+                if let Ok(vol) = vol_str.parse::<f32>() {
+                    audio_manager.set_volume(vol.clamp(0.0, 1.0));
+                }
+            }
+
             // EQ enable / bands_31 / preamp_gain
             let eq_enabled = db_lock
                 .get_setting("eq_enabled")
@@ -755,6 +762,98 @@ impl AudoxidyApp {
                     }
                 }
             });
+
+            // --- Phase 03: Volumen y Mezcla settings ---
+            // Load into AudioCenterManager fields AND apply to AudioState
+            if let Some(val) = db_lock.get_setting("vol_fades_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_fades_enabled = v;
+                audio_manager.state().write().fades_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_fade_in_ms") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_fade_in_ms = v as f64;
+                    audio_manager.state().write().fade_in_ms = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_fade_out_ms") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_fade_out_ms = v as f64;
+                    audio_manager.state().write().fade_out_ms = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_silence_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_silence_enabled = v;
+                audio_manager.state().write().silence_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_silence_duration_ms") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_silence_duration_ms = v as f64;
+                    audio_manager.state().write().silence_duration_ms = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_silence_threshold_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_silence_threshold_db = v as f64;
+                    audio_manager.state().write().silence_threshold_db = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_normalize_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_normalize_enabled = v;
+                audio_manager.state().write().normalize_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_normalize_target_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_normalize_target_db = v as f64;
+                    audio_manager.state().write().normalize_target_db = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_normalize_cap_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_normalize_cap_db = v as f64;
+                    audio_manager.state().write().normalize_cap_db = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_master_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_rg_master_enabled = v;
+                audio_manager.state().write().rg_master_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_track_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_rg_track_enabled = v;
+                audio_manager.state().write().replay_gain_track_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_album_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_rg_album_enabled = v;
+                audio_manager.state().write().replay_gain_album_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_analyze_rt_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_rg_analyze_rt_enabled = v;
+                audio_manager.state().write().rg_analyze_rt_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_offset_album_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_rg_offset_album_db = v as f64;
+                    audio_manager.state().write().rg_offset_album_db = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_offset_track_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_rg_offset_track_db = v as f64;
+                    audio_manager.state().write().rg_offset_track_db = v;
+                }
+            }
+            if let Some(val) = db_lock.get_setting("vol_rg_offset_rt_db") {
+                if let Ok(v) = val.parse::<f32>() {
+                    audio_center_manager.volumen_rg_offset_rt_db = v as f64;
+                    audio_manager.state().write().rg_offset_rt_db = v;
+                }
+            }
         }
 
         (

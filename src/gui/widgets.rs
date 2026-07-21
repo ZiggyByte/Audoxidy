@@ -248,20 +248,10 @@ fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
     )
 }
 
-#[derive(Debug, Clone, Default)]
-struct NumberStepperState {
-    is_hover_left: bool,
-    is_hover_right: bool,
-    is_input_editing: bool,
-    input_value_text: String,
-    input_cursor_pos: usize,
-    input_has_focus: bool,
-}
-
-/// Custom stepper widget: 64×14 px with Unicode chevrons and manual numeric input (D-32).
-/// Left/right chevrons step the value. Center zone shows formatted value + suffix;
-/// click to enter edit mode. Enter/click-outside applies the raw parsed value
-/// (never rounded to step — D-34). Escape cancels.
+/// Custom stepper widget: 84×14 px with SVG chevrons and manual numeric input (D-32).
+/// Left/right SVG chevrons step the value. Center zone shows formatted value + suffix;
+/// click to enter edit mode (raw number, no suffix). Enter/click-outside applies the
+/// raw parsed value (never rounded to step — D-34). Escape cancels.
 pub struct NumberStepper<'a, Message> {
     value: f64,
     range: std::ops::RangeInclusive<f64>,
@@ -271,7 +261,6 @@ pub struct NumberStepper<'a, Message> {
 }
 
 impl<'a, Message> NumberStepper<'a, Message> {
-    /// Create a new NumberStepper. The value is clamped to range on construction.
     pub fn new(
         value: f64,
         range: std::ops::RangeInclusive<f64>,
@@ -287,31 +276,44 @@ impl<'a, Message> NumberStepper<'a, Message> {
         }
     }
 
-    /// Set callback for focus-gating state changes (D-35).
     pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_selected_state_change = Some(Box::new(callback));
         self
     }
+}
 
-    /// Apply a new value (clamped to range) and fire the on_change callback.
-    fn commit_value(&self, v: f64, shell: &mut iced::advanced::Shell<'_, Message>) {
-        let clamped = v.clamp(*self.range.start(), *self.range.end());
-        shell.publish((self.on_change)(clamped));
-    }
+// --- Center zone widget: displays value, handles click-to-edit and keyboard input ---
+
+#[derive(Debug, Clone, Default)]
+struct NumberStepperCenterState {
+    is_input_editing: bool,
+    input_value_text: String,
+    input_cursor_pos: usize,
+    input_has_focus: bool,
+}
+
+/// Internal widget for the center zone of the NumberStepper (56px wide).
+/// Displays formatted value + suffix normally; click to edit raw number.
+struct NumberStepperCenter<'a, Message> {
+    value: f64,
+    unit: StepperUnit,
+    range: std::ops::RangeInclusive<f64>,
+    on_change: std::rc::Rc<Box<dyn Fn(f64) -> Message + 'a>>,
+    on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
 }
 
 impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
-    for NumberStepper<'a, Message>
+    for NumberStepperCenter<'a, Message>
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fixed(84.0),
+            width: Length::Fixed(56.0),
             height: Length::Fixed(14.0),
         }
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {
-        iced::advanced::widget::tree::State::new(NumberStepperState::default())
+        iced::advanced::widget::tree::State::new(NumberStepperCenterState::default())
     }
 
     fn layout(
@@ -320,7 +322,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        let size = limits.resolve(Length::Fixed(84.0), Length::Fixed(14.0), iced::Size::ZERO);
+        let size = limits.resolve(Length::Fixed(56.0), Length::Fixed(14.0), iced::Size::ZERO);
         iced::advanced::layout::Node::new(size)
     }
 
@@ -336,63 +338,18 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _viewport: &iced::Rectangle,
     ) {
         let bounds = layout.bounds();
-        let state = tree.state.downcast_mut::<NumberStepperState>();
+        let state = tree.state.downcast_mut::<NumberStepperCenterState>();
         let cursor_pos = cursor.position();
         let is_focus = cursor_pos.is_some_and(|p| bounds.contains(p));
 
-        // Update hover state for chevron zones
-        if let Some(pos) = cursor_pos {
-            let left_zone = Rectangle {
-                x: bounds.x,
-                y: bounds.y,
-                width: 14.0,
-                height: 14.0,
-            };
-            let right_zone = Rectangle {
-                x: bounds.x + 70.0,
-                y: bounds.y,
-                width: 14.0,
-                height: 14.0,
-            };
-            state.is_hover_left = left_zone.contains(pos);
-            state.is_hover_right = right_zone.contains(pos);
-        } else {
-            state.is_hover_left = false;
-            state.is_hover_right = false;
-        }
-
-        // Determine click zones
-        let center_zone = Rectangle {
-            x: bounds.x + 14.0,
-            y: bounds.y,
-            width: 56.0,
-            height: 14.0,
-        };
-        let left_zone = Rectangle {
-            x: bounds.x,
-            y: bounds.y,
-            width: 14.0,
-            height: 14.0,
-        };
-        let right_zone = Rectangle {
-            x: bounds.x + 70.0,
-            y: bounds.y,
-            width: 14.0,
-            height: 14.0,
-        };
-        let in_center = cursor_pos.is_some_and(|p| center_zone.contains(p));
-        let in_left = cursor_pos.is_some_and(|p| left_zone.contains(p));
-        let in_right = cursor_pos.is_some_and(|p| right_zone.contains(p));
-
         match event {
-            // Click outside the stepper while editing → apply and exit
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
                 if !is_focus && state.input_has_focus =>
             {
-                // Apply current input value
                 let stripped = strip_suffix(&state.input_value_text);
                 if let Ok(v) = stripped.parse::<f64>() {
-                    self.commit_value(v, shell);
+                    let clamped = v.clamp(*self.range.start(), *self.range.end());
+                    shell.publish((self.on_change)(clamped));
                 }
                 state.is_input_editing = false;
                 state.input_has_focus = false;
@@ -402,42 +359,23 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 }
             }
 
-            // Mouse button press
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
-                if in_left {
-                    // Step down
-                    let new_val = self.value - self.unit.step();
-                    self.value = new_val.clamp(*self.range.start(), *self.range.end());
-                    shell.publish((self.on_change)(self.value));
-                    state.is_input_editing = false;
-                    state.input_has_focus = false;
-                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
-                } else if in_right {
-                    // Step up
-                    let new_val = self.value + self.unit.step();
-                    self.value = new_val.clamp(*self.range.start(), *self.range.end());
-                    shell.publish((self.on_change)(self.value));
-                    state.is_input_editing = false;
-                    state.input_has_focus = false;
-                    GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
-                } else if in_center {
-                    // Enter edit mode
-                    shell.capture_event();
-                    state.input_value_text = match &self.unit {
-                        StepperUnit::Decibels => format!("{:.2}", self.value),
-                        StepperUnit::Milliseconds => format!("{:.0}", self.value),
-                    };
-                    state.input_cursor_pos = state.input_value_text.len();
-                    state.is_input_editing = true;
-                    state.input_has_focus = true;
-                    GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
-                    if let Some(ref cb) = self.on_selected_state_change {
-                        shell.publish(cb(true));
-                    }
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+                if is_focus && !state.is_input_editing =>
+            {
+                shell.capture_event();
+                state.input_value_text = match &self.unit {
+                    StepperUnit::Decibels => format!("{:.2}", self.value),
+                    StepperUnit::Milliseconds => format!("{:.0}", self.value),
+                };
+                state.input_cursor_pos = state.input_value_text.len();
+                state.is_input_editing = true;
+                state.input_has_focus = true;
+                GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
+                if let Some(ref cb) = self.on_selected_state_change {
+                    shell.publish(cb(true));
                 }
             }
 
-            // Keyboard input (when editing)
             iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
                 if state.input_has_focus && state.is_input_editing =>
             {
@@ -447,7 +385,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         let stripped = strip_suffix(&state.input_value_text);
                         if let Ok(v) = stripped.parse::<f64>() {
                             let clamped = v.clamp(*self.range.start(), *self.range.end());
-                            self.value = clamped;
                             shell.publish((self.on_change)(clamped));
                         }
                         state.is_input_editing = false;
@@ -465,18 +402,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(false));
                         }
-                    }
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowUp) => {
-                        shell.capture_event();
-                        let new_val = self.value + self.unit.step();
-                        self.value = new_val.clamp(*self.range.start(), *self.range.end());
-                        shell.publish((self.on_change)(self.value));
-                    }
-                    iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowDown) => {
-                        shell.capture_event();
-                        let new_val = self.value - self.unit.step();
-                        self.value = new_val.clamp(*self.range.start(), *self.range.end());
-                        shell.publish((self.on_change)(self.value));
                     }
                     iced::keyboard::Key::Named(iced::keyboard::key::Named::ArrowLeft) => {
                         if state.input_cursor_pos > 0 {
@@ -502,7 +427,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     iced::keyboard::Key::Character(c) => {
                         if state.input_value_text.len() < 20 {
                             let ch = c.chars().next().unwrap_or(' ');
-                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
+                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace()
+                            {
                                 state.input_value_text.insert(state.input_cursor_pos, ch);
                                 state.input_cursor_pos += 1;
                             }
@@ -511,7 +437,6 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     _ => {}
                 }
             }
-
             _ => {}
         }
     }
@@ -530,105 +455,17 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         use iced::advanced::text::Renderer as _;
 
         let bounds = layout.bounds();
-        let state = tree.state.downcast_ref::<NumberStepperState>();
+        let state = tree.state.downcast_ref::<NumberStepperCenterState>();
 
-        let font_size: f32 = 12.0;
-        let chevron_icon_size: f32 = 14.0;
-
-        // --- Left chevron zone ---
-        let left_zone = Rectangle {
-            x: bounds.x,
-            y: bounds.y,
-            width: 14.0,
-            height: 14.0,
-        };
-        // Background (hover highlight)
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
-                bounds: left_zone,
-                ..Default::default()
-            },
-            if state.is_hover_left {
-                COLOR_CONTRAST
-            } else {
-                COLOR_BG
-            },
-        );
-        // Left chevron SVG icon
-        let chevron_left_x = left_zone.x + (left_zone.width - chevron_icon_size) / 2.0;
-        let chevron_left_y = left_zone.y + (left_zone.height - chevron_icon_size) / 2.0;
-        renderer.fill_text(
-            iced::advanced::text::Text {
-                content: "\u{25C0}".to_string(),
-                bounds: iced::Size::new(chevron_icon_size, chevron_icon_size),
-                size: iced::Pixels(chevron_icon_size),
-                line_height: iced::advanced::text::LineHeight::Relative(1.0),
-                font: FONT_INTER_SANS_MEDIUM,
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center,
-                shaping: iced::advanced::text::Shaping::Basic,
-                wrapping: iced::advanced::text::Wrapping::None,
-            },
-            iced::Point::new(chevron_left_x, chevron_left_y),
-            COLOR_TEXT_PRIMARY,
-            left_zone,
-        );
-
-        // --- Right chevron zone ---
-        let right_zone = Rectangle {
-            x: bounds.x + 70.0,
-            y: bounds.y,
-            width: 14.0,
-            height: 14.0,
-        };
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad {
-                bounds: right_zone,
-                ..Default::default()
-            },
-            if state.is_hover_right {
-                COLOR_CONTRAST
-            } else {
-                COLOR_BG
-            },
-        );
-        let chevron_right_x = right_zone.x + (right_zone.width - chevron_icon_size) / 2.0;
-        let chevron_right_y = right_zone.y + (right_zone.height - chevron_icon_size) / 2.0;
-        renderer.fill_text(
-            iced::advanced::text::Text {
-                content: "\u{25B6}".to_string(),
-                bounds: iced::Size::new(chevron_icon_size, chevron_icon_size),
-                size: iced::Pixels(chevron_icon_size),
-                line_height: iced::advanced::text::LineHeight::Relative(1.0),
-                font: FONT_INTER_SANS_MEDIUM,
-                align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Center,
-                shaping: iced::advanced::text::Shaping::Basic,
-                wrapping: iced::advanced::text::Wrapping::None,
-            },
-            iced::Point::new(chevron_right_x, chevron_right_y),
-            COLOR_TEXT_PRIMARY,
-            right_zone,
-        );
-
-        // --- Center value zone ---
-        let center_zone = Rectangle {
-            x: bounds.x + 14.0,
-            y: bounds.y,
-            width: 56.0,
-            height: 14.0,
-        };
-        // Background for center zone
-        renderer.fill_quad(
-            iced::advanced::graphics::core::renderer::Quad {
-                bounds: center_zone,
+                bounds,
                 ..Default::default()
             },
             COLOR_BG,
         );
 
         let display_text = if state.is_input_editing {
-            // Show edit buffer with cursor
             let pos = state.input_cursor_pos.min(state.input_value_text.len());
             let (before, after) = state.input_value_text.split_at(pos);
             format!("{}|{}", before, after)
@@ -636,15 +473,13 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             format_stepper_value(self.value, &self.unit)
         };
 
-        // Center the text vertically in the center zone
-        let text_x = center_zone.x + center_zone.width / 2.0;
-        let text_y = center_zone.y + center_zone.height / 2.0;
-
+        let text_x = bounds.x + bounds.width / 2.0;
+        let text_y = bounds.y + bounds.height / 2.0;
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: display_text,
-                bounds: iced::Size::new(center_zone.width - 2.0, center_zone.height),
-                size: iced::Pixels(font_size),
+                bounds: iced::Size::new(bounds.width - 2.0, bounds.height),
+                size: iced::Pixels(12.0),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),
@@ -654,14 +489,106 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             },
             iced::Point::new(text_x, text_y),
             COLOR_TEXT_PRIMARY,
-            center_zone,
+            bounds,
         );
     }
 }
 
-impl<'a, Message: 'a> From<NumberStepper<'a, Message>> for Element<'a, Message> {
+// --- Composed stepper: SVG chevrons + center widget ---
+
+impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, Message> {
     fn from(stepper: NumberStepper<'a, Message>) -> Self {
-        Element::new(stepper)
+        let range_start = *stepper.range.start();
+        let range_end = *stepper.range.end();
+        let step = stepper.unit.step();
+        let on_change_rc = std::rc::Rc::new(stepper.on_change);
+        let unit = stepper.unit;
+
+        let left_icon = svg(iced::widget::svg::Handle::from_path(
+            "assets/icons/arrow-left-chevron.svg",
+        ))
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(|_theme: &Theme, _status| svg::Style {
+            color: Some(COLOR_TEXT_PRIMARY),
+        });
+
+        let right_icon = svg(iced::widget::svg::Handle::from_path(
+            "assets/icons/arrow-right-chevron.svg",
+        ))
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(|_theme: &Theme, _status| svg::Style {
+            color: Some(COLOR_TEXT_PRIMARY),
+        });
+
+        let val = stepper.value;
+        let on_change_left = {
+            let cb = on_change_rc.clone();
+            move || {
+                let new_val = (val - step).clamp(range_start, range_end);
+                cb(new_val)
+            }
+        };
+        let on_change_right = {
+            let cb = on_change_rc.clone();
+            move || {
+                let new_val = (val + step).clamp(range_start, range_end);
+                cb(new_val)
+            }
+        };
+
+        let left_btn = button(left_icon)
+            .width(Length::Fixed(14.0))
+            .height(Length::Fixed(14.0))
+            .style(|_theme: &Theme, status| {
+                let bg = if status == button::Status::Hovered || status == button::Status::Pressed
+                {
+                    COLOR_CONTRAST
+                } else {
+                    COLOR_BG
+                };
+                button::Style {
+                    background: Some(bg.into()),
+                    text_color: COLOR_TEXT_PRIMARY,
+                    ..button::Style::default()
+                }
+            })
+            .padding(0)
+            .on_press(on_change_left());
+
+        let right_btn = button(right_icon)
+            .width(Length::Fixed(14.0))
+            .height(Length::Fixed(14.0))
+            .style(|_theme: &Theme, status| {
+                let bg = if status == button::Status::Hovered || status == button::Status::Pressed
+                {
+                    COLOR_CONTRAST
+                } else {
+                    COLOR_BG
+                };
+                button::Style {
+                    background: Some(bg.into()),
+                    text_color: COLOR_TEXT_PRIMARY,
+                    ..button::Style::default()
+                }
+            })
+            .padding(0)
+            .on_press(on_change_right());
+
+        let center: Element<'a, Message> = Element::new(NumberStepperCenter {
+            value: stepper.value.clamp(range_start, range_end),
+            unit,
+            range: stepper.range,
+            on_change: on_change_rc.clone(),
+            on_selected_state_change: stepper.on_selected_state_change,
+        });
+
+        row![left_btn, center, right_btn]
+            .width(Length::Fixed(84.0))
+            .height(Length::Fixed(14.0))
+            .align_y(Alignment::Center)
+            .into()
     }
 }
 

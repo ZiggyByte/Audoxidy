@@ -4137,6 +4137,10 @@ impl AudoxidyApp {
                 let vol_percent = current_vol * 100.0;
                 let new_vol_percent = (vol_percent + direction * 5.0).clamp(0.0, 100.0);
                 self.audio_manager.set_volume(new_vol_percent / 100.0);
+                // Persist volume immediately (Fix B3, D-43)
+                if let Ok(db) = self.database.lock() {
+                    let _ = db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0));
+                }
                 self.player_ui_state.showing_volume = Some(new_vol_percent);
                 self.player_ui_state.volume_tick_id =
                     self.player_ui_state.volume_tick_id.wrapping_add(1);

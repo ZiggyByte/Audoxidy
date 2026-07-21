@@ -2,7 +2,7 @@
 // Incluye el módulo DSP directamente para acceso a types internos.
 // Ejecutar: cargo bench --bench dsp_bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 #[path = "../src/audio/dsp.rs"]
 mod dsp;
@@ -61,10 +61,7 @@ fn bench_equalizer_31band_stereo(c: &mut Criterion) {
 }
 
 fn bench_biquad_simd_vs_scalar(c: &mut Criterion) {
-    let mut filter = BiquadFilter::new(
-        BiquadFilterType::Peak,
-        1000.0, 3.0, 1.41,
-    );
+    let mut filter = BiquadFilter::new(BiquadFilterType::Peak, 1000.0, 3.0, 1.41);
 
     let mut frame_2ch = [0.5f64, -0.3f64];
     let mut frame_4ch = [0.5f64, -0.3f64, 0.1f64, -0.7f64];

@@ -244,9 +244,7 @@ mod integration_tests {
             }
             Err(_) => {
                 // Sin dispositivo de audio (CI) — esperado
-                println!(
-                    "AudioEngine::new_with_decoder failed (expected in CI without audio)"
-                );
+                println!("AudioEngine::new_with_decoder failed (expected in CI without audio)");
             }
         }
     }

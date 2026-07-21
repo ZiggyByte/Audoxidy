@@ -589,7 +589,11 @@ impl LibraryManager {
         let view_max = view_min + viewport_h;
 
         // D-04: Margen dinámico = 50% del viewport (25% en low-resource)
-        let viewport_margin_ratio: f32 = if crate::utils::is_low_resource() { 0.25 } else { 0.5 };
+        let viewport_margin_ratio: f32 = if crate::utils::is_low_resource() {
+            0.25
+        } else {
+            0.5
+        };
         let margin = (viewport_h * viewport_margin_ratio).max(50.0);
         let render_min = view_min - margin;
         let render_max = view_max + margin;
@@ -843,7 +847,11 @@ impl LibraryManager {
         }
 
         // D-04: Margen dinámico en grid = 50% del viewport (25% en low-resource)
-        let grid_margin_ratio: f32 = if crate::utils::is_low_resource() { 0.25 } else { 0.5 };
+        let grid_margin_ratio: f32 = if crate::utils::is_low_resource() {
+            0.25
+        } else {
+            0.5
+        };
         let lazy_margin = (viewport_h * grid_margin_ratio).max(100.0);
         let render_min = viewport_y - lazy_margin;
         let render_max = viewport_y + viewport_h + lazy_margin;

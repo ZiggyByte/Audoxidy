@@ -38,7 +38,11 @@ pub struct CoverCache {
 /// - Normal: 64 (estándar, suficiente para pantallas grandes)
 /// - Low-resource: 16 (evicción agresiva para ahorrar RAM)
 fn get_max_covers() -> usize {
-    if crate::utils::is_low_resource() { 16 } else { 64 }
+    if crate::utils::is_low_resource() {
+        16
+    } else {
+        64
+    }
 }
 
 pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
@@ -154,7 +158,11 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
         ));
     }
 
-    let target_size = if crate::utils::is_low_resource() { 200 } else { 400 };
+    let target_size = if crate::utils::is_low_resource() {
+        200
+    } else {
+        400
+    };
 
     let src_image = Image::from_vec_u8(
         width,

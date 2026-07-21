@@ -2474,7 +2474,7 @@ impl Database {
                 preamp_gain REAL NOT NULL DEFAULT 0.0,
                 bands_20 BLOB,
                 bands_31 BLOB
-            );"
+            );",
         )?;
         Ok(())
     }
@@ -2500,17 +2500,19 @@ impl Database {
         let mut stmt = self.conn.prepare(
             "SELECT name, preamp_gain, bands_20, bands_31 FROM eq_presets ORDER BY name COLLATE NOCASE"
         )?;
-        let presets = stmt.query_map([], |row| {
-            let name: String = row.get(0)?;
-            let preamp_gain: f32 = row.get(1)?;
-            let bands_20_blob: Option<Vec<u8>> = row.get(2)?;
-            let bands_31_blob: Option<Vec<u8>> = row.get(3)?;
+        let presets = stmt
+            .query_map([], |row| {
+                let name: String = row.get(0)?;
+                let preamp_gain: f32 = row.get(1)?;
+                let bands_20_blob: Option<Vec<u8>> = row.get(2)?;
+                let bands_31_blob: Option<Vec<u8>> = row.get(3)?;
 
-            let bands_20 = deserialize_f32_blob(bands_20_blob);
-            let bands_31 = deserialize_f32_blob(bands_31_blob);
+                let bands_20 = deserialize_f32_blob(bands_20_blob);
+                let bands_31 = deserialize_f32_blob(bands_31_blob);
 
-            Ok(EqPreset::new(&name, preamp_gain, bands_20, bands_31))
-        })?.collect::<Result<Vec<_>, _>>()?;
+                Ok(EqPreset::new(&name, preamp_gain, bands_20, bands_31))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(presets)
     }
 
@@ -2563,12 +2565,7 @@ mod eq_preset_tests {
     #[test]
     fn test_save_and_load_eq_presets() {
         let db = Database::new_memory().unwrap();
-        let preset = EqPreset::new(
-            "Test Preset",
-            2.5,
-            Some(vec![1.0; 20]),
-            Some(vec![2.0; 31]),
-        );
+        let preset = EqPreset::new("Test Preset", 2.5, Some(vec![1.0; 20]), Some(vec![2.0; 31]));
         db.save_eq_preset(&preset).unwrap();
 
         let loaded = db.load_eq_presets().unwrap();

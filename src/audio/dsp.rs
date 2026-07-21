@@ -166,7 +166,6 @@ impl DspChain {
         self.noise_gate.reset_state();
         self.limiter.reset_state();
     }
-
 }
 
 /// Ecualizador paramétrico de múltiples bandas (20 o 31 bandas).
@@ -339,7 +338,11 @@ impl Equalizer {
             }
         }
         // Update active bands according to current mode (D-10: don't change mode)
-        let active_gains = if self.bands.len() == 20 { bands_20 } else { bands_31 };
+        let active_gains = if self.bands.len() == 20 {
+            bands_20
+        } else {
+            bands_31
+        };
         for (i, &gain) in active_gains.iter().enumerate() {
             if i < self.bands.len() {
                 self.bands[i].set_gain(gain);
@@ -551,13 +554,27 @@ impl EqBand {
                 );
                 let arr = out.to_array();
 
-                frame[i] = arr[0]; frame[i + 1] = arr[1];
-                frame[i + 2] = arr[2]; frame[i + 3] = arr[3];
+                frame[i] = arr[0];
+                frame[i + 1] = arr[1];
+                frame[i + 2] = arr[2];
+                frame[i + 3] = arr[3];
 
-                s0.x2 = s0.x1; s0.x1 = frame[i]; s0.y2 = s0.y1; s0.y1 = frame[i];
-                s1.x2 = s1.x1; s1.x1 = frame[i + 1]; s1.y2 = s1.y1; s1.y1 = frame[i + 1];
-                s2.x2 = s2.x1; s2.x1 = frame[i + 2]; s2.y2 = s2.y1; s2.y1 = frame[i + 2];
-                s3.x2 = s3.x1; s3.x1 = frame[i + 3]; s3.y2 = s3.y1; s3.y1 = frame[i + 3];
+                s0.x2 = s0.x1;
+                s0.x1 = frame[i];
+                s0.y2 = s0.y1;
+                s0.y1 = frame[i];
+                s1.x2 = s1.x1;
+                s1.x1 = frame[i + 1];
+                s1.y2 = s1.y1;
+                s1.y1 = frame[i + 1];
+                s2.x2 = s2.x1;
+                s2.x1 = frame[i + 2];
+                s2.y2 = s2.y1;
+                s2.y1 = frame[i + 2];
+                s3.x2 = s3.x1;
+                s3.x1 = frame[i + 3];
+                s3.y2 = s3.y1;
+                s3.y1 = frame[i + 3];
 
                 i += 4;
             }
@@ -567,7 +584,10 @@ impl EqBand {
                 let x = frame[i];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
                 frame[i] = if y.abs() < 1e-20 { 0.0 } else { y };
-                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[i];
+                s.x2 = s.x1;
+                s.x1 = x;
+                s.y2 = s.y1;
+                s.y1 = frame[i];
                 i += 1;
             }
         }
@@ -579,7 +599,10 @@ impl EqBand {
                 let x = frame[ch];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
                 frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
-                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[ch];
+                s.x2 = s.x1;
+                s.x1 = x;
+                s.y2 = s.y1;
+                s.y1 = frame[ch];
             }
         }
     }
@@ -645,14 +668,12 @@ impl AllPassFilter {
 
 /// Prime-power delay lengths for FDN (16 lines, L channel).
 const FDN_DELAY_LENGTHS_L: [usize; 16] = [
-    2048, 729, 625, 343, 1331, 2197, 289, 361,
-    529, 841, 961, 1369, 1681, 1849, 2209, 2809,
+    2048, 729, 625, 343, 1331, 2197, 289, 361, 529, 841, 961, 1369, 1681, 1849, 2209, 2809,
 ];
 
 /// Prime-power delay lengths for FDN (R channel, different exponents for decorrelation).
 const FDN_DELAY_LENGTHS_R: [usize; 16] = [
-    4096, 2187, 1250, 343, 2662, 2197, 578, 361,
-    1058, 841, 1922, 1369, 1681, 3698, 2209, 2809,
+    4096, 2187, 1250, 343, 2662, 2197, 578, 361, 1058, 841, 1922, 1369, 1681, 3698, 2209, 2809,
 ];
 
 /// Construye la matriz de Hadamard 16×16 normalizada (entradas ±0.25).
@@ -924,8 +945,8 @@ pub struct Compressor {
     pub intensity_ratio: f32,
     intensity_attack: f32,
     intensity_release: f32,
-    knee_width: f32,    // dB
-    makeup_gain: f32,   // linear
+    knee_width: f32,  // dB
+    makeup_gain: f32, // linear
 
     // Internal state
     pub envelope: f64,
@@ -969,7 +990,9 @@ impl Compressor {
     }
 
     /// Configura los parámetros del compresor (deprecated — usar `intensity`).
-    #[deprecated(note = "Use `intensity` field instead. Ratio/attack/release params are now derived from intensity.")]
+    #[deprecated(
+        note = "Use `intensity` field instead. Ratio/attack/release params are now derived from intensity."
+    )]
     pub fn set_params(&mut self, threshold: f32, _ratio: f32, _attack: f32, _release: f32) {
         self.threshold = threshold;
         self.intensity = 0.5;
@@ -1087,7 +1110,11 @@ impl Compressor {
                 .filter(|s| s.is_finite())
                 .map(|s| s * s)
                 .sum();
-            if total_samples > 0 { sum_sq / total_samples as f64 } else { 0.0 }
+            if total_samples > 0 {
+                sum_sq / total_samples as f64
+            } else {
+                0.0
+            }
         } else {
             0.0
         };
@@ -1368,13 +1395,27 @@ impl BiquadFilter {
                     out.abs().cmp_lt(wide::f64x4::splat(1e-20)),
                 );
                 let arr = out.to_array();
-                frame[i] = arr[0]; frame[i + 1] = arr[1];
-                frame[i + 2] = arr[2]; frame[i + 3] = arr[3];
+                frame[i] = arr[0];
+                frame[i + 1] = arr[1];
+                frame[i + 2] = arr[2];
+                frame[i + 3] = arr[3];
 
-                s0.x2 = s0.x1; s0.x1 = frame[i]; s0.y2 = s0.y1; s0.y1 = frame[i];
-                s1.x2 = s1.x1; s1.x1 = frame[i + 1]; s1.y2 = s1.y1; s1.y1 = frame[i + 1];
-                s2.x2 = s2.x1; s2.x1 = frame[i + 2]; s2.y2 = s2.y1; s2.y1 = frame[i + 2];
-                s3.x2 = s3.x1; s3.x1 = frame[i + 3]; s3.y2 = s3.y1; s3.y1 = frame[i + 3];
+                s0.x2 = s0.x1;
+                s0.x1 = frame[i];
+                s0.y2 = s0.y1;
+                s0.y1 = frame[i];
+                s1.x2 = s1.x1;
+                s1.x1 = frame[i + 1];
+                s1.y2 = s1.y1;
+                s1.y1 = frame[i + 1];
+                s2.x2 = s2.x1;
+                s2.x1 = frame[i + 2];
+                s2.y2 = s2.y1;
+                s2.y1 = frame[i + 2];
+                s3.x2 = s3.x1;
+                s3.x1 = frame[i + 3];
+                s3.y2 = s3.y1;
+                s3.y1 = frame[i + 3];
 
                 i += 4;
             }
@@ -1383,7 +1424,10 @@ impl BiquadFilter {
                 let x = frame[i];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
                 frame[i] = if y.abs() < 1e-20 { 0.0 } else { y };
-                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[i];
+                s.x2 = s.x1;
+                s.x1 = x;
+                s.y2 = s.y1;
+                s.y1 = frame[i];
                 i += 1;
             }
         }
@@ -1395,7 +1439,10 @@ impl BiquadFilter {
                 let x = frame[ch];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
                 frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
-                s.x2 = s.x1; s.x1 = x; s.y2 = s.y1; s.y1 = frame[ch];
+                s.x2 = s.x1;
+                s.x1 = x;
+                s.y2 = s.y1;
+                s.y1 = frame[ch];
             }
         }
     }
@@ -1913,10 +1960,9 @@ impl NoiseGate {
 }
 /// FIR half-band 32-tap coefficients for 4x oversampling (Kaiser window β=6).
 const FIR_HALFBAND_COEFFS: [f64; 32] = [
-    0.0, -0.0013, 0.0, 0.0034, 0.0, -0.0076, 0.0, 0.0147,
-    0.0, -0.0264, 0.0, 0.0457, 0.0, -0.0807, 0.0, 0.1589,
-    0.5, 0.1589, 0.0, -0.0807, 0.0, 0.0457, 0.0, -0.0264,
-    0.0, 0.0147, 0.0, -0.0076, 0.0, 0.0034, 0.0, -0.0013,
+    0.0, -0.0013, 0.0, 0.0034, 0.0, -0.0076, 0.0, 0.0147, 0.0, -0.0264, 0.0, 0.0457, 0.0, -0.0807,
+    0.0, 0.1589, 0.5, 0.1589, 0.0, -0.0807, 0.0, 0.0457, 0.0, -0.0264, 0.0, 0.0147, 0.0, -0.0076,
+    0.0, 0.0034, 0.0, -0.0013,
 ];
 
 /// Limitador premium con lookahead 2ms, oversampling 4x y release adaptativo.
@@ -2027,7 +2073,11 @@ impl Limiter {
             .unwrap_or(0.0);
 
         // RMS of original frame for crest factor
-        let rms_sq = oldest.iter().filter(|s| s.is_finite()).map(|s| s * s).sum::<f64>()
+        let rms_sq = oldest
+            .iter()
+            .filter(|s| s.is_finite())
+            .map(|s| s * s)
+            .sum::<f64>()
             / oldest.len().max(1) as f64;
         let rms = rms_sq.sqrt().max(1e-10);
 
@@ -2045,14 +2095,12 @@ impl Limiter {
             .max_by(|a, b| a.partial_cmp(b).unwrap())
             .unwrap_or(0.0);
 
-        let release_coeff =
-            (-1.0_f64 / (release_secs * (self.sample_rate as f64))).exp();
+        let release_coeff = (-1.0_f64 / (release_secs * (self.sample_rate as f64))).exp();
 
         if max_abs > self.envelope {
             self.envelope = max_abs;
         } else {
-            self.envelope =
-                release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
+            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
         }
 
         let ceiling_lin = 10.0_f64.powf((self.ceiling as f64) / 20.0);

@@ -12,28 +12,46 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 /// - Otros: 10ms (conservador)
 fn platform_base_latency_ms() -> f64 {
     #[cfg(all(target_os = "linux", feature = "pipewire"))]
-    { 5.0 }
+    {
+        5.0
+    }
     #[cfg(all(target_os = "linux", not(feature = "pipewire")))]
-    { 10.0 }
+    {
+        10.0
+    }
     #[cfg(target_os = "windows")]
-    { 5.0 }
+    {
+        5.0
+    }
     #[cfg(target_os = "macos")]
-    { 5.0 }
+    {
+        5.0
+    }
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    { 10.0 }
+    {
+        10.0
+    }
 }
 
 /// Devuelve el tamaño de buffer mínimo (en frames) recomendado para la plataforma.
 /// Valores más bajos = menor latencia pero más riesgo de underruns.
 fn platform_min_buffer_frames() -> u32 {
     #[cfg(target_os = "linux")]
-    { 64 }   // PipeWire/ALSA pueden manejar 64 frames
+    {
+        64
+    } // PipeWire/ALSA pueden manejar 64 frames
     #[cfg(target_os = "windows")]
-    { 96 }   // WASAPI exclusivo soporta 96
+    {
+        96
+    } // WASAPI exclusivo soporta 96
     #[cfg(target_os = "macos")]
-    { 64 }   // Core Audio muy estable a 64
+    {
+        64
+    } // Core Audio muy estable a 64
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    { 128 }  // Default conservador
+    {
+        128
+    } // Default conservador
 }
 
 // --- Device-related types extracted from engine.rs ---
@@ -108,7 +126,13 @@ impl AudioDeviceManager {
     }
 
     /// Establece la salida de audio activa con el host, dispositivo y formato dados.
-    pub fn set_output(&self, host: cpal::Host, device: cpal::Device, config: cpal::StreamConfig, fmt: cpal::SampleFormat) {
+    pub fn set_output(
+        &self,
+        host: cpal::Host,
+        device: cpal::Device,
+        config: cpal::StreamConfig,
+        fmt: cpal::SampleFormat,
+    ) {
         let mut out = self.output.write();
         *out = Some(AudioOutput {
             host,
@@ -120,8 +144,18 @@ impl AudioDeviceManager {
     }
 
     /// Extrae y retorna la salida activa actual (host, dispositivo, configuración, formato).
-    pub fn take_output(&self) -> Option<(cpal::Host, cpal::Device, cpal::StreamConfig, cpal::SampleFormat)> {
-        self.output.write().take().map(|o| (o.host, o.device, o.stream_config, o.sample_format))
+    pub fn take_output(
+        &self,
+    ) -> Option<(
+        cpal::Host,
+        cpal::Device,
+        cpal::StreamConfig,
+        cpal::SampleFormat,
+    )> {
+        self.output
+            .write()
+            .take()
+            .map(|o| (o.host, o.device, o.stream_config, o.sample_format))
     }
 
     /// Devuelve la configuración del stream activo, si existe.
@@ -141,13 +175,27 @@ impl AudioDeviceManager {
 
     /// Verifica si hay un stream de audio activo.
     pub fn has_stream(&self) -> bool {
-        self.output.read().as_ref().and_then(|o| o.stream.as_ref()).is_some()
+        self.output
+            .read()
+            .as_ref()
+            .and_then(|o| o.stream.as_ref())
+            .is_some()
     }
 
     /// Inicializa la salida de audio por defecto del sistema.
     ///
     /// Usa el host y dispositivo predeterminados de CPAL.
-    pub fn init_default_output(&self) -> Result<(cpal::Host, cpal::Device, cpal::StreamConfig, cpal::SampleFormat), AudioError> {
+    pub fn init_default_output(
+        &self,
+    ) -> Result<
+        (
+            cpal::Host,
+            cpal::Device,
+            cpal::StreamConfig,
+            cpal::SampleFormat,
+        ),
+        AudioError,
+    > {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
         let config = device
@@ -160,12 +208,10 @@ impl AudioDeviceManager {
 
         // Intentar con defaults, fallback a config del dispositivo
         let sample_format = config.sample_format();
-        if self.configure_output(
-            host,
-            device.clone(),
-            stream_config.clone(),
-            sample_format,
-        ).is_err() {
+        if self
+            .configure_output(host, device.clone(), stream_config.clone(), sample_format)
+            .is_err()
+        {
             let host_fallback = cpal::default_host();
             let fmt = config.sample_format();
             let def_conf: cpal::StreamConfig = config.into();
@@ -197,12 +243,13 @@ impl AudioDeviceManager {
     /// Inicia el stream de audio usando un closure que construye el stream CPAL.
     ///
     /// Si ya hay un stream activo, no hace nada.
-    pub fn start_stream<F>(
-        &self,
-        build_stream: F,
-    ) -> Result<(), AudioError>
+    pub fn start_stream<F>(&self, build_stream: F) -> Result<(), AudioError>
     where
-        F: FnOnce(&cpal::Device, &cpal::StreamConfig, cpal::SampleFormat) -> Result<cpal::Stream, AudioError>,
+        F: FnOnce(
+            &cpal::Device,
+            &cpal::StreamConfig,
+            cpal::SampleFormat,
+        ) -> Result<cpal::Stream, AudioError>,
     {
         let mut out_lock = self.output.write();
         if let Some(output) = out_lock.as_mut() {
@@ -210,7 +257,9 @@ impl AudioDeviceManager {
                 return Ok(());
             }
             let stream = build_stream(&output.device, &output.stream_config, output.sample_format)?;
-            stream.play().map_err(|e| AudioError::StreamError(e.to_string()))?;
+            stream
+                .play()
+                .map_err(|e| AudioError::StreamError(e.to_string()))?;
             output.stream = Some(stream);
         }
         Ok(())
@@ -234,7 +283,11 @@ impl AudioDeviceManager {
 
     /// Devuelve la lista de dispositivos de salida del host activo.
     pub fn get_devices(&self) -> Vec<AudioDeviceInfo> {
-        let host_name = self.output.read().as_ref().map(|o| o.host.id().name())
+        let host_name = self
+            .output
+            .read()
+            .as_ref()
+            .map(|o| o.host.id().name())
             .unwrap_or_else(|| cpal::default_host().id().name());
 
         let host_id = cpal::available_hosts()
@@ -252,7 +305,10 @@ impl AudioDeviceManager {
                         .supported_output_configs()
                         .map(|c| c.collect())
                         .unwrap_or_default();
-                    AudioDeviceInfo { name, supported_configs }
+                    AudioDeviceInfo {
+                        name,
+                        supported_configs,
+                    }
                 })
                 .collect()
         } else {
@@ -266,7 +322,15 @@ impl AudioDeviceManager {
         &self,
         settings: &AudioSettings,
         _current_out_rate: u32,
-    ) -> Result<(cpal::Host, cpal::Device, cpal::StreamConfig, cpal::SampleFormat), AudioError> {
+    ) -> Result<
+        (
+            cpal::Host,
+            cpal::Device,
+            cpal::StreamConfig,
+            cpal::SampleFormat,
+        ),
+        AudioError,
+    > {
         let target_host_id = if let Some(ref name) = settings.host_id {
             cpal::available_hosts()
                 .into_iter()
@@ -323,11 +387,26 @@ impl AudioDeviceManager {
         let best = supported_configs
             .iter()
             .fold(None, |best, current| {
-                let channel_score = if current.channels() == req_channels { 100 }
-                    else if current.channels() > req_channels { 50 } else { 0 };
+                let channel_score = if current.channels() == req_channels {
+                    100
+                } else if current.channels() > req_channels {
+                    50
+                } else {
+                    0
+                };
                 let rate_score = req_rate.map_or(
-                    if (current.min_sample_rate()..=current.max_sample_rate()).contains(&44100) { 10 } else { 0 },
-                    |r| if r >= current.min_sample_rate() && r <= current.max_sample_rate() { 100 } else { 0 },
+                    if (current.min_sample_rate()..=current.max_sample_rate()).contains(&44100) {
+                        10
+                    } else {
+                        0
+                    },
+                    |r| {
+                        if r >= current.min_sample_rate() && r <= current.max_sample_rate() {
+                            100
+                        } else {
+                            0
+                        }
+                    },
                 );
                 let total = channel_score + rate_score;
                 match best {
@@ -342,9 +421,13 @@ impl AudioDeviceManager {
         let target_rate = req_rate.unwrap_or_else(|| {
             let min = best.min_sample_rate();
             let max = best.max_sample_rate();
-            if min <= 44100 && max >= 44100 { 44100 }
-            else if min <= 48000 && max >= 48000 { 48000 }
-            else { max }
+            if min <= 44100 && max >= 44100 {
+                44100
+            } else if min <= 48000 && max >= 48000 {
+                48000
+            } else {
+                max
+            }
         });
 
         let config = best.with_sample_rate(target_rate);
@@ -359,16 +442,27 @@ impl AudioDeviceManager {
             let calculated = (target_rate as f64 * base_latency_ms / 1000.0) as u32;
             let quantum = calculated.max(min_frames);
             // Redondear al quantum estándar más cercano
-            let quantum = if quantum <= 64 { 64 }
-                else if quantum <= 96 { 96 }
-                else if quantum <= 128 { 128 }
-                else if quantum <= 192 { 192 }
-                else if quantum <= 256 { 256 }
-                else if quantum <= 512 { 512 }
-                else if quantum <= 1024 { 1024 }
-                else if quantum <= 2048 { 2048 }
-                else if quantum <= 4096 { 4096 }
-                else { 8192 };
+            let quantum = if quantum <= 64 {
+                64
+            } else if quantum <= 96 {
+                96
+            } else if quantum <= 128 {
+                128
+            } else if quantum <= 192 {
+                192
+            } else if quantum <= 256 {
+                256
+            } else if quantum <= 512 {
+                512
+            } else if quantum <= 1024 {
+                1024
+            } else if quantum <= 2048 {
+                2048
+            } else if quantum <= 4096 {
+                4096
+            } else {
+                8192
+            };
             stream_config.buffer_size = cpal::BufferSize::Fixed(quantum);
         }
 

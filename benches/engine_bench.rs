@@ -1,7 +1,7 @@
 // Benchmark del motor de audio — mix_channels_planar, ChannelMap, state ops.
 // Ejecutar: cargo bench --bench engine_bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 #[path = "../src/audio/engine.rs"]
 mod engine;
@@ -12,10 +12,7 @@ fn bench_mix_channels_planar_stereo(c: &mut Criterion) {
     let frames = 512;
     let in_ch = 2;
     let out_ch = 2;
-    let input = vec![
-        vec![1.0f64; frames],
-        vec![0.5f64; frames],
-    ];
+    let input = vec![vec![1.0f64; frames], vec![0.5f64; frames]];
     let map = ChannelMap {
         fl: Some(0),
         fr: Some(1),
@@ -43,12 +40,20 @@ fn bench_mix_channels_planar_51_to_stereo(c: &mut Criterion) {
     let in_ch = 6;
     let out_ch = 2;
     let input = vec![
-        vec![1.0f64; frames], vec![0.8f64; frames], vec![0.5f64; frames],
-        vec![0.3f64; frames], vec![0.2f64; frames], vec![0.2f64; frames],
+        vec![1.0f64; frames],
+        vec![0.8f64; frames],
+        vec![0.5f64; frames],
+        vec![0.3f64; frames],
+        vec![0.2f64; frames],
+        vec![0.2f64; frames],
     ];
     let map = ChannelMap {
-        fl: Some(0), fr: Some(1), c: Some(2), lfe: Some(3),
-        sl: Some(4), sr: Some(5),
+        fl: Some(0),
+        fr: Some(1),
+        c: Some(2),
+        lfe: Some(3),
+        sl: Some(4),
+        sr: Some(5),
         ..Default::default()
     };
 
@@ -75,11 +80,20 @@ fn bench_channel_map_construction(c: &mut Criterion) {
     let configs = [
         Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
         Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE | Channels::LFE1,
-        Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE
-            | Channels::LFE1 | Channels::REAR_LEFT | Channels::REAR_RIGHT,
-        Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE
-            | Channels::LFE1 | Channels::REAR_LEFT | Channels::REAR_RIGHT
-            | Channels::SIDE_LEFT | Channels::SIDE_RIGHT,
+        Channels::FRONT_LEFT
+            | Channels::FRONT_RIGHT
+            | Channels::FRONT_CENTRE
+            | Channels::LFE1
+            | Channels::REAR_LEFT
+            | Channels::REAR_RIGHT,
+        Channels::FRONT_LEFT
+            | Channels::FRONT_RIGHT
+            | Channels::FRONT_CENTRE
+            | Channels::LFE1
+            | Channels::REAR_LEFT
+            | Channels::REAR_RIGHT
+            | Channels::SIDE_LEFT
+            | Channels::SIDE_RIGHT,
     ];
 
     c.bench_function("channel_map_construction_4configs", |b| {

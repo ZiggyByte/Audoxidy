@@ -194,10 +194,8 @@ impl AudioManager {
     pub fn apply_eq_preset(&self, preset: &EqPreset) {
         let mut dsp = self.engine.dsp.write();
         dsp.set_preamp_db(preset.preamp_gain);
-        dsp.equalizer.apply_preset_gains(
-            &preset.get_gains_20(),
-            &preset.get_gains_31(),
-        );
+        dsp.equalizer
+            .apply_preset_gains(&preset.get_gains_20(), &preset.get_gains_31());
     }
 
     /// Aplica ganancias de bandas de EQ directamente a ambos sets (20 y 31 bandas)

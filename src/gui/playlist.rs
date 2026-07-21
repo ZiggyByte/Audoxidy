@@ -8,8 +8,8 @@ use iced::{
     Alignment, Background, Color, Element, Length, Padding, Theme,
     widget::{Space, button, column, container, mouse_area, row, svg, text},
 };
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // Contadores de redraw para diagnóstico
 static PLAYLIST_VIEW_REDRAWS: AtomicU64 = AtomicU64::new(0);
@@ -1139,7 +1139,11 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let view_max = view_min + viewport.height;
 
     // Margen de renderizado reducido para menos redraws
-    let margin = if crate::utils::is_low_resource() { 50.0 } else { 150.0 };
+    let margin = if crate::utils::is_low_resource() {
+        50.0
+    } else {
+        150.0
+    };
     let render_min = (view_min - margin).max(0.0);
     let render_max = view_max + margin;
 

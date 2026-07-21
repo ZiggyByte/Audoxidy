@@ -1,7 +1,7 @@
 // Benchmark de utilidades — formatting, interner, covers.
 // Ejecutar: cargo bench --bench utils_bench
 
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 #[path = "../src/utils/mod.rs"]
 mod utils;
@@ -9,7 +9,8 @@ mod utils;
 use utils::*;
 
 fn bench_truncate_text(c: &mut Criterion) {
-    let long = "Una canción con un título extremadamente largo que debería ser truncado correctamente";
+    let long =
+        "Una canción con un título extremadamente largo que debería ser truncado correctamente";
 
     c.bench_function("truncate_text_long", |b| {
         b.iter(|| {

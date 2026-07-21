@@ -242,30 +242,53 @@ pub fn validate_config(config: &AppConfig) -> ConfigValidation {
     // Validar sample rate
     if let Some(sr) = config.audio.sample_rate {
         if sr < 8000 || sr > 768000 {
-            errors.push(format!("Sample rate {} Hz fuera de rango (8000-768000)", sr));
-        } else if ![8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000, 705600, 768000].contains(&sr) {
-            warnings.push(format!("Sample rate {} Hz no es estándar, puede no ser soportado", sr));
+            errors.push(format!(
+                "Sample rate {} Hz fuera de rango (8000-768000)",
+                sr
+            ));
+        } else if ![
+            8000, 11025, 16000, 22050, 44100, 48000, 88200, 96000, 176400, 192000, 352800, 384000,
+            705600, 768000,
+        ]
+        .contains(&sr)
+        {
+            warnings.push(format!(
+                "Sample rate {} Hz no es estándar, puede no ser soportado",
+                sr
+            ));
         }
     }
 
     // Validar buffer size
     if let Some(bs) = config.audio.buffer_size {
         if bs < 16 {
-            errors.push(format!("Buffer size {} es demasiado pequeño (mínimo 16)", bs));
+            errors.push(format!(
+                "Buffer size {} es demasiado pequeño (mínimo 16)",
+                bs
+            ));
         } else if bs > 16384 {
-            warnings.push(format!("Buffer size {} es muy grande, puede aumentar latencia", bs));
+            warnings.push(format!(
+                "Buffer size {} es muy grande, puede aumentar latencia",
+                bs
+            ));
         }
     }
 
     // Validar safety buffer
     if config.audio.safety_buffer_secs < 0.1 {
-        errors.push(format!("Safety buffer {:.1}s es demasiado pequeño (mínimo 0.1s)", config.audio.safety_buffer_secs));
+        errors.push(format!(
+            "Safety buffer {:.1}s es demasiado pequeño (mínimo 0.1s)",
+            config.audio.safety_buffer_secs
+        ));
     }
 
     // Validar logging
     match config.logging.level.as_str() {
         "trace" | "debug" | "info" | "warn" | "error" => {}
-        other => warnings.push(format!("Nivel de log '{}' no es estándar, usando info", other)),
+        other => warnings.push(format!(
+            "Nivel de log '{}' no es estándar, usando info",
+            other
+        )),
     }
 
     if config.logging.max_file_size_mb == 0 {
@@ -323,7 +346,10 @@ pub fn load_config() -> AppConfig {
             }
         }
     } else {
-        tracing::info!("No hay archivo de configuración. Creando {} con valores por defecto.", path.display());
+        tracing::info!(
+            "No hay archivo de configuración. Creando {} con valores por defecto.",
+            path.display()
+        );
         let config = AppConfig::default();
         let _ = save_config(&config);
         config

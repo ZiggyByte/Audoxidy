@@ -320,27 +320,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut effective_end_sec: Option<f64> = None;
     let mut track_start_trimmed: bool = false;
 
-    // RMS Normalization (D-21-D-24): declared as 0.0 until Task 3's RMS loop is active.
-    // Task 3 replaces this with real RMS measurement.
-    let rms_window_capacity = {
-        // ~400ms window at device sample rate (computed once per decode loop start)
-        let s = state.read();
-        (0.4 * s.device_sample_rate as f64) as usize
-    };
-    let mut rms_window: std::collections::VecDeque<f64> =
-        std::collections::VecDeque::with_capacity(rms_window_capacity.max(1));
-    let mut rms_sum_sq: f64 = 0.0;
-    let mut normalization_gain_db: f64 = 0.0;
-
     // RG offset smoothing (D-29): ~100 ms EMA ramp to eliminate clicks on UI offset changes.
     // Time constant computes as: alpha = 1 - exp(-dt / 0.100) where dt is batch duration.
     let mut smoothed_rg_offset_album_db: f64 = 0.0;
     let mut smoothed_rg_offset_track_db: f64 = 0.0;
     let mut smoothed_rg_offset_rt_db: f64 = 0.0;
-
-    // Limiter auto-on/restore (D-25)
-    let mut limiter_was_enabled: Option<bool> = None; // None = not yet forced on
-    let mut normalization_previously_active: bool = false;
 
     // bumpalo arena para asignaciones temporales por ciclo.
     // Se resetea completo al inicio de cada iteración, liberando toda la memoria
@@ -910,81 +894,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     if !output_accumulator.is_empty() {
                         output_accumulator_f32.clear();
 
-                        // ============================================================
-                        // RMS Normalization measurement (D-21-D-24):
-                        // ~400ms sliding RMS window, attack 3000ms / release 1000ms.
-                        // Measures the CURRENT batch before gain so it feeds NEXT gain.
-                        // ============================================================
-                        {
-                            let s = state.read();
-                            if s.normalize_enabled {
-                                // Per-frame RMS² accumulation on output_accumulator
-                                let out_ch = out_channels as usize;
-                                for frame in output_accumulator.chunks(out_ch) {
-                                    let frame_power: f64 =
-                                        frame.iter().map(|samp| samp * samp).sum::<f64>()
-                                            / out_ch as f64;
-                                    if rms_window.len() >= rms_window_capacity.max(1) {
-                                        if let Some(old) = rms_window.pop_front() {
-                                            rms_sum_sq -= old;
-                                        }
-                                    }
-                                    rms_window.push_back(frame_power);
-                                    rms_sum_sq += frame_power;
-                                }
-
-                                let measured_rms = (rms_sum_sq / rms_window.len().max(1) as f64)
-                                    .sqrt()
-                                    .max(1e-10);
-                                let measured_db = 20.0 * measured_rms.log10();
-                                let target_db = s.normalize_target_db as f64;
-                                let error_db = target_db - measured_db;
-                                let cap_db = s.normalize_cap_db as f64;
-                                let target_gain_db = error_db.clamp(0.0, cap_db);
-
-                                // Attack/Release smoothing (D-24): 3000ms attack, 1000ms release
-                                let dt = output_accumulator.len() as f64
-                                    / out_ch as f64
-                                    / out_rate as f64;
-                                if dt > 0.0 {
-                                    let tc = if target_gain_db > normalization_gain_db {
-                                        3.0
-                                    } else {
-                                        1.0
-                                    };
-                                    let alpha = 1.0 - (-dt / tc).exp();
-                                    normalization_gain_db +=
-                                        (target_gain_db - normalization_gain_db) * alpha;
-                                }
-                            } else {
-                                // Normalization disabled: reset state
-                                rms_window.clear();
-                                rms_sum_sq = 0.0;
-                                normalization_gain_db = 0.0;
-                            }
-
-                            // Limiter auto-on/restore (D-25)
-                            if s.normalize_enabled && !normalization_previously_active {
-                                // Just enabled -> force limiter on
-                                limiter_was_enabled = Some(engine.force_limiter_on());
-                            } else if !s.normalize_enabled && normalization_previously_active {
-                                // Just disabled -> restore limiter
-                                if let Some(was) = limiter_was_enabled.take() {
-                                    engine.restore_limiter(was);
-                                }
-                            }
-                            normalization_previously_active = s.normalize_enabled;
-                        }
-
-                        // NaN guard on normalization_gain_db
-                        if !normalization_gain_db.is_finite() {
-                            normalization_gain_db = 0.0;
-                        }
-
                         // Single loudness gain point (D-01): sum all sources in dB,
                         // convert to linear once, apply before DspChain.
                         let gain_linear: f64;
                         let vol: f64;
+                        let fades_enabled: bool;
                         {
                             let s = state.read();
                             let mut gain_db: f64 = 0.0;
@@ -1016,13 +930,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 }
                             }
 
-                            // 4. RMS Normalization output (shared controller per D-05)
-                            //    normalization_gain_db is computed per-batch in Task 3's RMS loop.
-                            gain_db += normalization_gain_db;
+                            // 4. Fixed gain (Gain fijo)
+                            if s.fixed_gain_enabled {
+                                gain_db += s.fixed_gain_db as f64;
+                            }
 
                             // 5. Clamp to safety ceiling (+12 dB existing, D-26)
                             gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
                             vol = s.volume as f64;
+                            fades_enabled = s.fades_enabled;
                         } // Release AudioState lock before DSP processing
 
                         // D-29: ~100 ms EMA anti-click ramp for RG offsets.
@@ -1149,7 +1065,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         } // Release state lock
 
                         // Volume smoothing trigger (D-08): 500ms linear ramp on volume changes.
-                        if (vol - previous_vol).abs() > 1e-10 {
+                        // Only active when fades are enabled.
+                        if fades_enabled && (vol - previous_vol).abs() > 1e-10 {
                             let sr = out_rate as f64;
                             let smoothing_samples = 0.5 * sr; // 500ms
                             let step = (vol - previous_vol).abs() / smoothing_samples.max(1.0);
@@ -1162,6 +1079,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     step_per_frame: step,
                                 };
                             }
+                            previous_vol = vol;
+                        } else {
                             previous_vol = vol;
                         }
 

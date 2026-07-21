@@ -114,10 +114,12 @@ pub struct AudioState {
     pub silence_duration_ms: f32,  // default: 1000.0 (range 100–10000, paso 50)
     pub silence_threshold_db: f32, // default: -50.0 (range -80..0, paso 0.25)
 
-    // Volumen y Mezcla — Normalization (D-21 master, D-22, D-23)
-    pub normalize_enabled: bool,  // default: false
-    pub normalize_target_db: f32, // default: -14.0 (range -30..0, paso 0.25)
-    pub normalize_cap_db: f32,    // default: 6.0 (range 0..+12, paso 0.25)
+    // Volumen y Mezcla — Fixed Gain
+    pub fixed_gain_enabled: bool,      // default: false
+    pub fixed_gain_db: f32,            // default: 0.0
+    // Fade individual toggles
+    pub fade_in_enabled: bool,         // default: false
+    pub fade_out_enabled: bool,        // default: false
 
     // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30 master, D-28)
     pub rg_master_enabled: bool,     // default: true (master of RG group)
@@ -169,10 +171,12 @@ impl Default for AudioState {
             silence_duration_ms: 1000.0,
             silence_threshold_db: -50.0,
 
-            // Volumen y Mezcla — Normalization
-            normalize_enabled: false,
-            normalize_target_db: -14.0,
-            normalize_cap_db: 6.0,
+            // Volumen y Mezcla — Fixed Gain
+            fixed_gain_enabled: false,
+            fixed_gain_db: 0.0,
+            // Fade individual toggles
+            fade_in_enabled: false,
+            fade_out_enabled: false,
 
             // Volumen y Mezcla — ReplayGain offsets
             rg_master_enabled: true,

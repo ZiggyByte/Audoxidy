@@ -799,23 +799,6 @@ impl AudoxidyApp {
                     audio_manager.state().write().silence_threshold_db = v;
                 }
             }
-            if let Some(val) = db_lock.get_setting("vol_normalize_enabled") {
-                let v = val == "1";
-                audio_center_manager.volumen_normalize_enabled = v;
-                audio_manager.state().write().normalize_enabled = v;
-            }
-            if let Some(val) = db_lock.get_setting("vol_normalize_target_db") {
-                if let Ok(v) = val.parse::<f32>() {
-                    audio_center_manager.volumen_normalize_target_db = v as f64;
-                    audio_manager.state().write().normalize_target_db = v;
-                }
-            }
-            if let Some(val) = db_lock.get_setting("vol_normalize_cap_db") {
-                if let Ok(v) = val.parse::<f32>() {
-                    audio_center_manager.volumen_normalize_cap_db = v as f64;
-                    audio_manager.state().write().normalize_cap_db = v;
-                }
-            }
             if let Some(val) = db_lock.get_setting("vol_rg_master_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_master_enabled = v;
@@ -4129,9 +4112,6 @@ impl AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceDurationChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceThresholdChanged(_)
-                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeToggle(_)
-                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeTargetChanged(_)
-                    | crate::gui::audio_center::AudioCenterMessage::VolumenNormalizeCapChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgMasterToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgTrackToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgAlbumToggle(_)

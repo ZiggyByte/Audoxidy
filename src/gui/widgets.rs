@@ -305,7 +305,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fixed(64.0),
+            width: Length::Fixed(84.0),
             height: Length::Fixed(14.0),
         }
     }
@@ -320,7 +320,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        let size = limits.resolve(Length::Fixed(64.0), Length::Fixed(14.0), iced::Size::ZERO);
+        let size = limits.resolve(Length::Fixed(84.0), Length::Fixed(14.0), iced::Size::ZERO);
         iced::advanced::layout::Node::new(size)
     }
 
@@ -349,7 +349,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 height: 14.0,
             };
             let right_zone = Rectangle {
-                x: bounds.x + 50.0,
+                x: bounds.x + 70.0,
                 y: bounds.y,
                 width: 14.0,
                 height: 14.0,
@@ -365,7 +365,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let center_zone = Rectangle {
             x: bounds.x + 14.0,
             y: bounds.y,
-            width: 36.0,
+            width: 56.0,
             height: 14.0,
         };
         let left_zone = Rectangle {
@@ -375,7 +375,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             height: 14.0,
         };
         let right_zone = Rectangle {
-            x: bounds.x + 50.0,
+            x: bounds.x + 70.0,
             y: bounds.y,
             width: 14.0,
             height: 14.0,
@@ -423,7 +423,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 } else if in_center {
                     // Enter edit mode
                     shell.capture_event();
-                    state.input_value_text = format_stepper_value(self.value, &self.unit);
+                    state.input_value_text = match &self.unit {
+                        StepperUnit::Decibels => format!("{:.2}", self.value),
+                        StepperUnit::Milliseconds => format!("{:.0}", self.value),
+                    };
                     state.input_cursor_pos = state.input_value_text.len();
                     state.is_input_editing = true;
                     state.input_has_focus = true;
@@ -530,8 +533,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let state = tree.state.downcast_ref::<NumberStepperState>();
 
         let font_size: f32 = 12.0;
-        let chevron_size: f32 = 12.0;
-        let chevron_glyph_size: f32 = 10.0;
+        let chevron_icon_size: f32 = 14.0;
 
         // --- Left chevron zone ---
         let left_zone = Rectangle {
@@ -552,18 +554,18 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 COLOR_BG
             },
         );
-        // Chevron glyph: ◀ (U+25C0)
-        let chevron_left_x = left_zone.x + (left_zone.width - chevron_glyph_size) / 2.0;
-        let chevron_left_y = left_zone.y + (left_zone.height - chevron_glyph_size) / 2.0;
+        // Left chevron SVG icon
+        let chevron_left_x = left_zone.x + (left_zone.width - chevron_icon_size) / 2.0;
+        let chevron_left_y = left_zone.y + (left_zone.height - chevron_icon_size) / 2.0;
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: "\u{25C0}".to_string(),
-                bounds: iced::Size::new(chevron_glyph_size, chevron_glyph_size),
-                size: iced::Pixels(chevron_size),
+                bounds: iced::Size::new(chevron_icon_size, chevron_icon_size),
+                size: iced::Pixels(chevron_icon_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Top,
+                align_y: iced::alignment::Vertical::Center,
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },
@@ -574,7 +576,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         // --- Right chevron zone ---
         let right_zone = Rectangle {
-            x: bounds.x + 50.0,
+            x: bounds.x + 70.0,
             y: bounds.y,
             width: 14.0,
             height: 14.0,
@@ -590,17 +592,17 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 COLOR_BG
             },
         );
-        let chevron_right_x = right_zone.x + (right_zone.width - chevron_glyph_size) / 2.0;
-        let chevron_right_y = right_zone.y + (right_zone.height - chevron_glyph_size) / 2.0;
+        let chevron_right_x = right_zone.x + (right_zone.width - chevron_icon_size) / 2.0;
+        let chevron_right_y = right_zone.y + (right_zone.height - chevron_icon_size) / 2.0;
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: "\u{25B6}".to_string(),
-                bounds: iced::Size::new(chevron_glyph_size, chevron_glyph_size),
-                size: iced::Pixels(chevron_size),
+                bounds: iced::Size::new(chevron_icon_size, chevron_icon_size),
+                size: iced::Pixels(chevron_icon_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Top,
+                align_y: iced::alignment::Vertical::Center,
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },
@@ -613,7 +615,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let center_zone = Rectangle {
             x: bounds.x + 14.0,
             y: bounds.y,
-            width: 36.0,
+            width: 56.0,
             height: 14.0,
         };
         // Background for center zone
@@ -634,19 +636,19 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             format_stepper_value(self.value, &self.unit)
         };
 
-        // Center the text in the center zone
+        // Center the text vertically in the center zone
         let text_x = center_zone.x + center_zone.width / 2.0;
-        let text_y = center_zone.y + (center_zone.height - font_size) / 2.0;
+        let text_y = center_zone.y + center_zone.height / 2.0;
 
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: display_text,
-                bounds: iced::Size::new(center_zone.width - 2.0, font_size),
+                bounds: iced::Size::new(center_zone.width - 2.0, center_zone.height),
                 size: iced::Pixels(font_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),
-                align_y: iced::alignment::Vertical::Top,
+                align_y: iced::alignment::Vertical::Center,
                 shaping: iced::advanced::text::Shaping::Basic,
                 wrapping: iced::advanced::text::Wrapping::None,
             },

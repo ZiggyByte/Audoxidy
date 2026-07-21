@@ -62,6 +62,7 @@ pub enum AudioCenterMessage {
     VolumenSilenceToggle(bool),
     VolumenSilenceDurationChanged(f64),
     VolumenSilenceThresholdChanged(f64),
+    VolumenSilenceEdgeTrimToggle(bool),
     VolumenFixedGainToggle(bool),
     VolumenFixedGainChanged(f64),
     VolumenRgMasterToggle(bool),
@@ -180,6 +181,7 @@ pub struct AudioCenterManager {
     pub volumen_silence_enabled: bool,
     pub volumen_silence_duration_ms: f64,
     pub volumen_silence_threshold_db: f64,
+    pub volumen_silence_edge_trim_enabled: bool,
     pub volumen_fixed_gain_enabled: bool,
     pub volumen_fixed_gain_db: f64,
     pub volumen_fade_in_enabled: bool,
@@ -232,16 +234,17 @@ impl Default for AudioCenterManager {
             system_rate: SystemSelection::Default,
             system_quantum: SystemSelection::Default,
 
-            volumen_fades_enabled: true,
+            volumen_fades_enabled: false,
             volumen_fade_in_ms: 1000.0,
             volumen_fade_out_ms: 1000.0,
             volumen_silence_enabled: true,
             volumen_silence_duration_ms: 1000.0,
             volumen_silence_threshold_db: -50.0,
+            volumen_silence_edge_trim_enabled: true,
             volumen_fixed_gain_enabled: false,
             volumen_fixed_gain_db: 0.0,
-            volumen_fade_in_enabled: true,
-            volumen_fade_out_enabled: true,
+            volumen_fade_in_enabled: false,
+            volumen_fade_out_enabled: false,
             volumen_rg_master_enabled: true,
             volumen_rg_track_enabled: true,
             volumen_rg_album_enabled: true,
@@ -510,6 +513,10 @@ impl AudioCenterManager {
             let _ = db_lock.set_setting(
                 "vol_silence_threshold_db",
                 &format!("{:.2}", s.silence_threshold_db),
+            );
+            let _ = db_lock.set_setting(
+                "vol_silence_edge_trim_enabled",
+                if s.silence_edge_trim_enabled { "1" } else { "0" },
             );
             let _ = db_lock.set_setting(
                 "vol_fixed_gain_enabled",
@@ -832,6 +839,11 @@ impl AudioCenterManager {
                         state_write.silence_threshold_db = v as f32;
                         self.volumen_silence_threshold_db = v;
                     }
+                }
+                if let Some(val) = db.get_setting("vol_silence_edge_trim_enabled") {
+                    let enabled = val == "1";
+                    state_write.silence_edge_trim_enabled = enabled;
+                    self.volumen_silence_edge_trim_enabled = enabled;
                 }
                 if let Some(val) = db.get_setting("vol_fixed_gain_enabled") {
                     let enabled = val == "1";
@@ -1592,6 +1604,10 @@ impl AudioCenterManager {
             AudioCenterMessage::VolumenSilenceThresholdChanged(val) => {
                 audio_manager.state().write().silence_threshold_db = val as f32;
                 self.volumen_silence_threshold_db = val;
+            }
+            AudioCenterMessage::VolumenSilenceEdgeTrimToggle(enabled) => {
+                audio_manager.state().write().silence_edge_trim_enabled = enabled;
+                self.volumen_silence_edge_trim_enabled = enabled;
             }
             AudioCenterMessage::VolumenFixedGainToggle(enabled) => {
                 audio_manager.state().write().fixed_gain_enabled = enabled;
@@ -3716,14 +3732,18 @@ fn view_audio_effects<'a>(
 
 fn view_volumen_mezcla<'a>(
     manager: &'a AudioCenterManager,
-    audio_manager: &'a Arc<AudioManager>,
+    _audio_manager: &'a Arc<AudioManager>,
 ) -> Element<'a, crate::gui::app::Message> {
     use crate::gui::widgets::{NumberStepper, StandardCheckbox, StepperUnit};
 
-    let audio_s = audio_manager.state();
-    let _state = audio_s.read();
+    // Helper to build a horizontal separator line that fills remaining row space.
+    let h_sep = || -> iced::Element<'a, crate::gui::app::Message> {
+        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+            .into()
+    };
 
-    // --- Group 1: Desvanecimiento (fades) ---
+    // --- Group 1: Fades ---
     let fades_master_on = manager.volumen_fades_enabled;
 
     let fades_title_row = row![
@@ -3734,30 +3754,19 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(6.0)),
+        Space::new().width(Length::Fixed(4.0)),
         text("Suavizar el cambio de volumen")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
+        Space::new().width(Length::Fixed(4.0)),
+        h_sep(),
     ]
-    .align_y(Alignment::Center)
-    .spacing(4);
-
-    let fades_divider = container(
-        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
-    )
-    .padding(iced::Padding {
-        top: 6.0,
-        right: 0.0,
-        bottom: 6.0,
-        left: 0.0,
-    });
+    .align_y(Alignment::Center);
 
     let fade_in_row = {
-        let disabled = !fades_master_on || !manager.volumen_fade_in_enabled;
-        let label_color = if disabled {
+        let disabled = !fades_master_on;
+        let label_color = if !fades_master_on {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
             COLOR_TEXT_SECONDARY
@@ -3809,12 +3818,11 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let fade_out_row = {
-        let disabled = !fades_master_on || !manager.volumen_fade_out_enabled;
-        let label_color = if disabled {
+        let disabled = !fades_master_on;
+        let label_color = if !fades_master_on {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
             COLOR_TEXT_SECONDARY
@@ -3866,12 +3874,11 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
-    let fades_group = column![fades_title_row, fades_divider, fade_in_row, fade_out_row,].spacing(8);
+    let fades_group = column![fades_title_row, fade_in_row, fade_out_row,].spacing(4);
 
-    // --- Group 2: Eliminar silencio ---
+    // --- Group 2: Silencio ---
     let silence_master_on = manager.volumen_silence_enabled;
 
     let silence_title_row = row![
@@ -3884,26 +3891,15 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(6.0)),
+        Space::new().width(Length::Fixed(4.0)),
         text("Eliminar silencio")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
+        Space::new().width(Length::Fixed(4.0)),
+        h_sep(),
     ]
-    .align_y(Alignment::Center)
-    .spacing(4);
-
-    let silence_divider = container(
-        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
-    )
-    .padding(iced::Padding {
-        top: 6.0,
-        right: 0.0,
-        bottom: 6.0,
-        left: 0.0,
-    });
+    .align_y(Alignment::Center);
 
     let silence_duration_row = {
         let label_color = if !silence_master_on {
@@ -3946,7 +3942,6 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let silence_threshold_row = {
@@ -3990,7 +3985,6 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let silence_border_row = {
@@ -3999,15 +3993,15 @@ fn view_volumen_mezcla<'a>(
         } else {
             COLOR_TEXT_SECONDARY
         };
-        let chk: iced::Element<'_, _> = if !silence_master_on {
-            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
-        } else {
-            StandardCheckbox::new(true, |b| {
-                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceToggle(
-                    b,
-                ))
+        let chk: iced::Element<'_, _> = if silence_master_on {
+            StandardCheckbox::new(manager.volumen_silence_edge_trim_enabled, |b| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenSilenceEdgeTrimToggle(b),
+                )
             })
             .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
         row![
             chk,
@@ -4019,51 +4013,38 @@ fn view_volumen_mezcla<'a>(
             Space::new().width(Length::Fill),
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let silence_group = column![
         silence_title_row,
-        silence_divider,
         silence_duration_row,
         silence_threshold_row,
         silence_border_row,
     ]
-    .spacing(8);
+    .spacing(4);
 
-    // --- Group 3: Gain fijo (replaces Normalizar) ---
+    // --- Group 3: Gain fijo ---
     let fixed_gain_on = manager.volumen_fixed_gain_enabled;
 
     let fixed_gain_title_row = row![
         {
             let chk: iced::Element<'_, _> = StandardCheckbox::new(fixed_gain_on, |b| {
-                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFixedGainToggle(
-                    b,
-                ))
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenFixedGainToggle(b),
+                )
             })
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(6.0)),
+        Space::new().width(Length::Fixed(4.0)),
         text("Gain fijo")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
+        Space::new().width(Length::Fixed(4.0)),
+        h_sep(),
     ]
-    .align_y(Alignment::Center)
-    .spacing(4);
-
-    let fixed_gain_divider = container(
-        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
-    )
-    .padding(iced::Padding {
-        top: 6.0,
-        right: 0.0,
-        bottom: 6.0,
-        left: 0.0,
-    });
+    .align_y(Alignment::Center);
 
     let fixed_gain_row = {
         let label_color = if !fixed_gain_on {
@@ -4106,11 +4087,9 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
-    let fixed_gain_group =
-        column![fixed_gain_title_row, fixed_gain_divider, fixed_gain_row,].spacing(8);
+    let fixed_gain_group = column![fixed_gain_title_row, fixed_gain_row,].spacing(4);
 
     // --- Group 4: Replay Gain ---
     let rg_master_on = manager.volumen_rg_master_enabled;
@@ -4125,26 +4104,15 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(6.0)),
+        Space::new().width(Length::Fixed(4.0)),
         text("Replay Gain")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
+        Space::new().width(Length::Fixed(4.0)),
+        h_sep(),
     ]
-    .align_y(Alignment::Center)
-    .spacing(4);
-
-    let rg_divider = container(
-        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
-    )
-    .padding(iced::Padding {
-        top: 6.0,
-        right: 0.0,
-        bottom: 6.0,
-        left: 0.0,
-    });
+    .align_y(Alignment::Center);
 
     let rg_album_row = {
         let disabled = !rg_master_on;
@@ -4153,18 +4121,15 @@ fn view_volumen_mezcla<'a>(
         } else {
             COLOR_TEXT_SECONDARY
         };
-        let chk: iced::Element<'_, _> = if disabled {
-            StandardCheckbox::new(manager.volumen_rg_album_enabled, |_| {
-                crate::gui::app::Message::NoOp
-            })
-            .into()
-        } else {
+        let chk: iced::Element<'_, _> = if !disabled {
             StandardCheckbox::new(manager.volumen_rg_album_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgAlbumToggle(b),
                 )
             })
             .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
         let stepper: iced::Element<'_, _> = if disabled {
             NumberStepper::new(
@@ -4203,7 +4168,6 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let rg_track_row = {
@@ -4213,18 +4177,15 @@ fn view_volumen_mezcla<'a>(
         } else {
             COLOR_TEXT_SECONDARY
         };
-        let chk: iced::Element<'_, _> = if disabled {
-            StandardCheckbox::new(manager.volumen_rg_track_enabled, |_| {
-                crate::gui::app::Message::NoOp
-            })
-            .into()
-        } else {
+        let chk: iced::Element<'_, _> = if !disabled {
             StandardCheckbox::new(manager.volumen_rg_track_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgTrackToggle(b),
                 )
             })
             .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
         let stepper: iced::Element<'_, _> = if disabled {
             NumberStepper::new(
@@ -4263,7 +4224,6 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
     let rg_untagged_row = {
@@ -4273,18 +4233,15 @@ fn view_volumen_mezcla<'a>(
         } else {
             COLOR_TEXT_SECONDARY
         };
-        let chk: iced::Element<'_, _> = if disabled {
-            StandardCheckbox::new(manager.volumen_rg_analyze_rt_enabled, |_| {
-                crate::gui::app::Message::NoOp
-            })
-            .into()
-        } else {
+        let chk: iced::Element<'_, _> = if !disabled {
             StandardCheckbox::new(manager.volumen_rg_analyze_rt_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgAnalyzeRtToggle(b),
                 )
             })
             .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
         let stepper: iced::Element<'_, _> = if disabled {
             NumberStepper::new(
@@ -4323,32 +4280,39 @@ fn view_volumen_mezcla<'a>(
             stepper,
         ]
         .align_y(Alignment::Center)
-        .spacing(4)
     };
 
-    let rg_group = column![
-        rg_title_row,
-        rg_divider,
-        rg_album_row,
-        rg_track_row,
-        rg_untagged_row,
-    ]
-    .spacing(8);
+    let rg_group = column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(4);
 
-    // Single column layout with padding [10, 15]
-    column![
-        fades_group,
-        Space::new().height(Length::Fixed(16.0)),
-        silence_group,
-        Space::new().height(Length::Fixed(16.0)),
-        fixed_gain_group,
-        Space::new().height(Length::Fixed(16.0)),
-        rg_group,
-    ]
+    // Left column: all groups
+    let left_col = container(
+        column![
+            fades_group,
+            silence_group,
+            fixed_gain_group,
+            rg_group,
+        ]
+        .spacing(13),
+    )
+    .width(Length::FillPortion(1));
+
+    // Vertical separator
+    let vert_sep = container(Space::new())
+        .width(Length::Fixed(2.0))
+        .height(Length::Fill)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
+    // Right column (empty)
+    let right_col = container(Space::new().width(Length::Fill)).width(Length::FillPortion(1));
+
+    container(
+        row![left_col, vert_sep, right_col]
+            .align_y(Alignment::Start),
+    )
     .padding(iced::Padding {
         top: 10.0,
         right: 15.0,
-        bottom: 0.0,
+        bottom: 10.0,
         left: 15.0,
     })
     .into()

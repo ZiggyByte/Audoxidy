@@ -446,7 +446,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 track_start_trimmed = false;
 
                                 let mut s = state.read();
-                                if s.fades_enabled && previous_was_natural_eof {
+                                if s.fades_enabled && s.fade_in_enabled && previous_was_natural_eof {
                                     let sr = s.sample_rate as f64;
                                     let fade_ms = s.fade_in_ms as f64;
                                     if fade_ms > 0.0 && sr > 0.0 {
@@ -983,7 +983,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             current_pos_sec = s.current_pos_sec;
 
                             // Edge trimming — start (D-18): fixed -50dB threshold, no minimum duration.
-                            if !track_start_trimmed && s.silence_enabled {
+                            if !track_start_trimmed && s.silence_enabled && s.silence_edge_trim_enabled {
                                 let edge_threshold = 10.0f64.powf(-50.0 / 20.0);
                                 let peak = output_accumulator
                                     .iter()
@@ -1037,15 +1037,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     // Non-silent frame: reset counter, update effective_end (D-18).
                                     silence_samples = 0;
                                     in_silence = false;
-                                    effective_end_sec = Some(current_pos_sec);
-                                    if !track_start_trimmed {
-                                        track_start_trimmed = true;
+                                    if s.silence_edge_trim_enabled {
+                                        effective_end_sec = Some(current_pos_sec);
+                                        if !track_start_trimmed {
+                                            track_start_trimmed = true;
+                                        }
                                     }
                                 }
                             }
 
                             // Fade-out trigger (D-10): at effective_end - fade_out_ms.
-                            if s.fades_enabled && s.fade_out_ms > 0.0 {
+                            if s.fades_enabled && s.fade_out_enabled && s.fade_out_ms > 0.0 {
                                 let end_pos = effective_end_sec.unwrap_or(s.total_duration_sec);
                                 let fade_start = end_pos - s.fade_out_ms as f64 / 1000.0;
                                 if current_pos_sec >= fade_start

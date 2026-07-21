@@ -113,6 +113,7 @@ pub struct AudioState {
     pub silence_enabled: bool,     // default: true
     pub silence_duration_ms: f32,  // default: 1000.0 (range 100–10000, paso 50)
     pub silence_threshold_db: f32, // default: -50.0 (range -80..0, paso 0.25)
+    pub silence_edge_trim_enabled: bool,   // default: true
 
     // Volumen y Mezcla — Fixed Gain
     pub fixed_gain_enabled: bool,      // default: false
@@ -162,7 +163,7 @@ impl Default for AudioState {
             replay_gain_album_enabled: true,
 
             // Volumen y Mezcla — Fades
-            fades_enabled: true,
+            fades_enabled: false,
             fade_in_ms: 1000.0,
             fade_out_ms: 1000.0,
 
@@ -170,6 +171,7 @@ impl Default for AudioState {
             silence_enabled: true,
             silence_duration_ms: 1000.0,
             silence_threshold_db: -50.0,
+            silence_edge_trim_enabled: true,
 
             // Volumen y Mezcla — Fixed Gain
             fixed_gain_enabled: false,

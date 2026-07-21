@@ -799,6 +799,11 @@ impl AudoxidyApp {
                     audio_manager.state().write().silence_threshold_db = v;
                 }
             }
+            if let Some(val) = db_lock.get_setting("vol_silence_edge_trim_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_silence_edge_trim_enabled = v;
+                audio_manager.state().write().silence_edge_trim_enabled = v;
+            }
             if let Some(val) = db_lock.get_setting("vol_rg_master_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_master_enabled = v;
@@ -4112,6 +4117,7 @@ impl AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceDurationChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceThresholdChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceEdgeTrimToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgMasterToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgTrackToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgAlbumToggle(_)

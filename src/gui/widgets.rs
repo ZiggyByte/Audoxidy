@@ -544,9 +544,9 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
             .style(|_theme: &Theme, status| {
                 let bg = if status == button::Status::Hovered || status == button::Status::Pressed
                 {
-                    COLOR_CONTRAST
+                    COLOR_ACCENT
                 } else {
-                    COLOR_BG
+                    COLOR_CONTRAST
                 };
                 button::Style {
                     background: Some(bg.into()),
@@ -563,9 +563,9 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
             .style(|_theme: &Theme, status| {
                 let bg = if status == button::Status::Hovered || status == button::Status::Pressed
                 {
-                    COLOR_CONTRAST
+                    COLOR_ACCENT
                 } else {
-                    COLOR_BG
+                    COLOR_CONTRAST
                 };
                 button::Style {
                     background: Some(bg.into()),

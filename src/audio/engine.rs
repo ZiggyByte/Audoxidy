@@ -116,8 +116,8 @@ pub struct AudioState {
     pub silence_edge_trim_enabled: bool,   // default: true
 
     // Volumen y Mezcla — Fixed Gain
-    pub fixed_gain_enabled: bool,      // default: false
-    pub fixed_gain_db: f32,            // default: 0.0
+    pub rg_fixed_enabled: bool,        // default: false
+    pub rg_fixed_db: f32,              // default: 0.0
     // Fade individual toggles
     pub fade_in_enabled: bool,         // default: false
     pub fade_out_enabled: bool,        // default: false
@@ -174,8 +174,8 @@ impl Default for AudioState {
             silence_edge_trim_enabled: true,
 
             // Volumen y Mezcla — Fixed Gain
-            fixed_gain_enabled: false,
-            fixed_gain_db: 0.0,
+            rg_fixed_enabled: false,
+            rg_fixed_db: 0.0,
             // Fade individual toggles
             fade_in_enabled: false,
             fade_out_enabled: false,

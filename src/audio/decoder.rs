@@ -312,13 +312,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
     // === Volumen y Mezcla state (Phase 03) ===
     let mut fade_state: FadeState = FadeState::Idle;
-    let mut previous_was_natural_eof: bool = false;
     let mut previous_vol: f64 = 0.3; // match AudioState default
 
     // Silence detection (D-14-D-20)
     let mut silence_samples: usize = 0;
     let mut in_silence: bool = false;
-    let mut effective_end_sec: Option<f64> = None;
     let mut track_start_trimmed: bool = false;
 
     // RG offset smoothing (D-29): ~100 ms EMA ramp to eliminate clicks on UI offset changes.
@@ -443,11 +441,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 // Volumen y Mezcla: State resets + fade-in trigger (D-09, D-20)
                                 silence_samples = 0;
                                 in_silence = false;
-                                effective_end_sec = None;
                                 track_start_trimmed = false;
 
                                 let mut s = state.read();
-                                if s.fades_enabled && s.fade_in_enabled && previous_was_natural_eof {
+                                // Fade-in on EVERY track start when enabled (D-09).
+                                // (Not gated on natural EOF — user expects a smooth rise
+                                // whenever a song begins.)
+                                if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
                                     let sr = s.sample_rate as f64;
                                     let fade_ms = s.fade_in_ms as f64;
                                     if fade_ms > 0.0 && sr > 0.0 {
@@ -461,7 +461,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     fade_state = FadeState::Idle;
                                 }
                                 drop(s);
-                                previous_was_natural_eof = false;
 
                                 if let Ok(decoder) = symphonia::default::get_codecs()
                                     .make(&track.codec_params, &DecoderOptions::default())
@@ -535,7 +534,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         fade_state = FadeState::Idle;
                         silence_samples = 0;
                         in_silence = false;
-                        effective_end_sec = None;
                         track_start_trimmed = false;
 
                         // Clear RingBuffer
@@ -551,10 +549,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     // Volumen y Mezcla: Reset on stop (D-20)
                     fade_state = FadeState::Idle;
-                    previous_was_natural_eof = false;
                     silence_samples = 0;
                     in_silence = false;
-                    effective_end_sec = None;
                     track_start_trimmed = false;
                 }
             }
@@ -661,7 +657,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 if eof {
                     state.write().is_playing = false;
                     state.write().eof_reached = true;
-                    previous_was_natural_eof = true; // Signal for next track fade-in (D-09)
 
                     // Autoclean on EOF
                     let s = state.read();
@@ -900,7 +895,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         let gain_linear: f64;
                         let vol: f64;
                         let fades_enabled: bool;
-                        let fixed_gain_active: bool;
                         {
                             let s = state.read();
                             let mut gain_db: f64 = 0.0;
@@ -932,11 +926,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 }
                             }
 
-                            // 4. Fixed gain (Gain fijo)
-                            if s.fixed_gain_enabled {
-                                gain_db += s.fixed_gain_db as f64;
+                            // 4. Replay gain fijo (applies ALWAYS when enabled, unlike the
+                            //    RT-analysis fallback which only acts when no tags exist).
+                            if s.rg_fixed_enabled {
+                                gain_db += s.rg_fixed_db as f64;
                             }
-                            fixed_gain_active = s.fixed_gain_enabled;
 
                             // 5. Clamp to safety ceiling (+12 dB existing, D-26)
                             gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
@@ -1037,21 +1031,21 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         continue;
                                     }
                                 } else {
-                                    // Non-silent frame: reset counter, update effective_end (D-18).
+                                    // Non-silent frame: reset counter.
                                     silence_samples = 0;
                                     in_silence = false;
-                                    if s.silence_edge_trim_enabled {
-                                        effective_end_sec = Some(current_pos_sec);
-                                        if !track_start_trimmed {
-                                            track_start_trimmed = true;
-                                        }
+                                    if !track_start_trimmed {
+                                        track_start_trimmed = true;
                                     }
                                 }
                             }
 
-                            // Fade-out trigger (D-10): at effective_end - fade_out_ms.
+                            // Fade-out trigger (D-10): at total_duration - fade_out_ms.
+                            // NOTE: must use total_duration_sec (NOT effective_end_sec, which
+                            // tracks live position) — otherwise the fade-out fires on every
+                            // batch and the volume oscillates during the whole song.
                             if s.fades_enabled && s.fade_out_enabled && s.fade_out_ms > 0.0 {
-                                let end_pos = effective_end_sec.unwrap_or(s.total_duration_sec);
+                                let end_pos = s.total_duration_sec;
                                 let fade_start = end_pos - s.fade_out_ms as f64 / 1000.0;
                                 if current_pos_sec >= fade_start
                                     && !matches!(fade_state, FadeState::FadingOut { .. })
@@ -1176,22 +1170,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 fade_coeff
                             } else {
                                 vol * fade_coeff
-                            };
-
-                            // Limiter auto-on when Gain fijo is boosting (anti-clipping safety).
-                            let limiter_was_enabled: Option<bool> = if fixed_gain_active
-                                && gain_linear > 1.0
-                            {
-                                if let Some(mut dsp) = engine.dsp.try_write() {
-                                    let was = dsp.limiter.enabled;
-                                    dsp.limiter.enabled = true;
-                                    drop(dsp);
-                                    Some(was)
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
                             };
 
                             // Fix B1 (D-44): Spin-wait for DSP lock up to 5ms before falling back.

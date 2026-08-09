@@ -1,13 +1,13 @@
 # Phase 03: Volumen y Mezcla - Context
 
 **Gathered:** 2026-07-18
-**Updated:** 2026-07-18 (post-UAT rounds 1-3)
-**Status:** Executed with UAT fixes — smoothing, limiter, persistence corrected
+**Updated:** 2026-07-18 (post-UAT rounds 1-4)
+**Status:** Executed with UAT fixes — fades/smoothing corrected, Gain fijo → Replay gain fijo, persistence in app.rs
 
 <domain>
 ## Phase Boundary
 
-Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado, con 4 grupos de funciones de volumen aplicadas en tiempo real al pipeline f64: (1) suavizado de cambio de volumen + fade-in/fade-out naturales, (2) eliminación de silencios (duración/umbral configurables + bordes automáticos), (3) normalización RMS en tiempo real con cap de pre-amplificación y limiter auto-on, (4) Replay Gain con offsets ±dB por fuente y análisis en tiempo real como fallback. Incluye 2 widgets globales reutilizables en `widgets.rs` (`StandardCheckbox` 12×12, `NumberStepper` 64×14 con unidades dB/ms), layout de 2 columnas iguales con separador vertical, persistencia inmediata de todo (sin botón aplicar) incluido el volumen del player, y 2 fixes del flujo de audio: dropout de efectos por `try_write()` y parseo con sufijo en CustomSlider.
+Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado, con grupos de funciones de volumen aplicadas en tiempo real al pipeline f64: (1) suavizado de cambio de volumen + fade-in/fade-out, (2) eliminación de silencios (duración/umbral configurables + bordes), (3) Replay gain fijo (ganancia fija aplicada siempre, sin condición de etiquetas), (4) Replay Gain con offsets ±dB por fuente y análisis en tiempo real como fallback. Incluye 2 widgets globales reutilizables en `widgets.rs` (`StandardCheckbox` 12×12, `NumberStepper` 84×14 con unidades dB/ms), layout de 2 columnas iguales con separador vertical, persistencia inmediata de todo (sin botón aplicar) incluido el volumen del player, y 2 fixes del flujo de audio: dropout de efectos por `try_write()` y parseo con sufijo en CustomSlider. El grupo "Normalizar Volumen" fue **eliminado por completo** en los ajustes UAT; el "Gain fijo" fue reemplazado por "Replay gain fijo" (se aplica siempre, no solo sin etiquetas).
 
 **No es:** crossfade entre pistas, pre-cálculo de RG en el scanner, LUFS K-weighted, memoria de ganancia por pista (todas diferidas), ni cambios en los efectos DSP existentes o en el ecualizador.
 
@@ -17,48 +17,47 @@ Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado
 ## Implementation Decisions
 
 ### Arquitectura / Gain-staging (cadena de audio)
-- **D-01:** Punto **único** de ganancia de sonoridad al frente de la cadena, suma en dominio dB: `(album_tag + offset_album) + (track_tag + offset_track) + (análisis_RT + offset_RT, solo si no hay etiquetas) + ganancia_normalización (capada por umbral superior)`. Se convierte a lineal **una sola vez** (`10^(db/20)`) y se aplica en un solo punto de multiplicación por frame, ANTES de la DspChain (posición actual del RG, `decoder.rs:800-813`).
+- **D-01:** Punto **único** de ganancia de sonoridad al frente de la cadena, suma en dominio dB: `(album_tag + offset_album) + (track_tag + offset_track) + (análisis_RT + offset_RT, solo si no hay etiquetas) + (replay_gain_fijo, siempre si está activo)`. Se convierte a lineal **una sola vez** (`10^(db/20)`) y se aplica en un solo punto de multiplicación por frame, ANTES de la DspChain (posición actual del RG, `decoder.rs:800-813`).
 - **D-02:** [informational] Cada "pre-amplificador" nuevo es **independiente** de los demás y del preamp del EQ. El preamp del EQ (`dsp.rs:54-57`) **se queda acoplado al EQ como está** — NO desacoplarlo.
 - **D-03:** Orden final de la cadena: ganancia de sonoridad (D-01) → DspChain existente (preamp EQ → EQ → efectos → **Limiter al final**) → envolvente de fades × volumen de usuario (juntos, al final, `decoder.rs:826-828`) → ringbuf. Los fades van al final para que ningún efecto los "deshaga"; todas las ganancias que suben nivel van antes del limiter (red anti-clipping).
 - **D-04:** [informational] Ringbuf se mantiene **f32** (NO migrar a f64). Todo el procesamiento ya es f64; f32 equivale a ~24 bits de precisión (≥ cualquier DAC) y CPAL raramente acepta f64 nativo. La conversión f64→f32 en el boundary (`decoder.rs:844-846`) es transparente.
-- **D-05:** Un **solo controlador de sonoridad compartido**: si Normalización y "Análisis RT" están ambos activos en una pista sin etiquetas, NO corren dos lazos (oscilarían). Un lazo mide post-RG y ajusta hacia el target; el offset RT se suma a su salida.
+- **D-05:** ~~Un solo controlador de sonoridad compartido (Normalización + Análisis RT)~~ — **ELIMINADO** con la normalización. El análisis RT es el único lazo de medición que queda, solo como fallback sin etiquetas.
 - **D-06:** Todo el procesamiento nuevo se implementa en **f64** (coherente con el pipeline existente).
 
 ### Fades y suavizado de volumen
 - **D-07:** "Suavizar el cambio de volumen" es el **master del grupo**: OFF → fade-in y fade-out se desactivan, se muestran grises y no aplican.
-- **D-08:** Suavizado del cambio de volumen de usuario: **500 ms fijos**, rampa **lineal**, sin widget. Aplica también a cambios continuos (drag del slider de volumen).
-- **D-09:** Fade-in: solo en **inicio natural** de pista (auto-avance tras fin natural). NO en play manual, NO en skip manual, NO al reanudar app. Default **1000 ms**, rango 0–10000, paso 50 ms.
-- **D-10:** Fade-out: solo al **final natural** de la pista. Default **1000 ms**, rango 0–10000, paso 50 ms. Trigger: cuando `effective_end − posición ≤ fade_ms` (usa el fin recortado si "eliminar bordes" está activo; si no, la duración total).
+- **D-08:** Suavizado del cambio de volumen de usuario: **500 ms fijos**, rampa **lineal**, sin widget. El cambio se hace **desde el nivel actual del volumen hacia el nuevo** (NUNCA desde 0). El smoothing usa `previous_vol` como coeff inicial. Corregido en UAT round 4: el bug de "baja a 0 y sube" era causado por el fade-out disparándose en cada batch (usaba `effective_end_sec` que rastrea la posición en vivo en vez de `total_duration_sec`).
+- **D-09:** Fade-in: en **cada inicio de pista** cuando está activo (corregido en UAT round 4 — antes solo en avance natural). Toggle propio `fade_in_enabled`. Default **1000 ms**, rango 0–10000, paso 50 ms.
+- **D-10:** Fade-out: al **final de la pista**. Toggle propio `fade_out_enabled`. Default **1000 ms**, rango 0–10000, paso 50 ms. **Trigger corregido**: usa `total_duration_sec − fade_ms` (NO `effective_end_sec`, que causaba oscilación). Fade-out se dispara solo cuando `current_pos_sec >= total_duration_sec − fade_out_ms`.
 - **D-11:** Stop / skip / pausa manual = **corte inmediato**, sin rampa.
 - **D-12:** Fades musicales (fade-in/fade-out) usan curva **equal-power**. El suavizado de 500 ms usa rampa lineal simple.
-- **D-13:** Implementación: máquina de estados de envolvente en el decoder (f64, coeficiente 0.0→1.0 interpolado por muestra, multiplicado junto al volumen). Cero allocs en el hot path. Tras un fade-out natural a 0, el coeficiente vuelve a 1.0 (o inicia fade-in) al cargar la siguiente pista.
+- **D-13:** Implementación: máquina de estados de envolvente en el decoder (f64, coeficiente 0.0→1.0 interpolado por muestra, multiplicado junto al volumen). Cero allocs en el hot path. `combined = vol * fade_coeff` para fades, pero para **Smoothing** `combined = fade_coeff` (el coeff YA es el nivel de volumen — corregido en UAT round 3).
 
 ### Eliminación de silencios
 - **D-14:** Mecanismo = **descarte de frames en el decoder** (NO seeks, NO pre-escaneo). El decoder corre ~100 ms por delante: cuando el silencio acumulado supera la "Duración", deja de escribir frames al ringbuf hasta que vuelve señal ≥ umbral. `current_pos_sec` sigue avanzando por timestamps de paquetes → la UI "salta" sola.
 - **D-15:** Detección = **peak por frame** (max |sample| de todos los canales) vs umbral. Métrica conservadora: cualquier golpecito cuenta como audio.
 - **D-16:** Defaults de usuario: duración **1000 ms** (rango 100–10000, paso 50) / umbral **-50 dB** (rango -80..0, paso 0.25).
 - **D-17:** Histéresis interna de **+3 dB** (entra a silencio a -50, sale a -47) para evitar parpadeo en la frontera.
-- **D-18:** "Eliminar silencio en los bordes" (automático, sin widgets): umbral interno fijo **-50 dB**, **sin duración mínima**. Borde inicial: descartar frames hasta el primer contenido audible. Borde final: si desde un punto todo es silencio hasta EOF → ese punto se marca como `effective_end` (el ringbuf se vacía ahí, la pista termina antes y avanza la siguiente; y alimenta el trigger del fade-out, D-10).
+- **D-18:** "Eliminar silencio en los bordes" (checkbox propio `silence_edge_trim_enabled`, UAT round 2): umbral interno fijo **-50 dB**, **sin duración mínima**. Borde inicial: descartar frames hasta el primer contenido audible. Borde final: se elimina el rastro de `effective_end` (el fade-out usa `total_duration_sec`); el recorte de cola se descarta si se detecta silencio hasta EOF.
 - **D-19:** La detección de silencio se mide **PRE-fade** (en el punto de ganancia de sonoridad). Crítico: si midiera post-fade, el propio fade-out se detectaría como silencio y dispararía el salto.
 - **D-20:** Seek, pausa y cambio de pista resetean contadores de silencio y estado de fades.
 
-### Normalizar Volumen
-- **D-21:** Enfoque = **RMS en tiempo real** (NO por picos, NO pre-escaneo). Ventana de medición ~**400 ms** (tipo "momentary" EBU R128), RMS sumado de canales, medido **post-RG** (cooperan: RG hace el grueso desde el segundo 0, normalización pule el resto).
-- **D-22:** "Nivel de volumen" = target RMS. Default **-14 dB** (rango -30..0, paso 0.25).
-- **D-23:** "Umbral superior de pre-amplificación" = **cap de boost máximo** de la normalización. Default **+6 dB** (rango 0..+12, paso 0.25).
-- **D-24:** Velocidad de ajuste: subida **3000 ms**, bajada **1000 ms** (rampas suaves; el limiter cubre picos rápidos).
-- **D-25:** **Limiter auto-on**: mientras Normalización esté activa, el limiter true-peak (techo -1 dBTP, ya existe en `dsp.rs:1911`) se fuerza ON. Al desactivar Normalización, el limiter vuelve a su estado previo del usuario.
+### Normalizar Volumen (ELIMINADO en UAT)
+- **D-21 a D-25 (ELIMINADOS):** El grupo "Normalizar Volumen" (RMS en tiempo real, target -14 dB, cap +6 dB, limiter auto-on) fue **eliminado por completo** durante los ajustes UAT. No queda ningún rastro en `audio_center.rs`, `decoder.rs`, `engine.rs` ni `app.rs`. El limiter auto-on también fue retirado (solo existía para normalización).
+
+### Replay gain fijo (reemplaza al "Gain fijo")
+- **D-21b:** "Replay gain fijo" — ganancia fija en dB que se aplica **SIEMPRE cuando está activa**, sin la condición de ausencia de etiquetas que tiene el análisis RT. Reemplaza al antiguo "Gain fijo". Implementado como `rg_fixed_enabled: bool` y `rg_fixed_db: f32` en `AudioState` (`engine.rs`). En el decoder se suma en el punto único de ganancia (D-01) junto a los demás RG, siempre que `rg_fixed_enabled`. Default 0 dB, rango -30..12, paso 0.25. Se mantiene el tope +12 dB. Persistencia: claves `vol_rg_fixed_enabled` / `vol_rg_fixed_db` en `APP_SETTINGS`, cargadas en `app.rs` al inicio.
 
 ### Replay Gain
 - **D-26:** Los ±dB de cada fuente son **offsets en dominio dB dentro de la etapa RG** (NO preamps/amplificadores separados): se suman al valor de su etiqueta antes de la única conversión a lineal. Heredan el tope de seguridad **+12 dB** existente (`decoder.rs:800-813`, se mantiene).
 - **D-27:** Album + canción **se suman** cuando ambos checkboxes están activos (comportamiento actual del engine, se mantiene).
-- **D-28:** "Analizar archivo en tiempo real" = **fallback solo cuando las fuentes de etiquetas activadas no tienen datos** para la pista. Target = el mismo de Normalización (-14 dB default), usando el controlador compartido (D-05). Beneficio extra: cubre archivos fuera de la biblioteca (el decoder no lee metadatos, `decoder.rs:339-342`).
+- **D-28:** "Analizar archivo en tiempo real" = **fallback solo cuando las fuentes de etiquetas activadas no tienen datos** para la pista. Beneficio extra: cubre archivos fuera de la biblioteca (el decoder no lee metadatos, `decoder.rs:339-342`).
 - **D-29:** Offsets default **0 dB**, rango **±12 dB**, paso 0.25. Cambios de offset desde UI se aplican con rampa corta ~100 ms anti-click.
 - **D-30:** Los flags `replay_gain_track_enabled` / `replay_gain_album_enabled` ya existen en `AudioState` (default true, `engine.rs:97-138`) sin API pública — la UI los escribe via `audio_manager.state().write()` (patrón de `AudioStateToggle`, `audio_center.rs:1160-1177`). El master "Replay Gain" gobierna el grupo (OFF → sub-funciones grises y ganancia RG = 0 dB).
 
 ### Widgets globales (`src/gui/widgets.rs`)
 - **D-31:** `StandardCheckbox` — 12×12 px. OFF: fondo `COLOR_BG`, borde 1 px `COLOR_TEXT_SECONDARY`. ON: fondo `COLOR_ACCENT`, borde 1 px `COLOR_ACCENT`, check "✓" en `COLOR_TEXT_PRIMARY`. Widget custom-dibujado (no existe iced::checkbox en la GUI actual). API: `StandardCheckbox::new(checked, on_toggle)`.
-- **D-32:** `NumberStepper` — rectángulo **64×14 px** fondo `COLOR_BG`; chevrons SVG 14 px (`assets/icons/arrow-left-chevron.svg`, `arrow-right-chevron.svg`) en los laterales, color `COLOR_TEXT_PRIMARY`, fondo hover `COLOR_CONTRAST`; valor centrado 12 px `COLOR_TEXT_PRIMARY` con sufijo de unidad visible ("dB"/"ms").
+- **D-32:** `NumberStepper` — rectángulo **84×14 px** fondo `COLOR_BG`; chevrons SVG 14 px (`assets/icons/arrow-left-chevron.svg`, `arrow-right-chevron.svg`) en los laterales, fondo **`COLOR_CONTRAST`** (normal) y **`COLOR_ACCENT`** (hover/pressed), color de icono `COLOR_TEXT_PRIMARY`; valor centrado 12 px `COLOR_TEXT_PRIMARY` con sufijo de unidad visible ("dB"/"ms") pero **sin sufijo al editar por teclado** (solo números, más fácil borrar).
 - **D-33:** API del stepper: `NumberStepper::new(value, range, StepperUnit::Decibels, on_change)` / `StepperUnit::Milliseconds`. Pasos de flecha: **0.25** (dB) / **50** (ms). Flechas ←/→ del widget y ↑/↓ del teclado hacen step ±.
 - **D-34:** Input manual: **nunca se redondea al paso** (1.78 dB se queda 1.78; 342 ms se queda 342). Filtro de caracteres (solo dígitos, `.`, `-`), Backspace borra a la izquierda del cursor y Delete/Supr a la derecha (edición estándar), ←/→ mueven el cursor, **Enter aplica**, **clic fuera aplica** (copiar mecanismo del slider, `widgets.rs:2999-3010`), **Escape cancela**. El sufijo se muestra pero se **excluye antes de parsear**.
 - **D-35:** Ambos widgets siguen el patrón CustomSlider: widget custom `iced::advanced::Widget`, input custom-dibujado con cursor `|` (no iced text_input), y callback `on_selected_state_change` → `AudioCenterMessage::SliderHoverActive` → `AppFocus::AudioCenter` para que las flechas no se escapen a biblioteca/playlist (`app.rs:3879-3891`, `app.rs:2526-2646`).
@@ -66,40 +65,38 @@ Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado
 ### Layout y comportamiento de la pestaña
 - **D-36:** Tab índice 3 "Volumen y Mezcla": añadir nombre al array `tab_names` (`audio_center.rs:1310`) + brazo `3 => view_volumen_mezcla(...)` (`audio_center.rs:1358-1363`) + variantes de `AudioCenterMessage` + handlers en `update()` (`audio_center.rs:604`).
 - **D-37:** Dos columnas de **igual ancho**: copiar el layout de `view_audio_config` (`audio_center.rs:2293-2325`) cambiando `FillPortion(5)/FillPortion(4)` → `FillPortion(1)/FillPortion(1)`, con el mismo separador vertical de 2 px `COLOR_CONTRAST` (`audio_center.rs:2284-2289`). SIN fila de botones inferior (no hay aplicar).
-- **D-38:** Separador horizontal tras el nombre de cada grupo: patrón de efectos (2 px `COLOR_TEXT_SECONDARY`, `audio_center.rs:2889-2898`).
-- **D-39:** Checkboxes alineados a la **izquierda** del nombre de la función; steppers alineados a la **derecha** del nombre.
+- **D-38:** Separador horizontal **1 px** `COLOR_TEXT_SECONDARY`, en la **MISMA fila** que el checkbox + texto principal del grupo (adaptativo, `Length::Fill` a la derecha del texto). Corregido en UAT (antes estaba debajo de la fila, a 2px).
+- **D-39:** Checkboxes alineados a la **izquierda** del nombre de la función; steppers alineados a la **derecha** del nombre. Todos en la **misma fila**.
 - **D-40:** Grupo OFF → sub-funciones grises (patrón `scale_alpha(0.5)` + sin `on_press`, `audio_center.rs:2240-2282`) y su aporte al engine = 0. Master ON → sub-funciones restauran su estado individual guardado y sus valores aplican inmediatamente.
-- **D-41:** Distribución: **columna 1** = grupo Fades + grupo Eliminar silencio; **columna 2** = grupo Normalizar Volumen + grupo Replay Gain.
+- **D-41:** Distribución: **columna 1** = todos los grupos (Fades, Eliminar silencio, Replay gain fijo, Replay Gain); **columna 2** = **vacía por ahora** (para funciones de mezcla futuras). Spacing vertical entre grupos **13 px**.
 
 ### Persistencia y fixes
-- **D-42:** Guardado inmediato (sin botón): añadir las nuevas variantes de mensaje a los match de `app.rs:3934-3960` → nueva función `save_volumen_settings_to_db()` en `AudioCenterManager` (espejo de `save_dsp_settings_to_db`, `audio_center.rs:278-315`) → tabla `APP_SETTINGS` (`database.rs:2033-2053`). Carga en `App::new` (`app.rs:594-727`) y/o `sync_from_engine` (`audio_center.rs:317+`).
-- **D-43:** **Persistir el volumen del player** en APP_SETTINGS (actualmente se resetea a 0.3 en cada arranque, `engine.rs:114`). Guardar en cada `Message::VolumeChanged` y cargar al inicio.
+- **D-42:** Guardado inmediato (sin botón): añadir las nuevas variantes de mensaje a los match de `app.rs:3934-3960` → nueva función `save_volumen_settings_to_db()` en `AudioCenterManager` (espejo de `save_dsp_settings_to_db`, `audio_center.rs:278-315`) → tabla `APP_SETTINGS` (`database.rs:2033-2053`). **Carga en `App::new` (`app.rs:600-630`) para que las settings se apliquen desde el arranque** (UAT round 3 — antes se cargaba en `sync_from_engine` que solo corre al abrir el panel).
+- **D-43:** **Persistir el volumen del player** en APP_SETTINGS. Guardar en el handler `PlayerScroll` (`app.rs:4134-4150`) con clave `player_volume` y cargar en `App::new` al inicio. Nota UAT: el mensaje `VolumeChanged` nunca se emite (no hay slider que lo produzca) — la persistencia real va en `PlayerScroll`.
 - **D-44:** **Fix B1 (dropout de efectos):** `decoder.rs:820-840` usa `try_write()` y si la GUI tiene el lock del DSP, esos frames pasan SIN procesar (efectos se apagan a rachas al arrastrar sliders). Fix: nunca saltarse frames de DSP — esperar el lock brevemente o aplicar desde snapshot consistente.
 - **D-45:** **Fix B2 (sufijo rompe parseo):** corregir también el `CustomSlider` (quitar sufijo antes de parsear en Enter/clic-fuera, `widgets.rs:3135-3187`, `widgets.rs:2961-3010`) — habilita input de teclado en sliders con unidad.
 
 ### Tabla de defaults aprobada (usuario)
 | # | Función | Rango widget | Default |
 |---|---------|--------------|---------|
-| 1 | Fade-in al iniciar (natural) | 0–10000 ms (paso 50) | **1000 ms** |
-| 2 | Fade-out al finalizar (natural) | 0–10000 ms (paso 50) | **1000 ms** |
+| 1 | Fade-in al iniciar canción | 0–10000 ms (paso 50) | **1000 ms** |
+| 2 | Fade-out al terminar canción | 0–10000 ms (paso 50) | **1000 ms** |
 | 3 | Duración silencio para saltar | 100–10000 ms (paso 50) | **1000 ms** |
 | 4 | Umbral detección de silencio | -80..0 dB (paso 0.25) | **-50 dB** |
-| 5 | Nivel de normalización (target RMS) | -30..0 dB (paso 0.25) | **-14 dB** |
-| 6 | Umbral superior pre-amplificación (cap) | 0..+12 dB (paso 0.25) | **+6 dB** |
-| 7 | Offset RG Album | ±12 dB (paso 0.25) | **0 dB** |
-| 8 | Offset RG Canción | ±12 dB (paso 0.25) | **0 dB** |
-| 9 | Offset RG Análisis RT | ±12 dB (paso 0.25) | **0 dB** |
-| 10 | Suavizado cambio de volumen (interno) | — | **500 ms, lineal** |
-| 11 | Curva fades musicales (interno) | — | **equal-power** |
-| 12 | Detección de silencio (interno) | — | **peak por frame** |
-| 13 | Umbral bordes (interno) | — | **-50 dB, sin duración mínima** |
-| 14 | Tope etapa RG (existente) | — | **+12 dB** |
-| 15 | Ventana RMS normalización (interno) | — | **~400 ms** |
-| 16 | Velocidad ajuste normalización (interno) | — | **subida 3000 ms / bajada 1000 ms** |
-| 17 | Limiter auto-on con normalización | — | techo **-1 dBTP**, restaura estado al apagar |
-| 18 | Trigger fade-out (interno) | — | `effective_end − posición ≤ fade_ms` |
-| 19 | Ringbuf (se mantiene) | — | **f32** |
-| 20 | Corte stop/skip/pausa manual (interno) | — | **inmediato** |
+| 5 | Replay gain fijo | -30..12 dB (paso 0.25) | **0 dB** |
+| 6 | Offset RG Album | ±12 dB (paso 0.25) | **0 dB** |
+| 7 | Offset RG Canción | ±12 dB (paso 0.25) | **0 dB** |
+| 8 | Offset RG Análisis RT | ±12 dB (paso 0.25) | **0 dB** |
+| 9 | Suavizado cambio de volumen (interno) | — | **500 ms, lineal** |
+| 10 | Curva fades musicales (interno) | — | **equal-power** |
+| 11 | Detección de silencio (interno) | — | **peak por frame** |
+| 12 | Umbral bordes (interno) | — | **-50 dB, sin duración mínima** |
+| 13 | Tope etapa RG (existente) | — | **+12 dB** |
+| 14 | Trigger fade-out (interno) | — | `total_duration − fade_ms` (corregido) |
+| 15 | Ringbuf (se mantiene) | — | **f32** |
+| 16 | Corte stop/skip/pausa manual (interno) | — | **inmediato** |
+
+*El grupo "Normalizar Volumen" (filas 5-6 y 15-17 originales) fue eliminado por completo en UAT.*
 
 ### Claude's Discretion
 - Nombres exactos de mensajes `AudioCenterMessage`, claves de APP_SETTINGS y funciones de guardado.
@@ -214,11 +211,13 @@ Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado
 <specifics>
 ## Specific Ideas
 
-- El usuario ajustó personalmente: suavizado 500 ms, fades 1000/1000 ms, umbral de silencio -50 dB (sobre propuesta de -48), velocidad de normalización 3000/1000 ms (compromiso entre su 800/800 y la recomendación 4000/1000), stepper de 64 px de ancho.
+- El usuario ajustó personalmente: suavizado 500 ms, fades 1000/1000 ms, umbral de silencio -50 dB, stepper de 84 px de ancho.
 - El usuario ajustará manualmente tipografía/geometría fina del stepper si hace falta — dejar constantes de diseño fáciles de localizar.
 - Requisito explícito del usuario: el input manual del stepper NUNCA se redondea al paso de las flechas.
 - Referencia de diseño de los offsets RG: "Preamp +X dB" de foobar2000 (offset sobre el valor RG, no etapa separada).
 - Los cambios de esta pestaña aplican y persisten INMEDIATAMENTE (sin botón), igual que los efectos DSP existentes.
+- UAT round 4: el usuario pidió eliminar "Gain fijo" y reemplazarlo por "Replay gain fijo" (igual que "gain para canciones sin etiqueta" pero sin condición de tags). El grupo "Normalizar Volumen" fue eliminado por completo (distorsión reportada). Los fades se corrigieron: el bug de oscilación venía de usar `effective_end_sec` (rastrea posición en vivo) en el trigger del fade-out.
+- El usuario pidió explícitamente que la persistencia se cargue en `app.rs` (no en audio_center.rs) para que los ajustes se apliquen desde el arranque del reproductor.
 
 </specifics>
 
@@ -227,8 +226,7 @@ Nueva pestaña **"Volumen y Mezcla"** (índice 3) en el Centro de Audio Avanzado
 
 - **Crossfade entre pistas** — reutilizará el motor de envolventes de esta fase; fase futura.
 - **Pre-cálculo de ReplayGain en el scanner** para pistas sin etiquetas (background, escribe a DB) — el análisis RT de esta fase es el fallback en vivo.
-- **Memoria de ganancia por pista** (recordar la ganancia convergida de normalización/RT para aplicarla al instante al re-escuchar).
-- **LUFS K-weighted real** en vez de RMS plano (más preciso perceptualmente).
+- **LUFS K-weighted real** en vez de RMS plano (más preciso perceptualmente) — la normalización RMS fue eliminada, este ítem queda diferido.
 - **Migrar ringbuf a f64** — evaluado y descartado: f32 ≥ resolución de cualquier DAC real; el procesamiento ya es f64 (D-04).
 
 </deferred>

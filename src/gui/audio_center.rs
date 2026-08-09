@@ -63,8 +63,8 @@ pub enum AudioCenterMessage {
     VolumenSilenceDurationChanged(f64),
     VolumenSilenceThresholdChanged(f64),
     VolumenSilenceEdgeTrimToggle(bool),
-    VolumenFixedGainToggle(bool),
-    VolumenFixedGainChanged(f64),
+    VolumenRgFixedToggle(bool),
+    VolumenRgFixedChanged(f64),
     VolumenRgMasterToggle(bool),
     VolumenRgTrackToggle(bool),
     VolumenRgAlbumToggle(bool),
@@ -182,8 +182,8 @@ pub struct AudioCenterManager {
     pub volumen_silence_duration_ms: f64,
     pub volumen_silence_threshold_db: f64,
     pub volumen_silence_edge_trim_enabled: bool,
-    pub volumen_fixed_gain_enabled: bool,
-    pub volumen_fixed_gain_db: f64,
+    pub volumen_rg_fixed_enabled: bool,
+    pub volumen_rg_fixed_db: f64,
     pub volumen_fade_in_enabled: bool,
     pub volumen_fade_out_enabled: bool,
     pub volumen_rg_master_enabled: bool,
@@ -241,8 +241,8 @@ impl Default for AudioCenterManager {
             volumen_silence_duration_ms: 1000.0,
             volumen_silence_threshold_db: -50.0,
             volumen_silence_edge_trim_enabled: true,
-            volumen_fixed_gain_enabled: false,
-            volumen_fixed_gain_db: 0.0,
+            volumen_rg_fixed_enabled: false,
+            volumen_rg_fixed_db: 0.0,
             volumen_fade_in_enabled: false,
             volumen_fade_out_enabled: false,
             volumen_rg_master_enabled: true,
@@ -519,12 +519,12 @@ impl AudioCenterManager {
                 if s.silence_edge_trim_enabled { "1" } else { "0" },
             );
             let _ = db_lock.set_setting(
-                "vol_fixed_gain_enabled",
-                if s.fixed_gain_enabled { "1" } else { "0" },
+                "vol_rg_fixed_enabled",
+                if s.rg_fixed_enabled { "1" } else { "0" },
             );
             let _ = db_lock.set_setting(
-                "vol_fixed_gain_db",
-                &format!("{:.2}", s.fixed_gain_db),
+                "vol_rg_fixed_db",
+                &format!("{:.2}", s.rg_fixed_db),
             );
             let _ = db_lock.set_setting(
                 "vol_fade_in_enabled",
@@ -845,15 +845,15 @@ impl AudioCenterManager {
                     state_write.silence_edge_trim_enabled = enabled;
                     self.volumen_silence_edge_trim_enabled = enabled;
                 }
-                if let Some(val) = db.get_setting("vol_fixed_gain_enabled") {
+                if let Some(val) = db.get_setting("vol_rg_fixed_enabled") {
                     let enabled = val == "1";
-                    state_write.fixed_gain_enabled = enabled;
-                    self.volumen_fixed_gain_enabled = enabled;
+                    state_write.rg_fixed_enabled = enabled;
+                    self.volumen_rg_fixed_enabled = enabled;
                 }
-                if let Some(val) = db.get_setting("vol_fixed_gain_db") {
+                if let Some(val) = db.get_setting("vol_rg_fixed_db") {
                     if let Ok(v) = val.parse::<f64>() {
-                        state_write.fixed_gain_db = v as f32;
-                        self.volumen_fixed_gain_db = v;
+                        state_write.rg_fixed_db = v as f32;
+                        self.volumen_rg_fixed_db = v;
                     }
                 }
                 if let Some(val) = db.get_setting("vol_fade_in_enabled") {
@@ -1609,13 +1609,13 @@ impl AudioCenterManager {
                 audio_manager.state().write().silence_edge_trim_enabled = enabled;
                 self.volumen_silence_edge_trim_enabled = enabled;
             }
-            AudioCenterMessage::VolumenFixedGainToggle(enabled) => {
-                audio_manager.state().write().fixed_gain_enabled = enabled;
-                self.volumen_fixed_gain_enabled = enabled;
+            AudioCenterMessage::VolumenRgFixedToggle(enabled) => {
+                audio_manager.state().write().rg_fixed_enabled = enabled;
+                self.volumen_rg_fixed_enabled = enabled;
             }
-            AudioCenterMessage::VolumenFixedGainChanged(val) => {
-                audio_manager.state().write().fixed_gain_db = val as f32;
-                self.volumen_fixed_gain_db = val;
+            AudioCenterMessage::VolumenRgFixedChanged(val) => {
+                audio_manager.state().write().rg_fixed_db = val as f32;
+                self.volumen_rg_fixed_db = val;
             }
             AudioCenterMessage::VolumenFadeInToggle(enabled) => {
                 audio_manager.state().write().fade_in_enabled = enabled;
@@ -4023,21 +4023,23 @@ fn view_volumen_mezcla<'a>(
     ]
     .spacing(4);
 
-    // --- Group 3: Gain fijo ---
-    let fixed_gain_on = manager.volumen_fixed_gain_enabled;
+    // --- Group 3: Replay gain fijo ---
+    // Igual que "gain para canciones sin etiqueta" pero se aplica SIEMPRE
+    // (sin la condición de ausencia de etiquetas).
+    let rg_fixed_on = manager.volumen_rg_fixed_enabled;
 
-    let fixed_gain_title_row = row![
+    let rg_fixed_title_row = row![
         {
-            let chk: iced::Element<'_, _> = StandardCheckbox::new(fixed_gain_on, |b| {
+            let chk: iced::Element<'_, _> = StandardCheckbox::new(rg_fixed_on, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFixedGainToggle(b),
+                    AudioCenterMessage::VolumenRgFixedToggle(b),
                 )
             })
             .into();
             chk
         },
         Space::new().width(Length::Fixed(4.0)),
-        text("Gain fijo")
+        text("Replay gain fijo")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
@@ -4046,15 +4048,15 @@ fn view_volumen_mezcla<'a>(
     ]
     .align_y(Alignment::Center);
 
-    let fixed_gain_row = {
-        let label_color = if !fixed_gain_on {
+    let rg_fixed_row = {
+        let label_color = if !rg_fixed_on {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
             COLOR_TEXT_SECONDARY
         };
-        let stepper: iced::Element<'_, _> = if !fixed_gain_on {
+        let stepper: iced::Element<'_, _> = if !rg_fixed_on {
             NumberStepper::new(
-                manager.volumen_fixed_gain_db,
+                manager.volumen_rg_fixed_db,
                 (-30.0)..=12.0,
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
@@ -4062,12 +4064,12 @@ fn view_volumen_mezcla<'a>(
             .into()
         } else {
             NumberStepper::new(
-                manager.volumen_fixed_gain_db,
+                manager.volumen_rg_fixed_db,
                 (-30.0)..=12.0,
                 StepperUnit::Decibels,
                 |v| {
                     crate::gui::app::Message::AudioCenterMsg(
-                        AudioCenterMessage::VolumenFixedGainChanged(v),
+                        AudioCenterMessage::VolumenRgFixedChanged(v),
                     )
                 },
             )
@@ -4089,7 +4091,7 @@ fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    let fixed_gain_group = column![fixed_gain_title_row, fixed_gain_row,].spacing(4);
+    let rg_fixed_group = column![rg_fixed_title_row, rg_fixed_row,].spacing(4);
 
     // --- Group 4: Replay Gain ---
     let rg_master_on = manager.volumen_rg_master_enabled;
@@ -4289,7 +4291,7 @@ fn view_volumen_mezcla<'a>(
         column![
             fades_group,
             silence_group,
-            fixed_gain_group,
+            rg_fixed_group,
             rg_group,
         ]
         .spacing(13),

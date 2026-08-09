@@ -618,8 +618,8 @@ impl AudoxidyApp {
                 s.silence_duration_ms = db_lock.get_setting("vol_silence_duration_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
                 s.silence_threshold_db = db_lock.get_setting("vol_silence_threshold_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(-50.0);
                 s.silence_edge_trim_enabled = db_lock.get_setting("vol_silence_edge_trim_enabled").map(|v| v == "1").unwrap_or(true);
-                s.fixed_gain_enabled = db_lock.get_setting("vol_fixed_gain_enabled").map(|v| v == "1").unwrap_or(false);
-                s.fixed_gain_db = db_lock.get_setting("vol_fixed_gain_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                s.rg_fixed_enabled = db_lock.get_setting("vol_rg_fixed_enabled").map(|v| v == "1").unwrap_or(false);
+                s.rg_fixed_db = db_lock.get_setting("vol_rg_fixed_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
                 s.rg_master_enabled = db_lock.get_setting("vol_rg_master_enabled").map(|v| v == "1").unwrap_or(true);
                 s.replay_gain_track_enabled = db_lock.get_setting("vol_rg_track_enabled").map(|v| v == "1").unwrap_or(true);
                 s.replay_gain_album_enabled = db_lock.get_setting("vol_rg_album_enabled").map(|v| v == "1").unwrap_or(true);
@@ -4136,6 +4136,8 @@ impl AudoxidyApp {
                 match &ac_msg {
                     // Volumen y Mezcla (D-42): cualquier cambio se guarda de inmediato
                     crate::gui::audio_center::AudioCenterMessage::VolumenFadesToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenFadeOutToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeOutChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSilenceToggle(_)
@@ -4148,7 +4150,9 @@ impl AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgAnalyzeRtToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetAlbumChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetTrackChanged(_)
-                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetRtChanged(_) => {
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgOffsetRtChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgFixedToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenRgFixedChanged(_) => {
                         self.audio_center_manager
                             .save_volumen_settings_to_db(&*self.audio_manager, &*self.database);
                     }

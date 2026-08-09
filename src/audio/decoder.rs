@@ -182,6 +182,7 @@ impl AudioDecoder for SymphoniaDecoder {
                     channels,
                     sample_rate: sr,
                 }));
+
             }
         }
     }
@@ -899,6 +900,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         let gain_linear: f64;
                         let vol: f64;
                         let fades_enabled: bool;
+                        let fixed_gain_active: bool;
                         {
                             let s = state.read();
                             let mut gain_db: f64 = 0.0;
@@ -934,6 +936,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if s.fixed_gain_enabled {
                                 gain_db += s.fixed_gain_db as f64;
                             }
+                            fixed_gain_active = s.fixed_gain_enabled;
 
                             // 5. Clamp to safety ceiling (+12 dB existing, D-26)
                             gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
@@ -1169,7 +1172,27 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         {
                             let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
                             let out_ch = out_channels as usize;
-                            let combined = vol * fade_coeff;
+                            let combined = if matches!(fade_state, FadeState::Smoothing { .. }) {
+                                fade_coeff
+                            } else {
+                                vol * fade_coeff
+                            };
+
+                            // Limiter auto-on when Gain fijo is boosting (anti-clipping safety).
+                            let limiter_was_enabled: Option<bool> = if fixed_gain_active
+                                && gain_linear > 1.0
+                            {
+                                if let Some(mut dsp) = engine.dsp.try_write() {
+                                    let was = dsp.limiter.enabled;
+                                    dsp.limiter.enabled = true;
+                                    drop(dsp);
+                                    Some(was)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
 
                             // Fix B1 (D-44): Spin-wait for DSP lock up to 5ms before falling back.
                             // Prevents DSP dropout during brief GUI lock contention.

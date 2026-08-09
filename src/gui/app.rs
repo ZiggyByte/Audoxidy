@@ -605,6 +605,30 @@ impl AudoxidyApp {
                 }
             }
 
+            // Cargar Volumen y Mezcla al inicio (aplicar al motor inmediatamente)
+            {
+                let state_arc = audio_manager.state();
+                let mut s = state_arc.write();
+                s.fades_enabled = db_lock.get_setting("vol_fades_enabled").map(|v| v == "1").unwrap_or(false);
+                s.fade_in_ms = db_lock.get_setting("vol_fade_in_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
+                s.fade_out_ms = db_lock.get_setting("vol_fade_out_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
+                s.fade_in_enabled = db_lock.get_setting("vol_fade_in_enabled").map(|v| v == "1").unwrap_or(false);
+                s.fade_out_enabled = db_lock.get_setting("vol_fade_out_enabled").map(|v| v == "1").unwrap_or(false);
+                s.silence_enabled = db_lock.get_setting("vol_silence_enabled").map(|v| v == "1").unwrap_or(true);
+                s.silence_duration_ms = db_lock.get_setting("vol_silence_duration_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
+                s.silence_threshold_db = db_lock.get_setting("vol_silence_threshold_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(-50.0);
+                s.silence_edge_trim_enabled = db_lock.get_setting("vol_silence_edge_trim_enabled").map(|v| v == "1").unwrap_or(true);
+                s.fixed_gain_enabled = db_lock.get_setting("vol_fixed_gain_enabled").map(|v| v == "1").unwrap_or(false);
+                s.fixed_gain_db = db_lock.get_setting("vol_fixed_gain_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                s.rg_master_enabled = db_lock.get_setting("vol_rg_master_enabled").map(|v| v == "1").unwrap_or(true);
+                s.replay_gain_track_enabled = db_lock.get_setting("vol_rg_track_enabled").map(|v| v == "1").unwrap_or(true);
+                s.replay_gain_album_enabled = db_lock.get_setting("vol_rg_album_enabled").map(|v| v == "1").unwrap_or(true);
+                s.rg_analyze_rt_enabled = db_lock.get_setting("vol_rg_analyze_rt_enabled").map(|v| v == "1").unwrap_or(true);
+                s.rg_offset_album_db = db_lock.get_setting("vol_rg_offset_album_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                s.rg_offset_track_db = db_lock.get_setting("vol_rg_offset_track_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                s.rg_offset_rt_db = db_lock.get_setting("vol_rg_offset_rt_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+            }
+
             // EQ enable / bands_31 / preamp_gain
             let eq_enabled = db_lock
                 .get_setting("eq_enabled")

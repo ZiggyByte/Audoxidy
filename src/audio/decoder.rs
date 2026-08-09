@@ -277,16 +277,16 @@ enum FadeState {
     Idle,
     FadingIn {
         coeff: f64,
-        step_per_frame: f64,
-    }, // rising 0→1, equal-power
+        rate_per_sec: f64,
+    }, // rising 0→1, equal-power; coeff advances by rate_per_sec * batch_dt
     FadingOut {
         coeff: f64,
-        step_per_frame: f64,
+        rate_per_sec: f64,
     }, // falling 1→0, equal-power
     Smoothing {
         coeff: f64,
         target: f64,
-        step_per_frame: f64,
+        rate_per_sec: f64,
     }, // linear 500ms
 }
 
@@ -312,7 +312,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
     // === Volumen y Mezcla state (Phase 03) ===
     let mut fade_state: FadeState = FadeState::Idle;
-    let mut previous_vol: f64 = 0.3; // match AudioState default
+    // previous_vol tracks the last-applied volume. Initialize from the engine's
+    // current volume so the first smoothing ramps from the real level, not a
+    // hardcoded 0.3 (UAT round 4).
+    let mut previous_vol: f64 = state.read().volume as f64;
 
     // Silence detection (D-14-D-20)
     let mut silence_samples: usize = 0;
@@ -448,13 +451,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 // (Not gated on natural EOF — user expects a smooth rise
                                 // whenever a song begins.)
                                 if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
-                                    let sr = s.sample_rate as f64;
                                     let fade_ms = s.fade_in_ms as f64;
-                                    if fade_ms > 0.0 && sr > 0.0 {
-                                        let step_per_sample = 1.0 / (fade_ms / 1000.0 * sr);
+                                    if fade_ms > 0.0 {
+                                        // rate_per_sec: fraction of the fade completed per
+                                        // second of *real* audio time. Independent of sample
+                                        // rate and batch size (robust timing, UAT round 4).
+                                        let rate_per_sec = 1.0 / (fade_ms / 1000.0);
                                         fade_state = FadeState::FadingIn {
                                             coeff: 0.0,
-                                            step_per_frame: step_per_sample,
+                                            rate_per_sec,
                                         };
                                     }
                                 } else {
@@ -1050,13 +1055,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 if current_pos_sec >= fade_start
                                     && !matches!(fade_state, FadeState::FadingOut { .. })
                                 {
-                                    let sr = out_rate as f64;
-                                    let fade_dur_samples = s.fade_out_ms as f64 / 1000.0 * sr;
-                                    if fade_dur_samples > 0.0 {
-                                        let step_per_sample = 1.0 / fade_dur_samples;
+                                    let fade_ms = s.fade_out_ms as f64;
+                                    if fade_ms > 0.0 {
+                                        // rate_per_sec: fraction per second of real audio time.
+                                        let rate_per_sec = 1.0 / (fade_ms / 1000.0);
                                         fade_state = FadeState::FadingOut {
                                             coeff: 1.0,
-                                            step_per_frame: step_per_sample,
+                                            rate_per_sec,
                                         };
                                     }
                                 }
@@ -1066,16 +1071,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         // Volume smoothing trigger (D-08): 500ms linear ramp on volume changes.
                         // Only active when fades are enabled.
                         if fades_enabled && (vol - previous_vol).abs() > 1e-10 {
-                            let sr = out_rate as f64;
-                            let smoothing_samples = 0.5 * sr; // 500ms
-                            let step = (vol - previous_vol).abs() / smoothing_samples.max(1.0);
+                            // rate_per_sec: ramp over a fixed 500ms of real audio time.
+                            let rate_per_sec = 1.0 / 0.5; // 500ms
                             if matches!(fade_state, FadeState::Idle)
                                 || matches!(fade_state, FadeState::Smoothing { .. })
                             {
                                 fade_state = FadeState::Smoothing {
                                     coeff: previous_vol,
                                     target: vol,
-                                    step_per_frame: step,
+                                    rate_per_sec,
                                 };
                             }
                             previous_vol = vol;
@@ -1085,12 +1089,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                         // Fade envelope coefficient (D-12, D-13): equal-power for fades,
                         // linear for volume smoothing.
-                        let frames_in_batch = output_accumulator.len() as f64 / out_channels as f64;
+                        // coeff advances by rate_per_sec * batch_dt — i.e. by REAL audio
+                        // time. This makes the configured ms exact regardless of sample
+                        // rate or batch size (UAT round 4).
+                        let batch_advance = batch_dt;
                         let fade_coeff = match fade_state {
                             FadeState::Idle => 1.0,
                             FadeState::FadingIn {
                                 mut coeff,
-                                step_per_frame,
+                                rate_per_sec,
                             } => {
                                 if coeff >= 1.0 {
                                     fade_state = FadeState::Idle;
@@ -1100,35 +1107,40 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     // Equal-power fade-in (D-12): sin²(π/2 * t)
                                     let ep_coeff =
                                         (std::f64::consts::PI / 2.0 * current).sin().powi(2);
-                                    coeff += step_per_frame * frames_in_batch;
+                                    coeff += rate_per_sec * batch_advance;
                                     if coeff > 1.0 {
                                         coeff = 1.0;
                                     }
                                     fade_state = FadeState::FadingIn {
                                         coeff,
-                                        step_per_frame,
+                                        rate_per_sec,
                                     };
                                     ep_coeff
                                 }
                             }
                             FadeState::FadingOut {
                                 mut coeff,
-                                step_per_frame,
+                                rate_per_sec,
                             } => {
                                 if coeff <= 0.0 {
-                                    fade_state = FadeState::Idle;
+                                    // Fade-out complete: STAY at 0 (do not return to Idle,
+                                    // which would snap volume back up). The track is ending.
+                                    fade_state = FadeState::FadingOut {
+                                        coeff: 0.0,
+                                        rate_per_sec,
+                                    };
                                     0.0
                                 } else {
                                     let current = coeff;
                                     let ep_coeff =
                                         (std::f64::consts::PI / 2.0 * current).sin().powi(2);
-                                    coeff -= step_per_frame * frames_in_batch;
+                                    coeff -= rate_per_sec * batch_advance;
                                     if coeff < 0.0 {
                                         coeff = 0.0;
                                     }
                                     fade_state = FadeState::FadingOut {
                                         coeff,
-                                        step_per_frame,
+                                        rate_per_sec,
                                     };
                                     ep_coeff
                                 }
@@ -1136,9 +1148,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             FadeState::Smoothing {
                                 mut coeff,
                                 target,
-                                mut step_per_frame,
+                                rate_per_sec,
                             } => {
-                                let step = step_per_frame * frames_in_batch;
+                                let step = rate_per_sec * batch_advance;
                                 if (coeff - target).abs() < step {
                                     fade_state = FadeState::Idle;
                                     target
@@ -1147,7 +1159,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     fade_state = FadeState::Smoothing {
                                         coeff,
                                         target,
-                                        step_per_frame,
+                                        rate_per_sec,
                                     };
                                     coeff
                                 } else {
@@ -1155,7 +1167,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     fade_state = FadeState::Smoothing {
                                         coeff,
                                         target,
-                                        step_per_frame,
+                                        rate_per_sec,
                                     };
                                     coeff
                                 }

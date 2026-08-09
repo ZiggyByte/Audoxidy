@@ -3788,6 +3788,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Milliseconds,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -3844,6 +3845,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Milliseconds,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -3914,6 +3916,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Milliseconds,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -3957,6 +3960,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -4061,6 +4065,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -4140,6 +4145,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -4196,6 +4202,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(
@@ -4252,6 +4259,7 @@ fn view_volumen_mezcla<'a>(
                 StepperUnit::Decibels,
                 |_| crate::gui::app::Message::NoOp,
             )
+            .disabled()
             .into()
         } else {
             NumberStepper::new(

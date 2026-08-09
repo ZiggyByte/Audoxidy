@@ -258,6 +258,7 @@ pub struct NumberStepper<'a, Message> {
     unit: StepperUnit,
     on_change: Box<dyn Fn(f64) -> Message + 'a>,
     on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    disabled: bool,
 }
 
 impl<'a, Message> NumberStepper<'a, Message> {
@@ -273,11 +274,18 @@ impl<'a, Message> NumberStepper<'a, Message> {
             unit,
             on_change: Box::new(on_change),
             on_selected_state_change: None,
+            disabled: false,
         }
     }
 
     pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_selected_state_change = Some(Box::new(callback));
+        self
+    }
+
+    /// Disable the stepper: renders greyed-out and ignores all interaction.
+    pub fn disabled(mut self) -> Self {
+        self.disabled = true;
         self
     }
 }
@@ -300,6 +308,7 @@ struct NumberStepperCenter<'a, Message> {
     range: std::ops::RangeInclusive<f64>,
     on_change: std::rc::Rc<Box<dyn Fn(f64) -> Message + 'a>>,
     on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    disabled: bool,
 }
 
 impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
@@ -337,6 +346,9 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         shell: &mut iced::advanced::Shell<'_, Message>,
         _viewport: &iced::Rectangle,
     ) {
+        if self.disabled {
+            return;
+        }
         let bounds = layout.bounds();
         let state = tree.state.downcast_mut::<NumberStepperCenterState>();
         let cursor_pos = cursor.position();
@@ -475,6 +487,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         let text_x = bounds.x + bounds.width / 2.0;
         let text_y = bounds.y + bounds.height / 2.0;
+        let text_color = if self.disabled {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+        } else {
+            COLOR_TEXT_PRIMARY
+        };
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: display_text,
@@ -488,7 +505,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 wrapping: iced::advanced::text::Wrapping::None,
             },
             iced::Point::new(text_x, text_y),
-            COLOR_TEXT_PRIMARY,
+            text_color,
             bounds,
         );
     }
@@ -503,14 +520,21 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
         let step = stepper.unit.step();
         let on_change_rc = std::rc::Rc::new(stepper.on_change);
         let unit = stepper.unit;
+        let disabled = stepper.disabled;
+
+        let icon_color = if disabled {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+        } else {
+            COLOR_TEXT_PRIMARY
+        };
 
         let left_icon = svg(iced::widget::svg::Handle::from_path(
             "assets/icons/arrow-left-chevron.svg",
         ))
         .width(Length::Fixed(14.0))
         .height(Length::Fixed(14.0))
-        .style(|_theme: &Theme, _status| svg::Style {
-            color: Some(COLOR_TEXT_PRIMARY),
+        .style(move |_theme: &Theme, _status| svg::Style {
+            color: Some(icon_color),
         });
 
         let right_icon = svg(iced::widget::svg::Handle::from_path(
@@ -518,8 +542,8 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
         ))
         .width(Length::Fixed(14.0))
         .height(Length::Fixed(14.0))
-        .style(|_theme: &Theme, _status| svg::Style {
-            color: Some(COLOR_TEXT_PRIMARY),
+        .style(move |_theme: &Theme, _status| svg::Style {
+            color: Some(icon_color),
         });
 
         let val = stepper.value;
@@ -538,43 +562,48 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
             }
         };
 
+        let btn_style = move |_theme: &Theme, status| {
+            let bg = if status == button::Status::Hovered || status == button::Status::Pressed {
+                if disabled {
+                    COLOR_CONTRAST
+                } else {
+                    COLOR_ACCENT
+                }
+            } else {
+                COLOR_CONTRAST
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: if disabled {
+                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+                } else {
+                    COLOR_TEXT_PRIMARY
+                },
+                ..button::Style::default()
+            }
+        };
+
         let left_btn = button(left_icon)
             .width(Length::Fixed(14.0))
             .height(Length::Fixed(14.0))
-            .style(|_theme: &Theme, status| {
-                let bg = if status == button::Status::Hovered || status == button::Status::Pressed
-                {
-                    COLOR_ACCENT
-                } else {
-                    COLOR_CONTRAST
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: COLOR_TEXT_PRIMARY,
-                    ..button::Style::default()
-                }
-            })
-            .padding(0)
-            .on_press(on_change_left());
+            .style(btn_style)
+            .padding(0);
+        let left_btn = if disabled {
+            left_btn
+        } else {
+            left_btn.on_press(on_change_left())
+        };
 
         let right_btn = button(right_icon)
             .width(Length::Fixed(14.0))
             .height(Length::Fixed(14.0))
-            .style(|_theme: &Theme, status| {
-                let bg = if status == button::Status::Hovered || status == button::Status::Pressed
-                {
-                    COLOR_ACCENT
-                } else {
-                    COLOR_CONTRAST
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: COLOR_TEXT_PRIMARY,
-                    ..button::Style::default()
-                }
-            })
-            .padding(0)
-            .on_press(on_change_right());
+            .style(btn_style)
+            .padding(0);
+        let right_btn = if disabled {
+            right_btn
+        } else {
+            right_btn.on_press(on_change_right())
+        };
 
         let center: Element<'a, Message> = Element::new(NumberStepperCenter {
             value: stepper.value.clamp(range_start, range_end),
@@ -582,6 +611,7 @@ impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, M
             range: stepper.range,
             on_change: on_change_rc.clone(),
             on_selected_state_change: stepper.on_selected_state_change,
+            disabled,
         });
 
         row![left_btn, center, right_btn]

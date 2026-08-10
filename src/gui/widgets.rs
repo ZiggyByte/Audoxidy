@@ -258,6 +258,7 @@ pub struct NumberStepper<'a, Message> {
     unit: StepperUnit,
     on_change: Box<dyn Fn(f64) -> Message + 'a>,
     on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    on_right_click: Option<Box<dyn Fn() -> Message + 'a>>,
     disabled: bool,
 }
 
@@ -274,12 +275,19 @@ impl<'a, Message> NumberStepper<'a, Message> {
             unit,
             on_change: Box::new(on_change),
             on_selected_state_change: None,
+            on_right_click: None,
             disabled: false,
         }
     }
 
     pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
         self.on_selected_state_change = Some(Box::new(callback));
+        self
+    }
+
+    /// Right-click anywhere on the stepper resets to the function's default value.
+    pub fn on_right_click(mut self, callback: impl Fn() -> Message + 'a) -> Self {
+        self.on_right_click = Some(Box::new(callback));
         self
     }
 
@@ -293,68 +301,195 @@ impl<'a, Message> NumberStepper<'a, Message> {
 // --- Center zone widget: displays value, handles click-to-edit and keyboard input ---
 
 #[derive(Debug, Clone, Default)]
-struct NumberStepperCenterState {
+struct NumberStepperState {
     is_input_editing: bool,
     input_value_text: String,
     input_cursor_pos: usize,
     input_has_focus: bool,
+    held_dir: i8,        // -1 = left arrow held, 1 = right arrow held, 0 = none
+    hover_left: bool,
+    hover_right: bool,
 }
 
-/// Internal widget for the center zone of the NumberStepper (56px wide).
-/// Displays formatted value + suffix normally; click to edit raw number.
-struct NumberStepperCenter<'a, Message> {
+/// Full stepper widget (84×14 px). Left/right zones host the SVG chevrons
+/// (delegated as children); the center zone draws the value + edit input.
+/// Handles: click-to-step, hold-to-repeat (via RedrawRequested), right-click reset,
+/// click-to-edit with keyboard input, disabled state.
+struct NumberStepperWidget<'a, Message> {
     value: f64,
     unit: StepperUnit,
     range: std::ops::RangeInclusive<f64>,
     on_change: std::rc::Rc<Box<dyn Fn(f64) -> Message + 'a>>,
     on_selected_state_change: Option<Box<dyn Fn(bool) -> Message + 'a>>,
+    on_right_click: Option<Box<dyn Fn() -> Message + 'a>>,
     disabled: bool,
+    content: Element<'a, Message>,
 }
 
-impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
-    for NumberStepperCenter<'a, Message>
+impl<'a, Message: 'a + Clone> NumberStepperWidget<'a, Message> {
+    fn new(stepper: NumberStepper<'a, Message>) -> Self {
+        let range_start = *stepper.range.start();
+        let range_end = *stepper.range.end();
+        let on_change_rc = std::rc::Rc::new(stepper.on_change);
+        let unit = stepper.unit;
+        let disabled = stepper.disabled;
+
+        let icon_color = if disabled {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+        } else {
+            COLOR_TEXT_PRIMARY
+        };
+
+        let left_icon = svg(iced::widget::svg::Handle::from_path(
+            "assets/icons/arrow-left-chevron.svg",
+        ))
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme: &Theme, _status| svg::Style {
+            color: Some(icon_color),
+        });
+
+        let right_icon = svg(iced::widget::svg::Handle::from_path(
+            "assets/icons/arrow-right-chevron.svg",
+        ))
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme: &Theme, _status| svg::Style {
+            color: Some(icon_color),
+        });
+
+        let content: Element<'a, Message> = row![
+            left_icon,
+            Space::new().width(Length::Fixed(56.0)).height(Length::Fixed(14.0)),
+            right_icon,
+        ]
+        .width(Length::Fixed(84.0))
+        .height(Length::Fixed(14.0))
+        .align_y(Alignment::Center)
+        .into();
+
+        Self {
+            value: stepper.value.clamp(range_start, range_end),
+            unit,
+            range: stepper.range,
+            on_change: on_change_rc,
+            on_selected_state_change: stepper.on_selected_state_change,
+            on_right_click: stepper.on_right_click,
+            disabled,
+            content,
+        }
+    }
+
+    fn step_value(&self, dir: i8, shell: &mut iced::advanced::Shell<'_, Message>) {
+        let step = self.unit.step();
+        let new_val = self.value + dir as f64 * step;
+        let clamped = new_val.clamp(*self.range.start(), *self.range.end());
+        shell.publish((self.on_change)(clamped));
+    }
+}
+
+impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Renderer>
+    for NumberStepperWidget<'a, Message>
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fixed(56.0),
+            width: Length::Fixed(84.0),
             height: Length::Fixed(14.0),
         }
     }
 
     fn state(&self) -> iced::advanced::widget::tree::State {
-        iced::advanced::widget::tree::State::new(NumberStepperCenterState::default())
+        iced::advanced::widget::tree::State::new(NumberStepperState::default())
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content))
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation)
     }
 
     fn layout(
         &mut self,
-        _tree: &mut iced::advanced::widget::Tree,
-        _renderer: &iced::Renderer,
-        limits: &iced::advanced::layout::Limits,
-    ) -> iced::advanced::layout::Node {
-        let size = limits.resolve(Length::Fixed(56.0), Length::Fixed(14.0), iced::Size::ZERO);
-        iced::advanced::layout::Node::new(size)
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn update(
         &mut self,
-        tree: &mut iced::advanced::widget::Tree,
-        event: &iced::Event,
-        layout: iced::advanced::Layout<'_>,
-        cursor: iced::advanced::mouse::Cursor,
-        _renderer: &iced::Renderer,
-        _clipboard: &mut dyn iced::advanced::Clipboard,
-        shell: &mut iced::advanced::Shell<'_, Message>,
-        _viewport: &iced::Rectangle,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
     ) {
         if self.disabled {
             return;
         }
         let bounds = layout.bounds();
-        let state = tree.state.downcast_mut::<NumberStepperCenterState>();
+        let state = tree.state.downcast_mut::<NumberStepperState>();
         let cursor_pos = cursor.position();
         let is_focus = cursor_pos.is_some_and(|p| bounds.contains(p));
 
+        // Hit-test zones: left arrow 0-14, center 14-70, right arrow 70-84
+        let left_zone = Rectangle {
+            x: bounds.x,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let center_zone = Rectangle {
+            x: bounds.x + 14.0,
+            y: bounds.y,
+            width: 56.0,
+            height: 14.0,
+        };
+        let right_zone = Rectangle {
+            x: bounds.x + 70.0,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let in_left = cursor_pos.is_some_and(|p| left_zone.contains(p));
+        let in_center = cursor_pos.is_some_and(|p| center_zone.contains(p));
+        let in_right = cursor_pos.is_some_and(|p| right_zone.contains(p));
+        state.hover_left = in_left;
+        state.hover_right = in_right;
+
         match event {
+            // Right-click anywhere on the stepper → reset to default value.
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right))
+                if is_focus =>
+            {
+                shell.capture_event();
+                if let Some(ref cb) = self.on_right_click {
+                    shell.publish(cb());
+                }
+                return;
+            }
+
+            // Click outside while editing → apply and exit.
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(_))
                 if !is_focus && state.input_has_focus =>
             {
@@ -365,27 +500,51 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 }
                 state.is_input_editing = false;
                 state.input_has_focus = false;
+                state.held_dir = 0;
                 GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                 if let Some(ref cb) = self.on_selected_state_change {
                     shell.publish(cb(false));
                 }
+                return;
             }
 
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
-                if is_focus && !state.is_input_editing =>
-            {
+            // Left button press: arrow → step + begin hold; center → enter edit.
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
                 shell.capture_event();
-                state.input_value_text = match &self.unit {
-                    StepperUnit::Decibels => format!("{:.2}", self.value),
-                    StepperUnit::Milliseconds => format!("{:.0}", self.value),
-                };
-                state.input_cursor_pos = state.input_value_text.len();
-                state.is_input_editing = true;
-                state.input_has_focus = true;
-                GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
-                if let Some(ref cb) = self.on_selected_state_change {
-                    shell.publish(cb(true));
+                if in_left {
+                    self.step_value(-1, shell);
+                    state.held_dir = -1;
+                } else if in_right {
+                    self.step_value(1, shell);
+                    state.held_dir = 1;
+                } else if in_center && !state.is_input_editing {
+                    state.input_value_text = match &self.unit {
+                        StepperUnit::Decibels => format!("{:.2}", self.value),
+                        StepperUnit::Milliseconds => format!("{:.0}", self.value),
+                    };
+                    state.input_cursor_pos = state.input_value_text.len();
+                    state.is_input_editing = true;
+                    state.input_has_focus = true;
+                    GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
+                    if let Some(ref cb) = self.on_selected_state_change {
+                        shell.publish(cb(true));
+                    }
                 }
+                return;
+            }
+
+            // Release left button → stop hold repeat.
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+                state.held_dir = 0;
+                return;
+            }
+
+            // Redraw ticks while an arrow is held → repeat stepping for hold-to-repeat.
+            iced::Event::Window(iced::window::Event::RedrawRequested(_)) => {
+                if state.held_dir != 0 {
+                    self.step_value(state.held_dir, shell);
+                }
+                return;
             }
 
             iced::Event::Keyboard(iced::keyboard::Event::KeyPressed { key, .. })
@@ -401,6 +560,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         }
                         state.is_input_editing = false;
                         state.input_has_focus = false;
+                        state.held_dir = 0;
                         GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                         if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(false));
@@ -410,6 +570,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                         shell.capture_event();
                         state.is_input_editing = false;
                         state.input_has_focus = false;
+                        state.held_dir = 0;
                         GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
                         if let Some(ref cb) = self.on_selected_state_change {
                             shell.publish(cb(false));
@@ -448,35 +609,105 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                     }
                     _ => {}
                 }
+                return;
             }
+
             _ => {}
         }
+
+        // Delegate remaining events (e.g. cursor moves) to the content row.
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
     }
 
     fn draw(
         &self,
-        tree: &iced::advanced::widget::Tree,
+        tree: &Tree,
         renderer: &mut iced::Renderer,
-        _theme: &Theme,
-        _style: &iced::advanced::renderer::Style,
-        layout: iced::advanced::Layout<'_>,
-        _cursor: iced::advanced::mouse::Cursor,
-        _viewport: &iced::Rectangle,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
     ) {
         use iced::advanced::Renderer as _;
         use iced::advanced::text::Renderer as _;
 
         let bounds = layout.bounds();
-        let state = tree.state.downcast_ref::<NumberStepperCenterState>();
+        let state = tree.state.downcast_ref::<NumberStepperState>();
 
+        // Draw arrow backgrounds first.
+        let left_zone = Rectangle {
+            x: bounds.x,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let right_zone = Rectangle {
+            x: bounds.x + 70.0,
+            y: bounds.y,
+            width: 14.0,
+            height: 14.0,
+        };
+        let center_zone = Rectangle {
+            x: bounds.x + 14.0,
+            y: bounds.y,
+            width: 56.0,
+            height: 14.0,
+        };
+
+        let left_bg = if !self.disabled && state.hover_left {
+            COLOR_ACCENT
+        } else {
+            COLOR_CONTRAST
+        };
+        let right_bg = if !self.disabled && state.hover_right {
+            COLOR_ACCENT
+        } else {
+            COLOR_CONTRAST
+        };
         renderer.fill_quad(
             iced::advanced::graphics::core::renderer::Quad {
-                bounds,
+                bounds: left_zone,
+                ..Default::default()
+            },
+            left_bg,
+        );
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: right_zone,
+                ..Default::default()
+            },
+            right_bg,
+        );
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: center_zone,
                 ..Default::default()
             },
             COLOR_BG,
         );
 
+        // Draw SVG chevron children (delegated content row) on top of the backgrounds.
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+
+        // Draw the center value text (or edit buffer) on top of the center zone.
         let display_text = if state.is_input_editing {
             let pos = state.input_cursor_pos.min(state.input_value_text.len());
             let (before, after) = state.input_value_text.split_at(pos);
@@ -485,8 +716,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             format_stepper_value(self.value, &self.unit)
         };
 
-        let text_x = bounds.x + bounds.width / 2.0;
-        let text_y = bounds.y + bounds.height / 2.0;
+        let text_x = center_zone.x + center_zone.width / 2.0;
+        let text_y = center_zone.y + center_zone.height / 2.0;
         let text_color = if self.disabled {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -495,7 +726,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         renderer.fill_text(
             iced::advanced::text::Text {
                 content: display_text,
-                bounds: iced::Size::new(bounds.width - 2.0, bounds.height),
+                bounds: iced::Size::new(center_zone.width - 2.0, center_zone.height),
                 size: iced::Pixels(12.0),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
@@ -506,119 +737,39 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             },
             iced::Point::new(text_x, text_y),
             text_color,
-            bounds,
+            center_zone,
         );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        // While an arrow is held, report Idle so iced keeps sending redraw
+        // requests — this drives the hold-to-repeat stepping.
+        let state = tree.state.downcast_ref::<NumberStepperState>();
+        if state.held_dir != 0 {
+            return mouse::Interaction::Idle;
+        }
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 }
 
-// --- Composed stepper: SVG chevrons + center widget ---
+// --- Composed stepper: build the full widget ---
 
 impl<'a, Message: 'a + Clone> From<NumberStepper<'a, Message>> for Element<'a, Message> {
     fn from(stepper: NumberStepper<'a, Message>) -> Self {
-        let range_start = *stepper.range.start();
-        let range_end = *stepper.range.end();
-        let step = stepper.unit.step();
-        let on_change_rc = std::rc::Rc::new(stepper.on_change);
-        let unit = stepper.unit;
-        let disabled = stepper.disabled;
-
-        let icon_color = if disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_PRIMARY
-        };
-
-        let left_icon = svg(iced::widget::svg::Handle::from_path(
-            "assets/icons/arrow-left-chevron.svg",
-        ))
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
-        .style(move |_theme: &Theme, _status| svg::Style {
-            color: Some(icon_color),
-        });
-
-        let right_icon = svg(iced::widget::svg::Handle::from_path(
-            "assets/icons/arrow-right-chevron.svg",
-        ))
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
-        .style(move |_theme: &Theme, _status| svg::Style {
-            color: Some(icon_color),
-        });
-
-        let val = stepper.value;
-        let on_change_left = {
-            let cb = on_change_rc.clone();
-            move || {
-                let new_val = (val - step).clamp(range_start, range_end);
-                cb(new_val)
-            }
-        };
-        let on_change_right = {
-            let cb = on_change_rc.clone();
-            move || {
-                let new_val = (val + step).clamp(range_start, range_end);
-                cb(new_val)
-            }
-        };
-
-        let btn_style = move |_theme: &Theme, status| {
-            let bg = if status == button::Status::Hovered || status == button::Status::Pressed {
-                if disabled {
-                    COLOR_CONTRAST
-                } else {
-                    COLOR_ACCENT
-                }
-            } else {
-                COLOR_CONTRAST
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: if disabled {
-                    COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-                } else {
-                    COLOR_TEXT_PRIMARY
-                },
-                ..button::Style::default()
-            }
-        };
-
-        let left_btn = button(left_icon)
-            .width(Length::Fixed(14.0))
-            .height(Length::Fixed(14.0))
-            .style(btn_style)
-            .padding(0);
-        let left_btn = if disabled {
-            left_btn
-        } else {
-            left_btn.on_press(on_change_left())
-        };
-
-        let right_btn = button(right_icon)
-            .width(Length::Fixed(14.0))
-            .height(Length::Fixed(14.0))
-            .style(btn_style)
-            .padding(0);
-        let right_btn = if disabled {
-            right_btn
-        } else {
-            right_btn.on_press(on_change_right())
-        };
-
-        let center: Element<'a, Message> = Element::new(NumberStepperCenter {
-            value: stepper.value.clamp(range_start, range_end),
-            unit,
-            range: stepper.range,
-            on_change: on_change_rc.clone(),
-            on_selected_state_change: stepper.on_selected_state_change,
-            disabled,
-        });
-
-        row![left_btn, center, right_btn]
-            .width(Length::Fixed(84.0))
-            .height(Length::Fixed(14.0))
-            .align_y(Alignment::Center)
-            .into()
+        Element::new(NumberStepperWidget::new(stepper))
     }
 }
 

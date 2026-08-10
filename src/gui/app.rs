@@ -610,6 +610,7 @@ impl AudoxidyApp {
                 let state_arc = audio_manager.state();
                 let mut s = state_arc.write();
                 s.fades_enabled = db_lock.get_setting("vol_fades_enabled").map(|v| v == "1").unwrap_or(false);
+                s.smooth_volume_enabled = db_lock.get_setting("vol_smooth_volume_enabled").map(|v| v == "1").unwrap_or(false);
                 s.fade_in_ms = db_lock.get_setting("vol_fade_in_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
                 s.fade_out_ms = db_lock.get_setting("vol_fade_out_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
                 s.fade_in_enabled = db_lock.get_setting("vol_fade_in_enabled").map(|v| v == "1").unwrap_or(false);
@@ -793,6 +794,11 @@ impl AudoxidyApp {
                 let v = val == "1";
                 audio_center_manager.volumen_fades_enabled = v;
                 audio_manager.state().write().fades_enabled = v;
+            }
+            if let Some(val) = db_lock.get_setting("vol_smooth_volume_enabled") {
+                let v = val == "1";
+                audio_center_manager.volumen_smooth_volume_enabled = v;
+                audio_manager.state().write().smooth_volume_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_fade_in_ms") {
                 if let Ok(v) = val.parse::<f32>() {
@@ -4136,6 +4142,7 @@ impl AudoxidyApp {
                 match &ac_msg {
                     // Volumen y Mezcla (D-42): cualquier cambio se guarda de inmediato
                     crate::gui::audio_center::AudioCenterMessage::VolumenFadesToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::VolumenSmoothVolumeToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeOutToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInChanged(_)

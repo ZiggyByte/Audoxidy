@@ -105,7 +105,8 @@ pub struct AudioState {
     pub replay_gain_album_enabled: bool,
 
     // Volumen y Mezcla — Fades (D-07 master, D-09, D-10)
-    pub fades_enabled: bool, // default: true
+    pub fades_enabled: bool, // default: false — group master "Cambio de Volumen"
+    pub smooth_volume_enabled: bool, // default: false — individual "Suavizar el cambio de volumen"
     pub fade_in_ms: f32,     // default: 1000.0 (range 0–10000, paso 50)
     pub fade_out_ms: f32,    // default: 1000.0 (range 0–10000, paso 50)
 
@@ -164,6 +165,7 @@ impl Default for AudioState {
 
             // Volumen y Mezcla — Fades
             fades_enabled: false,
+            smooth_volume_enabled: false,
             fade_in_ms: 1000.0,
             fade_out_ms: 1000.0,
 

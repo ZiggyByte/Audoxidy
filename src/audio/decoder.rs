@@ -900,6 +900,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         let gain_linear: f64;
                         let vol: f64;
                         let fades_enabled: bool;
+                        let smooth_volume_enabled: bool;
                         {
                             let s = state.read();
                             let mut gain_db: f64 = 0.0;
@@ -941,6 +942,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
                             vol = s.volume as f64;
                             fades_enabled = s.fades_enabled;
+                            smooth_volume_enabled = s.smooth_volume_enabled;
                         } // Release AudioState lock before DSP processing
 
                         // D-29: ~100 ms EMA anti-click ramp for RG offsets.
@@ -1068,11 +1070,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             }
                         } // Release state lock
 
-                        // Volume smoothing trigger (D-08): 500ms linear ramp on volume changes.
-                        // Only active when fades are enabled.
-                        if fades_enabled && (vol - previous_vol).abs() > 1e-10 {
-                            // rate_per_sec: ramp over a fixed 500ms of real audio time.
-                            let rate_per_sec = 1.0 / 0.5; // 500ms
+                        // Volume smoothing trigger (D-08): 2000ms linear ramp on volume changes.
+                        // Gated by the individual smooth_volume_enabled flag (not the group
+                        // master), so fade-in/fade-out can run without smoothing active.
+                        if smooth_volume_enabled && (vol - previous_vol).abs() > 1e-10 {
+                            // rate_per_sec: ramp over a fixed 2000ms of real audio time.
+                            let rate_per_sec = 1.0 / 2.0; // 2000ms
                             if matches!(fade_state, FadeState::Idle)
                                 || matches!(fade_state, FadeState::Smoothing { .. })
                             {

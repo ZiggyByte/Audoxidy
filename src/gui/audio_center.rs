@@ -55,6 +55,7 @@ pub enum AudioCenterMessage {
 
     // Tab 4: Volumen y Mezcla
     VolumenFadesToggle(bool),
+    VolumenSmoothVolumeToggle(bool),
     VolumenFadeInToggle(bool),
     VolumenFadeOutToggle(bool),
     VolumenFadeInChanged(f64),
@@ -176,6 +177,7 @@ pub struct AudioCenterManager {
 
     // Volumen y Mezcla state (Phase 03) — mirrors AudioState for UI display
     pub volumen_fades_enabled: bool,
+    pub volumen_smooth_volume_enabled: bool,
     pub volumen_fade_in_ms: f64,
     pub volumen_fade_out_ms: f64,
     pub volumen_silence_enabled: bool,
@@ -235,6 +237,7 @@ impl Default for AudioCenterManager {
             system_quantum: SystemSelection::Default,
 
             volumen_fades_enabled: false,
+            volumen_smooth_volume_enabled: false,
             volumen_fade_in_ms: 1000.0,
             volumen_fade_out_ms: 1000.0,
             volumen_silence_enabled: true,
@@ -500,6 +503,7 @@ impl AudioCenterManager {
             let s = state.read();
             let _ =
                 db_lock.set_setting("vol_fades_enabled", if s.fades_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting("vol_smooth_volume_enabled", if s.smooth_volume_enabled { "1" } else { "0" });
             let _ = db_lock.set_setting("vol_fade_in_ms", &format!("{:.0}", s.fade_in_ms));
             let _ = db_lock.set_setting("vol_fade_out_ms", &format!("{:.0}", s.fade_out_ms));
             let _ = db_lock.set_setting(
@@ -810,6 +814,11 @@ impl AudioCenterManager {
                     let enabled = val == "1";
                     state_write.fades_enabled = enabled;
                     self.volumen_fades_enabled = enabled;
+                }
+                if let Some(val) = db.get_setting("vol_smooth_volume_enabled") {
+                    let enabled = val == "1";
+                    state_write.smooth_volume_enabled = enabled;
+                    self.volumen_smooth_volume_enabled = enabled;
                 }
                 if let Some(val) = db.get_setting("vol_fade_in_ms") {
                     if let Ok(v) = val.parse::<f64>() {
@@ -1584,6 +1593,10 @@ impl AudioCenterManager {
             AudioCenterMessage::VolumenFadesToggle(enabled) => {
                 audio_manager.state().write().fades_enabled = enabled;
                 self.volumen_fades_enabled = enabled;
+            }
+            AudioCenterMessage::VolumenSmoothVolumeToggle(enabled) => {
+                audio_manager.state().write().smooth_volume_enabled = enabled;
+                self.volumen_smooth_volume_enabled = enabled;
             }
             AudioCenterMessage::VolumenFadeInChanged(val) => {
                 audio_manager.state().write().fade_in_ms = val as f32;
@@ -3755,7 +3768,7 @@ fn view_volumen_mezcla<'a>(
             chk
         },
         Space::new().width(Length::Fixed(4.0)),
-        text("Suavizar el cambio de volumen")
+        text("Cambio de Volumen")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
@@ -3764,8 +3777,37 @@ fn view_volumen_mezcla<'a>(
     ]
     .align_y(Alignment::Center);
 
+    // Sub-row: Suavizar el cambio de volumen (individual checkbox, gated by group master)
+    let smooth_row = {
+        let label_color = if !fades_master_on {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+        } else {
+            COLOR_TEXT_SECONDARY
+        };
+        let chk: iced::Element<'_, _> = if fades_master_on {
+            StandardCheckbox::new(manager.volumen_smooth_volume_enabled, |b| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenSmoothVolumeToggle(b),
+                )
+            })
+            .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
+        };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(4.0)),
+            text("Suavizar el cambio de volumen")
+                .size(12)
+                .color(label_color)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+    };
+
     let fade_in_row = {
-        let disabled = !fades_master_on;
+        let disabled = !fades_master_on || !manager.volumen_fade_in_enabled;
         let label_color = if !fades_master_on {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -3806,12 +3848,17 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenFadeInChanged(1000.0),
+                )
+            })
             .into()
         };
         row![
             chk,
             Space::new().width(Length::Fixed(4.0)),
-            text("Suavizar cambio de volumen al iniciar cancion")
+            text("Desvanecimiento del volumen al iniciar la cancion")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),
@@ -3822,7 +3869,7 @@ fn view_volumen_mezcla<'a>(
     };
 
     let fade_out_row = {
-        let disabled = !fades_master_on;
+        let disabled = !fades_master_on || !manager.volumen_fade_out_enabled;
         let label_color = if !fades_master_on {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -3863,12 +3910,17 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenFadeOutChanged(1000.0),
+                )
+            })
             .into()
         };
         row![
             chk,
             Space::new().width(Length::Fixed(4.0)),
-            text("Suavizar cambio de volumen al terminar cancion")
+            text("Desvanecimiento del volumen al terminar la cancion")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),
@@ -3878,7 +3930,7 @@ fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    let fades_group = column![fades_title_row, fade_in_row, fade_out_row,].spacing(4);
+    let fades_group = column![fades_title_row, smooth_row, fade_in_row, fade_out_row,].spacing(4);
 
     // --- Group 2: Silencio ---
     let silence_master_on = manager.volumen_silence_enabled;
@@ -3934,10 +3986,15 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenSilenceDurationChanged(1000.0),
+                )
+            })
             .into()
         };
         row![
-            text("Duración del silencio para activar la eliminación:")
+            text("Duración mínima del silencio para activar la eliminación:")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),
@@ -3977,6 +4034,11 @@ fn view_volumen_mezcla<'a>(
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(
                     active,
                 ))
+            })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenSilenceThresholdChanged(-50.0),
+                )
             })
             .into()
         };
@@ -4043,7 +4105,7 @@ fn view_volumen_mezcla<'a>(
             chk
         },
         Space::new().width(Length::Fixed(4.0)),
-        text("Replay gain fijo")
+        text("Pre-Amplificador")
             .size(12)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
@@ -4083,10 +4145,15 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenRgFixedChanged(0.0),
+                )
+            })
             .into()
         };
         row![
-            text("Nivel fijo:")
+            text("Nivel de Pre-Amplificador")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),
@@ -4122,7 +4189,7 @@ fn view_volumen_mezcla<'a>(
     .align_y(Alignment::Center);
 
     let rg_album_row = {
-        let disabled = !rg_master_on;
+        let disabled = !rg_master_on || !manager.volumen_rg_album_enabled;
         let label_color = if disabled {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -4163,6 +4230,11 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenRgOffsetAlbumChanged(0.0),
+                )
+            })
             .into()
         };
         row![
@@ -4179,7 +4251,7 @@ fn view_volumen_mezcla<'a>(
     };
 
     let rg_track_row = {
-        let disabled = !rg_master_on;
+        let disabled = !rg_master_on || !manager.volumen_rg_track_enabled;
         let label_color = if disabled {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -4220,6 +4292,11 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenRgOffsetTrackChanged(0.0),
+                )
+            })
             .into()
         };
         row![
@@ -4236,7 +4313,7 @@ fn view_volumen_mezcla<'a>(
     };
 
     let rg_untagged_row = {
-        let disabled = !rg_master_on;
+        let disabled = !rg_master_on || !manager.volumen_rg_analyze_rt_enabled;
         let label_color = if disabled {
             COLOR_TEXT_SECONDARY.scale_alpha(0.5)
         } else {
@@ -4277,12 +4354,17 @@ fn view_volumen_mezcla<'a>(
                     active,
                 ))
             })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::VolumenRgOffsetRtChanged(0.0),
+                )
+            })
             .into()
         };
         row![
             chk,
             Space::new().width(Length::Fixed(4.0)),
-            text("Gain para canciones sin etiqueta")
+            text("Replay Gain para canciones sin etiquetas")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),

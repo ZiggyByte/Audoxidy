@@ -283,11 +283,20 @@ enum FadeState {
         coeff: f64,
         rate_per_sec: f64,
     }, // falling 1→0, equal-power
-    Smoothing {
-        coeff: f64,
-        target: f64,
-        rate_per_sec: f64,
-    }, // linear 500ms
+}
+
+// Volumen smoothing (UAT round 7): waits for the user to finish adjusting the
+// volume (debounce), then ramps from the current applied level to the target.
+// Debounce = 400ms of inactivity; ramp = 1500ms linear.
+const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
+const SMOOTH_DURATION_SECS: f64 = 1.5;
+
+#[derive(Debug, Clone, Copy)]
+struct SmoothRamp {
+    from: f64,
+    to: f64,
+    elapsed: f64,
+    duration: f64,
 }
 
 pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: AudioEngine) {
@@ -312,10 +321,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
     // === Volumen y Mezcla state (Phase 03) ===
     let mut fade_state: FadeState = FadeState::Idle;
-    // previous_vol tracks the last-applied volume. Initialize from the engine's
-    // current volume so the first smoothing ramps from the real level, not a
-    // hardcoded 0.3 (UAT round 4).
-    let mut previous_vol: f64 = state.read().volume as f64;
+    // Volume smoothing state (UAT round 7). `applied_vol` is the level actually
+    // applied to the audio; `pending_vol` is the user's target (s.volume).
+    // The volume does NOT change while the user is adjusting; after 400ms of
+    // inactivity a 1500ms ramp takes applied_vol from its current level to the
+    // target. Initialized from the engine's real volume (not a hardcoded 0.3).
+    let mut applied_vol: f64 = state.read().volume as f64;
+    let mut pending_vol: f64 = applied_vol;
+    let mut debounce_remaining: f64 = 0.0;
+    let mut smooth_ramp: Option<SmoothRamp> = None;
 
     // Silence detection (D-14-D-20)
     let mut silence_samples: usize = 0;
@@ -1070,24 +1084,53 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             }
                         } // Release state lock
 
-                        // Volume smoothing trigger (D-08): 2000ms linear ramp on volume changes.
-                        // Gated by the individual smooth_volume_enabled flag (not the group
-                        // master), so fade-in/fade-out can run without smoothing active.
-                        if smooth_volume_enabled && (vol - previous_vol).abs() > 1e-10 {
-                            // rate_per_sec: ramp over a fixed 2000ms of real audio time.
-                            let rate_per_sec = 1.0 / 2.0; // 2000ms
-                            if matches!(fade_state, FadeState::Idle)
-                                || matches!(fade_state, FadeState::Smoothing { .. })
-                            {
-                                fade_state = FadeState::Smoothing {
-                                    coeff: previous_vol,
-                                    target: vol,
-                                    rate_per_sec,
-                                };
+                        // Volume smoothing (D-08, UAT round 7): debounce + ramp.
+                        // While the user adjusts the volume, applied_vol stays frozen.
+                        // After 400ms of inactivity, a 1500ms linear ramp moves
+                        // applied_vol from its current level to the new target.
+                        // Gated by the individual smooth_volume_enabled flag (not the
+                        // group master), so fade-in/fade-out can run independently.
+                        let user_target = vol;
+                        if smooth_volume_enabled {
+                            if (user_target - pending_vol).abs() > 1e-10 {
+                                // User changed the target → restart debounce, cancel any
+                                // in-flight ramp (applied_vol keeps its current level).
+                                pending_vol = user_target;
+                                debounce_remaining = SMOOTH_DEBOUNCE_SECS;
+                                smooth_ramp = None;
                             }
-                            previous_vol = vol;
+                            if let Some(ref mut ramp) = smooth_ramp {
+                                ramp.elapsed += batch_dt;
+                                let t = (ramp.elapsed / ramp.duration).min(1.0);
+                                applied_vol = ramp.from + (ramp.to - ramp.from) * t;
+                                if t >= 1.0 {
+                                    applied_vol = ramp.to;
+                                    smooth_ramp = None;
+                                }
+                            } else if debounce_remaining > 0.0 {
+                                debounce_remaining -= batch_dt;
+                                if debounce_remaining <= 0.0 {
+                                    debounce_remaining = 0.0;
+                                    if (applied_vol - pending_vol).abs() > 1e-10 {
+                                        smooth_ramp = Some(SmoothRamp {
+                                            from: applied_vol,
+                                            to: pending_vol,
+                                            elapsed: 0.0,
+                                            duration: SMOOTH_DURATION_SECS,
+                                        });
+                                    } else {
+                                        applied_vol = pending_vol;
+                                    }
+                                }
+                            } else {
+                                applied_vol = pending_vol;
+                            }
                         } else {
-                            previous_vol = vol;
+                            // Smoothing off: apply the user volume immediately.
+                            applied_vol = user_target;
+                            pending_vol = user_target;
+                            debounce_remaining = 0.0;
+                            smooth_ramp = None;
                         }
 
                         // Fade envelope coefficient (D-12, D-13): equal-power for fades,
@@ -1148,44 +1191,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     ep_coeff
                                 }
                             }
-                            FadeState::Smoothing {
-                                mut coeff,
-                                target,
-                                rate_per_sec,
-                            } => {
-                                let step = rate_per_sec * batch_advance;
-                                if (coeff - target).abs() < step {
-                                    fade_state = FadeState::Idle;
-                                    target
-                                } else if coeff < target {
-                                    coeff += step;
-                                    fade_state = FadeState::Smoothing {
-                                        coeff,
-                                        target,
-                                        rate_per_sec,
-                                    };
-                                    coeff
-                                } else {
-                                    coeff -= step;
-                                    fade_state = FadeState::Smoothing {
-                                        coeff,
-                                        target,
-                                        rate_per_sec,
-                                    };
-                                    coeff
-                                }
-                            }
                         };
 
                         // 1. Aplicar gain → DSP → fades×volume (D-03) al accumulator.
                         {
                             let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
                             let out_ch = out_channels as usize;
-                            let combined = if matches!(fade_state, FadeState::Smoothing { .. }) {
-                                fade_coeff
-                            } else {
-                                vol * fade_coeff
-                            };
+                            // combined = applied_vol (smoothed or immediate user volume)
+                            // × fade_coeff (equal-power musical fade, 1.0 when Idle).
+                            let combined = applied_vol * fade_coeff;
 
                             // Fix B1 (D-44): Spin-wait for DSP lock up to 5ms before falling back.
                             // Prevents DSP dropout during brief GUI lock contention.

@@ -238,8 +238,8 @@ impl Default for AudioCenterManager {
 
             volumen_fades_enabled: false,
             volumen_smooth_volume_enabled: false,
-            volumen_fade_in_ms: 1000.0,
-            volumen_fade_out_ms: 1000.0,
+            volumen_fade_in_ms: 2000.0,
+            volumen_fade_out_ms: 3000.0,
             volumen_silence_enabled: true,
             volumen_silence_duration_ms: 1000.0,
             volumen_silence_threshold_db: -50.0,
@@ -3850,7 +3850,7 @@ fn view_volumen_mezcla<'a>(
             })
             .on_right_click(|| {
                 crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFadeInChanged(1000.0),
+                    AudioCenterMessage::VolumenFadeInChanged(2000.0),
                 )
             })
             .into()
@@ -3912,7 +3912,7 @@ fn view_volumen_mezcla<'a>(
             })
             .on_right_click(|| {
                 crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFadeOutChanged(1000.0),
+                    AudioCenterMessage::VolumenFadeOutChanged(3000.0),
                 )
             })
             .into()
@@ -4072,7 +4072,7 @@ fn view_volumen_mezcla<'a>(
         row![
             chk,
             Space::new().width(Length::Fixed(4.0)),
-            text("Eliminar silencio en los bordes")
+            text("Eliminar silencios de inicio y fin de las canciones")
                 .size(12)
                 .color(label_color)
                 .font(FONT_INTER_SANS_MEDIUM),

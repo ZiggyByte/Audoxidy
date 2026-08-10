@@ -166,8 +166,8 @@ impl Default for AudioState {
             // Volumen y Mezcla — Fades
             fades_enabled: false,
             smooth_volume_enabled: false,
-            fade_in_ms: 1000.0,
-            fade_out_ms: 1000.0,
+            fade_in_ms: 2000.0,
+            fade_out_ms: 3000.0,
 
             // Volumen y Mezcla — Silence removal
             silence_enabled: true,

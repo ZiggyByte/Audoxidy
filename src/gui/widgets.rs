@@ -300,13 +300,23 @@ impl<'a, Message> NumberStepper<'a, Message> {
 
 // --- Center zone widget: displays value, handles click-to-edit and keyboard input ---
 
+// Hold-to-repeat timing (UAT round 7): a single click never auto-repeats; the
+// hold must last ~400ms before stepping starts, then repeats every ~100ms.
+// HOLD_TICK_SECS approximates the per-redraw elapsed time used to advance the
+// hold timers (RedrawRequested carries no delta, so we use a fixed step).
+const HOLD_ACTIVATE_SECS: f64 = 0.4;
+const HOLD_REPEAT_SECS: f64 = 0.1;
+const HOLD_TICK_SECS: f64 = 0.016; // ~60 FPS
+
 #[derive(Debug, Clone, Default)]
 struct NumberStepperState {
     is_input_editing: bool,
     input_value_text: String,
     input_cursor_pos: usize,
     input_has_focus: bool,
-    held_dir: i8,        // -1 = left arrow held, 1 = right arrow held, 0 = none
+    held_dir: i8,            // -1 = left arrow held, 1 = right arrow held, 0 = none
+    hold_activated: bool,    // hold-repeat engaged after the activation delay
+    hold_elapsed: f64,       // accumulated hold time in seconds
     hover_left: bool,
     hover_right: bool,
 }
@@ -478,7 +488,9 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
         state.hover_right = in_right;
 
         match event {
-            // Right-click anywhere on the stepper → reset to default value.
+            // Right-click (secondary button) anywhere on the stepper → reset to default.
+            // `Button::Right` here means the secondary button; the primary button is
+            // reported as `Button::Left` by the platform regardless of handedness.
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right))
                 if is_focus =>
             {
@@ -508,21 +520,37 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                 return;
             }
 
-            // Left button press: arrow → step + begin hold; center → enter edit.
-            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+            // Primary button press (reported as Button::Left). Only capture when the
+            // click lands on THIS widget — otherwise the event must keep flowing to
+            // sibling widgets (e.g. the checkboxes in the same panel).
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+                if in_left || in_right || in_center =>
+            {
                 shell.capture_event();
                 if in_left {
                     self.step_value(-1, shell);
                     state.held_dir = -1;
+                    state.hold_activated = false;
+                    state.hold_elapsed = 0.0;
                 } else if in_right {
                     self.step_value(1, shell);
                     state.held_dir = 1;
+                    state.hold_activated = false;
+                    state.hold_elapsed = 0.0;
                 } else if in_center && !state.is_input_editing {
                     state.input_value_text = match &self.unit {
                         StepperUnit::Decibels => format!("{:.2}", self.value),
                         StepperUnit::Milliseconds => format!("{:.0}", self.value),
                     };
-                    state.input_cursor_pos = state.input_value_text.len();
+                    // Position the text cursor at the exact click x within the center
+                    // zone (mirrors CustomSlider's input cursor placement).
+                    let font_size: f32 = 12.0;
+                    let char_w = (font_size * 0.6).max(1.0);
+                    let rel_x = cursor_pos
+                        .map(|p| (p.x - center_zone.x).max(0.0))
+                        .unwrap_or(state.input_value_text.len() as f32 * char_w);
+                    state.input_cursor_pos =
+                        ((rel_x / char_w).round() as usize).min(state.input_value_text.len());
                     state.is_input_editing = true;
                     state.input_has_focus = true;
                     GLOBAL_SLIDER_SELECTED.store(true, Ordering::Relaxed);
@@ -533,16 +561,29 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                 return;
             }
 
-            // Release left button → stop hold repeat.
+            // Release primary button → stop hold repeat.
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.held_dir = 0;
+                state.hold_activated = false;
+                state.hold_elapsed = 0.0;
                 return;
             }
 
-            // Redraw ticks while an arrow is held → repeat stepping for hold-to-repeat.
+            // Redraw ticks while an arrow is held: after ~400ms of constant press the
+            // hold-to-repeat activates, stepping every ~100ms. The delay prevents a
+            // single click from firing many steps (UAT round 7).
             iced::Event::Window(iced::window::Event::RedrawRequested(_)) => {
                 if state.held_dir != 0 {
-                    self.step_value(state.held_dir, shell);
+                    state.hold_elapsed += HOLD_TICK_SECS;
+                    if state.hold_activated {
+                        if state.hold_elapsed >= HOLD_REPEAT_SECS {
+                            state.hold_elapsed = 0.0;
+                            self.step_value(state.held_dir, shell);
+                        }
+                    } else if state.hold_elapsed >= HOLD_ACTIVATE_SECS {
+                        state.hold_activated = true;
+                        state.hold_elapsed = 0.0;
+                    }
                 }
                 return;
             }

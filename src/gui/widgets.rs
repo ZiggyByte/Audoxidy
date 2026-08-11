@@ -18,11 +18,16 @@ use crate::gui::theme::{
 use crate::utils::{SortColumn, format_duration, format_metadata, truncate_text};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 
 /// Flag global: true cuando algún slider tiene is_selected activo.
 /// Los demás sliders revisan esto para ocultar su tooltip en hover.
 pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
+
+/// Flag global: direccion de hold activa de un NumberStepper (-1 izq, 1 der, 0 none).
+/// El app lo lee en su subscription de tiempo para forzar redraws continuos mientras
+/// el usuario mantiene presionada una flecha (hold-to-repeat, UAT round 7).
+pub static GLOBAL_STEPPER_HOLD: AtomicI8 = AtomicI8::new(0);
 
 // ==============================
 // Helper: strip unit suffixes from numeric strings before parsing (D-45)
@@ -79,8 +84,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fixed(12.0),
-            height: Length::Fixed(12.0),
+            width: Length::Fixed(13.0),
+            height: Length::Fixed(13.0),
         }
     }
 
@@ -94,7 +99,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
-        let size = limits.resolve(Length::Fixed(12.0), Length::Fixed(12.0), iced::Size::ZERO);
+        let size = limits.resolve(Length::Fixed(13.0), Length::Fixed(13.0), iced::Size::ZERO);
         iced::advanced::layout::Node::new(size)
     }
 
@@ -178,7 +183,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         );
 
         if self.checked {
-            let font_size = 10.0;
+            let font_size = 15.0;
             let text_x = bounds.x + bounds.width / 2.0;
             let text_y = bounds.y + (bounds.height - font_size) / 2.0;
 
@@ -209,7 +214,7 @@ impl<'a, Message: 'a> From<StandardCheckbox<'a, Message>> for Element<'a, Messag
 }
 
 // ==============================
-// NumberStepper — 64×14 px with ← → chevrons + manual input (D-32, D-33, D-34, D-35)
+// NumberStepper — 96×13 px with "<" / ">" glyph arrows + manual input (D-32, D-33, D-34, D-35)
 // ==============================
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -221,7 +226,7 @@ pub enum StepperUnit {
 }
 
 impl StepperUnit {
-    fn step(&self) -> f64 {
+    pub(crate) fn step(&self) -> f64 {
         match self {
             StepperUnit::Decibels => 0.25,
             StepperUnit::Milliseconds => 50.0,
@@ -238,7 +243,7 @@ impl StepperUnit {
 
 /// Format a numeric value with unit suffix, stripping trailing zeros but keeping
 /// minimum 2 decimal places. Examples: -50.00 dB → "-50 dB", -14.25 dB stays, 1000.00 ms → "1000 ms".
-fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
+pub(crate) fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
     let formatted = format!("{:.2}", value);
     let trimmed = formatted.trim_end_matches('0').trim_end_matches('.');
     format!(
@@ -248,8 +253,9 @@ fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
     )
 }
 
-/// Custom stepper widget: 84×14 px with SVG chevrons and manual numeric input (D-32).
-/// Left/right SVG chevrons step the value. Center zone shows formatted value + suffix;
+/// Custom stepper widget: 96×13 px (15px arrow zones + 66px input + 15px arrow zone)
+/// with "<" / ">" text glyph arrows (16px) and manual numeric input (D-32).
+/// Left/right arrows step the value. Center zone shows formatted value + suffix;
 /// click to enter edit mode (raw number, no suffix). Enter/click-outside applies the
 /// raw parsed value (never rounded to step — D-34). Escape cancels.
 pub struct NumberStepper<'a, Message> {
@@ -302,11 +308,9 @@ impl<'a, Message> NumberStepper<'a, Message> {
 
 // Hold-to-repeat timing (UAT round 7): a single click never auto-repeats; the
 // hold must last ~400ms before stepping starts, then repeats every ~100ms.
-// HOLD_TICK_SECS approximates the per-redraw elapsed time used to advance the
-// hold timers (RedrawRequested carries no delta, so we use a fixed step).
+// Real time is measured via the Instant carried by RedrawRequested.
 const HOLD_ACTIVATE_SECS: f64 = 0.4;
 const HOLD_REPEAT_SECS: f64 = 0.1;
-const HOLD_TICK_SECS: f64 = 0.016; // ~60 FPS
 
 #[derive(Debug, Clone, Default)]
 struct NumberStepperState {
@@ -314,15 +318,16 @@ struct NumberStepperState {
     input_value_text: String,
     input_cursor_pos: usize,
     input_has_focus: bool,
-    held_dir: i8,            // -1 = left arrow held, 1 = right arrow held, 0 = none
-    hold_activated: bool,    // hold-repeat engaged after the activation delay
-    hold_elapsed: f64,       // accumulated hold time in seconds
+    held_dir: i8,              // -1 = left arrow held, 1 = right arrow held, 0 = none
+    hold_start: Option<std::time::Instant>, // when the hold began (for activation delay)
+    last_step_at: Option<std::time::Instant>, // last auto-repeat step time
     hover_left: bool,
     hover_right: bool,
 }
 
-/// Full stepper widget (84×14 px). Left/right zones host the SVG chevrons
-/// (delegated as children); the center zone draws the value + edit input.
+/// Full stepper widget (96×13 px = 15px left arrow + 66px input + 15px right arrow).
+/// Left/right zones host the "<" / ">" text glyphs (delegated as children); the
+/// center zone draws the value + edit input.
 /// Handles: click-to-step, hold-to-repeat (via RedrawRequested), right-click reset,
 /// click-to-edit with keyboard input, disabled state.
 struct NumberStepperWidget<'a, Message> {
@@ -345,36 +350,41 @@ impl<'a, Message: 'a + Clone> NumberStepperWidget<'a, Message> {
         let disabled = stepper.disabled;
 
         let icon_color = if disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+            COLOR_TEXT_SECONDARY
         } else {
             COLOR_TEXT_PRIMARY
         };
 
-        let left_icon = svg(iced::widget::svg::Handle::from_path(
-            "assets/icons/arrow-left-chevron.svg",
-        ))
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
-        .style(move |_theme: &Theme, _status| svg::Style {
-            color: Some(icon_color),
-        });
+        // Arrows rendered as text glyphs "<" / ">" (16px), each in a 15px-wide zone.
+        // Center input is 66px wide; total widget is 15 + 66 + 15 = 96px wide, 13px tall.
+        // The glyph is centered horizontally and vertically within its 15px zone
+        // (UAT round 12). All interactions (click, hold-to-repeat, right-click
+        // reset, hover highlight) are unchanged.
+        let left_icon = text("<")
+            .size(16)
+            .width(Length::Fixed(15.0))
+            .height(Length::Fixed(13.0))
+            .color(icon_color)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
 
-        let right_icon = svg(iced::widget::svg::Handle::from_path(
-            "assets/icons/arrow-right-chevron.svg",
-        ))
-        .width(Length::Fixed(14.0))
-        .height(Length::Fixed(14.0))
-        .style(move |_theme: &Theme, _status| svg::Style {
-            color: Some(icon_color),
-        });
+        let right_icon = text(">")
+            .size(16)
+            .width(Length::Fixed(15.0))
+            .height(Length::Fixed(13.0))
+            .color(icon_color)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center);
 
         let content: Element<'a, Message> = row![
             left_icon,
-            Space::new().width(Length::Fixed(56.0)).height(Length::Fixed(14.0)),
+            Space::new().width(Length::Fixed(66.0)).height(Length::Fixed(13.0)),
             right_icon,
         ]
-        .width(Length::Fixed(84.0))
-        .height(Length::Fixed(14.0))
+        .width(Length::Fixed(96.0))
+        .height(Length::Fixed(13.0))
         .align_y(Alignment::Center)
         .into();
 
@@ -390,11 +400,42 @@ impl<'a, Message: 'a + Clone> NumberStepperWidget<'a, Message> {
         }
     }
 
-    fn step_value(&self, dir: i8, shell: &mut iced::advanced::Shell<'_, Message>) {
+    fn step_value_from(&self, base: f64, dir: i8, shell: &mut iced::advanced::Shell<'_, Message>) {
         let step = self.unit.step();
-        let new_val = self.value + dir as f64 * step;
+        let new_val = base + dir as f64 * step;
         let clamped = new_val.clamp(*self.range.start(), *self.range.end());
         shell.publish((self.on_change)(clamped));
+    }
+
+    /// If the center input is being edited, apply the typed buffer (parse + clamp),
+    /// exit edit mode, and return Some(committed value). Returns None when not editing.
+    /// Used so that clicking an arrow while editing commits the typed value first,
+    /// and the arrow step operates on the committed value (UAT round 9).
+    fn commit_editing(
+        &self,
+        state: &mut NumberStepperState,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+    ) -> Option<f64> {
+        if !state.is_input_editing {
+            return None;
+        }
+        let committed = strip_suffix(&state.input_value_text)
+            .parse::<f64>()
+            .ok()
+            .map(|v| v.clamp(*self.range.start(), *self.range.end()));
+        if let Some(v) = committed {
+            shell.publish((self.on_change)(v));
+        }
+        state.is_input_editing = false;
+        state.input_has_focus = false;
+        state.held_dir = 0;
+        state.hold_start = None;
+        state.last_step_at = None;
+        GLOBAL_SLIDER_SELECTED.store(false, Ordering::Relaxed);
+        if let Some(ref cb) = self.on_selected_state_change {
+            shell.publish(cb(false));
+        }
+        committed
     }
 }
 
@@ -403,8 +444,8 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fixed(84.0),
-            height: Length::Fixed(14.0),
+            width: Length::Fixed(96.0),
+            height: Length::Fixed(13.0),
         }
     }
 
@@ -462,24 +503,24 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
         let cursor_pos = cursor.position();
         let is_focus = cursor_pos.is_some_and(|p| bounds.contains(p));
 
-        // Hit-test zones: left arrow 0-14, center 14-70, right arrow 70-84
+        // Hit-test zones: left arrow 0-15, center 15-81 (66), right arrow 81-96 (15)
         let left_zone = Rectangle {
             x: bounds.x,
             y: bounds.y,
-            width: 14.0,
-            height: 14.0,
+            width: 15.0,
+            height: 13.0,
         };
         let center_zone = Rectangle {
-            x: bounds.x + 14.0,
+            x: bounds.x + 15.0,
             y: bounds.y,
-            width: 56.0,
-            height: 14.0,
+            width: 66.0,
+            height: 13.0,
         };
         let right_zone = Rectangle {
-            x: bounds.x + 70.0,
+            x: bounds.x + 81.0,
             y: bounds.y,
-            width: 14.0,
-            height: 14.0,
+            width: 15.0,
+            height: 13.0,
         };
         let in_left = cursor_pos.is_some_and(|p| left_zone.contains(p));
         let in_center = cursor_pos.is_some_and(|p| center_zone.contains(p));
@@ -528,15 +569,25 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
             {
                 shell.capture_event();
                 if in_left {
-                    self.step_value(-1, shell);
+                    // If editing, commit the typed buffer first so the arrow step
+                    // operates on the committed value (UAT round 9).
+                    let base = self
+                        .commit_editing(state, shell)
+                        .unwrap_or(self.value);
+                    self.step_value_from(base, -1, shell);
                     state.held_dir = -1;
-                    state.hold_activated = false;
-                    state.hold_elapsed = 0.0;
+                    state.hold_start = Some(std::time::Instant::now());
+                    state.last_step_at = None;
+                    GLOBAL_STEPPER_HOLD.store(-1, Ordering::Relaxed);
                 } else if in_right {
-                    self.step_value(1, shell);
+                    let base = self
+                        .commit_editing(state, shell)
+                        .unwrap_or(self.value);
+                    self.step_value_from(base, 1, shell);
                     state.held_dir = 1;
-                    state.hold_activated = false;
-                    state.hold_elapsed = 0.0;
+                    state.hold_start = Some(std::time::Instant::now());
+                    state.last_step_at = None;
+                    GLOBAL_STEPPER_HOLD.store(1, Ordering::Relaxed);
                 } else if in_center && !state.is_input_editing {
                     state.input_value_text = match &self.unit {
                         StepperUnit::Decibels => format!("{:.2}", self.value),
@@ -564,25 +615,41 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
             // Release primary button → stop hold repeat.
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
                 state.held_dir = 0;
-                state.hold_activated = false;
-                state.hold_elapsed = 0.0;
+                state.hold_start = None;
+                state.last_step_at = None;
+                GLOBAL_STEPPER_HOLD.store(0, Ordering::Relaxed);
                 return;
             }
 
             // Redraw ticks while an arrow is held: after ~400ms of constant press the
-            // hold-to-repeat activates, stepping every ~100ms. The delay prevents a
-            // single click from firing many steps (UAT round 7).
-            iced::Event::Window(iced::window::Event::RedrawRequested(_)) => {
+            // hold-to-repeat activates, stepping every ~100ms. Uses the real Instant
+            // from RedrawRequested for accurate timing. Redraws are kept flowing by
+            // the app's time subscription (driven by GLOBAL_STEPPER_HOLD).
+            iced::Event::Window(iced::window::Event::RedrawRequested(now)) => {
                 if state.held_dir != 0 {
-                    state.hold_elapsed += HOLD_TICK_SECS;
-                    if state.hold_activated {
-                        if state.hold_elapsed >= HOLD_REPEAT_SECS {
-                            state.hold_elapsed = 0.0;
-                            self.step_value(state.held_dir, shell);
+                    let now_i = *now;
+                    match state.hold_start {
+                        Some(start) => {
+                            let held_secs = now_i.duration_since(start).as_secs_f64();
+                            if held_secs >= HOLD_ACTIVATE_SECS {
+                                let repeat = match state.last_step_at {
+                                    Some(prev) => {
+                                        now_i.duration_since(prev).as_secs_f64()
+                                            >= HOLD_REPEAT_SECS
+                                    }
+                                    None => true,
+                                };
+                                if repeat {
+                                    state.last_step_at = Some(now_i);
+                                    self.step_value_from(self.value, state.held_dir, shell);
+                                }
+                            }
                         }
-                    } else if state.hold_elapsed >= HOLD_ACTIVATE_SECS {
-                        state.hold_activated = true;
-                        state.hold_elapsed = 0.0;
+                        None => {
+                            // Safety: redraw arrived without a recorded press.
+                            state.held_dir = 0;
+                            GLOBAL_STEPPER_HOLD.store(0, Ordering::Relaxed);
+                        }
                     }
                 }
                 return;
@@ -689,20 +756,20 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
         let left_zone = Rectangle {
             x: bounds.x,
             y: bounds.y,
-            width: 14.0,
-            height: 14.0,
+            width: 15.0,
+            height: 13.0,
         };
         let right_zone = Rectangle {
-            x: bounds.x + 70.0,
+            x: bounds.x + 81.0,
             y: bounds.y,
-            width: 14.0,
-            height: 14.0,
+            width: 15.0,
+            height: 13.0,
         };
         let center_zone = Rectangle {
-            x: bounds.x + 14.0,
+            x: bounds.x + 15.0,
             y: bounds.y,
-            width: 56.0,
-            height: 14.0,
+            width: 66.0,
+            height: 13.0,
         };
 
         let left_bg = if !self.disabled && state.hover_left {
@@ -760,7 +827,7 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
         let text_x = center_zone.x + center_zone.width / 2.0;
         let text_y = center_zone.y + center_zone.height / 2.0;
         let text_color = if self.disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+            COLOR_TEXT_SECONDARY
         } else {
             COLOR_TEXT_PRIMARY
         };
@@ -768,7 +835,7 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
             iced::advanced::text::Text {
                 content: display_text,
                 bounds: iced::Size::new(center_zone.width - 2.0, center_zone.height),
-                size: iced::Pixels(12.0),
+                size: iced::Pixels(13.0),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
                 font: FONT_INTER_SANS_MEDIUM,
                 align_x: iced::alignment::Horizontal::Center.into(),

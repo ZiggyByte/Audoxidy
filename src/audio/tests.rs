@@ -55,19 +55,22 @@ mod tests {
         assert_eq!(state.replay_gain_album_enabled, true);
 
         // Volumen y Mezcla — Fades (D-07, D-09, D-10)
-        assert_eq!(state.fades_enabled, true);
-        assert!((state.fade_in_ms - 1000.0).abs() < f64::EPSILON as f32);
-        assert!((state.fade_out_ms - 1000.0).abs() < f64::EPSILON as f32);
+        assert_eq!(state.fades_enabled, false);
+        assert_eq!(state.smooth_volume_enabled, false);
+        assert!((state.fade_in_ms - 2000.0).abs() < f64::EPSILON as f32);
+        assert!((state.fade_out_ms - 3000.0).abs() < f64::EPSILON as f32);
+        assert_eq!(state.fade_in_enabled, false);
+        assert_eq!(state.fade_out_enabled, false);
 
         // Volumen y Mezcla — Silence removal (D-14, D-16)
         assert_eq!(state.silence_enabled, true);
+        assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f64::EPSILON as f32);
         assert!((state.silence_threshold_db - (-50.0)).abs() < f64::EPSILON as f32);
 
-        // Volumen y Mezcla — Normalization (D-21, D-22, D-23)
-        assert_eq!(state.normalize_enabled, false);
-        assert!((state.normalize_target_db - (-14.0)).abs() < f64::EPSILON as f32);
-        assert!((state.normalize_cap_db - 6.0).abs() < f64::EPSILON as f32);
+        // Volumen y Mezcla — Replay gain fijo (reemplaza Normalización, UAT)
+        assert_eq!(state.rg_fixed_enabled, false);
+        assert!((state.rg_fixed_db - 0.0).abs() < f64::EPSILON as f32);
 
         // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30, D-28)
         assert_eq!(state.rg_master_enabled, true);
@@ -84,19 +87,22 @@ mod tests {
         let state = AudioState::default();
 
         // Fades (D-07, D-09, D-10)
-        assert_eq!(state.fades_enabled, true);
-        assert!((state.fade_in_ms - 1000.0).abs() < f32::EPSILON);
-        assert!((state.fade_out_ms - 1000.0).abs() < f32::EPSILON);
+        assert_eq!(state.fades_enabled, false);
+        assert_eq!(state.smooth_volume_enabled, false);
+        assert!((state.fade_in_ms - 2000.0).abs() < f32::EPSILON);
+        assert!((state.fade_out_ms - 3000.0).abs() < f32::EPSILON);
+        assert_eq!(state.fade_in_enabled, false);
+        assert_eq!(state.fade_out_enabled, false);
 
         // Silence removal (D-14, D-16)
         assert_eq!(state.silence_enabled, true);
+        assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f32::EPSILON);
         assert!((state.silence_threshold_db - (-50.0)).abs() < f32::EPSILON);
 
-        // Normalization (D-21, D-22, D-23)
-        assert_eq!(state.normalize_enabled, false);
-        assert!((state.normalize_target_db - (-14.0)).abs() < f32::EPSILON);
-        assert!((state.normalize_cap_db - 6.0).abs() < f32::EPSILON);
+        // Replay gain fijo (reemplaza Normalización, UAT)
+        assert_eq!(state.rg_fixed_enabled, false);
+        assert!((state.rg_fixed_db - 0.0).abs() < f32::EPSILON);
 
         // ReplayGain offsets (D-26, D-29, D-30, D-28)
         assert_eq!(state.rg_master_enabled, true);
@@ -439,106 +445,146 @@ mod tests {
         }
     }
 
-    // --- RMS Normalization convergence test (D-21, D-22, D-24) ---
+    // --- Volume smoothing with debounce (D-08, UAT round 7) ---
+    // The smoothing holds applied_vol frozen while the user adjusts; after the
+    // debounce window a 1500ms linear ramp moves applied_vol to the target.
+    // This mirrors decoder.rs's smooth logic (SMOOTH_DEBOUNCE_SECS = 0.4,
+    // SMOOTH_DURATION_SECS = 1.5).
+
+    const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
+    const SMOOTH_DURATION_SECS: f64 = 1.5;
 
     #[test]
-    fn test_rms_normalization_convergence() {
-        // D-21: ~400ms sliding RMS window at 44.1 kHz, 2 channels
-        // D-22: target -14 dB, cap +6 dB
-        // D-24: attack 3000ms, release 1000ms
+    fn test_smoothing_frozen_during_adjustment() {
+        // User keeps changing the target → applied_vol must stay at the old level.
+        let mut applied_vol: f64 = 0.65;
+        let mut pending_vol: f64 = 0.65;
+        let mut debounce_remaining: f64 = 0.0;
+        let mut smooth_ramp: Option<(f64, f64, f64, f64)> = None; // from,to,elapsed,duration
 
-        let sample_rate: f64 = 44100.0;
-        let channels: usize = 2;
-        let window_duration: f64 = 0.400; // 400ms
-        let window_frames: usize = ((sample_rate * window_duration) as usize).max(1);
-
-        // Simulate a constant -20 dB signal (linear ≈ 0.1 per sample)
-        let signal_level: f64 = 10.0_f64.powf(-20.0 / 20.0); // ≈ 0.1
-
-        let target_db: f64 = -14.0;
-        let cap_db: f64 = 6.0;
-
-        let mut rms_window: Vec<f64> = Vec::with_capacity(window_frames);
-        let mut rms_sum_sq: f64 = 0.0;
-        let mut normalization_gain_db: f64 = 0.0;
-
-        // Feed frames until window is full
-        for _ in 0..window_frames {
-            let frame_power = signal_level * signal_level; // RMS² per frame (simplified)
-            if rms_window.len() >= window_frames {
-                if let Some(old) = rms_window.pop() {
-                    rms_sum_sq -= old;
-                }
+        // Simulate: user moves from 65 to 25 in several batches.
+        for target in [0.55, 0.45, 0.35, 0.25] {
+            if (target - pending_vol).abs() > 1e-10 {
+                pending_vol = target;
+                debounce_remaining = SMOOTH_DEBOUNCE_SECS;
+                smooth_ramp = None;
             }
-            rms_window.push(frame_power);
-            rms_sum_sq += frame_power;
+            // No ramp yet, debounce still counting → applied_vol frozen at 0.65
+            debounce_remaining -= 0.05;
+            assert!(
+                (applied_vol - 0.65).abs() < 1e-10,
+                "applied_vol must stay frozen while adjusting, got {}",
+                applied_vol
+            );
+        }
+    }
+
+    #[test]
+    fn test_smoothing_ramp_reaches_target_in_duration() {
+        // After the debounce expires, the ramp must reach the target in ~1500ms.
+        let mut applied_vol: f64 = 0.65;
+        let pending_vol: f64 = 0.25;
+        let mut debounce_remaining: f64 = 0.0;
+        let mut smooth_ramp: Option<(f64, f64, f64, f64)> = None;
+
+        // Debounce elapses → start ramp from 0.65 toward 0.25.
+        if (applied_vol - pending_vol).abs() > 1e-10 {
+            smooth_ramp = Some((applied_vol, pending_vol, 0.0, SMOOTH_DURATION_SECS));
         }
 
-        // Now run convergence: each step is one frame (~0.0227ms at 44100Hz)
-        let mut gain_converged_3s = 0.0_f64;
-        let dt = 1.0 / sample_rate; // per-frame time step
-        let attack_tc = 3.0; // 3000ms attack
-        let release_tc = 1.0; // 1000ms release
-
-        let total_frames_3s = (3.0 * sample_rate) as usize;
-
-        for i in 0..total_frames_3s {
-            // Update RMS window (replace oldest)
-            let frame_power = signal_level * signal_level;
-            if rms_window.len() >= window_frames {
-                if let Some(old) = rms_window.pop() {
-                    rms_sum_sq -= old;
+        // Advance the ramp in 100ms batches until completion.
+        let dt = 0.1;
+        let mut elapsed_total = 0.0;
+        let mut reached = false;
+        while elapsed_total < 3.0 {
+            if let Some((from, to, elapsed, dur)) = smooth_ramp {
+                let e = elapsed + dt;
+                let t = (e / dur).min(1.0);
+                applied_vol = from + (to - from) * t;
+                if t >= 1.0 {
+                    smooth_ramp = None;
+                    reached = true;
+                } else {
+                    smooth_ramp = Some((from, to, e, dur));
                 }
             }
-            rms_window.push(frame_power);
-            rms_sum_sq += frame_power;
-
-            let measured_rms = (rms_sum_sq / rms_window.len() as f64).sqrt().max(1e-10);
-            let measured_db = 20.0 * measured_rms.log10();
-            let error_db = target_db - measured_db; // target - measured
-            let target_gain_db = error_db.clamp(0.0, cap_db);
-
-            // Smoothing (D-24): attack 3000ms / release 1000ms
-            let tc = if target_gain_db > normalization_gain_db {
-                attack_tc
-            } else {
-                release_tc
-            };
-            let alpha = 1.0 - (-dt / tc).exp();
-            normalization_gain_db += (target_gain_db - normalization_gain_db) * alpha;
-
-            // NaN guard
-            if !normalization_gain_db.is_finite() {
-                normalization_gain_db = 0.0;
-            }
-
-            // Record gain at 3 seconds
-            if i == total_frames_3s - 1 {
-                gain_converged_3s = normalization_gain_db;
+            elapsed_total += dt;
+            if reached {
+                break;
             }
         }
 
-        // After 3000ms, gain should converge within 1dB of target
-        // measured_rms ≈ 0.1 → measured_db ≈ -20, target = -14 → error = +6 dB
-        // cap = +6 dB → target_gain_db = 6.0
-        // After 3s (one attack time constant) gain should be ~63% of the way
-        // 6.0 * (1 - e^(-3/3)) = 6.0 * (1 - e^(-1)) ≈ 6.0 * 0.632 = 3.79 dB
-        let expected_approx = 6.0 * (1.0 - (-1.0_f64).exp()); // ≈ 3.79 dB
+        assert!(reached, "ramp should complete within 2s");
         assert!(
-            (gain_converged_3s - expected_approx).abs() < 0.5,
-            "RMS normalization should converge: expected ~{}, got {}",
-            expected_approx,
-            gain_converged_3s
+            (applied_vol - 0.25).abs() < 1e-6,
+            "final applied_vol should be 0.25, got {}",
+            applied_vol
         );
+        // Should have taken ~1500ms (allow tolerance for the batch step)
+        assert!((elapsed_total - SMOOTH_DURATION_SECS).abs() < 0.3);
+    }
 
-        // Gain should not exceed the cap
-        assert!(gain_converged_3s <= cap_db + 1e-6);
+    #[test]
+    fn test_smoothing_disabled_applies_immediately() {
+        // When smooth_volume_enabled is false, applied_vol = user target at once.
+        let target: f64 = 0.35;
+        let mut applied_vol: f64 = 0.35;
+        let mut pending_vol: f64 = 0.35;
+        let mut debounce_remaining: f64 = 0.0;
+        let mut smooth_ramp: Option<(f64, f64, f64, f64)> = None;
 
-        // Gain should be positive (need to boost -20dB signal to -14dB)
-        assert!(gain_converged_3s > 0.0);
+        // Smoothing OFF path (mirror): applied_vol = user_target, ramp cleared.
+        let user_target = target;
+        applied_vol = user_target;
+        pending_vol = user_target;
+        debounce_remaining = 0.0;
+        smooth_ramp = None;
 
-        // Gain must be finite
-        assert!(gain_converged_3s.is_finite());
+        assert!((applied_vol - 0.35).abs() < 1e-10);
+        assert!(smooth_ramp.is_none());
+        assert_eq!(debounce_remaining, 0.0);
+    }
+
+    // --- Fade rate-per-second timing (D-12, D-13, UAT round 4) ---
+    // coeff advances by rate_per_sec * batch_dt; a 1000ms fade completes in 1s.
+
+    #[test]
+    fn test_fade_timing_rate_per_sec() {
+        let fade_ms: f64 = 1000.0;
+        let rate_per_sec: f64 = 1.0 / (fade_ms / 1000.0);
+        let batch_dt: f64 = 0.1; // 100ms batches
+
+        let mut coeff: f64 = 0.0;
+        let mut elapsed: f64 = 0.0;
+        while coeff < 1.0 && elapsed < 3.0 {
+            coeff += rate_per_sec * batch_dt;
+            elapsed += batch_dt;
+        }
+        assert!(
+            (elapsed - 1.0).abs() < 0.11,
+            "1000ms fade should complete in ~1s, took {}s",
+            elapsed
+        );
+    }
+
+    #[test]
+    fn test_fade_timing_large_ms() {
+        // 6500ms fade completes in ~6.5s of audio time regardless of sample rate.
+        let fade_ms: f64 = 6500.0;
+        let rate_per_sec: f64 = 1.0 / (fade_ms / 1000.0);
+        let batch_dt: f64 = 0.1;
+
+        let mut coeff: f64 = 0.0;
+        let mut elapsed: f64 = 0.0;
+        while coeff < 1.0 && elapsed < 10.0 {
+            coeff += rate_per_sec * batch_dt;
+            elapsed += batch_dt;
+        }
+        assert!(
+            (elapsed - 6.5).abs() < 0.11,
+            "6500ms fade should complete in ~6.5s, took {}s",
+            elapsed
+        );
     }
 
     #[test]

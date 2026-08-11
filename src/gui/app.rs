@@ -4351,6 +4351,11 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::GlobalMouseRelease => {
+                // Safety net: clear any lingering stepper hold flag on any primary
+                // button release (UAT round 7 — prevents a stuck hold-to-repeat if a
+                // release event is missed by the widget).
+                crate::gui::widgets::GLOBAL_STEPPER_HOLD.store(0, std::sync::atomic::Ordering::Relaxed);
+
                 if self.library_manager.resizing_column.is_some() {
                     self.library_manager.resizing_column = None;
                 }
@@ -5397,6 +5402,20 @@ impl AudoxidyApp {
         });
 
         subs.push(mouse_evs);
+
+        // 6. Stepper hold-to-repeat (UAT round 7): while a NumberStepper arrow is held
+        //    (GLOBAL_STEPPER_HOLD != 0), emit a periodic Tick so iced keeps redrawing
+        //    and the widget's RedrawRequested handler drives the auto-repeat with real
+        //    timestamps. Without this the runtime stops redrawing (no animation) and
+        //    the hold would fire only once.
+        if crate::gui::widgets::GLOBAL_STEPPER_HOLD.load(std::sync::atomic::Ordering::Relaxed)
+            != 0
+        {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::Tick),
+            );
+        }
+
         iced::Subscription::batch(subs)
     }
 

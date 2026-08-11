@@ -2780,7 +2780,7 @@ fn view_audio_config<'a>(
                 .padding(iced::Padding {
                     top: -33.0,
                     bottom: 0.0,
-                    left: 0.0,
+                    left: -1.0,
                     right: 0.0
                 }),
             container(main_divider)
@@ -3756,6 +3756,38 @@ fn view_volumen_mezcla<'a>(
             .into()
     };
 
+    // --- Typography helpers (UAT round 9) ---
+    // Group titles: 14px, primary text color.
+    // Sub-function labels: 13px, primary when the function is enabled, secondary when not.
+    // Centralizes the repetitive font/size/color styling of every label in this tab.
+    let group_title = |name: &'a str| -> iced::Element<'a, crate::gui::app::Message> {
+        text(name)
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .into()
+    };
+    let subfunc_label = |name: &'a str, enabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
+        let color = if enabled {
+            COLOR_TEXT_PRIMARY
+        } else {
+            COLOR_TEXT_SECONDARY
+        };
+        text(name)
+            .size(13)
+            .color(color)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .into()
+    };
+
+    // Wraps a label in a clickable area that toggles a function on click
+    // (clicking the group/sub-function name toggles its checkbox, UAT round 10).
+    let clickable_toggle =
+        |label: iced::Element<'a, crate::gui::app::Message>,
+         msg: crate::gui::app::Message| -> iced::Element<'a, crate::gui::app::Message> {
+            mouse_area(label).on_press(msg).into()
+        };
+
     // --- Group 1: Fades ---
     let fades_master_on = manager.volumen_fades_enabled;
 
@@ -3767,23 +3799,20 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(4.0)),
-        text("Cambio de Volumen")
-            .size(12)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fixed(4.0)),
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            group_title("Desvanecimiento de Volumen"),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadesToggle(
+                !fades_master_on,
+            )),
+        ),
+        Space::new().width(Length::Fixed(8.0)),
         h_sep(),
     ]
     .align_y(Alignment::Center);
 
     // Sub-row: Suavizar el cambio de volumen (individual checkbox, gated by group master)
     let smooth_row = {
-        let label_color = if !fades_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let chk: iced::Element<'_, _> = if fades_master_on {
             StandardCheckbox::new(manager.volumen_smooth_volume_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
@@ -3796,11 +3825,22 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Suavizar el cambio de volumen")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Suavizar el cambio de volumen",
+                    fades_master_on && manager.volumen_smooth_volume_enabled,
+                ),
+                if fades_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenSmoothVolumeToggle(
+                            !manager.volumen_smooth_volume_enabled,
+                        ),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
         ]
         .align_y(Alignment::Center)
@@ -3808,11 +3848,6 @@ fn view_volumen_mezcla<'a>(
 
     let fade_in_row = {
         let disabled = !fades_master_on || !manager.volumen_fade_in_enabled;
-        let label_color = if !fades_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let chk: iced::Element<'_, _> = if fades_master_on {
             StandardCheckbox::new(manager.volumen_fade_in_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInToggle(
@@ -3857,11 +3892,20 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Desvanecimiento del volumen al iniciar la cancion")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Desvanecimiento de volumen al iniciar la cancion",
+                    fades_master_on && manager.volumen_fade_in_enabled,
+                ),
+                if fades_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInToggle(
+                        !manager.volumen_fade_in_enabled,
+                    ))
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -3870,11 +3914,6 @@ fn view_volumen_mezcla<'a>(
 
     let fade_out_row = {
         let disabled = !fades_master_on || !manager.volumen_fade_out_enabled;
-        let label_color = if !fades_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let chk: iced::Element<'_, _> = if fades_master_on {
             StandardCheckbox::new(manager.volumen_fade_out_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
@@ -3919,18 +3958,27 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Desvanecimiento del volumen al terminar la cancion")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Desvanecimiento de volumen al terminar la cancion",
+                    fades_master_on && manager.volumen_fade_out_enabled,
+                ),
+                if fades_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeOutToggle(
+                        !manager.volumen_fade_out_enabled,
+                    ))
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
         .align_y(Alignment::Center)
     };
 
-    let fades_group = column![fades_title_row, smooth_row, fade_in_row, fade_out_row,].spacing(4);
+    let fades_group = column![fades_title_row, smooth_row, fade_in_row, fade_out_row,].spacing(5);
 
     // --- Group 2: Silencio ---
     let silence_master_on = manager.volumen_silence_enabled;
@@ -3945,22 +3993,19 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(4.0)),
-        text("Eliminar silencio")
-            .size(12)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fixed(4.0)),
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            group_title("Eliminar silencio"),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceToggle(
+                !silence_master_on,
+            )),
+        ),
+        Space::new().width(Length::Fixed(8.0)),
         h_sep(),
     ]
     .align_y(Alignment::Center);
 
     let silence_duration_row = {
-        let label_color = if !silence_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let stepper: iced::Element<'_, _> = if !silence_master_on {
             NumberStepper::new(
                 manager.volumen_silence_duration_ms,
@@ -3994,10 +4039,11 @@ fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            text("Duración mínima del silencio para activar la eliminación:")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(8.0)),
+            subfunc_label(
+                "Eliminar los silencios mayores a:",
+                silence_master_on,
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4005,11 +4051,6 @@ fn view_volumen_mezcla<'a>(
     };
 
     let silence_threshold_row = {
-        let label_color = if !silence_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let stepper: iced::Element<'_, _> = if !silence_master_on {
             NumberStepper::new(
                 manager.volumen_silence_threshold_db,
@@ -4043,10 +4084,8 @@ fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            text("Umbral de la detección de silencio:")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(8.0)),
+            subfunc_label("Umbral de eliminación de silencios menores a:", silence_master_on),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4054,11 +4093,6 @@ fn view_volumen_mezcla<'a>(
     };
 
     let silence_border_row = {
-        let label_color = if !silence_master_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let chk: iced::Element<'_, _> = if silence_master_on {
             StandardCheckbox::new(manager.volumen_silence_edge_trim_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
@@ -4071,11 +4105,22 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Eliminar silencios de inicio y fin de las canciones")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Eliminar silencios de inicio y fin de las canciones",
+                    silence_master_on && manager.volumen_silence_edge_trim_enabled,
+                ),
+                if silence_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenSilenceEdgeTrimToggle(
+                            !manager.volumen_silence_edge_trim_enabled,
+                        ),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
         ]
         .align_y(Alignment::Center)
@@ -4087,7 +4132,7 @@ fn view_volumen_mezcla<'a>(
         silence_threshold_row,
         silence_border_row,
     ]
-    .spacing(4);
+    .spacing(5);
 
     // --- Group 3: Replay gain fijo ---
     // Igual que "gain para canciones sin etiqueta" pero se aplica SIEMPRE
@@ -4104,22 +4149,19 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(4.0)),
-        text("Pre-Amplificador")
-            .size(12)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fixed(4.0)),
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            group_title("Pre-Amplificador"),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgFixedToggle(
+                !rg_fixed_on,
+            )),
+        ),
+        Space::new().width(Length::Fixed(8.0)),
         h_sep(),
     ]
     .align_y(Alignment::Center);
 
     let rg_fixed_row = {
-        let label_color = if !rg_fixed_on {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
         let stepper: iced::Element<'_, _> = if !rg_fixed_on {
             NumberStepper::new(
                 manager.volumen_rg_fixed_db,
@@ -4153,17 +4195,15 @@ fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            text("Nivel de Pre-Amplificador")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(8.0)),
+            subfunc_label("Nivel del Pre-Amplificador", rg_fixed_on),
             Space::new().width(Length::Fill),
             stepper,
         ]
         .align_y(Alignment::Center)
     };
 
-    let rg_fixed_group = column![rg_fixed_title_row, rg_fixed_row,].spacing(4);
+    let rg_fixed_group = column![rg_fixed_title_row, rg_fixed_row,].spacing(5);
 
     // --- Group 4: Replay Gain ---
     let rg_master_on = manager.volumen_rg_master_enabled;
@@ -4178,24 +4218,25 @@ fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(4.0)),
-        text("Replay Gain")
-            .size(12)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fixed(4.0)),
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            group_title("Replay Gain"),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgMasterToggle(
+                !rg_master_on,
+            )),
+        ),
+        Space::new().width(Length::Fixed(8.0)),
         h_sep(),
     ]
     .align_y(Alignment::Center);
 
     let rg_album_row = {
-        let disabled = !rg_master_on || !manager.volumen_rg_album_enabled;
-        let label_color = if disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
-        let chk: iced::Element<'_, _> = if !disabled {
+        // The checkbox is clickable whenever the group master is ON (regardless of
+        // its own individual state). The stepper is disabled when the master is OFF
+        // OR this specific function is OFF.
+        let checkbox_locked = !rg_master_on;
+        let stepper_locked = !rg_master_on || !manager.volumen_rg_album_enabled;
+        let chk: iced::Element<'_, _> = if !checkbox_locked {
             StandardCheckbox::new(manager.volumen_rg_album_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgAlbumToggle(b),
@@ -4205,7 +4246,7 @@ fn view_volumen_mezcla<'a>(
         } else {
             StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
-        let stepper: iced::Element<'_, _> = if disabled {
+        let stepper: iced::Element<'_, _> = if stepper_locked {
             NumberStepper::new(
                 manager.volumen_rg_offset_album_db,
                 (-12.0)..=12.0,
@@ -4239,11 +4280,17 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Usar valor de etiqueta Album")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label("Usar valor de la etiqueta incrustada 'Album'", !stepper_locked),
+                if !checkbox_locked {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenRgAlbumToggle(!manager.volumen_rg_album_enabled),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4251,13 +4298,9 @@ fn view_volumen_mezcla<'a>(
     };
 
     let rg_track_row = {
-        let disabled = !rg_master_on || !manager.volumen_rg_track_enabled;
-        let label_color = if disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
-        let chk: iced::Element<'_, _> = if !disabled {
+        let checkbox_locked = !rg_master_on;
+        let stepper_locked = !rg_master_on || !manager.volumen_rg_track_enabled;
+        let chk: iced::Element<'_, _> = if !checkbox_locked {
             StandardCheckbox::new(manager.volumen_rg_track_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgTrackToggle(b),
@@ -4267,7 +4310,7 @@ fn view_volumen_mezcla<'a>(
         } else {
             StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
-        let stepper: iced::Element<'_, _> = if disabled {
+        let stepper: iced::Element<'_, _> = if stepper_locked {
             NumberStepper::new(
                 manager.volumen_rg_offset_track_db,
                 (-12.0)..=12.0,
@@ -4301,11 +4344,17 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Usar valor de etiqueta Cancion")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label("Usar valor de la etiqueta incrustada 'Canción'", !stepper_locked),
+                if !checkbox_locked {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenRgTrackToggle(!manager.volumen_rg_track_enabled),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4313,13 +4362,9 @@ fn view_volumen_mezcla<'a>(
     };
 
     let rg_untagged_row = {
-        let disabled = !rg_master_on || !manager.volumen_rg_analyze_rt_enabled;
-        let label_color = if disabled {
-            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
-        } else {
-            COLOR_TEXT_SECONDARY
-        };
-        let chk: iced::Element<'_, _> = if !disabled {
+        let checkbox_locked = !rg_master_on;
+        let stepper_locked = !rg_master_on || !manager.volumen_rg_analyze_rt_enabled;
+        let chk: iced::Element<'_, _> = if !checkbox_locked {
             StandardCheckbox::new(manager.volumen_rg_analyze_rt_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(
                     AudioCenterMessage::VolumenRgAnalyzeRtToggle(b),
@@ -4329,7 +4374,7 @@ fn view_volumen_mezcla<'a>(
         } else {
             StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
-        let stepper: iced::Element<'_, _> = if disabled {
+        let stepper: iced::Element<'_, _> = if stepper_locked {
             NumberStepper::new(
                 manager.volumen_rg_offset_rt_db,
                 (-12.0)..=12.0,
@@ -4363,18 +4408,26 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(4.0)),
-            text("Replay Gain para canciones sin etiquetas")
-                .size(12)
-                .color(label_color)
-                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label("Replay Gain fijo para canciones sin etiquetas", !stepper_locked),
+                if !checkbox_locked {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenRgAnalyzeRtToggle(
+                            !manager.volumen_rg_analyze_rt_enabled,
+                        ),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
         .align_y(Alignment::Center)
     };
 
-    let rg_group = column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(4);
+    let rg_group = column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(5);
 
     // Left column: all groups
     let left_col = container(
@@ -4384,7 +4437,7 @@ fn view_volumen_mezcla<'a>(
             rg_fixed_group,
             rg_group,
         ]
-        .spacing(13),
+        .spacing(18),
     )
     .width(Length::FillPortion(1));
 
@@ -4402,10 +4455,10 @@ fn view_volumen_mezcla<'a>(
             .align_y(Alignment::Start),
     )
     .padding(iced::Padding {
-        top: 10.0,
+        top: 18.0,
         right: 15.0,
-        bottom: 10.0,
-        left: 15.0,
+        bottom: 0.0,
+        left: 0.0,
     })
     .into()
 }

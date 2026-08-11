@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     // Import strip_suffix from the widgets module (now pub(crate) for test access)
-    use crate::gui::widgets::strip_suffix;
+    use crate::gui::widgets::{format_stepper_value, strip_suffix, StepperUnit};
 
     // ========================================================================
     // Suffix stripping tests (Fix B2 / D-45)
@@ -171,5 +171,69 @@ mod tests {
         let neg_str = "-3.14";
         let neg_parsed: f64 = neg_str.parse().unwrap();
         assert!((neg_parsed - (-3.14)).abs() < 1e-10);
+    }
+
+    // ========================================================================
+    // NumberStepper value formatting (format_stepper_value)
+    // ========================================================================
+
+    #[test]
+    fn test_stepper_format_db() {
+        // dB: trailing zeros stripped, 2 decimals kept, suffix "dB"
+        assert_eq!(format_stepper_value(-50.0, &StepperUnit::Decibels), "-50 dB");
+        assert_eq!(format_stepper_value(-14.25, &StepperUnit::Decibels), "-14.25 dB");
+        assert_eq!(format_stepper_value(0.0, &StepperUnit::Decibels), "0 dB");
+        assert_eq!(format_stepper_value(1.5, &StepperUnit::Decibels), "1.5 dB");
+        assert_eq!(format_stepper_value(4.5, &StepperUnit::Decibels), "4.5 dB");
+    }
+
+    #[test]
+    fn test_stepper_format_ms() {
+        // ms: integer-like values shown without decimals, suffix "ms"
+        assert_eq!(
+            format_stepper_value(1000.0, &StepperUnit::Milliseconds),
+            "1000 ms"
+        );
+        assert_eq!(
+            format_stepper_value(0.0, &StepperUnit::Milliseconds),
+            "0 ms"
+        );
+        assert_eq!(
+            format_stepper_value(1500.0, &StepperUnit::Milliseconds),
+            "1500 ms"
+        );
+    }
+
+    #[test]
+    fn test_stepper_format_edit_seed_no_suffix() {
+        // When entering edit mode, the buffer is seeded WITHOUT the unit suffix
+        // (round 6), so users don't have to delete "dB"/"ms" before typing.
+        let seed_db = format!("{:.2}", -50.0);
+        assert_eq!(seed_db, "-50.00");
+        assert!(strip_suffix(&seed_db).parse::<f64>().unwrap() == -50.0);
+
+        let seed_ms = format!("{:.0}", 1000.0);
+        assert_eq!(seed_ms, "1000");
+        assert!(strip_suffix(&seed_ms).parse::<f64>().unwrap() == 1000.0);
+    }
+
+    #[test]
+    fn test_stepper_commit_editing_round_trip() {
+        // UAT round 9: typing "1.78" then clicking an arrow commits 1.78 first,
+        // then steps by the unit step. The committed value must parse exactly.
+        let buffer = "1.78";
+        let parsed: f64 = strip_suffix(buffer).parse().unwrap();
+        assert!((parsed - 1.78).abs() < 1e-10);
+
+        // Step from the committed value (0.25 dB step) → 2.03, never 2.0.
+        let step = StepperUnit::Decibels.step();
+        let stepped = parsed + step;
+        assert!((stepped - 2.03).abs() < 1e-10);
+
+        // ms path: "342" + 50ms step → 392.
+        let ms_buffer = "342";
+        let ms_parsed: f64 = strip_suffix(ms_buffer).parse().unwrap();
+        let ms_stepped = ms_parsed + StepperUnit::Milliseconds.step();
+        assert!((ms_stepped - 392.0).abs() < 1e-10);
     }
 }

@@ -31,7 +31,7 @@ async_ftp = "6.0.0"
 
 # Database & Metadata
 rusqlite = { version = "0.38.0", features = ["bundled"] }
-lofty = "0.23.3"
+lofty = "0.25.1"
 walkdir = "2.5.0"
 
 # Serialization & Config

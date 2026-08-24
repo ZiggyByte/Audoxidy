@@ -827,17 +827,26 @@ mod tests {
 
         // restore_limiter(false) → restores to disabled
         chain.restore_limiter(false);
-        assert!(!chain.limiter.enabled, "Limiter should be restored to disabled");
+        assert!(
+            !chain.limiter.enabled,
+            "Limiter should be restored to disabled"
+        );
 
         // force_limiter_on when already enabled → returns true (was enabled), stays enabled
         chain.limiter.enabled = true;
         let was_enabled2 = chain.force_limiter_on();
-        assert!(was_enabled2, "Limiter was already enabled, should return true");
+        assert!(
+            was_enabled2,
+            "Limiter was already enabled, should return true"
+        );
         assert!(chain.limiter.enabled, "Limiter should stay enabled");
 
         // restore_limiter(true) → restores to enabled
         chain.restore_limiter(true);
-        assert!(chain.limiter.enabled, "Limiter should be restored to enabled");
+        assert!(
+            chain.limiter.enabled,
+            "Limiter should be restored to enabled"
+        );
 
         // Force on again after restore to true, then restore to false
         chain.limiter.enabled = false;
@@ -888,5 +897,167 @@ mod tests {
         chain.process_frame(&mut frame3);
         assert!(frame3[0].is_finite());
         assert!(frame3[1].is_finite());
+    }
+
+    // ========================================================================
+    // Compressor optimizado (buffer circular + SIMD, D-10)
+    // ========================================================================
+
+    #[test]
+    fn test_compressor_circular_passthrough_when_disabled() {
+        let mut c = Compressor::new();
+        c.enabled = false;
+        let input = vec![0.5_f64, -0.4, 0.3, -0.2, 0.6, 0.1];
+        let mut out = input.clone();
+        for frame in out.chunks_mut(2) {
+            c.process(frame);
+        }
+        for (a, b) in input.iter().zip(out.iter()) {
+            assert!(
+                (a - b).abs() < 1e-12,
+                "disabled compressor must pass through"
+            );
+        }
+    }
+
+    #[test]
+    fn test_compressor_circular_applies_gain_reduction() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        // Señal muy fuerte y sostenida (muy por encima del umbral) → la reducción
+        // de ganancia debe superar al makeup y reducir el nivel.
+        let input: Vec<f64> = (0..4000)
+            .map(|i| if i % 2 == 0 { 3.0 } else { -3.0 })
+            .collect();
+        let mut out = input.clone();
+        for frame in out.chunks_mut(2) {
+            c.process(frame);
+        }
+        let in_rms: f64 = input.iter().map(|s| s * s).sum::<f64>() / input.len() as f64;
+        let out_rms: f64 = out.iter().map(|s| s * s).sum::<f64>() / out.len() as f64;
+        assert!(in_rms > 1.0, "test signal must be loud");
+        assert!(
+            out_rms < in_rms * 0.8,
+            "compressor should reduce level on a loud sustained signal (in={}, out={})",
+            in_rms,
+            out_rms
+        );
+    }
+
+    #[test]
+    fn test_compressor_circular_no_nan() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        let mut out = Vec::new();
+        // Llenar el lookahead con señal limpia y procesar activamente.
+        for _ in 0..100 {
+            let mut frame = [0.9_f64, -0.9];
+            c.process(&mut frame);
+            out.extend_from_slice(&frame);
+        }
+        // Inyectar NaN/Inf: la cadena de procesamiento debe mantener la salida finita.
+        for _ in 0..100 {
+            let mut frame = [f64::NAN, f64::INFINITY];
+            c.process(&mut frame);
+            out.extend_from_slice(&frame);
+        }
+        for s in out.iter() {
+            assert!(s.is_finite(), "compressor output must be finite");
+        }
+    }
+
+    #[test]
+    fn test_compressor_circular_multichannel_no_panic() {
+        let mut c = Compressor::new();
+        c.enabled = true;
+        // 6 canales (5.1) → sin panic y sin NaN.
+        let mut frame = [0.5_f64, -0.4, 0.3, -0.2, 0.1, 0.0];
+        for _ in 0..500 {
+            c.process(&mut frame);
+        }
+        for s in frame.iter() {
+            assert!(s.is_finite());
+        }
+    }
+
+    // ========================================================================
+    // Limiter optimizado (polyphase true-peak inter-sample, D-11)
+    // ========================================================================
+
+    #[test]
+    fn test_limiter_true_peak_at_least_sample_peak() {
+        // El true-peak inter-sample debe ser >= al pico de muestra y finito.
+        let frame = [0.8_f64, 0.95, -0.9, 0.7, 0.99, -0.85];
+        let sample_peak = frame.iter().map(|s| s.abs()).fold(0.0, f64::max);
+        let tp = Limiter::true_peak(&frame);
+        assert!(tp.is_finite());
+        assert!(
+            tp >= sample_peak - 1e-9,
+            "true_peak (={}) must be >= sample_peak (={})",
+            tp,
+            sample_peak
+        );
+    }
+
+    #[test]
+    fn test_limiter_true_peak_catches_inter_sample() {
+        // Un pico inter-sample (oscilación rápida de alta amplitud entre muestras)
+        // debe producir un true-peak por encima del pico de muestra en algunos casos.
+        // Usamos una señal donde el interpolador revela picos entre muestras.
+        let frame = [1.0_f64, -1.0, 1.0, -1.0, 1.0, -1.0];
+        let tp = Limiter::true_peak(&frame);
+        assert!(tp.is_finite());
+        assert!(tp > 0.0);
+        // Para una alternancia a Nyquist, la interpolación nunca debe superar
+        // excesivamente el pico de muestra (sanity: < 2x).
+        assert!(tp < 2.0 + 1e-9);
+    }
+
+    #[test]
+    fn test_limiter_process_no_nan_and_ceiling() {
+        let mut l = Limiter::default();
+        l.enabled = true;
+        l.ceiling = -1.0; // -1 dBFS
+        let mut frame = [0.99_f64, -0.99];
+        for _ in 0..500 {
+            l.process(&mut frame);
+        }
+        for s in frame.iter() {
+            assert!(s.is_finite());
+        }
+        // Con un techo de -1 dB, la salida sostenida no debe superar el techo lineal.
+        let ceiling_lin = 10.0_f64.powf(-1.0 / 20.0);
+        assert!(frame.iter().all(|s| s.abs() <= ceiling_lin + 1e-6));
+    }
+
+    // ========================================================================
+    // Reverb optimizado (FWHT + decorrelación por canal, D-12 / D-09)
+    // ========================================================================
+
+    #[test]
+    fn test_reverb_multichannel_decorrelated_and_finite() {
+        let mut r = Reverb::new();
+        r.enabled = true;
+        // 6 canales: todos finitos y sin panic.
+        let mut frame = [0.4_f64, -0.3, 0.2, -0.1, 0.5, 0.05];
+        for _ in 0..300 {
+            r.process(&mut frame);
+        }
+        for s in frame.iter() {
+            assert!(s.is_finite(), "reverb output must be finite");
+        }
+        // Decorrelación por canal: con el MISMO input sostenido en todos los canales
+        // (suficientes frames para superar las líneas de delay), los canales usan
+        // sets FDN distintos y producen salidas distintas.
+        r.reset_state();
+        let mut a = [0.5_f64; 6];
+        for _ in 0..3000 {
+            r.process(&mut a);
+        }
+        assert!(
+            (a[0] - a[2]).abs() > 1e-6 || (a[0] - a[4]).abs() > 1e-6,
+            "reverb channels should be decorrelated (got a={:?})",
+            a
+        );
     }
 }

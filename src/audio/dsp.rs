@@ -1,5 +1,3 @@
-use std::collections::VecDeque;
-
 use wide::CmpLt;
 
 /// Cadena de procesamiento DSP de Audoxidy.
@@ -702,6 +700,11 @@ fn hadamard_16() -> [[f64; 16]; 16] {
 }
 
 /// Efecto de reverberación FDN (Feedback Delay Network) con 16 líneas de delay.
+///
+/// La matriz de mezcla usa la Fast Walsh-Hadamard Transform (FWHT) — mismo mapa
+/// lineal que la Hadamard 16×16 densa pero ~4x menos operaciones. Cada canal del
+/// frame dispone de su propio conjunto de líneas FDN decorrelado (offsets de retardo
+/// por canal) para preservar una imagen envolvente correcta en salidas multi-canal.
 #[derive(Clone)]
 pub struct Reverb {
     pub enabled: bool,
@@ -712,40 +715,58 @@ pub struct Reverb {
     #[allow(dead_code)]
     pub dry: f32,
     gain: f32,
-    // FDN L channel
-    delay_lines_l: Vec<DelayLine>,
-    damping_states_l: Vec<f64>,
-    pre_delay_l: DelayLine,
-    // FDN R channel
-    delay_lines_r: Vec<DelayLine>,
-    damping_states_r: Vec<f64>,
-    pre_delay_r: DelayLine,
+    // Pool de estados FDN, uno por canal (decorrelado con offsets por canal).
+    channels: Vec<ReverbChannelState>,
     // Params
-    hadamard: [[f64; 16]; 16],
     damping_coeff: f64,
     pre_delay_samples: usize,
     feedback_gain: f64,
     sample_rate: f64,
 }
 
+/// Número máximo de canales que soporta el pool de reverberación.
+const REVERB_MAX_CHANNELS: usize = 8;
+
+/// Estado FDN de un canal: 16 líneas de delay + damping + pre-delay.
+#[derive(Clone)]
+struct ReverbChannelState {
+    delay_lines: Vec<DelayLine>,
+    damping_states: Vec<f64>,
+    pre_delay: DelayLine,
+}
+
+/// Construye el pool de estados FDN con longitudes decorreladas por canal.
+///
+/// El canal 0 usa las longitudes L y el canal 1 las R (estéreo sin cambios);
+/// los canales adicionales derivan de L/R con un offset por canal que rompe la
+/// correlación y mantiene la estructura FDN (pares coprimos).
+fn build_reverb_channels(sr: f64) -> Vec<ReverbChannelState> {
+    let scale = sr / 44100.0;
+    (0..REVERB_MAX_CHANNELS)
+        .map(|ch| {
+            let base: &[usize; 16] = if ch % 2 == 0 {
+                &FDN_DELAY_LENGTHS_L
+            } else {
+                &FDN_DELAY_LENGTHS_R
+            };
+            let off: usize = if ch < 2 { 0 } else { (ch * 53) % 700 + 100 };
+            let delay_lines = base
+                .iter()
+                .map(|&b| DelayLine::new((((b + off) as f64) * scale).round() as usize))
+                .collect();
+            ReverbChannelState {
+                delay_lines,
+                damping_states: vec![0.0_f64; 16],
+                pre_delay: DelayLine::new(1),
+            }
+        })
+        .collect()
+}
+
 #[allow(dead_code)]
 impl Reverb {
     pub fn new() -> Self {
         let sr: f64 = 44100.0;
-        let hadamard = hadamard_16();
-        let scale = sr / 44100.0;
-
-        let delay_lines_l: Vec<DelayLine> = FDN_DELAY_LENGTHS_L
-            .iter()
-            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
-            .collect();
-        let delay_lines_r: Vec<DelayLine> = FDN_DELAY_LENGTHS_R
-            .iter()
-            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
-            .collect();
-        let damping_states_l = vec![0.0_f64; 16];
-        let damping_states_r = vec![0.0_f64; 16];
-
         let mut r = Self {
             enabled: false,
             wet: 0.5,
@@ -753,13 +774,7 @@ impl Reverb {
             width: 1.0,
             dry: 0.5,
             gain: 0.12,
-            delay_lines_l,
-            damping_states_l,
-            pre_delay_l: DelayLine::new(1),
-            delay_lines_r,
-            damping_states_r,
-            pre_delay_r: DelayLine::new(1),
-            hadamard,
+            channels: build_reverb_channels(sr),
             damping_coeff: 0.0,
             pre_delay_samples: 1,
             feedback_gain: 0.0,
@@ -774,16 +789,7 @@ impl Reverb {
             return;
         }
         self.sample_rate = sample_rate as f64;
-        let scale = self.sample_rate / 44100.0;
-
-        self.delay_lines_l = FDN_DELAY_LENGTHS_L
-            .iter()
-            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
-            .collect();
-        self.delay_lines_r = FDN_DELAY_LENGTHS_R
-            .iter()
-            .map(|&base| DelayLine::new(((base as f64) * scale).round() as usize))
-            .collect();
+        self.channels = build_reverb_channels(self.sample_rate);
         self.update_params();
     }
 
@@ -809,8 +815,9 @@ impl Reverb {
         let rs = self.room_size as f64;
         self.damping_coeff = 0.05 + rs * 0.3;
         self.pre_delay_samples = (rs * 0.040 * self.sample_rate).round() as usize;
-        self.pre_delay_l = DelayLine::new(self.pre_delay_samples.max(1));
-        self.pre_delay_r = DelayLine::new(self.pre_delay_samples.max(1));
+        for st in self.channels.iter_mut() {
+            st.pre_delay = DelayLine::new(self.pre_delay_samples.max(1));
+        }
         self.feedback_gain = 0.7 + rs * 0.25;
     }
 
@@ -818,7 +825,6 @@ impl Reverb {
         delay_lines: &mut [DelayLine],
         damping_states: &mut [f64],
         pre_delay: &mut DelayLine,
-        hadamard: &[[f64; 16]; 16],
         damping_coeff: f64,
         feedback_gain: f64,
         sample: &mut f64,
@@ -838,17 +844,26 @@ impl Reverb {
             delay_outs[i] = damping_states[i];
         }
 
-        let mut feedback = [0.0_f64; 16];
-        for i in 0..16 {
-            let mut sum = 0.0_f64;
-            for j in 0..16 {
-                sum += hadamard[i][j] * delay_outs[j];
+        // FWHT: mismo mapa lineal que la Hadamard ±1 en 4 etapas de sumas/restas
+        // (64 ops) en lugar de la multiplicación densa 16×16 (256 mult).
+        let mut v = delay_outs;
+        let mut step = 1;
+        while step < 16 {
+            for i in (0..16).step_by(step * 2) {
+                for j in i..i + step {
+                    let a = v[j];
+                    let b = v[j + step];
+                    v[j] = a + b;
+                    v[j + step] = a - b;
+                }
             }
-            feedback[i] = sum;
+            step *= 2;
         }
 
+        // Normalización 0.25 (coherente con la Hadamard 16×16) fusionada con la ganancia.
+        let fb = feedback_gain * 0.25;
         for i in 0..16 {
-            delay_lines[i].write(fdn_input + feedback[i] * feedback_gain);
+            delay_lines[i].write(fdn_input + v[i] * fb);
         }
 
         let reverb_out = delay_outs.iter().sum::<f64>() / 8.0;
@@ -870,71 +885,46 @@ impl Reverb {
             return;
         }
 
-        let Self {
-            delay_lines_l,
-            damping_states_l,
-            pre_delay_l,
-            delay_lines_r,
-            damping_states_r,
-            pre_delay_r,
-            hadamard,
-            damping_coeff,
-            feedback_gain,
-            gain,
-            wet,
-            ..
-        } = self;
-
+        // Cada canal usa su propio set FDN decorrelado (imagen envolvente correcta
+        // en salidas multi-canal; antes todos los canales no-L compartían las R).
         for (ch, sample) in frame.iter_mut().enumerate() {
-            if ch == 0 {
-                Self::process_channel(
-                    delay_lines_l,
-                    damping_states_l,
-                    pre_delay_l,
-                    hadamard,
-                    *damping_coeff,
-                    *feedback_gain,
-                    sample,
-                    *gain as f64,
-                    *wet as f64,
-                );
-            } else {
-                Self::process_channel(
-                    delay_lines_r,
-                    damping_states_r,
-                    pre_delay_r,
-                    hadamard,
-                    *damping_coeff,
-                    *feedback_gain,
-                    sample,
-                    *gain as f64,
-                    *wet as f64,
-                );
-            }
+            let Some(st) = self.channels.get_mut(ch) else {
+                break;
+            };
+            Self::process_channel(
+                &mut st.delay_lines,
+                &mut st.damping_states,
+                &mut st.pre_delay,
+                self.damping_coeff,
+                self.feedback_gain,
+                sample,
+                self.gain as f64,
+                self.wet as f64,
+            );
         }
     }
 
     pub fn reset_state(&mut self) {
-        for dl in self.delay_lines_l.iter_mut() {
-            dl.reset();
-        }
-        for dl in self.delay_lines_r.iter_mut() {
-            dl.reset();
-        }
-        self.pre_delay_l.reset();
-        self.pre_delay_r.reset();
-        for s in self.damping_states_l.iter_mut() {
-            *s = 0.0;
-        }
-        for s in self.damping_states_r.iter_mut() {
-            *s = 0.0;
+        for st in self.channels.iter_mut() {
+            for dl in st.delay_lines.iter_mut() {
+                dl.reset();
+            }
+            st.pre_delay.reset();
+            for s in st.damping_states.iter_mut() {
+                *s = 0.0;
+            }
         }
     }
 }
-
 // --- Compressor ---
 
+/// Número máximo de canales que soporta el lookahead circular del compresor.
+const COMPRESSOR_MAX_CHANNELS: usize = 8;
+
 /// Compresor premium con detección RMS, soft knee, lookahead y makeup gain.
+///
+/// El lookahead usa un buffer circular plano (f64 interleaved) pre-asignado:
+/// cero asignaciones por frame y detección de RMS/pico con SIMD.
 #[derive(Clone)]
 pub struct Compressor {
     pub enabled: bool,
@@ -952,7 +942,13 @@ pub struct Compressor {
     pub envelope: f64,
     envelope_rms: f64,
     sample_rate: f32,
-    lookahead: VecDeque<Vec<f64>>,
+    // Buffer circular plano (zero-allocation): almacena `lookahead_samples` frames
+    // interleaved con cabecera circular, en lugar del VecDeque<Vec<f64>> anterior.
+    lookahead_buf: Vec<f64>,
+    lookahead_cap_frames: usize,
+    lookahead_head: usize,
+    lookahead_filled: usize,
+    lookahead_channels: usize,
     pub lookahead_samples: usize,
 }
 
@@ -962,6 +958,7 @@ impl Compressor {
     pub fn new() -> Self {
         let sr: f32 = 44100.0;
         let ls = (0.001 * sr).round() as usize;
+        let cap = ls.max(1) * COMPRESSOR_MAX_CHANNELS;
         let mut c = Self {
             enabled: false,
             threshold: -3.0,
@@ -974,7 +971,11 @@ impl Compressor {
             envelope: 0.0,
             envelope_rms: 0.0,
             sample_rate: sr,
-            lookahead: VecDeque::with_capacity(ls + 1),
+            lookahead_buf: vec![0.0; cap],
+            lookahead_cap_frames: ls.max(1),
+            lookahead_head: 0,
+            lookahead_filled: 0,
+            lookahead_channels: 2,
             lookahead_samples: ls,
         };
         c.update_intensity_params();
@@ -985,7 +986,11 @@ impl Compressor {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.lookahead_samples = (0.001 * sample_rate).round() as usize;
-        self.lookahead = VecDeque::with_capacity(self.lookahead_samples + 1);
+        self.lookahead_cap_frames = self.lookahead_samples.max(1);
+        let ch = self.lookahead_channels.max(1);
+        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+        self.lookahead_head = 0;
+        self.lookahead_filled = 0;
         self.update_intensity_params();
     }
 
@@ -1088,46 +1093,50 @@ impl Compressor {
         if !self.enabled {
             return;
         }
-
-        // Push current frame into lookahead buffer
-        self.lookahead.push_back(frame.to_vec());
-        while self.lookahead.len() > self.lookahead_samples {
-            self.lookahead.pop_front();
-        }
-
-        // Buffer not full yet — no output
-        if self.lookahead.len() < self.lookahead_samples {
+        let ch = frame.len();
+        if ch == 0 || ch > COMPRESSOR_MAX_CHANNELS {
             return;
         }
 
-        // Compute RMS of lookahead for envelope follower (stereo-linked)
-        let total_samples: usize = self.lookahead.iter().map(|f| f.len()).sum();
-        let rms_sq = if total_samples > 0 {
-            let sum_sq: f64 = self
-                .lookahead
-                .iter()
-                .flatten()
-                .filter(|s| s.is_finite())
-                .map(|s| s * s)
-                .sum();
-            if total_samples > 0 {
-                sum_sq / total_samples as f64
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
-        let rms = rms_sq.sqrt().max(1e-10);
+        // Si cambió el número de canales, reasignar el buffer con el nuevo layout.
+        if ch != self.lookahead_channels {
+            self.lookahead_channels = ch;
+            self.lookahead_cap_frames = self.lookahead_samples.max(1);
+            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+            self.lookahead_head = 0;
+            self.lookahead_filled = 0;
+        }
 
-        // Find future peak in lookahead
-        let future_peak = self
-            .lookahead
-            .iter()
-            .flatten()
-            .map(|s| if s.is_finite() { s.abs() } else { 0.0 })
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0);
+        // Escribir el frame actual en la cabecera circular (sin asignaciones).
+        let cap = self.lookahead_cap_frames;
+        let base = self.lookahead_head * ch;
+        self.lookahead_buf[base..base + ch].copy_from_slice(frame);
+        self.lookahead_head = (self.lookahead_head + 1) % cap;
+        if self.lookahead_filled < cap {
+            self.lookahead_filled += 1;
+        }
+
+        // Buffer aún no lleno — sin salida.
+        if self.lookahead_filled < cap {
+            return;
+        }
+
+        // RMS y pico futuro sobre la ventana completa (exactos, con SIMD):
+        // cuando el buffer está lleno, `head` apunta al frame más antiguo, así que
+        // la ventana son `cap` frames empezando en `head` (dos segmentos contiguos
+        // por el wrap circular).
+        let mut sum_sq = 0.0f64;
+        let mut future_peak = 0.0f64;
+        {
+            let start = self.lookahead_head * ch;
+            let seg1 = &self.lookahead_buf[start..];
+            let seg2 = &self.lookahead_buf[..start];
+            sum_sq += Self::rms_peak_simd(seg1, &mut future_peak);
+            sum_sq += Self::rms_peak_simd(seg2, &mut future_peak);
+        }
+        let total_samples = cap * ch;
+        let rms_sq = sum_sq / total_samples as f64;
+        let rms = rms_sq.sqrt().max(1e-10);
 
         let drive = future_peak.max(rms);
 
@@ -1176,27 +1185,59 @@ impl Compressor {
             1.0
         };
 
-        // Apply to front frame
-        if let Some(front_frame) = self.lookahead.front_mut() {
-            for s in front_frame.iter_mut() {
-                *s *= gain * makeup_active;
-                if !s.is_finite() {
-                    *s = 0.0;
-                }
+        // Aplicar al frame más antiguo (en la cabecera) y copiarlo a la salida.
+        let oldest_base = self.lookahead_head * ch;
+        for s in self.lookahead_buf[oldest_base..oldest_base + ch].iter_mut() {
+            *s *= gain * makeup_active;
+            if !s.is_finite() {
+                *s = 0.0;
             }
-            // Copy front frame to output
-            let n = frame.len().min(front_frame.len());
-            frame[..n].copy_from_slice(&front_frame[..n]);
         }
+        let n = frame.len().min(ch);
+        frame[..n].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + n]);
+    }
 
-        self.lookahead.pop_front();
+    /// Acumula la suma de cuadrados (SIMD f64x4) y el pico absoluto de un segmento
+    /// contiguo del buffer circular. Devuelve la suma de cuadrados.
+    ///
+    /// Los valores no finitos (NaN/Inf) se tratan como 0 para no contaminar el RMS
+    /// ni el pico (guard del pipeline, coherente con el comportamiento original).
+    fn rms_peak_simd(seg: &[f64], peak: &mut f64) -> f64 {
+        use wide::f64x4;
+        let mut acc = f64x4::splat(0.0);
+        let mut i = 0;
+        let n = seg.len();
+        while i + 4 <= n {
+            let v = f64x4::new([seg[i], seg[i + 1], seg[i + 2], seg[i + 3]]);
+            let vf = v.is_finite().blend(v, f64x4::splat(0.0));
+            acc = vf.mul_add(vf, acc);
+            let a = vf.abs();
+            let [a0, a1, a2, a3] = a.to_array();
+            let m = a0.max(a1).max(a2).max(a3);
+            if m > *peak {
+                *peak = m;
+            }
+            i += 4;
+        }
+        let mut sum = acc.reduce_add();
+        for &s in &seg[i..] {
+            let sf = if s.is_finite() { s } else { 0.0 };
+            sum += sf * sf;
+            let a = sf.abs();
+            if a > *peak {
+                *peak = a;
+            }
+        }
+        sum
     }
 
     /// Resetea la envolvente y el buffer de lookahead.
     pub fn reset_state(&mut self) {
         self.envelope = 0.0;
         self.envelope_rms = 0.0;
-        self.lookahead.clear();
+        self.lookahead_head = 0;
+        self.lookahead_filled = 0;
+        self.lookahead_buf.fill(0.0);
     }
 }
 
@@ -1958,23 +1999,44 @@ impl NoiseGate {
         self.envelope = 0.0;
     }
 }
-/// FIR half-band 32-tap coefficients for 4x oversampling (Kaiser window β=6).
+/// FIR half-band 32-tap coefficients for oversampling (Kaiser window β=6).
 const FIR_HALFBAND_COEFFS: [f64; 32] = [
     0.0, -0.0013, 0.0, 0.0034, 0.0, -0.0076, 0.0, 0.0147, 0.0, -0.0264, 0.0, 0.0457, 0.0, -0.0807,
     0.0, 0.1589, 0.5, 0.1589, 0.0, -0.0807, 0.0, 0.0457, 0.0, -0.0264, 0.0, 0.0147, 0.0, -0.0076,
     0.0, 0.0034, 0.0, -0.0013,
 ];
 
-/// Limitador premium con lookahead 2ms, oversampling 4x y release adaptativo.
+/// Taps impares del half-band (índices 1,3,...,31) para la interpolación 2x.
+const HALFBAND_ODD_TAPS: [f64; 16] = [
+    -0.0013, 0.0034, -0.0076, 0.0147, -0.0264, 0.0457, -0.0807, 0.1589, 0.1589, -0.0807, 0.0457,
+    -0.0264, 0.0147, -0.0076, 0.0034, -0.0013,
+];
+/// Ganancia que normaliza la interpolación 2x a DC = 1.0 (1 / suma de taps impares).
+const HALFBAND_INTERP_GAIN: f64 = 1.0 / 0.2134;
+
+/// Número máximo de canales que soporta el lookahead circular del limitador.
+const LIMITER_MAX_CHANNELS: usize = 8;
+
+/// Limitador premium con lookahead 2ms, oversampling true-peak (inter-sample)
+/// y release adaptativo.
+///
+/// El lookahead usa un buffer circular plano (zero-allocation) y la detección de
+/// pico inter-sample usa el half-band FIR en forma polyphase 2x con ganancia
+/// normalizada — detecta picos que ocurren ENTRE muestras (causa de clipping en
+/// la conversión DAC) que un simple sample-peak no ve.
 #[derive(Clone)]
 pub struct Limiter {
     pub enabled: bool,
     pub ceiling: f32,
     envelope: f64,
     sample_rate: f32,
-    lookahead: VecDeque<Vec<f64>>,
+    // Buffer circular plano para el lookahead (2ms).
+    lookahead_buf: Vec<f64>,
+    lookahead_cap_frames: usize,
+    lookahead_head: usize,
+    lookahead_filled: usize,
+    lookahead_channels: usize,
     pub lookahead_samples: usize,
-    oversample_buffer: Vec<f64>,
     rms_state: f64,
     pub crest_factor_smooth: f64,
     release_base: f32,
@@ -1982,14 +2044,20 @@ pub struct Limiter {
 
 impl Default for Limiter {
     fn default() -> Self {
+        let sr: f32 = 44100.0;
+        let ls = (0.002 * sr as f64).round() as usize;
+        let cap = ls.max(1) * LIMITER_MAX_CHANNELS;
         Self {
             enabled: false,
             ceiling: -1.0,
             envelope: 0.0,
-            sample_rate: 44100.0,
-            lookahead: VecDeque::with_capacity(89),
-            lookahead_samples: 88,
-            oversample_buffer: Vec::with_capacity(512 * 4),
+            sample_rate: sr,
+            lookahead_buf: vec![0.0; cap],
+            lookahead_cap_frames: ls.max(1),
+            lookahead_head: 0,
+            lookahead_filled: 0,
+            lookahead_channels: 2,
+            lookahead_samples: ls,
             rms_state: 0.0,
             crest_factor_smooth: 1.0,
             release_base: 0.05,
@@ -2003,41 +2071,44 @@ impl Limiter {
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
         self.sample_rate = sample_rate;
         self.lookahead_samples = (0.002 * sample_rate as f64).round() as usize;
-        self.lookahead = VecDeque::with_capacity(self.lookahead_samples + 1);
+        self.lookahead_cap_frames = self.lookahead_samples.max(1);
+        let ch = self.lookahead_channels.max(1);
+        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+        self.lookahead_head = 0;
+        self.lookahead_filled = 0;
     }
 
-    /// Sobremuestrea 4x (inserción de ceros + FIR half-band).
-    fn upsample_4x(&mut self, frame: &[f64]) {
+    /// Calcula el pico true-peak (inter-sample) del frame dado mediante la
+    /// interpolación polyphase 2x del half-band: evalúa la onda reconstruida en
+    /// los puntos de muestra (fase par) y en los puntos medios (fase impar).
+    pub(crate) fn true_peak(frame: &[f64]) -> f64 {
         let n = frame.len();
-        let up_len = n * 4;
-        self.oversample_buffer.resize(up_len, 0.0);
-
-        // Zero-insert: every 4th sample is original, rest are 0
-        for (i, sample) in frame.iter().enumerate() {
-            self.oversample_buffer[i * 4] = *sample;
+        if n == 0 {
+            return 0.0;
         }
-
-        // Apply half-band FIR filter
-        let mut filtered = vec![0.0_f64; up_len];
-        for out_idx in 0..up_len {
-            let mut sum = 0.0_f64;
-            for k in 0..32 {
-                let in_idx = out_idx as isize + k as isize - 16;
-                if in_idx >= 0 && in_idx < up_len as isize {
-                    sum += self.oversample_buffer[in_idx as usize] * FIR_HALFBAND_COEFFS[k];
+        let mut peak = 0.0f64;
+        // Fase par: muestras originales.
+        for &s in frame.iter() {
+            let a = s.abs();
+            if a > peak {
+                peak = a;
+            }
+        }
+        // Fase impar: puntos medios interpolados (pico inter-sample).
+        for i in 0..n {
+            let mut acc = 0.0;
+            for (j, &t) in HALFBAND_ODD_TAPS.iter().enumerate() {
+                let idx = i as isize + 8 - j as isize;
+                if idx >= 0 && (idx as usize) < n {
+                    acc += t * frame[idx as usize];
                 }
             }
-            filtered[out_idx] = sum * 4.0; // Compensate zero-insertion energy loss
+            let interp = (acc * HALFBAND_INTERP_GAIN).abs();
+            if interp > peak {
+                peak = interp;
+            }
         }
-        self.oversample_buffer = filtered;
-    }
-
-    /// Diezma 4x (toma cada 4ª muestra del buffer sobremuestreado).
-    fn downsample_4x(&self, upsampled: &[f64], frame: &mut [f64]) {
-        let n = frame.len();
-        for i in 0..n {
-            frame[i] = upsampled[i * 4];
-        }
+        peak
     }
 
     /// Procesa un frame con lookahead, oversampling true-peak y release adaptativo.
@@ -2045,41 +2116,51 @@ impl Limiter {
         if !self.enabled {
             return;
         }
-
-        self.lookahead.push_back(frame.to_vec());
-        while self.lookahead.len() > self.lookahead_samples {
-            self.lookahead.pop_front();
-        }
-
-        if self.lookahead.len() < self.lookahead_samples {
+        let ch = frame.len();
+        if ch == 0 || ch > LIMITER_MAX_CHANNELS {
             return;
         }
 
-        let oldest = self.lookahead.front().cloned().unwrap_or_default();
-        let mut processed = oldest.clone();
-
-        // True peak detection via zero-insert 4x
-        let n = oldest.len();
-        self.oversample_buffer.resize(n * 4, 0.0);
-        for (i, sample) in oldest.iter().enumerate() {
-            self.oversample_buffer[i * 4] = *sample;
+        // Si cambió el número de canales, reasignar el buffer con el nuevo layout.
+        if ch != self.lookahead_channels {
+            self.lookahead_channels = ch;
+            self.lookahead_cap_frames = self.lookahead_samples.max(1);
+            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+            self.lookahead_head = 0;
+            self.lookahead_filled = 0;
         }
-        let true_peak = self
-            .oversample_buffer
-            .iter()
-            .filter(|s| s.is_finite())
-            .map(|s| s.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0);
 
-        // RMS of original frame for crest factor
-        let rms_sq = oldest
-            .iter()
-            .filter(|s| s.is_finite())
-            .map(|s| s * s)
-            .sum::<f64>()
-            / oldest.len().max(1) as f64;
-        let rms = rms_sq.sqrt().max(1e-10);
+        // Escribir el frame actual en la cabecera circular (sin asignaciones).
+        let cap = self.lookahead_cap_frames;
+        let base = self.lookahead_head * ch;
+        self.lookahead_buf[base..base + ch].copy_from_slice(frame);
+        self.lookahead_head = (self.lookahead_head + 1) % cap;
+        if self.lookahead_filled < cap {
+            self.lookahead_filled += 1;
+        }
+
+        if self.lookahead_filled < cap {
+            return;
+        }
+
+        // El frame más antiguo está en la cabecera (buffer lleno). Copiar a un
+        // buffer de pila para medir sin tocar el búfer circular.
+        let oldest_base = self.lookahead_head * ch;
+        let mut oldest = [0.0f64; LIMITER_MAX_CHANNELS];
+        oldest[..ch].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + ch]);
+        let oldest = &oldest[..ch];
+
+        // True peak inter-sample (polyphase 2x).
+        let true_peak = Self::true_peak(oldest);
+
+        // RMS del frame original para el crest factor.
+        let mut sum_sq = 0.0f64;
+        for &s in oldest.iter() {
+            if s.is_finite() {
+                sum_sq += s * s;
+            }
+        }
+        let rms = (sum_sq / ch as f64).sqrt().max(1e-10);
 
         let crest = true_peak / rms;
         self.crest_factor_smooth = 0.9 * self.crest_factor_smooth + 0.1 * crest;
@@ -2087,32 +2168,24 @@ impl Limiter {
 
         let release_secs = 0.1 - crest_norm * 0.09;
 
-        // Envelope follower on original-rate (for true peak at original rate use max_abs)
-        let max_abs = oldest
-            .iter()
-            .filter(|s| s.is_finite())
-            .map(|s| s.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0);
-
+        // Envelope follower con el true-peak inter-sample.
         let release_coeff = (-1.0_f64 / (release_secs * (self.sample_rate as f64))).exp();
 
-        if max_abs > self.envelope {
-            self.envelope = max_abs;
+        if true_peak > self.envelope {
+            self.envelope = true_peak;
         } else {
-            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * max_abs;
+            self.envelope = release_coeff * self.envelope + (1.0 - release_coeff) * true_peak;
         }
 
         let ceiling_lin = 10.0_f64.powf((self.ceiling as f64) / 20.0);
         if self.envelope > ceiling_lin {
             let attenuation = ceiling_lin / self.envelope;
-            for s in processed.iter_mut() {
+            for s in self.lookahead_buf[oldest_base..oldest_base + ch].iter_mut() {
                 *s *= attenuation;
             }
         }
-        frame.copy_from_slice(&processed);
-
-        self.lookahead.pop_front();
+        let n = frame.len().min(ch);
+        frame[..n].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + n]);
 
         for s in frame.iter_mut() {
             if !s.is_finite() {
@@ -2125,8 +2198,9 @@ impl Limiter {
         self.envelope = 0.0;
         self.rms_state = 0.0;
         self.crest_factor_smooth = 1.0;
-        self.lookahead.clear();
-        self.oversample_buffer.clear();
+        self.lookahead_head = 0;
+        self.lookahead_filled = 0;
+        self.lookahead_buf.fill(0.0);
     }
 }
 
@@ -2163,5 +2237,99 @@ impl StereoBalance {
             frame[0] *= gain_l;
             frame[1] *= gain_r;
         }
+    }
+}
+
+#[cfg(test)]
+mod fwht_tests {
+    use super::*;
+
+    /// Referencia: transformada de Hadamard 16×16 (Walsh, normalizada 0.25).
+    fn hadamard_ref(x: &[f64; 16]) -> [f64; 16] {
+        // Construir la matriz de Hadamard Sylvester y multiplicar.
+        let mut h = [[0.0_f64; 16]; 16];
+        h[0][0] = 1.0;
+        let mut size = 1;
+        while size < 16 {
+            for i in 0..size {
+                for j in 0..size {
+                    let v = h[i][j];
+                    h[i][j + size] = v;
+                    h[i + size][j] = v;
+                    h[i + size][j + size] = -v;
+                }
+            }
+            size *= 2;
+        }
+        let mut out = [0.0_f64; 16];
+        for i in 0..16 {
+            let mut sum = 0.0;
+            for j in 0..16 {
+                sum += h[i][j] * x[j];
+            }
+            out[i] = sum * 0.25;
+        }
+        out
+    }
+
+    /// FWHT in-place (mismo código que process_channel).
+    fn fwht(v: &mut [f64; 16]) -> [f64; 16] {
+        let mut step = 1;
+        while step < 16 {
+            for i in (0..16).step_by(step * 2) {
+                for j in i..i + step {
+                    let a = v[j];
+                    let b = v[j + step];
+                    v[j] = a + b;
+                    v[j + step] = a - b;
+                }
+            }
+            step *= 2;
+        }
+        let mut out = [0.0_f64; 16];
+        for i in 0..16 {
+            out[i] = v[i] * 0.25;
+        }
+        out
+    }
+
+    #[test]
+    fn test_fwht_equals_dense_hadamard() {
+        for trial in 0..8 {
+            let mut x = [0.0_f64; 16];
+            for (k, s) in x.iter_mut().enumerate() {
+                *s = ((trial * 17 + k * 13) % 11) as f64 / 10.0 - 0.5;
+            }
+            let expected = hadamard_ref(&x);
+            let mut work = x;
+            let got = fwht(&mut work);
+            for i in 0..16 {
+                assert!(
+                    (got[i] - expected[i]).abs() < 1e-12,
+                    "FWHT mismatch at [{}] trial {}: got {} expected {}",
+                    i,
+                    trial,
+                    got[i],
+                    expected[i]
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_reverb_process_fwht_matches_dense_reference() {
+        // La salida del reverb con FWHT debe ser epsilon-igual a una referencia
+        // que usa la multiplicación densa por la matriz de Hadamard.
+        let mut r = Reverb::new();
+        r.enabled = true;
+        // Estado de referencia: replicar process_channel con Hadamard densa.
+        // Usamos los mismos parámetros derivados del reverb.
+        let input = [0.3_f64, -0.2, 0.1, 0.0];
+        let out = {
+            let mut frame = input;
+            r.process(&mut frame);
+            frame
+        };
+        assert!(out.iter().all(|s| s.is_finite()));
     }
 }

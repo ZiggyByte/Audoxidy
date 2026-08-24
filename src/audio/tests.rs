@@ -116,6 +116,20 @@ mod tests {
         assert_eq!(state.replay_gain_album_enabled, true);
     }
 
+    // --- Mezcla Cruzada / Crossfade: AudioState defaults ---
+
+    #[test]
+    fn test_audio_state_crossfade_defaults() {
+        let state = AudioState::default();
+
+        // Master del grupo Crossfade y sus sub-funciones.
+        assert_eq!(state.crossfade_enabled, false);
+        assert_eq!(state.crossfade_manual_enabled, false);
+        assert_eq!(state.crossfade_auto_enabled, false);
+        assert!((state.crossfade_manual_ms - 1000.0).abs() < f32::EPSILON);
+        assert!((state.crossfade_auto_ms - 250.0).abs() < f32::EPSILON);
+    }
+
     // --- Loudness gain computation helper (mirrors decoder.rs:986-1025) ---
 
     /// Compute loudness gain (linear) mirroring the decoder's single gain point (D-01).
@@ -257,9 +271,7 @@ mod tests {
     #[test]
     fn test_loudness_gain_rt_fallback() {
         // No RG tags, analyze_rt=true, offset_rt = +2 dB → gain = 10^(2/20)
-        let gain = compute_gain_db(
-            None, None, true, true, true, 0.0, 0.0, 2.0, true, 0.0,
-        );
+        let gain = compute_gain_db(None, None, true, true, true, 0.0, 0.0, 2.0, true, 0.0);
         let expected = 10.0_f64.powf(2.0 / 20.0);
         assert!((gain - expected).abs() < 1e-10);
     }
@@ -430,7 +442,13 @@ mod tests {
         for i in 1..=100 {
             let t = i as f64 / 100.0;
             let coeff = equal_power_fade(t);
-            assert!(coeff >= prev, "Not monotonic at t={}: {} < {}", t, coeff, prev);
+            assert!(
+                coeff >= prev,
+                "Not monotonic at t={}: {} < {}",
+                t,
+                coeff,
+                prev
+            );
             prev = coeff;
         }
 

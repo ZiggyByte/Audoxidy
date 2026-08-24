@@ -73,6 +73,13 @@ pub enum AudioCenterMessage {
     VolumenRgOffsetAlbumChanged(f64),
     VolumenRgOffsetTrackChanged(f64),
     VolumenRgOffsetRtChanged(f64),
+
+    // Tab 4: Mezcla Cruzada (crossfade)
+    CrossfadeToggle(bool),
+    CrossfadeManualToggle(bool),
+    CrossfadeManualChanged(f64),
+    CrossfadeAutoToggle(bool),
+    CrossfadeAutoChanged(f64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +202,13 @@ pub struct AudioCenterManager {
     pub volumen_rg_offset_album_db: f64,
     pub volumen_rg_offset_track_db: f64,
     pub volumen_rg_offset_rt_db: f64,
+
+    // Mezcla Cruzada (crossfade) — espejo de AudioState para la UI
+    pub crossfade_enabled: bool,
+    pub crossfade_manual_enabled: bool,
+    pub crossfade_manual_ms: f64,
+    pub crossfade_auto_enabled: bool,
+    pub crossfade_auto_ms: f64,
 }
 
 impl Default for AudioCenterManager {
@@ -255,6 +269,11 @@ impl Default for AudioCenterManager {
             volumen_rg_offset_album_db: 0.0,
             volumen_rg_offset_track_db: 0.0,
             volumen_rg_offset_rt_db: 0.0,
+            crossfade_enabled: false,
+            crossfade_manual_enabled: false,
+            crossfade_manual_ms: 1000.0,
+            crossfade_auto_enabled: false,
+            crossfade_auto_ms: 250.0,
         }
     }
 }
@@ -503,7 +522,10 @@ impl AudioCenterManager {
             let s = state.read();
             let _ =
                 db_lock.set_setting("vol_fades_enabled", if s.fades_enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting("vol_smooth_volume_enabled", if s.smooth_volume_enabled { "1" } else { "0" });
+            let _ = db_lock.set_setting(
+                "vol_smooth_volume_enabled",
+                if s.smooth_volume_enabled { "1" } else { "0" },
+            );
             let _ = db_lock.set_setting("vol_fade_in_ms", &format!("{:.0}", s.fade_in_ms));
             let _ = db_lock.set_setting("vol_fade_out_ms", &format!("{:.0}", s.fade_out_ms));
             let _ = db_lock.set_setting(
@@ -520,16 +542,17 @@ impl AudioCenterManager {
             );
             let _ = db_lock.set_setting(
                 "vol_silence_edge_trim_enabled",
-                if s.silence_edge_trim_enabled { "1" } else { "0" },
+                if s.silence_edge_trim_enabled {
+                    "1"
+                } else {
+                    "0"
+                },
             );
             let _ = db_lock.set_setting(
                 "vol_rg_fixed_enabled",
                 if s.rg_fixed_enabled { "1" } else { "0" },
             );
-            let _ = db_lock.set_setting(
-                "vol_rg_fixed_db",
-                &format!("{:.2}", s.rg_fixed_db),
-            );
+            let _ = db_lock.set_setting("vol_rg_fixed_db", &format!("{:.2}", s.rg_fixed_db));
             let _ = db_lock.set_setting(
                 "vol_fade_in_enabled",
                 if s.fade_in_enabled { "1" } else { "0" },
@@ -572,6 +595,36 @@ impl AudioCenterManager {
             );
             let _ =
                 db_lock.set_setting("vol_rg_offset_rt_db", &format!("{:.2}", s.rg_offset_rt_db));
+        }
+    }
+
+    /// Guarda los ajustes de mezcla cruzada (crossfade) en la base de datos.
+    pub fn save_crossfade_settings_to_db(
+        &self,
+        audio_manager: &AudioManager,
+        db: &std::sync::Mutex<crate::db::Database>,
+    ) {
+        if let Ok(db_lock) = db.lock() {
+            let state = audio_manager.state();
+            let s = state.read();
+            let _ = db_lock.set_setting(
+                "crossfade_enabled",
+                if s.crossfade_enabled { "1" } else { "0" },
+            );
+            let _ = db_lock.set_setting(
+                "crossfade_manual_enabled",
+                if s.crossfade_manual_enabled { "1" } else { "0" },
+            );
+            let _ = db_lock.set_setting(
+                "crossfade_manual_ms",
+                &format!("{:.0}", s.crossfade_manual_ms),
+            );
+            let _ = db_lock.set_setting(
+                "crossfade_auto_enabled",
+                if s.crossfade_auto_enabled { "1" } else { "0" },
+            );
+            let _ =
+                db_lock.set_setting("crossfade_auto_ms", &format!("{:.0}", s.crossfade_auto_ms));
         }
     }
 
@@ -911,6 +964,35 @@ impl AudioCenterManager {
                     if let Ok(v) = val.parse::<f64>() {
                         state_write.rg_offset_rt_db = v as f32;
                         self.volumen_rg_offset_rt_db = v;
+                    }
+                }
+
+                // Mezcla Cruzada / Crossfade: cargar claves desde APP_SETTINGS.
+                if let Some(val) = db.get_setting("crossfade_enabled") {
+                    let v = val == "1";
+                    state_write.crossfade_enabled = v;
+                    self.crossfade_enabled = v;
+                }
+                if let Some(val) = db.get_setting("crossfade_manual_enabled") {
+                    let v = val == "1";
+                    state_write.crossfade_manual_enabled = v;
+                    self.crossfade_manual_enabled = v;
+                }
+                if let Some(val) = db.get_setting("crossfade_manual_ms") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.crossfade_manual_ms = v as f32;
+                        self.crossfade_manual_ms = v;
+                    }
+                }
+                if let Some(val) = db.get_setting("crossfade_auto_enabled") {
+                    let v = val == "1";
+                    state_write.crossfade_auto_enabled = v;
+                    self.crossfade_auto_enabled = v;
+                }
+                if let Some(val) = db.get_setting("crossfade_auto_ms") {
+                    if let Ok(v) = val.parse::<f64>() {
+                        state_write.crossfade_auto_ms = v as f32;
+                        self.crossfade_auto_ms = v;
                     }
                 }
             }
@@ -1593,6 +1675,11 @@ impl AudioCenterManager {
             AudioCenterMessage::VolumenFadesToggle(enabled) => {
                 audio_manager.state().write().fades_enabled = enabled;
                 self.volumen_fades_enabled = enabled;
+                // Like the other sub-functions (fade_in/fade_out), the individual
+                // smooth_volume_enabled flag is NOT touched here — its state is
+                // preserved so re-enabling the group restores it. The decoder gates
+                // smoothing on `fades_enabled && smooth_volume_enabled`, so disabling
+                // the master alone is enough to stop smoothing (UAT round 13).
             }
             AudioCenterMessage::VolumenSmoothVolumeToggle(enabled) => {
                 audio_manager.state().write().smooth_volume_enabled = enabled;
@@ -1665,6 +1752,26 @@ impl AudioCenterManager {
             AudioCenterMessage::VolumenRgOffsetRtChanged(val) => {
                 audio_manager.state().write().rg_offset_rt_db = val as f32;
                 self.volumen_rg_offset_rt_db = val;
+            }
+            AudioCenterMessage::CrossfadeToggle(enabled) => {
+                audio_manager.state().write().crossfade_enabled = enabled;
+                self.crossfade_enabled = enabled;
+            }
+            AudioCenterMessage::CrossfadeManualToggle(enabled) => {
+                audio_manager.state().write().crossfade_manual_enabled = enabled;
+                self.crossfade_manual_enabled = enabled;
+            }
+            AudioCenterMessage::CrossfadeManualChanged(val) => {
+                audio_manager.state().write().crossfade_manual_ms = val as f32;
+                self.crossfade_manual_ms = val;
+            }
+            AudioCenterMessage::CrossfadeAutoToggle(enabled) => {
+                audio_manager.state().write().crossfade_auto_enabled = enabled;
+                self.crossfade_auto_enabled = enabled;
+            }
+            AudioCenterMessage::CrossfadeAutoChanged(val) => {
+                audio_manager.state().write().crossfade_auto_ms = val as f32;
+                self.crossfade_auto_ms = val;
             }
         }
     }
@@ -2863,7 +2970,7 @@ fn view_equalizer<'a>(
                 .color(COLOR_TEXT_PRIMARY)
                 .font(FONT_INTER_SANS_MEDIUM),
         )
-        .padding([0, 6])
+        .padding([0, 5])
         .into()
     } else {
         iced::widget::Space::new().width(Length::Fixed(0.0)).into()
@@ -2873,27 +2980,27 @@ fn view_equalizer<'a>(
         preset_label,
         crate::gui::widgets::icon_button(
             "equalizer-straight.svg",
-            22,
+            14,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconLoad
             )),
         ),
         crate::gui::widgets::icon_button(
             "save-outlined-straight.svg",
-            22,
+            14,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconSave
             )),
         ),
         crate::gui::widgets::icon_button(
             "restore-straight.svg",
-            22,
+            14,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconReset
             )),
         ),
     ]
-    .spacing(5)
+    .spacing(7)
     .align_y(Alignment::Center);
 
     let top_row = row![
@@ -3051,7 +3158,7 @@ fn view_equalizer<'a>(
     .align_x(Alignment::Center);
 
     column![
-        Space::new().height(Length::Fixed(15.0)),
+        Space::new().height(Length::Fixed(16.0)),
         top_row,
         Space::new().height(Length::Fixed(25.0)),
         row![
@@ -3767,26 +3874,27 @@ fn view_volumen_mezcla<'a>(
             .font(FONT_INTER_SANS_MEDIUM)
             .into()
     };
-    let subfunc_label = |name: &'a str, enabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
-        let color = if enabled {
-            COLOR_TEXT_PRIMARY
-        } else {
-            COLOR_TEXT_SECONDARY
+    let subfunc_label =
+        |name: &'a str, enabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
+            let color = if enabled {
+                COLOR_TEXT_PRIMARY
+            } else {
+                COLOR_TEXT_SECONDARY
+            };
+            text(name)
+                .size(13)
+                .color(color)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .into()
         };
-        text(name)
-            .size(13)
-            .color(color)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .into()
-    };
 
     // Wraps a label in a clickable area that toggles a function on click
     // (clicking the group/sub-function name toggles its checkbox, UAT round 10).
-    let clickable_toggle =
-        |label: iced::Element<'a, crate::gui::app::Message>,
-         msg: crate::gui::app::Message| -> iced::Element<'a, crate::gui::app::Message> {
-            mouse_area(label).on_press(msg).into()
-        };
+    let clickable_toggle = |label: iced::Element<'a, crate::gui::app::Message>,
+                            msg: crate::gui::app::Message|
+     -> iced::Element<'a, crate::gui::app::Message> {
+        mouse_area(label).on_press(msg).into()
+    };
 
     // --- Group 1: Fades ---
     let fades_master_on = manager.volumen_fades_enabled;
@@ -3850,9 +3958,7 @@ fn view_volumen_mezcla<'a>(
         let disabled = !fades_master_on || !manager.volumen_fade_in_enabled;
         let chk: iced::Element<'_, _> = if fades_master_on {
             StandardCheckbox::new(manager.volumen_fade_in_enabled, |b| {
-                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInToggle(
-                    b,
-                ))
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInToggle(b))
             })
             .into()
         } else {
@@ -3884,9 +3990,9 @@ fn view_volumen_mezcla<'a>(
                 ))
             })
             .on_right_click(|| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFadeInChanged(2000.0),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInChanged(
+                    2000.0,
+                ))
             })
             .into()
         };
@@ -3899,9 +4005,9 @@ fn view_volumen_mezcla<'a>(
                     fades_master_on && manager.volumen_fade_in_enabled,
                 ),
                 if fades_master_on {
-                    crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeInToggle(
-                        !manager.volumen_fade_in_enabled,
-                    ))
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenFadeInToggle(!manager.volumen_fade_in_enabled),
+                    )
                 } else {
                     crate::gui::app::Message::NoOp
                 },
@@ -3916,9 +4022,9 @@ fn view_volumen_mezcla<'a>(
         let disabled = !fades_master_on || !manager.volumen_fade_out_enabled;
         let chk: iced::Element<'_, _> = if fades_master_on {
             StandardCheckbox::new(manager.volumen_fade_out_enabled, |b| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFadeOutToggle(b),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeOutToggle(
+                    b,
+                ))
             })
             .into()
         } else {
@@ -3950,9 +4056,9 @@ fn view_volumen_mezcla<'a>(
                 ))
             })
             .on_right_click(|| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenFadeOutChanged(3000.0),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeOutChanged(
+                    3000.0,
+                ))
             })
             .into()
         };
@@ -3965,9 +4071,9 @@ fn view_volumen_mezcla<'a>(
                     fades_master_on && manager.volumen_fade_out_enabled,
                 ),
                 if fades_master_on {
-                    crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadeOutToggle(
-                        !manager.volumen_fade_out_enabled,
-                    ))
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::VolumenFadeOutToggle(!manager.volumen_fade_out_enabled),
+                    )
                 } else {
                     crate::gui::app::Message::NoOp
                 },
@@ -4040,10 +4146,7 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             Space::new().width(Length::Fixed(8.0)),
-            subfunc_label(
-                "Eliminar los silencios mayores a:",
-                silence_master_on,
-            ),
+            subfunc_label("Eliminar los silencios mayores a:", silence_master_on,),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4085,7 +4188,10 @@ fn view_volumen_mezcla<'a>(
         };
         row![
             Space::new().width(Length::Fixed(8.0)),
-            subfunc_label("Umbral de eliminación de silencios menores a:", silence_master_on),
+            subfunc_label(
+                "Umbral de eliminación de silencios menores a:",
+                silence_master_on
+            ),
             Space::new().width(Length::Fill),
             stepper,
         ]
@@ -4142,9 +4248,9 @@ fn view_volumen_mezcla<'a>(
     let rg_fixed_title_row = row![
         {
             let chk: iced::Element<'_, _> = StandardCheckbox::new(rg_fixed_on, |b| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenRgFixedToggle(b),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgFixedToggle(
+                    b,
+                ))
             })
             .into();
             chk
@@ -4188,9 +4294,9 @@ fn view_volumen_mezcla<'a>(
                 ))
             })
             .on_right_click(|| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenRgFixedChanged(0.0),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgFixedChanged(
+                    0.0,
+                ))
             })
             .into()
         };
@@ -4211,9 +4317,9 @@ fn view_volumen_mezcla<'a>(
     let rg_title_row = row![
         {
             let chk: iced::Element<'_, _> = StandardCheckbox::new(rg_master_on, |b| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenRgMasterToggle(b),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgMasterToggle(
+                    b,
+                ))
             })
             .into();
             chk
@@ -4238,9 +4344,9 @@ fn view_volumen_mezcla<'a>(
         let stepper_locked = !rg_master_on || !manager.volumen_rg_album_enabled;
         let chk: iced::Element<'_, _> = if !checkbox_locked {
             StandardCheckbox::new(manager.volumen_rg_album_enabled, |b| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenRgAlbumToggle(b),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgAlbumToggle(
+                    b,
+                ))
             })
             .into()
         } else {
@@ -4282,7 +4388,10 @@ fn view_volumen_mezcla<'a>(
             chk,
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
-                subfunc_label("Usar valor de la etiqueta incrustada 'Album'", !stepper_locked),
+                subfunc_label(
+                    "Usar valor de la etiqueta incrustada 'Album'",
+                    !stepper_locked
+                ),
                 if !checkbox_locked {
                     crate::gui::app::Message::AudioCenterMsg(
                         AudioCenterMessage::VolumenRgAlbumToggle(!manager.volumen_rg_album_enabled),
@@ -4302,9 +4411,9 @@ fn view_volumen_mezcla<'a>(
         let stepper_locked = !rg_master_on || !manager.volumen_rg_track_enabled;
         let chk: iced::Element<'_, _> = if !checkbox_locked {
             StandardCheckbox::new(manager.volumen_rg_track_enabled, |b| {
-                crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenRgTrackToggle(b),
-                )
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgTrackToggle(
+                    b,
+                ))
             })
             .into()
         } else {
@@ -4346,7 +4455,10 @@ fn view_volumen_mezcla<'a>(
             chk,
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
-                subfunc_label("Usar valor de la etiqueta incrustada 'Canción'", !stepper_locked),
+                subfunc_label(
+                    "Usar valor de la etiqueta incrustada 'Canción'",
+                    !stepper_locked
+                ),
                 if !checkbox_locked {
                     crate::gui::app::Message::AudioCenterMsg(
                         AudioCenterMessage::VolumenRgTrackToggle(!manager.volumen_rg_track_enabled),
@@ -4410,7 +4522,10 @@ fn view_volumen_mezcla<'a>(
             chk,
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
-                subfunc_label("Replay Gain fijo para canciones sin etiquetas", !stepper_locked),
+                subfunc_label(
+                    "Replay Gain fijo para canciones sin etiquetas",
+                    !stepper_locked
+                ),
                 if !checkbox_locked {
                     crate::gui::app::Message::AudioCenterMsg(
                         AudioCenterMessage::VolumenRgAnalyzeRtToggle(
@@ -4430,16 +4545,9 @@ fn view_volumen_mezcla<'a>(
     let rg_group = column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(5);
 
     // Left column: all groups
-    let left_col = container(
-        column![
-            fades_group,
-            silence_group,
-            rg_fixed_group,
-            rg_group,
-        ]
-        .spacing(18),
-    )
-    .width(Length::FillPortion(1));
+    let left_col =
+        container(column![fades_group, silence_group, rg_fixed_group, rg_group,].spacing(18))
+            .width(Length::FillPortion(1));
 
     // Vertical separator
     let vert_sep = container(Space::new())
@@ -4447,18 +4555,195 @@ fn view_volumen_mezcla<'a>(
         .height(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
-    // Right column (empty)
-    let right_col = container(Space::new().width(Length::Fill)).width(Length::FillPortion(1));
+    // --- Right column: Crossfade (Mezcla Cruzada) ---
+    // Replica el patrón de la columna izquierda: checkbox master + título clicable
+    // + separador horizontal; sub-grupos como etiquetas visuales; sub-funciones con
+    // checkbox + nombre clicable + NumberStepper alineado a la derecha.
+    let xfade_master_on = manager.crossfade_enabled;
 
-    container(
-        row![left_col, vert_sep, right_col]
-            .align_y(Alignment::Start),
-    )
-    .padding(iced::Padding {
-        top: 18.0,
-        right: 15.0,
-        bottom: 0.0,
-        left: 0.0,
-    })
-    .into()
+    let xfade_title_row = row![
+        {
+            let chk: iced::Element<'_, _> = StandardCheckbox::new(xfade_master_on, |b| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeToggle(b))
+            })
+            .into();
+            chk
+        },
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            group_title("Crossfade"),
+            crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeToggle(
+                !xfade_master_on,
+            )),
+        ),
+        Space::new().width(Length::Fixed(8.0)),
+        h_sep(),
+    ]
+    .align_y(Alignment::Center);
+
+    // Sub-grupo visual: "Cambio Manual" (sin checkbox — solo ayuda visual).
+    let xfade_manual_label = row![
+        Space::new().width(Length::Fixed(8.0)),
+        subfunc_label("Manual change:", xfade_master_on),
+    ]
+    .align_y(Alignment::Center);
+
+    let xfade_manual_row = {
+        let stepper_locked = !xfade_master_on || !manager.crossfade_manual_enabled;
+        let chk: iced::Element<'_, _> = if xfade_master_on {
+            StandardCheckbox::new(manager.crossfade_manual_enabled, |b| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeManualToggle(
+                    b,
+                ))
+            })
+            .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
+        };
+        let stepper: iced::Element<'_, _> = if stepper_locked {
+            NumberStepper::new(
+                manager.crossfade_manual_ms,
+                0.0..=10000.0,
+                StepperUnit::Milliseconds,
+                |_| crate::gui::app::Message::NoOp,
+            )
+            .disabled()
+            .into()
+        } else {
+            NumberStepper::new(
+                manager.crossfade_manual_ms,
+                0.0..=10000.0,
+                StepperUnit::Milliseconds,
+                |v| {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeManualChanged(v),
+                    )
+                },
+            )
+            .on_selected_state_change(|active| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(
+                    active,
+                ))
+            })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(
+                    AudioCenterMessage::CrossfadeManualChanged(1000.0),
+                )
+            })
+            .into()
+        };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Crossfade current with next song",
+                    xfade_master_on && manager.crossfade_manual_enabled,
+                ),
+                if xfade_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeManualToggle(
+                            !manager.crossfade_manual_enabled,
+                        ),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+    };
+
+    // Sub-grupo visual: "Cambio Automático" (sin checkbox — solo ayuda visual).
+    let xfade_auto_label = row![
+        Space::new().width(Length::Fixed(8.0)),
+        subfunc_label("Automatic change:", xfade_master_on),
+    ]
+    .align_y(Alignment::Center);
+
+    let xfade_auto_row = {
+        let stepper_locked = !xfade_master_on || !manager.crossfade_auto_enabled;
+        let chk: iced::Element<'_, _> = if xfade_master_on {
+            StandardCheckbox::new(manager.crossfade_auto_enabled, |b| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeAutoToggle(b))
+            })
+            .into()
+        } else {
+            StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
+        };
+        let stepper: iced::Element<'_, _> = if stepper_locked {
+            NumberStepper::new(
+                manager.crossfade_auto_ms,
+                0.0..=10000.0,
+                StepperUnit::Milliseconds,
+                |_| crate::gui::app::Message::NoOp,
+            )
+            .disabled()
+            .into()
+        } else {
+            NumberStepper::new(
+                manager.crossfade_auto_ms,
+                0.0..=10000.0,
+                StepperUnit::Milliseconds,
+                |v| {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeAutoChanged(v),
+                    )
+                },
+            )
+            .on_selected_state_change(|active| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::SliderHoverActive(
+                    active,
+                ))
+            })
+            .on_right_click(|| {
+                crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeAutoChanged(
+                    250.0,
+                ))
+            })
+            .into()
+        };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subfunc_label(
+                    "Crossfade current with next song",
+                    xfade_master_on && manager.crossfade_auto_enabled,
+                ),
+                if xfade_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeAutoToggle(!manager.crossfade_auto_enabled),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
+            Space::new().width(Length::Fill),
+            stepper,
+        ]
+        .align_y(Alignment::Center)
+    };
+
+    let xfade_group = column![
+        xfade_title_row,
+        xfade_manual_label,
+        xfade_manual_row,
+        xfade_auto_label,
+        xfade_auto_row,
+    ]
+    .spacing(5);
+
+    let right_col = container(column![xfade_group].spacing(18)).width(Length::FillPortion(1));
+
+    container(row![left_col, vert_sep, right_col].align_y(Alignment::Start))
+        .padding(iced::Padding {
+            top: 18.0,
+            right: 15.0,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .into()
 }

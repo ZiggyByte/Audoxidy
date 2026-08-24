@@ -47,6 +47,18 @@ pub enum AudioCommand {
         track_gain: Option<f64>,
         album_gain: Option<f64>,
     },
+    /// Pre-carga la siguiente canción en el hilo decodificador para transiciones sin cortes.
+    PreloadNext {
+        path: String,
+        title: String,
+        artist: String,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+    },
+    /// Descarta el estado de pre-carga actual.
+    ClearPreload,
+    /// Dispara un crossfade manual con la duración en milisegundos especificada.
+    CrossfadeNext(f64),
     Seek(f64),
     Stop,
 }
@@ -111,17 +123,17 @@ pub struct AudioState {
     pub fade_out_ms: f32,    // default: 1000.0 (range 0–10000, paso 50)
 
     // Volumen y Mezcla — Silence removal (D-14 master, D-16)
-    pub silence_enabled: bool,     // default: true
-    pub silence_duration_ms: f32,  // default: 1000.0 (range 100–10000, paso 50)
-    pub silence_threshold_db: f32, // default: -50.0 (range -80..0, paso 0.25)
-    pub silence_edge_trim_enabled: bool,   // default: true
+    pub silence_enabled: bool,           // default: true
+    pub silence_duration_ms: f32,        // default: 1000.0 (range 100–10000, paso 50)
+    pub silence_threshold_db: f32,       // default: -50.0 (range -80..0, paso 0.25)
+    pub silence_edge_trim_enabled: bool, // default: true
 
     // Volumen y Mezcla — Fixed Gain
-    pub rg_fixed_enabled: bool,        // default: false
-    pub rg_fixed_db: f32,              // default: 0.0
+    pub rg_fixed_enabled: bool, // default: false
+    pub rg_fixed_db: f32,       // default: 0.0
     // Fade individual toggles
-    pub fade_in_enabled: bool,         // default: false
-    pub fade_out_enabled: bool,        // default: false
+    pub fade_in_enabled: bool,  // default: false
+    pub fade_out_enabled: bool, // default: false
 
     // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30 master, D-28)
     pub rg_master_enabled: bool,     // default: true (master of RG group)
@@ -129,6 +141,13 @@ pub struct AudioState {
     pub rg_offset_track_db: f32,     // default: 0.0 (range ±12, paso 0.25)
     pub rg_offset_rt_db: f32,        // default: 0.0 (range ±12, paso 0.25)
     pub rg_analyze_rt_enabled: bool, // default: true (RT analysis fallback)
+
+    // Mezcla Cruzada — crossfade entre canciones
+    pub crossfade_enabled: bool, // default: false — master del grupo "Mezcla Cruzada"
+    pub crossfade_manual_enabled: bool, // default: false — crossfade en cambio manual
+    pub crossfade_manual_ms: f32, // default: 1000.0 (range 0–10000, paso 50)
+    pub crossfade_auto_enabled: bool, // default: false — crossfade en cambio automático
+    pub crossfade_auto_ms: f32,  // default: 250.0 (range 0–10000, paso 50)
 }
 
 // Adapters removed (not needed for Rubato 1.0 with Vec<Vec<f32>>)
@@ -188,6 +207,13 @@ impl Default for AudioState {
             rg_offset_track_db: 0.0,
             rg_offset_rt_db: 0.0,
             rg_analyze_rt_enabled: true,
+
+            // Mezcla Cruzada — crossfade
+            crossfade_enabled: false,
+            crossfade_manual_enabled: false,
+            crossfade_manual_ms: 1000.0,
+            crossfade_auto_enabled: false,
+            crossfade_auto_ms: 250.0,
         }
     }
 }
@@ -471,7 +497,9 @@ impl AudioEngine {
     /// Aplica una configuración de audio completa: host, dispositivo, sample rate,
     /// profundidad de bits, canales y tamaño de buffer.
     ///
-    /// Detiene el stream actual y lo recrea con la nueva configuración.
+    /// Recrea el stream con la nueva configuración manteniendo la reproducción activa.
+    /// Escribe la nueva tasa de muestreo en el estado compartido ANTES de reconstruir,
+    /// para que el hilo decodificador reajuste su resampler sin desajustes de tasa.
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
         self.device_manager.stop_stream();
         let current_rate = self.state.read().device_sample_rate;
@@ -483,6 +511,9 @@ impl AudioEngine {
         {
             let mut s = self.state.write();
             s.config_channels = settings.channels.clone();
+            // Escribir la nueva tasa/canales antes de reconstruir el stream: el decoder
+            // reacciona recreando su resampler al leer la tasa nueva (fix B5).
+            s.device_sample_rate = stream_config.sample_rate;
         }
 
         // Update DSP configuration
@@ -502,6 +533,10 @@ impl AudioEngine {
         stream_config: cpal::StreamConfig,
         sample_format: cpal::SampleFormat,
     ) -> Result<(), AudioError> {
+        let prev_channels = {
+            let s = self.state.read();
+            s.channels
+        };
         {
             let mut s = self.state.write();
             s.device_sample_rate = stream_config.sample_rate;
@@ -523,25 +558,29 @@ impl AudioEngine {
         self.device_manager
             .set_output(host, device.clone(), stream_config.clone(), sample_format);
 
-        // Recreate RingBuffer scaled to sample rate
-        let sr = stream_config.sample_rate as usize;
-        let ch = stream_config.channels as usize;
-        let dur_secs = if crate::utils::is_low_resource() {
-            0.5
-        } else {
-            2.0
-        };
-        let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
-        let rb = HeapRb::<f32>::new(rb_size.max(384_000));
-        let (producer, consumer) = rb.split();
+        // Recrear el RingBuffer solo cuando cambia el número de canales.
+        // Si solo cambia la tasa de muestreo, se conserva el buffer actual para
+        // evitar vaciar el audio en reproducción durante el reinicio del stream (fix B5).
+        if prev_channels != stream_config.channels {
+            let sr = stream_config.sample_rate as usize;
+            let ch = stream_config.channels as usize;
+            let dur_secs = if crate::utils::is_low_resource() {
+                0.5
+            } else {
+                2.0
+            };
+            let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
+            let rb = HeapRb::<f32>::new(rb_size.max(384_000));
+            let (producer, consumer) = rb.split();
 
-        {
-            let mut p_lock = self.buffer_producer.lock();
-            *p_lock = Some(producer);
-        }
-        {
-            let mut c_lock = self.buffer_consumer.lock();
-            *c_lock = Some(consumer);
+            {
+                let mut p_lock = self.buffer_producer.lock();
+                *p_lock = Some(producer);
+            }
+            {
+                let mut c_lock = self.buffer_consumer.lock();
+                *c_lock = Some(consumer);
+            }
         }
 
         self.start()
@@ -565,6 +604,39 @@ impl AudioEngine {
             track_gain,
             album_gain,
         });
+        Ok(())
+    }
+
+    /// Pre-carga la siguiente canción en el hilo decodificador para transiciones sin cortes.
+    ///
+    /// Envía un comando `AudioCommand::PreloadNext` al canal `crossbeam`.
+    pub fn preload_file(
+        &self,
+        path: &str,
+        title: String,
+        artist: String,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+    ) -> Result<(), AudioError> {
+        let _ = self.command_tx.send(AudioCommand::PreloadNext {
+            path: path.to_string(),
+            title,
+            artist,
+            track_gain,
+            album_gain,
+        });
+        Ok(())
+    }
+
+    /// Descarta el estado de pre-carga actual en el hilo decodificador.
+    pub fn clear_preload(&self) -> Result<(), AudioError> {
+        let _ = self.command_tx.send(AudioCommand::ClearPreload);
+        Ok(())
+    }
+
+    /// Dispara un crossfade manual con la duración especificada en milisegundos.
+    pub fn crossfade_next(&self, ms: f64) -> Result<(), AudioError> {
+        let _ = self.command_tx.send(AudioCommand::CrossfadeNext(ms));
         Ok(())
     }
 

@@ -609,25 +609,103 @@ impl AudoxidyApp {
             {
                 let state_arc = audio_manager.state();
                 let mut s = state_arc.write();
-                s.fades_enabled = db_lock.get_setting("vol_fades_enabled").map(|v| v == "1").unwrap_or(false);
-                s.smooth_volume_enabled = db_lock.get_setting("vol_smooth_volume_enabled").map(|v| v == "1").unwrap_or(false);
-                s.fade_in_ms = db_lock.get_setting("vol_fade_in_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(2000.0);
-                s.fade_out_ms = db_lock.get_setting("vol_fade_out_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(3000.0);
-                s.fade_in_enabled = db_lock.get_setting("vol_fade_in_enabled").map(|v| v == "1").unwrap_or(false);
-                s.fade_out_enabled = db_lock.get_setting("vol_fade_out_enabled").map(|v| v == "1").unwrap_or(false);
-                s.silence_enabled = db_lock.get_setting("vol_silence_enabled").map(|v| v == "1").unwrap_or(true);
-                s.silence_duration_ms = db_lock.get_setting("vol_silence_duration_ms").and_then(|v| v.parse::<f32>().ok()).unwrap_or(1000.0);
-                s.silence_threshold_db = db_lock.get_setting("vol_silence_threshold_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(-50.0);
-                s.silence_edge_trim_enabled = db_lock.get_setting("vol_silence_edge_trim_enabled").map(|v| v == "1").unwrap_or(true);
-                s.rg_fixed_enabled = db_lock.get_setting("vol_rg_fixed_enabled").map(|v| v == "1").unwrap_or(false);
-                s.rg_fixed_db = db_lock.get_setting("vol_rg_fixed_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
-                s.rg_master_enabled = db_lock.get_setting("vol_rg_master_enabled").map(|v| v == "1").unwrap_or(true);
-                s.replay_gain_track_enabled = db_lock.get_setting("vol_rg_track_enabled").map(|v| v == "1").unwrap_or(true);
-                s.replay_gain_album_enabled = db_lock.get_setting("vol_rg_album_enabled").map(|v| v == "1").unwrap_or(true);
-                s.rg_analyze_rt_enabled = db_lock.get_setting("vol_rg_analyze_rt_enabled").map(|v| v == "1").unwrap_or(true);
-                s.rg_offset_album_db = db_lock.get_setting("vol_rg_offset_album_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
-                s.rg_offset_track_db = db_lock.get_setting("vol_rg_offset_track_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
-                s.rg_offset_rt_db = db_lock.get_setting("vol_rg_offset_rt_db").and_then(|v| v.parse::<f32>().ok()).unwrap_or(0.0);
+                s.fades_enabled = db_lock
+                    .get_setting("vol_fades_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.smooth_volume_enabled = db_lock
+                    .get_setting("vol_smooth_volume_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.fade_in_ms = db_lock
+                    .get_setting("vol_fade_in_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(2000.0);
+                s.fade_out_ms = db_lock
+                    .get_setting("vol_fade_out_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(3000.0);
+                s.fade_in_enabled = db_lock
+                    .get_setting("vol_fade_in_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.fade_out_enabled = db_lock
+                    .get_setting("vol_fade_out_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.silence_enabled = db_lock
+                    .get_setting("vol_silence_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.silence_duration_ms = db_lock
+                    .get_setting("vol_silence_duration_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(1000.0);
+                s.silence_threshold_db = db_lock
+                    .get_setting("vol_silence_threshold_db")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(-50.0);
+                s.silence_edge_trim_enabled = db_lock
+                    .get_setting("vol_silence_edge_trim_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.rg_fixed_enabled = db_lock
+                    .get_setting("vol_rg_fixed_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.rg_fixed_db = db_lock
+                    .get_setting("vol_rg_fixed_db")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                s.rg_master_enabled = db_lock
+                    .get_setting("vol_rg_master_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.replay_gain_track_enabled = db_lock
+                    .get_setting("vol_rg_track_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.replay_gain_album_enabled = db_lock
+                    .get_setting("vol_rg_album_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.rg_analyze_rt_enabled = db_lock
+                    .get_setting("vol_rg_analyze_rt_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(true);
+                s.rg_offset_album_db = db_lock
+                    .get_setting("vol_rg_offset_album_db")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                s.rg_offset_track_db = db_lock
+                    .get_setting("vol_rg_offset_track_db")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                s.rg_offset_rt_db = db_lock
+                    .get_setting("vol_rg_offset_rt_db")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(0.0);
+                // Mezcla Cruzada / Crossfade: cargar al arranque (aplicar al motor inmediatamente)
+                s.crossfade_enabled = db_lock
+                    .get_setting("crossfade_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.crossfade_manual_enabled = db_lock
+                    .get_setting("crossfade_manual_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.crossfade_manual_ms = db_lock
+                    .get_setting("crossfade_manual_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(1000.0);
+                s.crossfade_auto_enabled = db_lock
+                    .get_setting("crossfade_auto_enabled")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.crossfade_auto_ms = db_lock
+                    .get_setting("crossfade_auto_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(250.0);
             }
 
             // EQ enable / bands_31 / preamp_gain
@@ -1104,7 +1182,9 @@ impl AudoxidyApp {
                     let position = state.current_pos_sec;
                     if duration > 0.0 {
                         let remaining = duration - position;
-                        if remaining <= 30.0 && remaining > 29.5 {
+                        // Prefetch de carátula y pre-carga de la siguiente canción
+                        // ~15s antes del final (transiciones sin cortes).
+                        if remaining <= 15.0 && remaining > 14.5 {
                             if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
                                 if let Some(ref cover_path) = next_song.cover_path {
                                     if self.player_ui_state.current_cover_path
@@ -1114,6 +1194,20 @@ impl AudoxidyApp {
                                             crate::utils::covers::load_cover_handle(cover_path);
                                     }
                                 }
+                                // Pre-cargar la siguiente canción una sola vez por pista.
+                                if self.player_ui_state.preloaded_next_path.as_deref()
+                                    != Some(next_song.file_path.as_ref())
+                                {
+                                    let _ = self.audio_manager.preload_next(
+                                        &next_song.file_path,
+                                        next_song.title.to_string(),
+                                        next_song.artist_name.to_string(),
+                                        None,
+                                        None,
+                                    );
+                                    self.player_ui_state.preloaded_next_path =
+                                        Some(next_song.file_path.to_string());
+                                }
                             }
                         }
                     }
@@ -1122,6 +1216,8 @@ impl AudoxidyApp {
                 if state.eof_reached {
                     self.audio_manager.clear_eof();
                     self.playlist_manager.play_next(&self.audio_manager);
+                    // Nueva pista activa: restablecer la pre-carga para la siguiente.
+                    self.player_ui_state.preloaded_next_path = None;
 
                     if self.playlist_manager.shuffle_active {
                         if let Some(session) = &self.playlist_manager.shuffle_session {
@@ -1370,7 +1466,23 @@ impl AudoxidyApp {
             }
             Message::NextTrack => {
                 crate::utils::covers::clear_raw_cache();
+
+                // Crossfade manual: si el grupo Crossfade está activo y su sub-función
+                // manual está habilitada, se dispara la mezcla con la duración configurada
+                // (el decoder mezcla la pista actual con la siguiente pre-cargada).
+                let st = self.audio_manager.get_state();
+                if st.crossfade_enabled
+                    && st.crossfade_manual_enabled
+                    && st.crossfade_manual_ms > 0.0
+                {
+                    let _ = self
+                        .audio_manager
+                        .crossfade_next(st.crossfade_manual_ms as f64);
+                }
+
                 self.playlist_manager.play_next(&self.audio_manager);
+                // Nueva pista activa: restablecer la pre-carga para la siguiente.
+                self.player_ui_state.preloaded_next_path = None;
                 self.persist_playlist_state();
 
                 if self.playlist_manager.shuffle_active {
@@ -4165,6 +4277,18 @@ impl AudoxidyApp {
                     }
                     _ => {}
                 }
+                match &ac_msg {
+                    // Mezcla Cruzada / Crossfade: cualquier cambio se guarda de inmediato
+                    crate::gui::audio_center::AudioCenterMessage::CrossfadeToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::CrossfadeManualToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::CrossfadeManualChanged(_)
+                    | crate::gui::audio_center::AudioCenterMessage::CrossfadeAutoToggle(_)
+                    | crate::gui::audio_center::AudioCenterMessage::CrossfadeAutoChanged(_) => {
+                        self.audio_center_manager
+                            .save_crossfade_settings_to_db(&*self.audio_manager, &*self.database);
+                    }
+                    _ => {}
+                }
 
                 Task::none()
             }
@@ -4180,7 +4304,8 @@ impl AudoxidyApp {
                 self.audio_manager.set_volume(new_vol_percent / 100.0);
                 // Persist volume immediately (Fix B3, D-43)
                 if let Ok(db) = self.database.lock() {
-                    let _ = db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0));
+                    let _ =
+                        db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0));
                 }
                 self.player_ui_state.showing_volume = Some(new_vol_percent);
                 self.player_ui_state.volume_tick_id =
@@ -4354,7 +4479,8 @@ impl AudoxidyApp {
                 // Safety net: clear any lingering stepper hold flag on any primary
                 // button release (UAT round 7 — prevents a stuck hold-to-repeat if a
                 // release event is missed by the widget).
-                crate::gui::widgets::GLOBAL_STEPPER_HOLD.store(0, std::sync::atomic::Ordering::Relaxed);
+                crate::gui::widgets::GLOBAL_STEPPER_HOLD
+                    .store(0, std::sync::atomic::Ordering::Relaxed);
 
                 if self.library_manager.resizing_column.is_some() {
                     self.library_manager.resizing_column = None;
@@ -5408,8 +5534,7 @@ impl AudoxidyApp {
         //    and the widget's RedrawRequested handler drives the auto-repeat with real
         //    timestamps. Without this the runtime stops redrawing (no animation) and
         //    the hold would fire only once.
-        if crate::gui::widgets::GLOBAL_STEPPER_HOLD.load(std::sync::atomic::Ordering::Relaxed)
-            != 0
+        if crate::gui::widgets::GLOBAL_STEPPER_HOLD.load(std::sync::atomic::Ordering::Relaxed) != 0
         {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::Tick),

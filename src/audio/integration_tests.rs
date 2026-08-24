@@ -248,4 +248,34 @@ mod integration_tests {
             }
         }
     }
+
+    // ── Mezcla Cruzada / Crossfade: persistencia en APP_SETTINGS ──
+
+    #[test]
+    fn test_crossfade_settings_round_trip() {
+        let mut db = Database::new_memory().expect("Failed to create in-memory DB");
+
+        // Guardar las 5 claves de crossfade (espejo de save_crossfade_settings_to_db).
+        let _ = db.set_setting("crossfade_enabled", "1");
+        let _ = db.set_setting("crossfade_manual_enabled", "1");
+        let _ = db.set_setting("crossfade_manual_ms", "1300");
+        let _ = db.set_setting("crossfade_auto_enabled", "0");
+        let _ = db.set_setting("crossfade_auto_ms", "450");
+
+        // Recuperar y verificar.
+        assert_eq!(db.get_setting("crossfade_enabled").as_deref(), Some("1"));
+        assert_eq!(
+            db.get_setting("crossfade_manual_enabled").as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            db.get_setting("crossfade_manual_ms").as_deref(),
+            Some("1300")
+        );
+        assert_eq!(
+            db.get_setting("crossfade_auto_enabled").as_deref(),
+            Some("0")
+        );
+        assert_eq!(db.get_setting("crossfade_auto_ms").as_deref(), Some("450"));
+    }
 }

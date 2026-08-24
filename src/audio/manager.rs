@@ -120,6 +120,43 @@ impl AudioManager {
             .decode_file(path, title.into(), artist.into(), tg, ag)
     }
 
+    /// Pre-carga la siguiente canción en el hilo decodificador para transiciones sin cortes.
+    ///
+    /// Igual que `load_file` pero envía un comando de pre-carga (la canción se decodifica
+    /// por adelantado y se promueve sin pausa cuando termina la actual).
+    pub fn preload_next(
+        &self,
+        path: &str,
+        title: impl Into<String>,
+        artist: impl Into<String>,
+        track_gain: Option<f64>,
+        album_gain: Option<f64>,
+    ) -> Result<(), AudioError> {
+        let (mut tg, mut ag) = (track_gain, album_gain);
+        if tg.is_none() && ag.is_none() {
+            if let Some(db_arc) = &*self.database.lock() {
+                if let Ok(db) = db_arc.try_lock() {
+                    if let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path) {
+                        tg = db_tg;
+                        ag = db_ag;
+                    }
+                }
+            }
+        }
+        self.engine
+            .preload_file(path, title.into(), artist.into(), tg, ag)
+    }
+
+    /// Descarta el estado de pre-carga actual en el hilo decodificador.
+    pub fn clear_preload(&self) -> Result<(), AudioError> {
+        self.engine.clear_preload()
+    }
+
+    /// Dispara un crossfade manual con la duración especificada en milisegundos.
+    pub fn crossfade_next(&self, ms: f64) -> Result<(), AudioError> {
+        self.engine.crossfade_next(ms)
+    }
+
     /// Establece el volumen de reproducción (0.0 a 1.0).
     pub fn set_volume(&self, volume: f32) {
         self.engine.set_volume(volume);

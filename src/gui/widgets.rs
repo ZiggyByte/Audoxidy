@@ -318,7 +318,7 @@ struct NumberStepperState {
     input_value_text: String,
     input_cursor_pos: usize,
     input_has_focus: bool,
-    held_dir: i8,              // -1 = left arrow held, 1 = right arrow held, 0 = none
+    held_dir: i8, // -1 = left arrow held, 1 = right arrow held, 0 = none
     hold_start: Option<std::time::Instant>, // when the hold began (for activation delay)
     last_step_at: Option<std::time::Instant>, // last auto-repeat step time
     hover_left: bool,
@@ -355,32 +355,59 @@ impl<'a, Message: 'a + Clone> NumberStepperWidget<'a, Message> {
             COLOR_TEXT_PRIMARY
         };
 
-        // Arrows rendered as text glyphs "<" / ">" (16px), each in a 15px-wide zone.
+        // Arrows rendered as text glyphs "-" / "+" (17px), each in a 15px-wide zone.
         // Center input is 66px wide; total widget is 15 + 66 + 15 = 96px wide, 13px tall.
-        // The glyph is centered horizontally and vertically within its 15px zone
-        // (UAT round 12). All interactions (click, hold-to-repeat, right-click
-        // reset, hover highlight) are unchanged.
-        let left_icon = text("<")
-            .size(16)
-            .width(Length::Fixed(15.0))
-            .height(Length::Fixed(13.0))
-            .color(icon_color)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center);
+        // The glyph is centered horizontally and vertically within its 15px zone,
+        // with a -2px top padding applied ONLY to the glyph (not the arrow area).
+        // All interactions (click, hold-to-repeat, right-click reset, hover highlight)
+        // are unchanged.
+        let left_icon = container(
+            text("-")
+                .size(17)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .color(icon_color)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        )
+        .width(Length::Fixed(15.0))
+        .height(Length::Fixed(13.0))
+        .padding(iced::Padding {
+            top: -2.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
 
-        let right_icon = text(">")
-            .size(16)
-            .width(Length::Fixed(15.0))
-            .height(Length::Fixed(13.0))
-            .color(icon_color)
-            .font(FONT_INTER_SANS_MEDIUM)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center);
+        let right_icon = container(
+            text("+")
+                .size(17)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .color(icon_color)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        )
+        .width(Length::Fixed(15.0))
+        .height(Length::Fixed(13.0))
+        .padding(iced::Padding {
+            top: -2.0,
+            right: 0.0,
+            bottom: 0.0,
+            left: 0.0,
+        })
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
 
         let content: Element<'a, Message> = row![
             left_icon,
-            Space::new().width(Length::Fixed(66.0)).height(Length::Fixed(13.0)),
+            Space::new()
+                .width(Length::Fixed(66.0))
+                .height(Length::Fixed(13.0)),
             right_icon,
         ]
         .width(Length::Fixed(96.0))
@@ -571,18 +598,14 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                 if in_left {
                     // If editing, commit the typed buffer first so the arrow step
                     // operates on the committed value (UAT round 9).
-                    let base = self
-                        .commit_editing(state, shell)
-                        .unwrap_or(self.value);
+                    let base = self.commit_editing(state, shell).unwrap_or(self.value);
                     self.step_value_from(base, -1, shell);
                     state.held_dir = -1;
                     state.hold_start = Some(std::time::Instant::now());
                     state.last_step_at = None;
                     GLOBAL_STEPPER_HOLD.store(-1, Ordering::Relaxed);
                 } else if in_right {
-                    let base = self
-                        .commit_editing(state, shell)
-                        .unwrap_or(self.value);
+                    let base = self.commit_editing(state, shell).unwrap_or(self.value);
                     self.step_value_from(base, 1, shell);
                     state.held_dir = 1;
                     state.hold_start = Some(std::time::Instant::now());
@@ -634,8 +657,7 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                             if held_secs >= HOLD_ACTIVATE_SECS {
                                 let repeat = match state.last_step_at {
                                     Some(prev) => {
-                                        now_i.duration_since(prev).as_secs_f64()
-                                            >= HOLD_REPEAT_SECS
+                                        now_i.duration_since(prev).as_secs_f64() >= HOLD_REPEAT_SECS
                                     }
                                     None => true,
                                 };
@@ -708,8 +730,7 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                     iced::keyboard::Key::Character(c) => {
                         if state.input_value_text.len() < 20 {
                             let ch = c.chars().next().unwrap_or(' ');
-                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace()
-                            {
+                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
                                 state.input_value_text.insert(state.input_cursor_pos, ch);
                                 state.input_cursor_pos += 1;
                             }
@@ -1220,7 +1241,7 @@ pub fn icon_button<'a, Message: Clone + 'a>(
     action: Option<Message>,
 ) -> Element<'a, Message> {
     let has_action = action.is_some();
-    let btn_size = (size + 4).max(26);
+    let btn_size = (size + 4).max(20);
     let icon = svg(svg::Handle::from_path(format!(
         "assets/icons/{}",
         icon_filename
@@ -1248,7 +1269,7 @@ pub fn icon_button<'a, Message: Clone + 'a>(
                 },
                 text_color: COLOR_TEXT_PRIMARY,
                 border: iced::Border {
-                    radius: 6.0.into(),
+                    radius: 4.0.into(),
                     width: 0.0,
                     color: Color::TRANSPARENT,
                 },

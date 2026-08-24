@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     // Import strip_suffix from the widgets module (now pub(crate) for test access)
-    use crate::gui::widgets::{format_stepper_value, strip_suffix, StepperUnit};
+    use crate::gui::widgets::{StepperUnit, format_stepper_value, strip_suffix};
 
     // ========================================================================
     // Suffix stripping tests (Fix B2 / D-45)
@@ -154,8 +154,16 @@ mod tests {
         let step: f64 = 0.25;
         let rounded_down = (1.78_f64 / step).floor() * step; // 1.75
         let rounded_nearest = (1.78_f64 / step).round() * step; // 1.75
-        assert!((parsed - rounded_down).abs() > 1e-10, "Should NOT round to {}", rounded_down);
-        assert!((parsed - rounded_nearest).abs() > 1e-10, "Should NOT round to {}", rounded_nearest);
+        assert!(
+            (parsed - rounded_down).abs() > 1e-10,
+            "Should NOT round to {}",
+            rounded_down
+        );
+        assert!(
+            (parsed - rounded_nearest).abs() > 1e-10,
+            "Should NOT round to {}",
+            rounded_nearest
+        );
         assert!((parsed - 2.0).abs() > 1e-10, "Should NOT be 2.0");
 
         // Test with milliseconds (step 50)
@@ -165,7 +173,10 @@ mod tests {
 
         let ms_step: f64 = 50.0;
         let ms_rounded = (342.0_f64 / ms_step).round() * ms_step; // 350
-        assert!((ms_parsed - ms_rounded).abs() > 1e-10, "Should NOT round 342ms to 350ms");
+        assert!(
+            (ms_parsed - ms_rounded).abs() > 1e-10,
+            "Should NOT round 342ms to 350ms"
+        );
 
         // Test negative value with decimals
         let neg_str = "-3.14";
@@ -180,8 +191,14 @@ mod tests {
     #[test]
     fn test_stepper_format_db() {
         // dB: trailing zeros stripped, 2 decimals kept, suffix "dB"
-        assert_eq!(format_stepper_value(-50.0, &StepperUnit::Decibels), "-50 dB");
-        assert_eq!(format_stepper_value(-14.25, &StepperUnit::Decibels), "-14.25 dB");
+        assert_eq!(
+            format_stepper_value(-50.0, &StepperUnit::Decibels),
+            "-50 dB"
+        );
+        assert_eq!(
+            format_stepper_value(-14.25, &StepperUnit::Decibels),
+            "-14.25 dB"
+        );
         assert_eq!(format_stepper_value(0.0, &StepperUnit::Decibels), "0 dB");
         assert_eq!(format_stepper_value(1.5, &StepperUnit::Decibels), "1.5 dB");
         assert_eq!(format_stepper_value(4.5, &StepperUnit::Decibels), "4.5 dB");

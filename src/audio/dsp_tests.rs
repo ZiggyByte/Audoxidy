@@ -1060,4 +1060,174 @@ mod tests {
             a
         );
     }
+
+    #[test]
+    fn test_dsp_chain_multichannel_no_garbage() {
+        // Reproduce el escenario del bug reportado: EQ + efectos activos con frame
+        // de 6 canales. Un frame "limpio" (seno de baja amplitud) debe salir finito,
+        // acotado y sin NaN/Inf — si algún efecto produce basura, lo detectamos aquí.
+        let mut chain = DspChain::default();
+        chain.enabled = true;
+        chain.set_sample_rate(44100.0);
+        chain.set_channel_count(6);
+        chain.equalizer.enabled = true;
+        chain.noise_gate.enabled = true;
+        chain.sub_bass.enabled = true;
+        chain.mid_bass.enabled = true;
+        chain.voice_boost.enabled = true;
+        chain.compressor.enabled = true;
+        chain.reverb.enabled = true;
+        chain.limiter.enabled = true;
+
+        let mut frame = [0.0_f64; 6];
+        let mut max_out = 0.0_f64;
+        for n in 0..2000 {
+            for (c, s) in frame.iter_mut().enumerate() {
+                *s = 0.4
+                    * (2.0 * std::f64::consts::PI * 440.0 * (n as f64) / 44100.0 + c as f64).sin();
+            }
+            chain.process_frame(&mut frame);
+            for s in frame.iter() {
+                assert!(
+                    s.is_finite(),
+                    "DSP multichannel produjo un valor no finito en n={}",
+                    n
+                );
+                max_out = max_out.max(s.abs());
+            }
+        }
+        assert!(
+            max_out < 50.0,
+            "salida DSP multichannel desbordada: {}",
+            max_out
+        );
+    }
+
+    #[test]
+    fn test_eq_simd_multichannel_matches_scalar_no_oscillation() {
+        // El bug del zumbido: la ruta SIMD del biquad (≥4 canales) alimentaba la
+        // SALIDA como entrada retardada (x1) en vez de la entrada real → oscilación.
+        // Verificamos que las 4 salidas de un mismo EqBand con la MISMA señal de
+        // entrada son idénticas (filtro lineal determinista) y acotadas.
+        use crate::audio::dsp::EqBand;
+        let mut band = EqBand::new(1000.0);
+        band.set_gain(6.0);
+        band.resize_channels(4);
+
+        let mut frame = [0.0_f64; 4];
+        let mut max_out = 0.0_f64;
+        for n in 0..4000 {
+            let x = 0.3 * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / 44100.0).sin();
+            for c in frame.iter_mut() {
+                *c = x;
+            }
+            band.process_frame(&mut frame);
+            for s in frame.iter() {
+                assert!(
+                    s.is_finite(),
+                    "EqBand SIMD produjo un valor no finito en n={}",
+                    n
+                );
+                max_out = max_out.max(s.abs());
+            }
+            assert!(
+                (frame[0] - frame[1]).abs() < 1e-9
+                    && (frame[0] - frame[2]).abs() < 1e-9
+                    && (frame[0] - frame[3]).abs() < 1e-9,
+                "canales divergen en n={}: {:?}",
+                n,
+                frame
+            );
+        }
+        assert!(max_out < 10.0, "EqBand SIMD osciló (zumbido): {}", max_out);
+    }
+
+    #[test]
+    fn test_biquad_simd_multichannel_no_oscillation() {
+        use crate::audio::dsp::BiquadFilterType;
+        // SubBass/MidBass/VoiceBoost usan BiquadFilter con la misma ruta SIMD.
+        let mut f = crate::audio::dsp::BiquadFilter::new(BiquadFilterType::Peak, 100.0, 6.0, 0.8);
+        f.resize_channels(4);
+        f.set_sample_rate(44100.0);
+
+        let mut frame = [0.0_f64; 4];
+        let mut max_out = 0.0_f64;
+        for n in 0..4000 {
+            let x = 0.3 * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / 44100.0).sin();
+            for c in frame.iter_mut() {
+                *c = x;
+            }
+            f.process_frame(&mut frame);
+            for s in frame.iter() {
+                assert!(
+                    s.is_finite(),
+                    "BiquadFilter SIMD produjo un valor no finito"
+                );
+                max_out = max_out.max(s.abs());
+            }
+            assert!(
+                (frame[0] - frame[1]).abs() < 1e-9 && (frame[0] - frame[2]).abs() < 1e-9,
+                "biquad canales divergen en n={}",
+                n
+            );
+        }
+        assert!(max_out < 10.0, "BiquadFilter SIMD osciló: {}", max_out);
+    }
+
+    #[test]
+    fn test_wide_is_finite_blend_pattern() {
+        // Patrón del compresor para enmascarar NaN/Inf → 0 (verificado correcto).
+        use wide::f64x4;
+        let v = f64x4::new([0.5_f64, f64::NAN, 1.0, f64::INFINITY]);
+        let vf = v.is_finite().blend(v, f64x4::splat(0.0));
+        let arr = vf.to_array();
+        for (i, val) in arr.iter().enumerate() {
+            assert!(
+                val.is_finite(),
+                "is_finite().blend produjo no finito en lane {}: {:?}",
+                i,
+                arr
+            );
+        }
+        assert!((arr[0] - 0.5).abs() < 1e-12, "lane 0 debe pasar: {:?}", arr);
+        assert!(arr[1].abs() < 1e-12, "lane 1 (NaN) debe ser 0: {:?}", arr);
+    }
+
+    #[test]
+    fn test_noise_gate_nan_no_panic() {
+        // Regresión del crash: NoiseGate hacía partial_cmp(b).unwrap() sobre frames
+        // con NaN → panic y cierre del reproductor. Ahora usa f64::max (ignora NaN).
+        let mut ng = NoiseGate::default();
+        ng.enabled = true;
+        let mut frame = [f64::NAN, f64::INFINITY, 0.5, -0.3];
+        ng.process(&mut frame); // No debe paniquear.
+        for s in frame.iter() {
+            assert!(s.is_finite(), "noise gate debe emitir valores finitos");
+        }
+    }
+
+    #[test]
+    fn test_dsp_chain_nan_input_does_not_crash() {
+        // Regresión del crash con tasas altas + canales > 2 + efectos: la cadena
+        // completa recibe un frame con NaN y NO debe paniquear; la salida debe ser
+        // finita (los guards de cada efecto la limpian).
+        let mut chain = DspChain::default();
+        chain.enabled = true;
+        chain.set_sample_rate(192000.0);
+        chain.set_channel_count(8);
+        chain.equalizer.enabled = true;
+        chain.noise_gate.enabled = true;
+        chain.sub_bass.enabled = true;
+        chain.mid_bass.enabled = true;
+        chain.voice_boost.enabled = true;
+        chain.compressor.enabled = true;
+        chain.reverb.enabled = true;
+        chain.limiter.enabled = true;
+
+        let mut frame = [f64::NAN; 8];
+        chain.process_frame(&mut frame); // No debe paniquear.
+        for s in frame.iter() {
+            assert!(s.is_finite(), "la cadena DSP debe emitir valores finitos");
+        }
+    }
 }

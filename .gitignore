@@ -1,3 +1,4 @@
+
 target/
 covers/
 cache/
@@ -17,21 +18,13 @@ library.db-shm
 library.db-wal
 library.db*
 
+.graphifyignore
 graphify-out/
 .criterion/
 logs/
 .planning/
 .opencode/
 .agents/
-.claude/
-Archivos_de_ayuda_e_informacion_de_Audoxidy_desactualizados/
-PLAN_IMPLEMENTACION.md
-skills-lock.json
 AGENTS.md
-
-session-ses_19f7.md
-session-ses_1a31.md
-
-
-# Contexto personal/IA — no subir a GitHub
-.graphifyignore
+.claude/
+skills-lock.json

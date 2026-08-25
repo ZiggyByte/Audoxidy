@@ -560,6 +560,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut crossfade_active: bool = false;
     let mut crossfade_elapsed_sec: f64 = 0.0;
     let mut crossfade_duration_sec: f64 = 0.0;
+    // Distingue el crossfade manual (la GUI ya avanzó la playlist al dispararlo)
+    // del automático (el decoder debe marcar EOF para que la GUI avance el índice).
+    let mut crossfade_is_manual: bool = false;
 
     // bumpalo arena para asignaciones temporales por ciclo.
     // Se resetea completo al inicio de cada iteración, liberando toda la memoria
@@ -595,11 +598,20 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     // Dedup: si el path ya es la pista actual y no hemos llegado al EOF,
                     // ignoramos la orden — evita re-abrir/re-probar el archivo (y el corte
                     // asociado) cuando la GUI confirma un avance que el decoder ya manejó
-                    // vía promoción de pre-carga.
+                    // vía promoción de pre-carga. También se ignora cuando el path es la
+                    // pista pre-cargada: el decoder ya la tiene abierta y la promoverá con
+                    // el crossfade (manual) o en el EOF natural — un Load aquí purgaría
+                    // el estado y destruiría la mezcla en curso.
                     {
                         let s = state.read();
-                        if s.path == path && !s.eof_reached && s.is_playing {
-                            tracing::debug!("Load dedup: '{}' ya en reproducción.", path);
+                        let is_current = s.path == path && !s.eof_reached && s.is_playing;
+                        let is_preloaded = preload_path.as_deref() == Some(path.as_str())
+                            && preload_format.is_some();
+                        if is_current || is_preloaded {
+                            tracing::debug!(
+                                "Load dedup: '{}' ya en reproducción/pre-cargada.",
+                                path
+                            );
                             continue;
                         }
                     }
@@ -690,6 +702,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 silence_samples = 0;
                                 in_silence = false;
                                 track_start_trimmed = false;
+
+                                // Reset del crossfade: una pista nueva arranca sin mezcla.
+                                crossfade_active = false;
+                                crossfade_elapsed_sec = 0.0;
+                                crossfade_duration_sec = 0.0;
+                                crossfade_is_manual = false;
+                                preloaded_pending.clear();
 
                                 let mut s = state.read();
                                 // Fade-in on EVERY track start when enabled (D-09).
@@ -887,11 +906,19 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     } else {
                         0.0
                     };
-                    if ms > 0.0 && !predecode_buffer.is_empty() {
-                        crossfade_duration_sec = ms / 1000.0;
-                        crossfade_elapsed_sec = 0.0;
-                        crossfade_active = true;
-                        tracing::info!("Crossfade manual iniciado: {} ms", ms);
+                    if ms > 0.0 && (preload_format.is_some() || !predecode_buffer.is_empty()) {
+                        // Si ya hay una mezcla en curso, el usuario quiere cambiar
+                        // AHORA: completar la mezcla activa de inmediato (el cambio
+                        // de pista no debe quedar bloqueado hasta que termine).
+                        if crossfade_active {
+                            crossfade_elapsed_sec = crossfade_duration_sec;
+                        } else {
+                            crossfade_duration_sec = ms / 1000.0;
+                            crossfade_elapsed_sec = 0.0;
+                            crossfade_active = true;
+                            crossfade_is_manual = true;
+                            tracing::info!("Crossfade manual iniciado: {} ms", ms);
+                        }
                     }
                 }
                 AudioCommand::Seek(time) => {
@@ -973,6 +1000,29 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         };
 
         if should_wait {
+            // Tiempo de espera (el ringbuf está al target de latencia): aprovechamos
+            // este momento —que es donde el decoder pasa la mayor parte del tiempo—
+            // para decodificar la pista pre-cargada en segundo plano. Sin esto, el
+            // buffer de pre-decode nunca se llena y ni el crossfade ni la promoción
+            // sin cortes pueden funcionar.
+            if preload_format.is_some() {
+                let _ = preload_decode_batch(
+                    &mut preload_format,
+                    &mut preload_decoder,
+                    &mut preload_track_id,
+                    &mut preload_audio_buf,
+                    &mut preload_resampler,
+                    &mut preload_resampler_rates,
+                    &mut preload_resampler_in_buf,
+                    &mut preload_input_pool,
+                    &mut preload_output_pool,
+                    &mut preload_channel_map,
+                    &mut predecode_buffer,
+                    predecode_cap_frames,
+                    out_rate,
+                    out_channels,
+                );
+            }
             let sleep_ms = if crate::utils::is_low_resource() {
                 5
             } else {
@@ -1114,6 +1164,25 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             {
                                 if let Some(mut dsp_lock) = engine.dsp.try_write() {
                                     dsp_lock.reset_state();
+                                }
+                            }
+
+                            // Estado de fades para la NUEVA pista: se limpia el fade-out
+                            // de la anterior (si se heredara, la pista quedaría muda) y
+                            // se arranca el fade-in de la columna izquierda si está
+                            // activado (el Load es dedup, así que no lo dispararía).
+                            fade_state = FadeState::Idle;
+                            silence_samples = 0;
+                            in_silence = false;
+                            track_start_trimmed = false;
+                            {
+                                let s = state.read();
+                                if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
+                                    let rate_per_sec = 1.0 / ((s.fade_in_ms as f64) / 1000.0);
+                                    fade_state = FadeState::FadingIn {
+                                        coeff: 0.0,
+                                        rate_per_sec,
+                                    };
                                 }
                             }
 
@@ -1372,7 +1441,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         } else {
             // Tiempo idle (buffer del stream lleno o sin pista activa): aprovechamos
             // para decodificar la pista pre-cargada en segundo plano.
-            if preload_format.is_some() && !crossfade_active {
+            if preload_format.is_some() {
                 // Decodificamos un lote por iteración; el loop controla la frecuencia.
                 let _ = preload_decode_batch(
                     &mut preload_format,
@@ -1417,29 +1486,28 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         crossfade_duration_sec = s.crossfade_auto_ms as f64 / 1000.0;
                         crossfade_elapsed_sec = 0.0;
                         crossfade_active = true;
+                        crossfade_is_manual = false;
                         tracing::info!("Crossfade automático iniciado: {} ms", s.crossfade_auto_ms);
                     }
                 }
             }
 
-            // Mezcla f64 (D-17): funde la pista actual (envolvente de salida) con el
-            // inicio de la siguiente pre-cargada (envolvente de entrada), usando curvas
-            // equal-power complementarias (sin²) coherentes con los fades musicales.
+            // Mezcla f64: superpone la canción actual con el inicio de la siguiente
+            // pre-cargada SIN desvanecimiento de volumen — ambas se mezclan al nivel
+            // del reproductor (los fades de la columna izquierda son independientes).
+            // El factor 0.5 evita el recorte al sumar dos señales a pleno nivel.
             if crossfade_active {
                 let out_ch = out_channels as usize;
                 if out_ch > 0 && !predecode_buffer.is_empty() {
                     let batch_dt_cf =
                         output_accumulator.len() as f64 / out_ch as f64 / out_rate as f64;
                     let t = (crossfade_elapsed_sec / crossfade_duration_sec.max(1e-9)).min(1.0);
-                    let pi_2 = std::f64::consts::PI / 2.0;
-                    let out_env = (pi_2 * (1.0 - t)).sin().powi(2);
-                    let in_env = (pi_2 * t).sin().powi(2);
                     for frame in output_accumulator.chunks_mut(out_ch) {
                         for s in frame.iter_mut() {
                             let Some(next) = predecode_buffer.pop_front() else {
                                 break;
                             };
-                            let mixed = *s * out_env + next * in_env;
+                            let mixed = (*s + next) * 0.5;
                             *s = if mixed.is_finite() { mixed } else { 0.0 };
                         }
                     }
@@ -1475,7 +1543,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 s.total_duration_sec = preload_total_duration_sec;
                                 s.sample_rate = preload_sr;
                                 s.current_pos_sec = 0.0;
-                                s.eof_reached = true;
+                                // En el crossfade MANUAL la GUI ya avanzó la playlist
+                                // al dispararlo — no marcar EOF (evita el doble avance).
+                                // En el automático, EOF permite que la GUI avance el índice.
+                                s.eof_reached = !crossfade_is_manual;
                             }
                             resampler = None;
                             resampler_rates = None;
@@ -1488,6 +1559,25 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     dsp_lock.reset_state();
                                 }
                             }
+
+                            // Estado de fades para la NUEVA pista: limpiar el fade-out
+                            // de la anterior (si se heredara, quedaría muda) y arrancar
+                            // el fade-in de la columna izquierda si está activado.
+                            fade_state = FadeState::Idle;
+                            silence_samples = 0;
+                            in_silence = false;
+                            track_start_trimmed = false;
+                            {
+                                let s = state.read();
+                                if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
+                                    let rate_per_sec = 1.0 / ((s.fade_in_ms as f64) / 1000.0);
+                                    fade_state = FadeState::FadingIn {
+                                        coeff: 0.0,
+                                        rate_per_sec,
+                                    };
+                                }
+                            }
+
                             preload_resampler = None;
                             preload_resampler_rates = None;
                             preload_resampler_in_buf.clear();
@@ -1591,11 +1681,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 // Edge trimming — start (D-18): fixed -50dB threshold, no minimum duration.
                 if !track_start_trimmed && s.silence_enabled && s.silence_edge_trim_enabled {
                     let edge_threshold = 10.0f64.powf(-50.0 / 20.0);
+                    // f64::max ignora NaN (nunca paniquea ante frames contaminados).
                     let peak = output_accumulator
                         .iter()
                         .map(|sample| sample.abs())
-                        .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        .unwrap_or(0.0);
+                        .fold(0.0_f64, f64::max);
                     if peak < edge_threshold {
                         // Leading silence: discard this batch entirely.
                         output_accumulator.clear();
@@ -1619,8 +1709,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     let peak = output_accumulator
                         .iter()
                         .map(|sample| sample.abs())
-                        .max_by(|a, b| a.partial_cmp(b).unwrap())
-                        .unwrap_or(0.0);
+                        .fold(0.0_f64, f64::max);
 
                     if peak < threshold {
                         // Silent frame (D-14): accumulate and potentially drop.
@@ -1650,6 +1739,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 // NOTE: must use total_duration_sec (NOT effective_end_sec, which
                 // tracks live position) — otherwise the fade-out fires on every
                 // batch and the volume oscillates during the whole song.
+                // El fade-out de la columna izquierda corre SIEMPRE (independiente del
+                // crossfade): la mezcla cruzada solo mezcla, no gestiona el volumen.
                 if s.fades_enabled && s.fade_out_enabled && s.fade_out_ms > 0.0 {
                     let end_pos = s.total_duration_sec;
                     let fade_start = end_pos - s.fade_out_ms as f64 / 1000.0;
@@ -1834,6 +1925,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 // --- PUSHING ATÓMICO (FRAME ALIGNMENT) ---
                 // Aseguramos que solo se envíen múltiplos exactos de `out_channels`.
                 let mut pos = 0;
+                let mut stalled = 0;
                 while pos < output_accumulator_f32.len() {
                     let mut pushed = 0;
                     if let Some(producer) = producer_mutex.lock().as_mut() {
@@ -1852,8 +1944,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
 
                     if pushed == 0 {
-                        // Si no hay espacio para un frame completo, esperamos (Backoff)
-                        tracing::trace!("Push stalled: available < out_channels. Waiting...");
+                        // Sin espacio para un frame completo: esperar (backoff).
+                        // Si el stream no drena (p. ej. falló su construcción), se
+                        // abandona el push tras un límite para no bloquear el decoder.
+                        stalled += 1;
+                        if stalled >= 50 {
+                            tracing::warn!(
+                                "Push stalled persistentemente: se descartan {} frames sobrantes.",
+                                output_accumulator_f32.len() - pos
+                            );
+                            break;
+                        }
                         let backoff_ms = if crate::utils::is_low_resource() {
                             10
                         } else {

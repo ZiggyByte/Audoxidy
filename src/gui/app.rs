@@ -1058,6 +1058,39 @@ impl AudoxidyApp {
             .load_file(path, title, artist, track_gain, album_gain)
     }
 
+    /// Reproduce una canción de la playlist por índice. Si es la MISMA canción que
+    /// ya se está reproduciendo, la reinicia desde el inicio (seek a 0) en lugar de
+    /// re-cargarla — el dedup del decoder ignoraría un Load del mismo path.
+    fn play_song_from_playlist(&mut self, idx: usize) {
+        let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) else {
+            return;
+        };
+        let path = song.file_path.clone();
+        let title = song.title.clone();
+        let artist = song.artist_name.to_string();
+        let s_id = song.song_id;
+
+        let current = self.audio_manager.get_state();
+        let is_same_song = current.path.as_str() == path.as_ref() && current.is_playing;
+
+        self.sync_player_art();
+        if is_same_song {
+            // Reiniciar la canción actual desde el principio.
+            self.audio_manager.seek(0.0);
+            self.audio_manager.play();
+        } else if let Err(e) =
+            self.load_file_with_gains(&path, title.to_string(), artist.to_string())
+        {
+            tracing::error!("Error reproduciendo archivo: {}", e);
+            return;
+        } else {
+            self.audio_manager.play();
+            self.playlist_manager.playing_song_idx = Some(idx);
+            self.playlist_manager.notify_manual_play(s_id);
+        }
+        self.persist_playlist_state();
+    }
+
     fn execute_playlist_autoscroll(&self, target_idx: usize) -> Task<Message> {
         if let Some(viewport) = &self.playlist_manager.last_viewport {
             let (item_top, item_bottom) = self.playlist_manager.get_item_y_bounds(target_idx);
@@ -1183,12 +1216,14 @@ impl AudoxidyApp {
                     if duration > 0.0 {
                         let remaining = duration - position;
                         // Prefetch de carátula y pre-carga de la siguiente canción
-                        // ~15s antes del final (transiciones sin cortes).
-                        if remaining <= 15.0 && remaining > 14.5 {
+                        // ~15s antes del final (transiciones sin cortes). El dedup
+                        // por handle/path evita repetir el trabajo en cada tick.
+                        if remaining <= 15.0 {
                             if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
                                 if let Some(ref cover_path) = next_song.cover_path {
-                                    if self.player_ui_state.current_cover_path
-                                        != cover_path.as_ref()
+                                    if self.player_ui_state.prefetched_next_handle.is_none()
+                                        && self.player_ui_state.current_cover_path
+                                            != cover_path.as_ref()
                                     {
                                         self.player_ui_state.prefetched_next_handle =
                                             crate::utils::covers::load_cover_handle(cover_path);
@@ -1475,9 +1510,28 @@ impl AudoxidyApp {
                     && st.crossfade_manual_enabled
                     && st.crossfade_manual_ms > 0.0
                 {
-                    let _ = self
-                        .audio_manager
-                        .crossfade_next(st.crossfade_manual_ms as f64);
+                    // Garantizar que la siguiente canción esté pre-cargada ANTES de
+                    // disparar la mezcla (el usuario puede saltar en cualquier momento,
+                    // no solo ~15s antes del final). Si ya está pre-cargada, el dedup
+                    // del decoder ignora la orden.
+                    if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
+                        if self.player_ui_state.preloaded_next_path.as_deref()
+                            != Some(next_song.file_path.as_ref())
+                        {
+                            let _ = self.audio_manager.preload_next(
+                                &next_song.file_path,
+                                next_song.title.to_string(),
+                                next_song.artist_name.to_string(),
+                                None,
+                                None,
+                            );
+                            self.player_ui_state.preloaded_next_path =
+                                Some(next_song.file_path.to_string());
+                        }
+                        let _ = self
+                            .audio_manager
+                            .crossfade_next(st.crossfade_manual_ms as f64);
+                    }
                 }
 
                 self.playlist_manager.play_next(&self.audio_manager);
@@ -1619,22 +1673,8 @@ impl AudoxidyApp {
 
                 if is_double_click {
                     if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
-                        let path = song.file_path.clone();
-                        let title = song.title.clone();
-                        let artist = song.artist_name.to_string();
-                        let s_id = song.song_id;
-
-                        self.sync_player_art();
-                        if let Err(e) =
-                            self.load_file_with_gains(&path, title.to_string(), artist.to_string())
-                        {
-                            tracing::error!("Error reproduciendo archivo: {}", e);
-                        } else {
-                            self.audio_manager.play();
-                            self.playlist_manager.playing_song_idx = Some(idx);
-                            self.playlist_manager.notify_manual_play(s_id);
-                            self.persist_playlist_state();
-                        }
+                        // Reproduce la canción (o la reinicia si ya es la actual).
+                        self.play_song_from_playlist(idx);
                     }
                 }
                 focus_task
@@ -2869,31 +2909,14 @@ impl AudoxidyApp {
                     Key::Named(Named::Enter) => {
                         if self.focus == AppFocus::Playlist {
                             // Reproducción inmediata para Enter en Playlist
+                            // (reinicia la canción actual si ya se está reproduciendo).
                             if let Some(idx) = self.playlist_manager.focused_idx {
-                                if let Some(song) =
-                                    self.playlist_manager.get_song_at_linear_index(idx)
+                                if self
+                                    .playlist_manager
+                                    .get_song_at_linear_index(idx)
+                                    .is_some()
                                 {
-                                    let path = song.file_path.clone();
-                                    let title = song.title.clone();
-                                    let artist = song.artist_name.to_string();
-
-                                    self.sync_player_art();
-                                    if let Err(e) = self.load_file_with_gains(
-                                        &path,
-                                        title.to_string(),
-                                        artist.to_string(),
-                                    ) {
-                                        tracing::error!(
-                                            "Error reproducidendo archivo con Enter: {}",
-                                            e
-                                        );
-                                    } else {
-                                        self.audio_manager.set_playing(true);
-                                        self.sync_player_art();
-                                        self.audio_manager.play();
-                                        self.playlist_manager.playing_song_idx = Some(idx);
-                                        self.persist_playlist_state();
-                                    }
+                                    self.play_song_from_playlist(idx);
                                 }
                             }
                             Task::none()
@@ -4636,16 +4659,26 @@ impl AudoxidyApp {
             return;
         }
 
-        // 2. Obtener la ruta AVIF de la canción actual desde la playlist
+        // 2. Obtener la ruta AVIF de la canción actual desde la playlist.
+        //    La canción debe coincidir con el path del motor. Si el índice aún no
+        //    apunta a la canción correcta (p. ej. justo tras la promoción de la
+        //    pre-carga en el decoder, antes de que la GUI avance el índice), NO
+        //    marcamos current_art_id: un tick posterior reintentará cuando el
+        //    índice ya apunte a la canción real.
         let mut new_cover_path = String::new();
+        let mut song_found = false;
         if let Some(idx) = self.playlist_manager.playing_song_idx {
             if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
                 if song.file_path.as_ref() == audio_state.path {
+                    song_found = true;
                     if let Some(ref cp) = song.cover_path {
                         new_cover_path = cp.to_string();
                     }
                 }
             }
+        }
+        if !song_found {
+            return;
         }
 
         // 3. Reusar carátula si es el MISMO álbum (misma ruta de caché)

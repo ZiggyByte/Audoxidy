@@ -536,6 +536,10 @@ impl EqBand {
                 let s3 = unsafe { &mut *s_ptr.add(i + 3) };
 
                 let x = wide::f64x4::new([frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]);
+                // Capturar la entrada ANTES de sobrescribir frame (los biquad usan la
+                // entrada retardada x1/x2, no la salida — alimentar la salida como
+                // entrada los vuelve inestables → zumbido/oscilación en ≥4 canales).
+                let xin = x.to_array();
                 let xs1 = wide::f64x4::new([s0.x1, s1.x1, s2.x1, s3.x1]);
                 let xs2 = wide::f64x4::new([s0.x2, s1.x2, s2.x2, s3.x2]);
                 let ys1 = wide::f64x4::new([s0.y1, s1.y1, s2.y1, s3.y1]);
@@ -546,11 +550,16 @@ impl EqBand {
                     + wide::f64x4::splat(b2) * xs2
                     - wide::f64x4::splat(a1) * ys1
                     - wide::f64x4::splat(a2) * ys2;
-                let out = out.blend(
-                    wide::f64x4::splat(0.0),
-                    out.abs().cmp_lt(wide::f64x4::splat(1e-20)),
-                );
-                let arr = out.to_array();
+                // Snap a cero de los valores despreciables (evita denormales) por
+                // lane — el patrón blend/cmp_lt de wide 0.7 produce NaN aquí, así
+                // que se hace de forma escalar y segura.
+                let raw = out.to_array();
+                let arr = [
+                    if raw[0].abs() < 1e-20 { 0.0 } else { raw[0] },
+                    if raw[1].abs() < 1e-20 { 0.0 } else { raw[1] },
+                    if raw[2].abs() < 1e-20 { 0.0 } else { raw[2] },
+                    if raw[3].abs() < 1e-20 { 0.0 } else { raw[3] },
+                ];
 
                 frame[i] = arr[0];
                 frame[i + 1] = arr[1];
@@ -558,21 +567,21 @@ impl EqBand {
                 frame[i + 3] = arr[3];
 
                 s0.x2 = s0.x1;
-                s0.x1 = frame[i];
+                s0.x1 = xin[0];
                 s0.y2 = s0.y1;
-                s0.y1 = frame[i];
+                s0.y1 = arr[0];
                 s1.x2 = s1.x1;
-                s1.x1 = frame[i + 1];
+                s1.x1 = xin[1];
                 s1.y2 = s1.y1;
-                s1.y1 = frame[i + 1];
+                s1.y1 = arr[1];
                 s2.x2 = s2.x1;
-                s2.x1 = frame[i + 2];
+                s2.x1 = xin[2];
                 s2.y2 = s2.y1;
-                s2.y1 = frame[i + 2];
+                s2.y1 = arr[2];
                 s3.x2 = s3.x1;
-                s3.x1 = frame[i + 3];
+                s3.x1 = xin[3];
                 s3.y2 = s3.y1;
-                s3.y1 = frame[i + 3];
+                s3.y1 = arr[3];
 
                 i += 4;
             }
@@ -1421,6 +1430,10 @@ impl BiquadFilter {
                 let s3 = unsafe { &mut *s_ptr.add(i + 3) };
 
                 let x = wide::f64x4::new([frame[i], frame[i + 1], frame[i + 2], frame[i + 3]]);
+                // Capturar la entrada ANTES de sobrescribir frame (los biquad usan la
+                // entrada retardada x1/x2, no la salida — alimentar la salida como
+                // entrada los vuelve inestables → zumbido/oscilación en ≥4 canales).
+                let xin = x.to_array();
                 let xs1 = wide::f64x4::new([s0.x1, s1.x1, s2.x1, s3.x1]);
                 let xs2 = wide::f64x4::new([s0.x2, s1.x2, s2.x2, s3.x2]);
                 let ys1 = wide::f64x4::new([s0.y1, s1.y1, s2.y1, s3.y1]);
@@ -1431,32 +1444,37 @@ impl BiquadFilter {
                     + wide::f64x4::splat(b2) * xs2
                     - wide::f64x4::splat(a1) * ys1
                     - wide::f64x4::splat(a2) * ys2;
-                let out = out.blend(
-                    wide::f64x4::splat(0.0),
-                    out.abs().cmp_lt(wide::f64x4::splat(1e-20)),
-                );
-                let arr = out.to_array();
+                // Snap a cero de los valores despreciables (evita denormales) por
+                // lane — el patrón blend/cmp_lt de wide 0.7 produce NaN aquí, así
+                // que se hace de forma escalar y segura.
+                let raw = out.to_array();
+                let arr = [
+                    if raw[0].abs() < 1e-20 { 0.0 } else { raw[0] },
+                    if raw[1].abs() < 1e-20 { 0.0 } else { raw[1] },
+                    if raw[2].abs() < 1e-20 { 0.0 } else { raw[2] },
+                    if raw[3].abs() < 1e-20 { 0.0 } else { raw[3] },
+                ];
                 frame[i] = arr[0];
                 frame[i + 1] = arr[1];
                 frame[i + 2] = arr[2];
                 frame[i + 3] = arr[3];
 
                 s0.x2 = s0.x1;
-                s0.x1 = frame[i];
+                s0.x1 = xin[0];
                 s0.y2 = s0.y1;
-                s0.y1 = frame[i];
+                s0.y1 = arr[0];
                 s1.x2 = s1.x1;
-                s1.x1 = frame[i + 1];
+                s1.x1 = xin[1];
                 s1.y2 = s1.y1;
-                s1.y1 = frame[i + 1];
+                s1.y1 = arr[1];
                 s2.x2 = s2.x1;
-                s2.x1 = frame[i + 2];
+                s2.x1 = xin[2];
                 s2.y2 = s2.y1;
-                s2.y1 = frame[i + 2];
+                s2.y1 = arr[2];
                 s3.x2 = s3.x1;
-                s3.x1 = frame[i + 3];
+                s3.x1 = xin[3];
                 s3.y2 = s3.y1;
-                s3.y1 = frame[i + 3];
+                s3.y1 = arr[3];
 
                 i += 4;
             }
@@ -1966,11 +1984,9 @@ impl NoiseGate {
         self.sample_rate = sample_rate;
     }
     pub fn process(&mut self, frame: &mut [f64]) {
-        let max_abs = frame
-            .iter()
-            .map(|s| s.abs())
-            .max_by(|a, b| a.partial_cmp(b).unwrap())
-            .unwrap_or(0.0_f64);
+        // f64::max ignora NaN (devuelve el operando no-NaN): a diferencia de
+        // partial_cmp().unwrap(), nunca paniquea con frames contaminados.
+        let max_abs = frame.iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
         let attack_coeff = (-1.0_f64 / ((self.attack as f64) * (self.sample_rate as f64))).exp();
         let release_coeff = (-1.0_f64 / ((self.release as f64) * (self.sample_rate as f64))).exp();
 
@@ -1991,7 +2007,14 @@ impl NoiseGate {
                 .powf((env_db - (self.threshold as f64)) / 20.0)
                 .max(0.0001);
             for s in frame.iter_mut() {
-                *s *= att;
+                // Guard anti-NaN: un frame contaminado no debe propagarse aguas abajo.
+                *s = if s.is_finite() { *s * att } else { 0.0 };
+            }
+        } else {
+            for s in frame.iter_mut() {
+                if !s.is_finite() {
+                    *s = 0.0;
+                }
             }
         }
     }

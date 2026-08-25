@@ -1151,7 +1151,17 @@ impl AudioCenterManager {
                     channels: ChannelConfig::Manual(self.selected_channels_manual),
                     buffer_size: self.selected_buffer_size,
                 };
-                let _ = audio_manager.apply_audio_settings(settings);
+                if let Err(e) = audio_manager.apply_audio_settings(settings) {
+                    // Si el stream no pudo construirse (p. ej. el dispositivo no
+                    // soporta la combinación tasa×canales), se notifica claramente:
+                    // antes el error se ignoraba y el reproductor quedaba mudo.
+                    tracing::error!(
+                        "No se pudo aplicar la configuración de audio ({}): el dispositivo \
+                         puede no soportar la combinación de tasa de muestreo y canales \
+                         elegida. Se conserva la configuración anterior.",
+                        e
+                    );
+                }
 
                 // Guardar los ajustes en la base de datos para la persistencia
                 if let Some(db_arc) = audio_manager.get_database() {
@@ -3887,6 +3897,20 @@ fn view_volumen_mezcla<'a>(
                 .font(FONT_INTER_SANS_MEDIUM)
                 .into()
         };
+    // Etiqueta de sub-grupo (ayuda visual sin checkbox): 14px, mismo esquema de color.
+    let subgroup_label =
+        |name: &'a str, enabled: bool| -> iced::Element<'a, crate::gui::app::Message> {
+            let color = if enabled {
+                COLOR_TEXT_PRIMARY
+            } else {
+                COLOR_TEXT_SECONDARY
+            };
+            text(name)
+                .size(14)
+                .color(color)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .into()
+        };
 
     // Wraps a label in a clickable area that toggles a function on click
     // (clicking the group/sub-function name toggles its checkbox, UAT round 10).
@@ -4571,7 +4595,7 @@ fn view_volumen_mezcla<'a>(
         },
         Space::new().width(Length::Fixed(5.0)),
         clickable_toggle(
-            group_title("Crossfade"),
+            group_title("Mezcla Cruzada"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeToggle(
                 !xfade_master_on,
             )),
@@ -4584,7 +4608,7 @@ fn view_volumen_mezcla<'a>(
     // Sub-grupo visual: "Cambio Manual" (sin checkbox — solo ayuda visual).
     let xfade_manual_label = row![
         Space::new().width(Length::Fixed(8.0)),
-        subfunc_label("Manual change:", xfade_master_on),
+        subgroup_label("Cambio manual:", xfade_master_on),
     ]
     .align_y(Alignment::Center);
 
@@ -4637,7 +4661,7 @@ fn view_volumen_mezcla<'a>(
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
                 subfunc_label(
-                    "Crossfade current with next song",
+                    "Mezclar canción actual con la siguiente",
                     xfade_master_on && manager.crossfade_manual_enabled,
                 ),
                 if xfade_master_on {
@@ -4659,7 +4683,7 @@ fn view_volumen_mezcla<'a>(
     // Sub-grupo visual: "Cambio Automático" (sin checkbox — solo ayuda visual).
     let xfade_auto_label = row![
         Space::new().width(Length::Fixed(8.0)),
-        subfunc_label("Automatic change:", xfade_master_on),
+        subgroup_label("Cambio automático:", xfade_master_on),
     ]
     .align_y(Alignment::Center);
 
@@ -4710,7 +4734,7 @@ fn view_volumen_mezcla<'a>(
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
                 subfunc_label(
-                    "Crossfade current with next song",
+                    "Mezclar canción actual con la siguiente",
                     xfade_master_on && manager.crossfade_auto_enabled,
                 ),
                 if xfade_master_on {

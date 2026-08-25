@@ -533,9 +533,9 @@ impl AudioEngine {
         stream_config: cpal::StreamConfig,
         sample_format: cpal::SampleFormat,
     ) -> Result<(), AudioError> {
-        let prev_channels = {
+        let (prev_rate, prev_channels) = {
             let s = self.state.read();
-            s.channels
+            (s.device_sample_rate, s.channels)
         };
         {
             let mut s = self.state.write();
@@ -558,10 +558,12 @@ impl AudioEngine {
         self.device_manager
             .set_output(host, device.clone(), stream_config.clone(), sample_format);
 
-        // Recrear el RingBuffer solo cuando cambia el número de canales.
-        // Si solo cambia la tasa de muestreo, se conserva el buffer actual para
-        // evitar vaciar el audio en reproducción durante el reinicio del stream (fix B5).
-        if prev_channels != stream_config.channels {
+        // Si cambió la tasa de muestreo o el número de canales, el contenido del
+        // ringbuf es inválido (los samples están a la tasa/canales anteriores y se
+        // reproducirían a velocidad o layout incorrectos — canción "lenta/rápida" o
+        // ruido). En ese caso se recrea el buffer con el tamaño correcto. Solo se
+        // conserva cuando la config de muestreo no cambió (buffer size / bit depth).
+        if prev_rate != stream_config.sample_rate || prev_channels != stream_config.channels {
             let sr = stream_config.sample_rate as usize;
             let ch = stream_config.channels as usize;
             let dur_secs = if crate::utils::is_low_resource() {

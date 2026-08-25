@@ -502,6 +502,10 @@ impl AudioEngine {
     /// para que el hilo decodificador reajuste su resampler sin desajustes de tasa.
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
         self.device_manager.stop_stream();
+        // Tiempo de asentamiento: el dispositivo necesita liberar el stream anterior
+        // antes de construir el nuevo — si se construye inmediatamente, puede quedar
+        // mudo (el audio no se escucha hasta un nuevo arranque del stream).
+        std::thread::sleep(std::time::Duration::from_millis(30));
         let current_rate = self.state.read().device_sample_rate;
 
         let (host, device, stream_config, sample_format) = self
@@ -632,6 +636,14 @@ impl AudioEngine {
 
     /// Descarta el estado de pre-carga actual en el hilo decodificador.
     pub fn clear_preload(&self) -> Result<(), AudioError> {
+        let _ = self.command_tx.send(AudioCommand::ClearPreload);
+        Ok(())
+    }
+
+    /// Libera la memoria de la pre-carga de forma SEGURA durante la reproducción
+    /// (a diferencia de `purge_buffers`, que reinicia el stream): descarta el buffer
+    /// de pre-decode y el pendiente. La GUI la vuelve a disparar a ~15s del final.
+    pub fn purge_preload(&self) -> Result<(), AudioError> {
         let _ = self.command_tx.send(AudioCommand::ClearPreload);
         Ok(())
     }

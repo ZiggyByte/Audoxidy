@@ -152,6 +152,12 @@ impl AudioManager {
         self.engine.clear_preload()
     }
 
+    /// Libera la memoria de la pre-carga sin interrumpir la reproducción (para el
+    /// recolector de basura global). La pre-carga se re-dispara a ~15s del final.
+    pub fn purge_preload(&self) -> Result<(), AudioError> {
+        self.engine.purge_preload()
+    }
+
     /// Dispara un crossfade manual con la duración especificada en milisegundos.
     pub fn crossfade_next(&self, ms: f64) -> Result<(), AudioError> {
         self.engine.crossfade_next(ms)

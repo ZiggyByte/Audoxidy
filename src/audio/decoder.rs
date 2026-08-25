@@ -292,6 +292,109 @@ struct SmoothRamp {
     duration: f64,
 }
 
+/// Abre y prepara la pista de pre-carga pendiente (probe de symphonia + decoder).
+///
+/// Se ejecuta en el tiempo idle del loop (no en el handler del comando) para no
+/// bloquear la reproducción de la pista actual durante la apertura del archivo.
+#[allow(clippy::too_many_arguments)]
+fn open_preload_track(
+    pending: &mut Option<(String, String, String, Option<f64>, Option<f64>)>,
+    preload_format: &mut Option<Box<dyn FormatReader>>,
+    preload_decoder: &mut Option<Box<dyn Decoder>>,
+    preload_track_id: &mut u32,
+    preload_sr: &mut u32,
+    preload_total_duration_sec: &mut f64,
+    preload_channel_map: &mut ChannelMap,
+    preload_path: &mut Option<String>,
+    preload_title: &mut Option<String>,
+    preload_artist: &mut Option<String>,
+    preload_rg: &mut (Option<f32>, Option<f32>),
+    predecode_cap_frames: &mut usize,
+    state: &std::sync::Arc<parking_lot::RwLock<crate::audio::engine::AudioState>>,
+) {
+    let Some((path, title, artist, track_gain, album_gain)) = pending.take() else {
+        return;
+    };
+
+    match open_audio_source(&path) {
+        Ok(source) => {
+            let mss = MediaSourceStream::new(source, Default::default());
+            let hint = Hint::new();
+            let metadata_opts = MetadataOptions {
+                limit_metadata_bytes: Limit::Maximum(0),
+                limit_visual_bytes: Limit::Maximum(0),
+            };
+            if let Ok(probed) = symphonia::default::get_probe().format(
+                &hint,
+                mss,
+                &FormatOptions::default(),
+                &metadata_opts,
+            ) {
+                let track = probed.format.default_track().unwrap();
+                *preload_track_id = track.id;
+                *preload_sr = track.codec_params.sample_rate.unwrap_or(44100);
+                *preload_total_duration_sec = track
+                    .codec_params
+                    .n_frames
+                    .map(|f| f as f64 / *preload_sr as f64)
+                    .unwrap_or(0.0);
+
+                if let Ok(decoder) = symphonia::default::get_codecs()
+                    .make(&track.codec_params, &DecoderOptions::default())
+                {
+                    if let Some(channels) = track.codec_params.channels {
+                        *preload_channel_map = AudioEngine::get_channel_map(channels);
+                    } else {
+                        let count = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+                        *preload_channel_map = ChannelMap::default();
+                        if count >= 1 {
+                            preload_channel_map.fl = Some(0);
+                        }
+                        if count >= 2 {
+                            preload_channel_map.fr = Some(1);
+                        }
+                    }
+                    *preload_decoder = Some(decoder);
+                    *preload_format = Some(probed.format);
+                    *preload_path = Some(path.clone());
+                    *preload_title = Some(title);
+                    *preload_artist = Some(artist);
+                    *preload_rg = (track_gain.map(|g| g as f32), album_gain.map(|g| g as f32));
+
+                    // Capacidad del buffer de pre-decode: cubre la mezcla más larga
+                    // posible + margen de seguridad (acotada a ~8s máx para no
+                    // acumular memoria ni provocar descartes al promover).
+                    let (out_rate, out_channels) = {
+                        let s = state.read();
+                        (s.device_sample_rate, s.channels as usize)
+                    };
+                    let xfade_manual_ms = {
+                        let s = state.read();
+                        s.crossfade_manual_ms.max(0.0)
+                    };
+                    let xfade_auto_ms = {
+                        let s = state.read();
+                        s.crossfade_auto_ms.max(0.0)
+                    };
+                    let cap_ms = (xfade_manual_ms.max(xfade_auto_ms) + 2000.0).min(8000.0);
+                    *predecode_cap_frames =
+                        ((cap_ms as f64 / 1000.0) * out_rate as f64) as usize * out_channels.max(1);
+                    tracing::info!(
+                        "Pre-carga iniciada para '{}' ({} Hz, {} canales).",
+                        path,
+                        *preload_sr,
+                        out_channels
+                    );
+                } else {
+                    *preload_format = None;
+                    tracing::error!("Pre-carga falló (codec): {}", path);
+                }
+            }
+        }
+        Err(e) => tracing::error!("Pre-carga falló (open): {} — {}", path, e),
+    }
+}
+
 /// Decodifica un lote de la pista pre-cargada y lo añade (f64 interleaved,
 /// ya resampleado a `out_rate × out_channels`) al buffer de pre-decode.
 ///
@@ -545,6 +648,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut preload_title: Option<String> = None;
     let mut preload_artist: Option<String> = None;
     let mut preload_rg: (Option<f32>, Option<f32>) = (None, None);
+    // Solicitud de pre-carga pendiente: la apertura del archivo (probe de symphonia)
+    // NO se hace en el handler del comando (bloquearía la reproducción) sino en el
+    // tiempo idle del loop, donde no interrumpe el flujo de audio.
+    let mut preload_pending: Option<(String, String, String, Option<f64>, Option<f64>)> = None;
     let mut predecode_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     let mut predecode_cap_frames: usize = 0;
     let mut preloaded_pending: Vec<f64> = Vec::new();
@@ -578,6 +685,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         // Esto erradica los pitidos y zumbidos al cambiar de canción o al procesar OGG irregulares.
         output_accumulator.clear();
         output_accumulator_f32.clear();
+        // Si los acumuladores retienen mucha más capacidad de la necesaria (p. ej.
+        // tras un volcado de pre-carga de varios segundos), se libera al asignador.
+        if output_accumulator.capacity() > 1_000_000 {
+            output_accumulator.shrink_to_fit();
+        }
+        if output_accumulator_f32.capacity() > 1_000_000 {
+            output_accumulator_f32.shrink_to_fit();
+        }
 
         // Check for commands
         let cmd_result = if current_format.is_none() {
@@ -785,7 +900,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         continue;
                     }
 
-                    // Descartar cualquier pre-carga anterior antes de abrir la nueva.
+                    // Descartar cualquier pre-carga anterior y registrar la solicitud.
+                    // La apertura del archivo se difiere al tiempo idle del loop para
+                    // no bloquear la reproducción de la pista actual.
                     preload_format = None;
                     preload_decoder = None;
                     preload_resampler = None;
@@ -795,92 +912,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_input_pool.clear();
                     preload_output_pool.clear();
                     predecode_buffer.clear();
-
-                    match open_audio_source(&path) {
-                        Ok(source) => {
-                            let mss = MediaSourceStream::new(source, Default::default());
-                            let hint = Hint::new();
-                            let metadata_opts = MetadataOptions {
-                                limit_metadata_bytes: Limit::Maximum(0),
-                                limit_visual_bytes: Limit::Maximum(0),
-                            };
-                            if let Ok(probed) = symphonia::default::get_probe().format(
-                                &hint,
-                                mss,
-                                &FormatOptions::default(),
-                                &metadata_opts,
-                            ) {
-                                let track = probed.format.default_track().unwrap();
-                                preload_track_id = track.id;
-                                preload_sr = track.codec_params.sample_rate.unwrap_or(44100);
-                                preload_total_duration_sec = track
-                                    .codec_params
-                                    .n_frames
-                                    .map(|f| f as f64 / preload_sr as f64)
-                                    .unwrap_or(0.0);
-
-                                if let Ok(decoder) = symphonia::default::get_codecs()
-                                    .make(&track.codec_params, &DecoderOptions::default())
-                                {
-                                    if let Some(channels) = track.codec_params.channels {
-                                        preload_channel_map =
-                                            AudioEngine::get_channel_map(channels);
-                                    } else {
-                                        let count = track
-                                            .codec_params
-                                            .channels
-                                            .map(|c| c.count())
-                                            .unwrap_or(2);
-                                        preload_channel_map = ChannelMap::default();
-                                        if count >= 1 {
-                                            preload_channel_map.fl = Some(0);
-                                        }
-                                        if count >= 2 {
-                                            preload_channel_map.fr = Some(1);
-                                        }
-                                    }
-                                    preload_decoder = Some(decoder);
-                                    preload_format = Some(probed.format);
-                                    preload_path = Some(path.clone());
-                                    preload_title = Some(title);
-                                    preload_artist = Some(artist);
-                                    preload_rg = (
-                                        track_gain.map(|g| g as f32),
-                                        album_gain.map(|g| g as f32),
-                                    );
-
-                                    // Capacidad del buffer de pre-decode: cubre la mezcla
-                                    // más larga posible + margen de seguridad.
-                                    let (out_rate, out_channels) = {
-                                        let s = state.read();
-                                        (s.device_sample_rate, s.channels as usize)
-                                    };
-                                    let xfade_manual_ms = {
-                                        let s = state.read();
-                                        s.crossfade_manual_ms.max(0.0)
-                                    };
-                                    let xfade_auto_ms = {
-                                        let s = state.read();
-                                        s.crossfade_auto_ms.max(0.0)
-                                    };
-                                    let cap_ms = xfade_manual_ms.max(xfade_auto_ms) + 2000.0;
-                                    predecode_cap_frames =
-                                        ((cap_ms as f64 / 1000.0) * out_rate as f64) as usize
-                                            * out_channels.max(1);
-                                    tracing::info!(
-                                        "Pre-carga iniciada para '{}' ({} Hz, {} canales).",
-                                        path,
-                                        preload_sr,
-                                        out_channels
-                                    );
-                                } else {
-                                    preload_format = None;
-                                    tracing::error!("Pre-carga falló (codec): {}", path);
-                                }
-                            }
-                        }
-                        Err(e) => tracing::error!("Pre-carga falló (open): {} — {}", path, e),
-                    }
+                    preload_path = None;
+                    preload_title = None;
+                    preload_artist = None;
+                    preload_rg = (None, None);
+                    preload_pending = Some((path, title, artist, track_gain, album_gain));
                 }
                 AudioCommand::ClearPreload => {
                     preload_format = None;
@@ -896,6 +932,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_title = None;
                     preload_artist = None;
                     preload_rg = (None, None);
+                    preload_pending = None;
                     preloaded_pending.clear();
                 }
                 AudioCommand::CrossfadeNext(ms) => {
@@ -976,19 +1013,29 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             }
         }
 
-        // Drenar audio pre-cargado (promovido tras EOF/crossfade): se procesa por la
-        // cadena normal (gain→DSP→volumen→ringbuf) en esta iteración, sin decodificar
-        // la nueva pista hasta que el buffer pre-cargado se haya agotado.
-        let process_preloaded = !preloaded_pending.is_empty();
-        if process_preloaded {
-            output_accumulator.extend(preloaded_pending.drain(..));
-        }
-
         // Control de Latencia (Virtual Buffer Size) limitando el RingBuffer
         let (out_rate, out_channels) = {
             let s = state.read();
             (s.device_sample_rate, s.channels as usize)
         };
+
+        // Drenar audio pre-cargado (promovido tras EOF/crossfade): se procesa por la
+        // cadena normal (gain→DSP→volumen→ringbuf) en esta iteración, sin decodificar
+        // la nueva pista hasta que el buffer pre-cargado se haya agotado. El drenado
+        // es POR LOTES ACOTADOS (~100ms por iteración): el ringbuf no puede absorber
+        // varios segundos de golpe y el exceso se descartaba → saltos de 10-15s al
+        // inicio de la canción siguiente.
+        let process_preloaded = !preloaded_pending.is_empty();
+        if process_preloaded {
+            let max_batch = ((out_rate as usize * out_channels) * 100) / 1000;
+            let batch = max_batch.max(out_channels).min(preloaded_pending.len());
+            output_accumulator.extend(preloaded_pending.drain(..batch));
+            if preloaded_pending.is_empty() {
+                // Pre-carga totalmente consumida: liberar la capacidad retenida
+                // (decenas de MB) para devolver la RAM al asignador.
+                preloaded_pending.shrink_to_fit();
+            }
+        }
 
         // Target: 100ms of safety margin to absorb CPU spikes at 384kHz
         let target_latency_samples = (out_rate as usize * out_channels * 100) / 1000;
@@ -1005,6 +1052,25 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // para decodificar la pista pre-cargada en segundo plano. Sin esto, el
             // buffer de pre-decode nunca se llena y ni el crossfade ni la promoción
             // sin cortes pueden funcionar.
+            // Primero se abre la pista pendiente (diferido del handler de comandos
+            // para no bloquear la reproducción) y luego se decodifica un lote.
+            if preload_pending.is_some() && preload_format.is_none() {
+                open_preload_track(
+                    &mut preload_pending,
+                    &mut preload_format,
+                    &mut preload_decoder,
+                    &mut preload_track_id,
+                    &mut preload_sr,
+                    &mut preload_total_duration_sec,
+                    &mut preload_channel_map,
+                    &mut preload_path,
+                    &mut preload_title,
+                    &mut preload_artist,
+                    &mut preload_rg,
+                    &mut predecode_cap_frames,
+                    &state,
+                );
+            }
             if preload_format.is_some() {
                 let _ = preload_decode_batch(
                     &mut preload_format,
@@ -1132,6 +1198,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if !predecode_buffer.is_empty() {
                                 preloaded_pending.extend(predecode_buffer.drain(..));
                             }
+                            // Liberar la capacidad retenida del predecode (puede ser
+                            // de decenas de MB) — el siguiente pre-carga reasignará.
+                            predecode_buffer.shrink_to_fit();
 
                             {
                                 let mut s = state.write();
@@ -1195,6 +1264,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             preload_output_pool.clear();
                             preload_channel_map = ChannelMap::default();
                             preload_rg = (None, None);
+                            preload_pending = None;
 
                             tracing::info!(
                                 "Transición sin cortes: pista pre-cargada promovida ('{}').",
@@ -1441,6 +1511,24 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         } else {
             // Tiempo idle (buffer del stream lleno o sin pista activa): aprovechamos
             // para decodificar la pista pre-cargada en segundo plano.
+            // Abrir la pista pendiente (diferido) y luego decodificar un lote.
+            if preload_pending.is_some() && preload_format.is_none() {
+                open_preload_track(
+                    &mut preload_pending,
+                    &mut preload_format,
+                    &mut preload_decoder,
+                    &mut preload_track_id,
+                    &mut preload_sr,
+                    &mut preload_total_duration_sec,
+                    &mut preload_channel_map,
+                    &mut preload_path,
+                    &mut preload_title,
+                    &mut preload_artist,
+                    &mut preload_rg,
+                    &mut predecode_cap_frames,
+                    &state,
+                );
+            }
             if preload_format.is_some() {
                 // Decodificamos un lote por iteración; el loop controla la frecuencia.
                 let _ = preload_decode_batch(
@@ -1495,7 +1583,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // Mezcla f64: superpone la canción actual con el inicio de la siguiente
             // pre-cargada SIN desvanecimiento de volumen — ambas se mezclan al nivel
             // del reproductor (los fades de la columna izquierda son independientes).
-            // El factor 0.5 evita el recorte al sumar dos señales a pleno nivel.
+            // La escala se aplica SOLO si la suma excede 1.0 (evita recorte sin bajar
+            // el nivel de las canciones durante la mezcla).
             if crossfade_active {
                 let out_ch = out_channels as usize;
                 if out_ch > 0 && !predecode_buffer.is_empty() {
@@ -1507,8 +1596,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             let Some(next) = predecode_buffer.pop_front() else {
                                 break;
                             };
-                            let mixed = (*s + next) * 0.5;
-                            *s = if mixed.is_finite() { mixed } else { 0.0 };
+                            *s = *s + next;
+                        }
+                        // Escala adaptativa de pico: solo si un canal de este frame
+                        // excede 1.0, se normaliza el pico (mantiene ambas canciones
+                        // a pleno nivel el resto del tiempo).
+                        let peak = frame.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+                        if peak > 1.0 {
+                            let scale = 1.0 / peak;
+                            for v in frame.iter_mut() {
+                                *v *= scale;
+                            }
                         }
                     }
                     crossfade_elapsed_sec += batch_dt_cf;
@@ -1586,6 +1684,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             preload_output_pool.clear();
                             preload_channel_map = ChannelMap::default();
                             preload_rg = (None, None);
+                            preload_pending = None;
                         }
                     }
                 }

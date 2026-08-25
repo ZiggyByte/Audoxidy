@@ -1380,12 +1380,18 @@ impl AudoxidyApp {
                 // 4. Purgar carátulas LRU (Purga suave de 16 elementos)
                 crate::utils::covers::purge_old_covers(16);
 
-                // 5. Purga de buffers de audio solo si no hay música sonando
+                // 5. Liberar la memoria de la pre-carga de audio (seguro durante la
+                //    reproducción: no reinicia el stream; la pre-carga se re-dispara
+                //    a ~15s del final de la canción).
+                let _ = self.audio_manager.purge_preload();
+                self.player_ui_state.preloaded_next_path = None;
+
+                // 6. Purga de buffers de audio solo si no hay música sonando
                 if !is_playing {
                     let _ = self.audio_manager.purge_buffers();
                 }
 
-                // 6. FINAL: Reclamar memoria física al SO (Linux)
+                // 7. FINAL: Reclamar memoria física al SO (Linux)
                 crate::utils::memory_manager::MemoryManager::force_free_to_os();
 
                 Task::none()

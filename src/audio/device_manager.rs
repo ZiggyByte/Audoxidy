@@ -418,17 +418,26 @@ impl AudioDeviceManager {
             .map(|(_, c)| c)
             .ok_or(AudioError::ConfigError("No valid config found".into()))?;
 
-        let target_rate = req_rate.unwrap_or_else(|| {
-            let min = best.min_sample_rate();
-            let max = best.max_sample_rate();
-            if min <= 44100 && max >= 44100 {
-                44100
-            } else if min <= 48000 && max >= 48000 {
-                48000
-            } else {
-                max
+        let target_rate = match req_rate {
+            // Si la tasa pedida está dentro del rango del dispositivo, se usa tal cual.
+            Some(r) if r >= best.min_sample_rate() && r <= best.max_sample_rate() => r,
+            // Si NO está soportada, se fija la más cercana dentro del rango (antes se
+            // usaba la pedida aunque fuera inválida → el stream no se construía y el
+            // audio quedaba mudo hasta pausa/play).
+            Some(r) if r < best.min_sample_rate() => best.min_sample_rate(),
+            Some(r) => best.max_sample_rate(),
+            None => {
+                let min = best.min_sample_rate();
+                let max = best.max_sample_rate();
+                if min <= 44100 && max >= 44100 {
+                    44100
+                } else if min <= 48000 && max >= 48000 {
+                    48000
+                } else {
+                    max
+                }
             }
-        });
+        };
 
         let config = best.with_sample_rate(target_rate);
         let mut stream_config: cpal::StreamConfig = config.clone().into();

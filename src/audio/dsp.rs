@@ -896,7 +896,15 @@ impl Reverb {
 
         // Cada canal usa su propio set FDN decorrelado (imagen envolvente correcta
         // en salidas multi-canal; antes todos los canales no-L compartían las R).
+        // La cantidad de reverb se ajusta por rol de canal (orden estándar
+        // FL FR C LFE BL BR SL SR): el LFE NO lleva reverb (rumor grave) y el
+        // centro lleva menos (mantiene la voz definida) — también ahorra CPU.
         for (ch, sample) in frame.iter_mut().enumerate() {
+            let wet_scale = match ch {
+                3 => continue, // LFE: sin reverb (passthrough)
+                2 => 0.7,      // Centro: reverb reducido
+                _ => 1.0,
+            };
             let Some(st) = self.channels.get_mut(ch) else {
                 break;
             };
@@ -908,7 +916,7 @@ impl Reverb {
                 self.feedback_gain,
                 sample,
                 self.gain as f64,
-                self.wet as f64,
+                self.wet as f64 * wet_scale,
             );
         }
     }

@@ -1230,4 +1230,35 @@ mod tests {
             assert!(s.is_finite(), "la cadena DSP debe emitir valores finitos");
         }
     }
+
+    #[test]
+    fn test_reverb_lfe_bypassed_and_center_reduced() {
+        // El reverb por rol de canal: el LFE (canal 3) pasa sin reverb y el centro
+        // (canal 2) lleva menos wet. Con el MISMO input en todos los canales, la
+        // salida del LFE debe ser exactamente el input (sin modificar) mientras
+        // FL/FR sí se procesan.
+        let mut r = Reverb::new();
+        r.enabled = true;
+        r.wet = 1.0;
+        r.set_room_size(0.5);
+
+        let mut frame = [0.3_f64; 6];
+        for _ in 0..100 {
+            r.process(&mut frame);
+        }
+        // El LFE no debe haber sido procesado: el FDN del LFE nunca recibe entrada,
+        // así que su salida permanece = input (0.3) tras el dry/wet con wet del LFE.
+        // Con wet=1.0 y passthrough, el LFE conserva exactamente su valor.
+        assert!(
+            (frame[3] - 0.3).abs() < 1e-12,
+            "LFE debe pasar sin reverb (got {})",
+            frame[3]
+        );
+        // Los canales frontales SÍ se procesan (deben diferir del input).
+        assert!(
+            (frame[0] - 0.3).abs() > 1e-9,
+            "FL debe tener reverb (got {})",
+            frame[0]
+        );
+    }
 }

@@ -1302,16 +1302,24 @@ impl AudoxidyApp {
                     return Task::done(Message::GlobalMemoryPurge);
                 }
 
-                // 5b. Purga por timer (solo cuando RAM está por debajo del hard cap)
+                // 5b. Purga por timer o por umbral de RAM del propio reproductor.
+                // Nunca durante un escaneo (extracción de metadatos y carátulas).
                 let is_scanning_now = self
                     .scanner
                     .is_scanning
                     .load(std::sync::atomic::Ordering::Relaxed);
-                if crate::utils::memory_manager::MemoryManager::should_run_global_purge(
-                    2,
-                    is_scanning_now,
-                ) {
-                    return Task::done(Message::GlobalMemoryPurge);
+                if !is_scanning_now {
+                    let purge_timer =
+                        crate::utils::memory_manager::MemoryManager::should_run_global_purge(
+                            2,
+                            is_scanning_now,
+                        );
+                    let ram_over =
+                        crate::utils::memory_manager::MemoryManager::is_app_ram_over_limit()
+                            || crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap();
+                    if purge_timer || ram_over {
+                        return Task::done(Message::GlobalMemoryPurge);
+                    }
                 }
 
                 // Detección de fin de escáner para liberar memoria 30s después

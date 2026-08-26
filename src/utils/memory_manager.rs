@@ -12,11 +12,18 @@ static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 /// Cached system info para evitar crear el objeto sysinfo::System en cada consulta
 static SYSINFO: OnceLock<parking_lot::Mutex<sysinfo::System>> = OnceLock::new();
 
-/// Intervalo fijo de purga: 120 segundos (2 minutos). D-01: estricto, sin backoff ni lógica adaptativa.
-const FIXED_PURGE_INTERVAL_SECS: u64 = 120;
+/// Intervalo fijo de purga: 60 segundos (1 minuto). D-01: estricto, sin backoff ni lógica adaptativa.
+const FIXED_PURGE_INTERVAL_SECS: u64 = 60;
 
 /// Umbral de hard cap de RAM: si el uso supera este porcentaje, se fuerza purga inmediata. D-03.
 const RAM_HARD_CAP_PERCENT: f64 = 75.0;
+
+/// Tope de RAM del propio reproductor: si supera este valor (MB), se fuerza purga
+/// inmediata aunque el sistema no esté al límite.
+const APP_RAM_MAX_MB: u64 = 300;
+
+/// Tamaño de página del sistema (Linux: 4096 bytes típicamente).
+const PAGE_SIZE_BYTES: u64 = 4096;
 
 /// Obtiene o inicializa la instancia global de `sysinfo::System`.
 fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
@@ -106,10 +113,37 @@ impl MemoryManager {
 
     /// Comprueba si la RAM del sistema supera el hard cap (75%). D-03.
     /// Si retorna `true`, el Tick handler debe forzar un `GlobalMemoryPurge` inmediato
-    /// sin esperar el ciclo de 2 minutos.
+    /// sin esperar el ciclo de purga periódico.
     pub fn is_ram_over_hard_cap() -> bool {
         let ram_pct = get_ram_usage_percent();
         ram_pct > RAM_HARD_CAP_PERCENT
+    }
+
+    /// Devuelve la RAM física usada por este proceso en MB (Linux: /proc/self/statm).
+    fn get_self_ram_mb() -> u64 {
+        #[cfg(target_os = "linux")]
+        {
+            use std::io::Read;
+            if let Ok(mut f) = std::fs::File::open("/proc/self/statm") {
+                let mut buf = String::new();
+                if f.read_to_string(&mut buf).is_ok() {
+                    // statm: size resident shared text lib data dt (páginas).
+                    if let Some(rss_pages) = buf.split_whitespace().nth(1) {
+                        if let Ok(pages) = rss_pages.parse::<u64>() {
+                            return (pages * PAGE_SIZE_BYTES) / (1024 * 1024);
+                        }
+                    }
+                }
+            }
+        }
+        0
+    }
+
+    /// Comprueba si la RAM del propio reproductor supera el tope (300 MB).
+    /// Usada por el Tick para forzar purgas tempranas del proceso (no solo del sistema).
+    pub fn is_app_ram_over_limit() -> bool {
+        let mb = Self::get_self_ram_mb();
+        mb > APP_RAM_MAX_MB
     }
 
     /// Ejecuta la secuencia de purga global notificando a la App

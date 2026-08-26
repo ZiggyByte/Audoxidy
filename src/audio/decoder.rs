@@ -936,8 +936,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preloaded_pending.clear();
                 }
                 AudioCommand::CrossfadeNext(ms) => {
-                    // Activa un crossfade manual con la duración indicada (solo si hay
-                    // una pista pre-cargada disponible para mezclar).
+                    // Activa un crossfade manual con la duración indicada.
                     let ms = if ms.is_finite() {
                         ms.clamp(0.0, 10000.0)
                     } else {
@@ -956,6 +955,18 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             crossfade_is_manual = true;
                             tracing::info!("Crossfade manual iniciado: {} ms", ms);
                         }
+                    } else if ms > 0.0 {
+                        // No hay audio pre-cargado listo (el usuario saltó antes de que
+                        // la pre-carga abriera/decodificara): NO se puede mezclar. Se
+                        // descarta la pre-carga para que el Load que envía la GUI haga
+                        // la transición normal INMEDIATA (si se conservara, el dedup
+                        // bloquearía el cambio hasta el final de la canción actual).
+                        preload_format = None;
+                        preload_decoder = None;
+                        preload_path = None;
+                        preload_pending = None;
+                        predecode_buffer.clear();
+                        tracing::info!("Crossfade manual sin pre-carga: transición inmediata.");
                     }
                 }
                 AudioCommand::Seek(time) => {
@@ -1019,24 +1030,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             (s.device_sample_rate, s.channels as usize)
         };
 
-        // Drenar audio pre-cargado (promovido tras EOF/crossfade): se procesa por la
-        // cadena normal (gain→DSP→volumen→ringbuf) en esta iteración, sin decodificar
-        // la nueva pista hasta que el buffer pre-cargado se haya agotado. El drenado
-        // es POR LOTES ACOTADOS (~100ms por iteración): el ringbuf no puede absorber
-        // varios segundos de golpe y el exceso se descartaba → saltos de 10-15s al
-        // inicio de la canción siguiente.
-        let process_preloaded = !preloaded_pending.is_empty();
-        if process_preloaded {
-            let max_batch = ((out_rate as usize * out_channels) * 100) / 1000;
-            let batch = max_batch.max(out_channels).min(preloaded_pending.len());
-            output_accumulator.extend(preloaded_pending.drain(..batch));
-            if preloaded_pending.is_empty() {
-                // Pre-carga totalmente consumida: liberar la capacidad retenida
-                // (decenas de MB) para devolver la RAM al asignador.
-                preloaded_pending.shrink_to_fit();
-            }
-        }
-
         // Target: 100ms of safety margin to absorb CPU spikes at 384kHz
         let target_latency_samples = (out_rate as usize * out_channels * 100) / 1000;
 
@@ -1096,6 +1089,25 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             };
             std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
             continue;
+        }
+
+        // Drenar audio pre-cargado (promovido tras EOF/crossfade): se procesa por la
+        // cadena normal (gain→DSP→volumen→ringbuf) en esta iteración, sin decodificar
+        // la nueva pista hasta que el buffer pre-cargado se haya agotado. El drenado
+        // es POR LOTES ACOTADOS (~100ms por iteración) y se ejecuta SOLO cuando el
+        // ringbuf tiene espacio (después del chequeo should_wait): si se drenara
+        // antes, el audio se descartaría al limpiar el acumulador en la siguiente
+        // iteración (causa de los saltos de 2-3s al inicio de la canción).
+        let process_preloaded = !preloaded_pending.is_empty();
+        if process_preloaded {
+            let max_batch = ((out_rate as usize * out_channels) * 100) / 1000;
+            let batch = max_batch.max(out_channels).min(preloaded_pending.len());
+            output_accumulator.extend(preloaded_pending.drain(..batch));
+            if preloaded_pending.is_empty() {
+                // Pre-carga totalmente consumida: liberar la capacidad retenida
+                // (decenas de MB) para devolver la RAM al asignador.
+                preloaded_pending.shrink_to_fit();
+            }
         }
 
         // 2. Llenar buffer si hay espacio
@@ -1585,33 +1597,39 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // del reproductor (los fades de la columna izquierda son independientes).
             // La escala se aplica SOLO si la suma excede 1.0 (evita recorte sin bajar
             // el nivel de las canciones durante la mezcla).
+            // El avance del tiempo es POR DURACIÓN REAL: aunque el buffer de pre-decode
+            // se quede vacío a mitad de la mezcla (el decoder lo rellena en el tiempo
+            // idle), el crossfade se completa en el tiempo configurado y promueve — de
+            // lo contrario quedaría atascado hasta el final de la canción actual.
             if crossfade_active {
                 let out_ch = out_channels as usize;
-                if out_ch > 0 && !predecode_buffer.is_empty() {
+                if out_ch > 0 {
                     let batch_dt_cf =
                         output_accumulator.len() as f64 / out_ch as f64 / out_rate as f64;
-                    let t = (crossfade_elapsed_sec / crossfade_duration_sec.max(1e-9)).min(1.0);
-                    for frame in output_accumulator.chunks_mut(out_ch) {
-                        for s in frame.iter_mut() {
-                            let Some(next) = predecode_buffer.pop_front() else {
-                                break;
-                            };
-                            *s = *s + next;
-                        }
-                        // Escala adaptativa de pico: solo si un canal de este frame
-                        // excede 1.0, se normaliza el pico (mantiene ambas canciones
-                        // a pleno nivel el resto del tiempo).
-                        let peak = frame.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
-                        if peak > 1.0 {
-                            let scale = 1.0 / peak;
-                            for v in frame.iter_mut() {
-                                *v *= scale;
+                    if !predecode_buffer.is_empty() {
+                        let t = (crossfade_elapsed_sec / crossfade_duration_sec.max(1e-9)).min(1.0);
+                        for frame in output_accumulator.chunks_mut(out_ch) {
+                            for s in frame.iter_mut() {
+                                let Some(next) = predecode_buffer.pop_front() else {
+                                    break;
+                                };
+                                *s = *s + next;
+                            }
+                            // Escala adaptativa de pico: solo si un canal de este frame
+                            // excede 1.0, se normaliza el pico (mantiene ambas canciones
+                            // a pleno nivel el resto del tiempo).
+                            let peak = frame.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
+                            if peak > 1.0 {
+                                let scale = 1.0 / peak;
+                                for v in frame.iter_mut() {
+                                    *v *= scale;
+                                }
                             }
                         }
                     }
                     crossfade_elapsed_sec += batch_dt_cf;
 
-                    if t >= 1.0 {
+                    if crossfade_elapsed_sec >= crossfade_duration_sec {
                         // Mezcla completada: el resto de la pre-carga pasa a ser la
                         // pista actual (promoción) y se procesa por la cadena normal.
                         crossfade_active = false;

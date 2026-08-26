@@ -1261,4 +1261,56 @@ mod tests {
             frame[0]
         );
     }
+    #[test]
+    fn test_resampler_high_ratio_44100_to_192000() {
+        // Diagnóstico del bug de sample rate: ¿el resampler sinc falla a ratios altos?
+        use rubato::{
+            Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.99,
+            interpolation: SincInterpolationType::Cubic,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+        let ratio = 192000.0 / 44100.0;
+        let mut rs = match Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input) {
+            Ok(r) => r,
+            Err(e) => panic!("new_sinc FALLÓ a ratio {}: {:?}", ratio, e),
+        };
+        // Alimentar 1024 frames de un seno y procesar.
+        let mut input: Vec<Vec<f64>> = vec![vec![0.0; 1024], vec![0.0; 1024]];
+        for i in 0..1024 {
+            let v = 0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 44100.0).sin();
+            input[0][i] = v;
+            input[1][i] = v;
+        }
+        let needed = rs.input_frames_next();
+        assert_eq!(needed, 1024);
+        let out_frames = rs.output_frames_next();
+        let mut output: Vec<Vec<f64>> = vec![vec![0.0; out_frames], vec![0.0; out_frames]];
+        let input_adapt =
+            audioadapter_buffers::direct::SequentialSliceOfVecs::new(&input, 2, needed).unwrap();
+        let mut output_adapt = audioadapter_buffers::direct::SequentialSliceOfVecs::new_mut(
+            &mut output,
+            2,
+            out_frames,
+        )
+        .unwrap();
+        let res = rs.process_into_buffer(&input_adapt, &mut output_adapt, None);
+        assert!(res.is_ok(), "process_into_buffer falló: {:?}", res);
+        // La salida debe ser finita y razonable.
+        let peak = output[0].iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
+        assert!(
+            peak.is_finite() && peak > 0.0 && peak < 2.0,
+            "peak raro: {}",
+            peak
+        );
+        println!(
+            "OK: ratio {} → {} frames de salida, peak {}",
+            ratio, out_frames, peak
+        );
+    }
 }

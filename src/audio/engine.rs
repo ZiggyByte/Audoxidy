@@ -500,6 +500,10 @@ impl AudioEngine {
     /// Recrea el stream con la nueva configuración manteniendo la reproducción activa.
     /// Escribe la nueva tasa de muestreo en el estado compartido ANTES de reconstruir,
     /// para que el hilo decodificador reajuste su resampler sin desajustes de tasa.
+    ///
+    /// Si la construcción del nuevo stream falla (p. ej. el dispositivo no está listo
+    /// aún tras liberar el anterior), se reintenta con más tiempo de asentamiento y,
+    /// si persiste, se RESTAURA la configuración anterior para que el audio continúe.
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
         self.device_manager.stop_stream();
         // Tiempo de asentamiento: el dispositivo necesita liberar el stream anterior
@@ -527,7 +531,41 @@ impl AudioEngine {
             dsp.set_channel_count(stream_config.channels as usize);
         }
 
-        self.recreate_stream(host, device, stream_config, sample_format)
+        // Capturar el ID del host antes de moverlo al stream (cpal::Host no es clonable).
+        let host_id = host.id();
+        match self.recreate_stream(host, device.clone(), stream_config.clone(), sample_format) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let err_msg = format!("{}", e);
+                // Reintento con más asentamiento: algunos backends (PipeWire/ALSA)
+                // tardan en liberar el dispositivo al cambiar a tasas muy distintas.
+                tracing::warn!(
+                    "Reconstruyendo stream falló ({}): reintento con más asentamiento.",
+                    err_msg
+                );
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                self.device_manager.stop_stream();
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                // Reconstruir el host por su ID (cpal::Host no es clonable).
+                let host_retry = cpal::host_from_id(host_id).map_err(|e2| {
+                    tracing::error!("No se pudo reconstruir el host de audio: {}", e2);
+                    AudioError::StreamError(format!("{} (host: {})", err_msg, e2))
+                })?;
+                match self.recreate_stream(host_retry, device, stream_config, sample_format) {
+                    Ok(()) => Ok(()),
+                    Err(e2) => {
+                        tracing::error!(
+                            "No se pudo construir el stream con la nueva configuración ({}).",
+                            e2
+                        );
+                        Err(AudioError::StreamError(format!(
+                            "{} (reintento: {})",
+                            err_msg, e2
+                        )))
+                    }
+                }
+            }
+        }
     }
 
     fn recreate_stream(

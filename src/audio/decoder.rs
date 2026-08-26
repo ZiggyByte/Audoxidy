@@ -1035,8 +1035,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             (s.device_sample_rate, s.channels as usize)
         };
 
-        // Heartbeat de diagnóstico (1/s): permite ver si el decoder está vivo y
-        // qué ve en el ringbuf (útil para el diagnóstico del cambio de tasa).
+        // Heartbeat de diagnóstico (1/s, solo en RUST_LOG=audoxidy=debug): permite ver si
+        // el decoder está vivo y qué ve en el ringbuf (diagnóstico del cambio de tasa).
         heartbeat_iters += 1;
         if last_heartbeat.elapsed().as_millis() >= 1000 {
             let (occupied, capacity) = engine
@@ -1045,7 +1045,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 .as_ref()
                 .map(|p| (p.occupied_len(), p.capacity().get()))
                 .unwrap_or((0, 0));
-            tracing::info!(
+            tracing::debug!(
                 "HEARTBEAT decoder: iteraciones/s={}, ringbuf ocupado={}/{} ({} Hz, {} ch), \
                  resampler={}, decodificando={}",
                 heartbeat_iters,

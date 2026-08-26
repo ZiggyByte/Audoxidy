@@ -999,4 +999,31 @@ mod tests {
             );
         }
     }
+
+    // --- Matemática de buffers a altas tasas (diagnóstico del cambio de rate) ---
+
+    #[test]
+    fn test_ringbuf_sizes_at_high_rates() {
+        // rb_size = rate × ch × 2.0s (mínimo 384.000 muestras), como en recreate_stream.
+        let cases = [
+            (44100u32, 2usize, 176_400usize),
+            (96000, 2, 384_000),
+            (192_000, 2, 768_000),
+            (192_000, 6, 2_304_000),
+            (384_000, 8, 6_144_000),
+        ];
+        for (rate, ch, expected) in cases {
+            let rb_size = ((rate as f64 * ch as f64) * 2.0) as usize;
+            assert_eq!(rb_size.max(384_000), expected.max(384_000));
+        }
+    }
+
+    #[test]
+    fn test_target_latency_math() {
+        // 100ms de latencia objetivo a distintas tasas/canales (decoder should_wait).
+        assert_eq!((44100 * 2 * 100) / 1000, 8820);
+        assert_eq!((96000 * 2 * 100) / 1000, 19200);
+        assert_eq!((192000 * 2 * 100) / 1000, 38400);
+        assert_eq!((384000 * 8 * 100) / 1000, 307200);
+    }
 }

@@ -356,7 +356,7 @@ impl AudioEngine {
         let channels = config.channels as usize;
         let err_fn = |err| tracing::error!("Stream error: {}", err);
 
-        self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
+self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
             let stream = match fmt {
                 cpal::SampleFormat::F32 => dev.build_output_stream(
                     &config,
@@ -392,7 +392,23 @@ impl AudioEngine {
                 ),
                 _ => return Err(AudioError::UnsupportedSampleFormat),
             }
-            .map_err(|e| AudioError::StreamError(e.to_string()))?;
+            .map_err(|e| {
+                tracing::error!(
+                    "FALLO al construir el stream de salida ({} Hz, {} ch, {:?}): {}",
+                    config.sample_rate,
+                    config.channels,
+                    config.buffer_size,
+                    e
+                );
+                AudioError::StreamError(e.to_string())
+            })?;
+            tracing::info!(
+                "Stream de salida construido y en PLAY ({} Hz, {} ch, buffer {:?})",
+                config.sample_rate,
+                config.channels,
+                config.buffer_size
+            );
+
             Ok(stream)
         })
     }
@@ -419,6 +435,10 @@ impl AudioEngine {
     ) where
         T: cpal::Sample + cpal::FromSample<f32>,
     {
+        // Marca de tiempo del último underrun registrado (diagnóstico, ~1 log/s).
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        static LAST_UNDERRUN_LOG: AtomicU64 = AtomicU64::new(0);
         if channels > 0 {
             let current_frames = (output.len() / channels) as u32;
             if current_frames > 0 {
@@ -455,7 +475,23 @@ impl AudioEngine {
                 let remaining = (out_len - written).min(tmp_buf.len());
                 let n = consumer.pop_slice(&mut tmp_buf[..remaining]);
                 if n == 0 {
-                    // Underrun: llenar el resto con silencio
+                    // Underrun: llenar el resto con silencio. Log limitado a ~1/s
+                    // (diagnóstico del cambio de tasa: si el decoder no produce a
+                    // la nueva tasa, el callback ve underruns continuos).
+                    let now_secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    let last = LAST_UNDERRUN_LOG.load(Ordering::Relaxed);
+                    if now_secs.saturating_sub(last) >= 1 {
+                        LAST_UNDERRUN_LOG.store(now_secs, Ordering::Relaxed);
+                        tracing::warn!(
+                            "UNDERRUN: el ringbuf no tiene datos ({}/{} muestras) — \
+                             el decoder podría no estar produciendo a la tasa actual.",
+                            written,
+                            out_len
+                        );
+                    }
                     for s in output[written..].iter_mut() {
                         *s = T::from_sample(0.0);
                     }
@@ -515,6 +551,14 @@ impl AudioEngine {
         let (host, device, stream_config, sample_format) = self
             .device_manager
             .resolve_settings(&settings, current_rate)?;
+        tracing::info!(
+            "Aplicando config de audio: tasa {} Hz, {} canales, buffer {:?}, formato {:?} (anterior {} Hz)",
+            stream_config.sample_rate,
+            stream_config.channels,
+            stream_config.buffer_size,
+            sample_format,
+            current_rate
+        );
 
         {
             let mut s = self.state.write();
@@ -614,6 +658,15 @@ impl AudioEngine {
                 2.0
             };
             let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
+            tracing::info!(
+                "Ringbuf recreado: {} muestras ({} Hz x {} ch x {:.0}s). Anterior: {} Hz x {} ch.",
+                rb_size.max(384_000),
+                sr,
+                ch,
+                dur_secs,
+                prev_rate,
+                prev_channels
+            );
             let rb = HeapRb::<f32>::new(rb_size.max(384_000));
             let (producer, consumer) = rb.split();
 

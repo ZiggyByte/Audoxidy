@@ -604,6 +604,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let state = engine.state.clone();
     let producer_mutex = engine.buffer_producer.clone();
     let mut channel_map = ChannelMap::default();
+    // Última tasa de salida vista por el decoder (diagnóstico del cambio de config).
+    let mut last_out_rate: u32 = state.read().device_sample_rate;
 
     // Zero-Allocation Pool Buffers: Pre-asignados fuera del bucle para evitar GC pressure.
     let mut audio_buf: Option<AudioBuffer<f64>> = None;
@@ -1029,6 +1031,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             let s = state.read();
             (s.device_sample_rate, s.channels as usize)
         };
+        // Diagnóstico: registrar el cambio de tasa de salida detectado por el decoder.
+        if out_rate != last_out_rate {
+            tracing::info!(
+                "Decoder detectó cambio de tasa de salida: {} -> {} Hz ({} canales)",
+                last_out_rate,
+                out_rate,
+                out_channels
+            );
+            last_out_rate = out_rate;
+        }
 
         // Target: 100ms of safety margin to absorb CPU spikes at 384kHz
         let target_latency_samples = (out_rate as usize * out_channels * 100) / 1000;

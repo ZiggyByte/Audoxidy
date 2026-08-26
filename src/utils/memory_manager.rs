@@ -20,7 +20,7 @@ const RAM_HARD_CAP_PERCENT: f64 = 75.0;
 
 /// Tope de RAM del propio reproductor: si supera este valor (MB), se fuerza purga
 /// inmediata aunque el sistema no esté al límite.
-const APP_RAM_MAX_MB: u64 = 300;
+const APP_RAM_MAX_MB: u64 = 500;
 
 /// Tamaño de página del sistema (Linux: 4096 bytes típicamente).
 const PAGE_SIZE_BYTES: u64 = 4096;
@@ -139,7 +139,7 @@ impl MemoryManager {
         0
     }
 
-    /// Comprueba si la RAM del propio reproductor supera el tope (300 MB).
+    /// Comprueba si la RAM del propio reproductor supera el tope (500 MB).
     /// Usada por el Tick para forzar purgas tempranas del proceso (no solo del sistema).
     pub fn is_app_ram_over_limit() -> bool {
         let mb = Self::get_self_ram_mb();

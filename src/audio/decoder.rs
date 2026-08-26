@@ -1039,6 +1039,24 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 out_rate,
                 out_channels
             );
+            // La pre-carga existente quedó decodificada a la tasa ANTERIOR: si se
+            // promoviera mezclaría tasas (basura/silencio). Se descarta; la GUI
+            // vuelve a pre-cargar a ~15s del final de la canción.
+            preload_format = None;
+            preload_decoder = None;
+            preload_resampler = None;
+            preload_resampler_rates = None;
+            preload_resampler_in_buf.clear();
+            preload_audio_buf = None;
+            preload_input_pool.clear();
+            preload_output_pool.clear();
+            predecode_buffer.clear();
+            preload_path = None;
+            preload_title = None;
+            preload_artist = None;
+            preload_rg = (None, None);
+            preload_pending = None;
+            preloaded_pending.clear();
             last_out_rate = out_rate;
         }
 

@@ -619,10 +619,10 @@ self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
         stream_config: cpal::StreamConfig,
         sample_format: cpal::SampleFormat,
     ) -> Result<(), AudioError> {
-        let (prev_rate, prev_channels) = {
-            let s = self.state.read();
-            (s.device_sample_rate, s.channels)
-        };
+        // Config PREVIA guardada en el device_manager (ANTES de sobrescribirla).
+        // No se lee del estado compartido: apply_settings ya escribió la tasa nueva
+        // ahí antes de reconstruir (fix B5), y compararla impediría recrear el ringbuf.
+        let prev = self.device_manager.get_stream_config();
         {
             let mut s = self.state.write();
             s.device_sample_rate = stream_config.sample_rate;
@@ -649,6 +649,8 @@ self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
         // reproducirían a velocidad o layout incorrectos — canción "lenta/rápida" o
         // ruido). En ese caso se recrea el buffer con el tamaño correcto. Solo se
         // conserva cuando la config de muestreo no cambió (buffer size / bit depth).
+        let prev_rate = prev.as_ref().map(|c| c.sample_rate).unwrap_or(44100);
+        let prev_channels = prev.as_ref().map(|c| c.channels).unwrap_or(2);
         if prev_rate != stream_config.sample_rate || prev_channels != stream_config.channels {
             let sr = stream_config.sample_rate as usize;
             let ch = stream_config.channels as usize;

@@ -1313,4 +1313,62 @@ mod tests {
             ratio, out_frames, peak
         );
     }
+
+    #[test]
+    fn test_resampler_ratio_8_7_sustained_output() {
+        // Reproduce el patrón del decoder a 44100 -> 384000 (ratio 8.7): alimentar
+        // paquetes de 1024 frames repetidamente y verificar que cada llamada produce
+        // una cantidad razonable de frames (sin atascarse en 0).
+        use rubato::{
+            Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: 0.99,
+            interpolation: SincInterpolationType::Cubic,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+        let ratio = 384000.0 / 44100.0;
+        let mut rs = Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input)
+            .expect("new_sinc ratio 8.7 falló");
+        let mut total_out_frames = 0usize;
+        for chunk in 0..20 {
+            let needed = rs.input_frames_next();
+            assert!(needed > 0, "input_frames_next() == 0 en chunk {}", chunk);
+            let mut input: Vec<Vec<f64>> = vec![vec![0.0; needed], vec![0.0; needed]];
+            for i in 0..needed {
+                let v = 0.5 * (2.0 * std::f64::consts::PI * 440.0 * i as f64 / 44100.0).sin();
+                input[0][i] = v;
+                input[1][i] = v;
+            }
+            let out_frames = rs.output_frames_next();
+            assert!(out_frames > 0, "output_frames_next() == 0 en chunk {}", chunk);
+            let mut output: Vec<Vec<f64>> = vec![vec![0.0; out_frames], vec![0.0; out_frames]];
+            let in_adapt =
+                audioadapter_buffers::direct::SequentialSliceOfVecs::new(&input, 2, needed).unwrap();
+            let mut out_adapt = audioadapter_buffers::direct::SequentialSliceOfVecs::new_mut(
+                &mut output, 2, out_frames,
+            )
+            .unwrap();
+            assert!(
+                rs.process_into_buffer(&in_adapt, &mut out_adapt, None).is_ok(),
+                "process_into_buffer falló en chunk {}",
+                chunk
+            );
+            // La salida debe ser finita.
+            for s in output[0].iter() {
+                assert!(s.is_finite(), "salida no finita en chunk {}", chunk);
+            }
+            total_out_frames += out_frames;
+        }
+        // 20 chunks × ~6600 frames ≈ 132k frames ≈ 1.38s a 96000 frames/s reales...
+        // lo importante: nunca se atasca y la salida es continua.
+        assert!(
+            total_out_frames > 100_000,
+            "producción demasiado baja: {}",
+            total_out_frames
+        );
+    }
 }

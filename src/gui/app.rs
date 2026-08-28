@@ -1242,6 +1242,8 @@ impl AudoxidyApp {
                                     );
                                     self.player_ui_state.preloaded_next_path =
                                         Some(next_song.file_path.to_string());
+                                    // La pre-carga está activa: el GC no debe correr.
+                                    self.player_ui_state.preload_finished_at = None;
                                 }
                             }
                         }
@@ -1251,8 +1253,13 @@ impl AudoxidyApp {
                 if state.eof_reached {
                     self.audio_manager.clear_eof();
                     self.playlist_manager.play_next(&self.audio_manager);
-                    // Nueva pista activa: restablecer la pre-carga para la siguiente.
+                    // Nueva pista activa: restablecer la pre-carga para la siguiente y
+                    // marcar el fin de la pre-carga (el GC se reactiva 5s después).
                     self.player_ui_state.preloaded_next_path = None;
+                    self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_secs())
+                        .ok();
 
                     if self.playlist_manager.shuffle_active {
                         if let Some(session) = &self.playlist_manager.shuffle_session {
@@ -1304,19 +1311,35 @@ impl AudoxidyApp {
 
                 // 5b. Purga por timer o por umbral de RAM del propio reproductor.
                 // Nunca durante un escaneo (extracción de metadatos y carátulas).
+                // La purga por RAM tiene cooldown (10s) para evitar el bucle
+                // GC → re-creación de pre-carga → GC cuando la RAM sigue alta.
                 let is_scanning_now = self
                     .scanner
                     .is_scanning
                     .load(std::sync::atomic::Ordering::Relaxed);
-                if !is_scanning_now {
+
+                // Seguro de pre-carga: el GC no corre mientras la pre-carga está activa
+                // ni en los 5s posteriores a su fin (evita interrumpir la transición
+                // de canciones). Es el mismo patrón que el seguro de escaneo.
+                let now_secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let preload_active = self.player_ui_state.preloaded_next_path.is_some();
+                let preload_finished_recently = self
+                    .player_ui_state
+                    .preload_finished_at
+                    .map(|t| now_secs.saturating_sub(t) < 5)
+                    .unwrap_or(false);
+
+                if !is_scanning_now && !preload_active && !preload_finished_recently {
                     let purge_timer =
                         crate::utils::memory_manager::MemoryManager::should_run_global_purge(
                             2,
                             is_scanning_now,
                         );
                     let ram_over =
-                        crate::utils::memory_manager::MemoryManager::is_app_ram_over_limit()
-                            || crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap();
+                        crate::utils::memory_manager::MemoryManager::should_purge_for_ram();
                     if purge_timer || ram_over {
                         return Task::done(Message::GlobalMemoryPurge);
                     }
@@ -1389,10 +1412,11 @@ impl AudoxidyApp {
                 crate::utils::covers::purge_old_covers(16);
 
                 // 5. Liberar la memoria de la pre-carga de audio (seguro durante la
-                //    reproducción: no reinicia el stream; la pre-carga se re-dispara
-                //    a ~15s del final de la canción).
+                //    reproducción: no reinicia el stream). NO se resetea
+                //    preloaded_next_path: si se reseteara, la pre-carga se re-crearía
+                //    en el siguiente tick (a ~15s del final) y, con la RAM aún por
+                //    encima del umbral, el GC → pre-carga → GC entraría en bucle.
                 let _ = self.audio_manager.purge_preload();
-                self.player_ui_state.preloaded_next_path = None;
 
                 // 6. Purga de buffers de audio solo si no hay música sonando
                 if !is_playing {
@@ -1549,8 +1573,13 @@ impl AudoxidyApp {
                 }
 
                 self.playlist_manager.play_next(&self.audio_manager);
-                // Nueva pista activa: restablecer la pre-carga para la siguiente.
+                // Nueva pista activa: restablecer la pre-carga para la siguiente y
+                // marcar el fin de la pre-carga (el GC se reactiva 5s después).
                 self.player_ui_state.preloaded_next_path = None;
+                self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .ok();
                 self.persist_playlist_state();
 
                 if self.playlist_manager.shuffle_active {
@@ -4932,7 +4961,7 @@ impl AudoxidyApp {
                         export_choice_button("M3U", *format == ExportFormat::M3U, Message::SelectExportFormat(ExportFormat::M3U)),
                         export_choice_button("M3U8", *format == ExportFormat::M3U8, Message::SelectExportFormat(ExportFormat::M3U8)),
                     ].spacing(10).align_y(iced::Alignment::Center);
-                    
+
                     let mode_choices = iced::widget::row![
                         export_choice_button("Solo Lista", *mode == ExportMode::SingleFile, Message::SelectExportMode(ExportMode::SingleFile)),
                         export_choice_button("Carpeta Portable", *mode == ExportMode::PortableFolder, Message::SelectExportMode(ExportMode::PortableFolder)),

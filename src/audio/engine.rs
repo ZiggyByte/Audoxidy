@@ -356,7 +356,7 @@ impl AudioEngine {
         let channels = config.channels as usize;
         let err_fn = |err| tracing::error!("Stream error: {}", err);
 
-self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
+        self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
             let stream = match fmt {
                 cpal::SampleFormat::F32 => dev.build_output_stream(
                     &config,

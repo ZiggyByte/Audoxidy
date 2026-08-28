@@ -9,6 +9,14 @@ pub struct MemoryManager;
 static START_TIME: AtomicU64 = AtomicU64::new(0);
 static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 
+// Última purga forzada por exceso de RAM (cooldown: evita purgar en cada tick).
+static LAST_RAM_PURGE: AtomicU64 = AtomicU64::new(0);
+
+/// Cooldown mínimo entre purgas forzadas por RAM (10s): sin él, con la RAM por
+/// encima del umbral la purga se dispararía en cada tick (500ms) y entraría en
+/// bucle con la re-creación de la pre-carga (log "GC: Purging" repetido).
+const RAM_PURGE_COOLDOWN_SECS: u64 = 10;
+
 /// Cached system info para evitar crear el objeto sysinfo::System en cada consulta
 static SYSINFO: OnceLock<parking_lot::Mutex<sysinfo::System>> = OnceLock::new();
 
@@ -117,6 +125,26 @@ impl MemoryManager {
     pub fn is_ram_over_hard_cap() -> bool {
         let ram_pct = get_ram_usage_percent();
         ram_pct > RAM_HARD_CAP_PERCENT
+    }
+
+    /// Decide si debe forzarse una purga por exceso de RAM, con COOLDOWN de 10s.
+    ///
+    /// Sin el cooldown, con la RAM por encima del umbral la purga se dispararía en
+    /// cada tick (500ms), y al purgar la pre-carga (que se re-crea al instante) el
+    /// bucle GC → pre-carga → GC se repetiría indefinidamente (log "GC: Purging"
+    /// cada pocos cientos de ms).
+    pub fn should_purge_for_ram() -> bool {
+        if !(Self::is_app_ram_over_limit() || Self::is_ram_over_hard_cap()) {
+            return false;
+        }
+        let now = Self::get_now_secs();
+        let last = LAST_RAM_PURGE.load(Ordering::Relaxed);
+        if now.saturating_sub(last) >= RAM_PURGE_COOLDOWN_SECS {
+            LAST_RAM_PURGE.store(now, Ordering::Relaxed);
+            true
+        } else {
+            false
+        }
     }
 
     /// Devuelve la RAM física usada por este proceso en MB (Linux: /proc/self/statm).

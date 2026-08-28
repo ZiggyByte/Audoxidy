@@ -346,8 +346,8 @@ impl Database {
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS songs_ai AFTER INSERT ON SONGS BEGIN
             INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
-            VALUES (new.id, new.title, 
-                   (SELECT name FROM ARTISTS WHERE id = new.artist_id), 
+            VALUES (new.id, new.title,
+                   (SELECT name FROM ARTISTS WHERE id = new.artist_id),
                    (SELECT title FROM ALBUMS WHERE id = new.album_id));
         END;",
             [],
@@ -356,8 +356,8 @@ impl Database {
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS songs_ad AFTER DELETE ON SONGS BEGIN
             INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
-            VALUES('delete', old.id, old.title, 
-                   (SELECT name FROM ARTISTS WHERE id = old.artist_id), 
+            VALUES('delete', old.id, old.title,
+                   (SELECT name FROM ARTISTS WHERE id = old.artist_id),
                    (SELECT title FROM ALBUMS WHERE id = old.album_id));
         END;",
             [],
@@ -366,12 +366,12 @@ impl Database {
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE ON SONGS BEGIN
             INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
-            VALUES('delete', old.id, old.title, 
-                   (SELECT name FROM ARTISTS WHERE id = old.artist_id), 
+            VALUES('delete', old.id, old.title,
+                   (SELECT name FROM ARTISTS WHERE id = old.artist_id),
                    (SELECT title FROM ALBUMS WHERE id = old.album_id));
             INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
-            VALUES (new.id, new.title, 
-                   (SELECT name FROM ARTISTS WHERE id = new.artist_id), 
+            VALUES (new.id, new.title,
+                   (SELECT name FROM ARTISTS WHERE id = new.artist_id),
                    (SELECT title FROM ALBUMS WHERE id = new.album_id));
         END;",
             [],
@@ -483,7 +483,7 @@ impl Database {
         let hash_id = Self::generate_hash(&format!("{}{}{}", title, artist_id, folder_path));
         self.conn
             .prepare_cached(
-                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
+                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 year = COALESCE(year, excluded.year),
@@ -533,7 +533,7 @@ impl Database {
         // 1. Resolver o crear álbum (Aseguramos que el álbum pertenezca al artista del álbum)
         self.conn
             .prepare_cached(
-                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre) 
+                "INSERT INTO ALBUMS (title, artist_id, folder_id, hash_id, year, genre)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)
              ON CONFLICT(hash_id) DO UPDATE SET
                 artist_id = excluded.artist_id,
@@ -597,18 +597,18 @@ impl Database {
         // 2. Inserción de la canción (Con su propio artista de pista)
         self.conn.prepare_cached(
             "INSERT INTO SONGS (
-                album_id, artist_id, folder_id, file_path, title, track_num, duration, format, 
+                album_id, artist_id, folder_id, file_path, title, track_num, duration, format,
                 bit_depth, sample_rate, channels, size, embedded_cover, cover_override, import_order, is_external
             ) VALUES (
                 (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
-            ) ON CONFLICT(file_path) DO UPDATE SET 
+            ) ON CONFLICT(file_path) DO UPDATE SET
                 title = excluded.title, track_num = excluded.track_num, duration = excluded.duration,
                 artist_id = excluded.artist_id, cover_override = excluded.cover_override, is_external = excluded.is_external"
         )?.execute(
             params![
-                album_hash_id, track_artist_id, folder_id, song.full_file_path, song.title, 
+                album_hash_id, track_artist_id, folder_id, song.full_file_path, song.title,
                 song.track_number,
-                song.duration_secs, song.format, song.bit_depth, song.sample_rate, 
+                song.duration_secs, song.format, song.bit_depth, song.sample_rate,
                 song.channels, song.size, song.embedded_cover, final_song_cover_override, song.import_order,
                 if is_external { 1 } else { 0 }
             ],
@@ -624,25 +624,25 @@ impl Database {
             .prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?
             .execute([song_id])?;
         for (tag_type, key, value) in raw_tags {
-            self.conn.prepare_cached(
-                "INSERT OR REPLACE INTO SONG_TAG_ITEMS (song_id, tag_type, item_key, raw_value) 
-                 VALUES (?1, ?2, ?3, ?4)"
-            )?.execute(
-                params![song_id, tag_type, key, value],
-            )?;
+            self.conn
+                .prepare_cached(
+                    "INSERT OR REPLACE INTO SONG_TAG_ITEMS (song_id, tag_type, item_key, raw_value)
+                 VALUES (?1, ?2, ?3, ?4)",
+                )?
+                .execute(params![song_id, tag_type, key, value])?;
         }
 
         // 4. Metadatos extendidos (Vista unificada)
         self.conn.prepare_cached(
             "INSERT INTO SONG_METADATA (
-                song_id, lyrics, comments, composer, lyricist, publisher, url, copyright, 
+                song_id, lyrics, comments, composer, lyricist, publisher, url, copyright,
                 encoded_by, catalog, isrc, key, bpm, track_gain, album_gain
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)
             ON CONFLICT(song_id) DO UPDATE SET lyrics = excluded.lyrics, comments = excluded.comments"
         )?.execute(
             params![
-                song_id, extended.lyrics, extended.comments, extended.composer, extended.lyricist, 
-                extended.publisher, extended.url, extended.copyright, extended.encoded_by, 
+                song_id, extended.lyrics, extended.comments, extended.composer, extended.lyricist,
+                extended.publisher, extended.url, extended.copyright, extended.encoded_by,
                 extended.catalog, extended.isrc, extended.key, extended.bpm, extended.track_gain, extended.album_gain
             ],
         )?;
@@ -713,7 +713,7 @@ impl Database {
     pub fn search_songs(&self, query: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare(
             "
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name
@@ -784,7 +784,7 @@ impl Database {
     /// Obtiene todas las canciones de la biblioteca (no externas) ordenadas.
     pub fn get_all_songs(&self) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name
@@ -984,7 +984,7 @@ impl Database {
     /// Obtiene las canciones de un álbum específico por su hash.
     pub fn get_songs_by_album(&self, album_hash_id: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name
@@ -1056,7 +1056,7 @@ impl Database {
         artist_name: &str,
     ) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path, 
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name
@@ -1264,8 +1264,8 @@ impl Database {
         )?;
         // Eliminar artistas sin álbumes ni canciones
         self.conn.execute(
-            "DELETE FROM ARTISTS WHERE NOT EXISTS (SELECT 1 FROM ALBUMS WHERE artist_id = ARTISTS.id) 
-             AND NOT EXISTS (SELECT 1 FROM SONGS WHERE artist_id = ARTISTS.id)", 
+            "DELETE FROM ARTISTS WHERE NOT EXISTS (SELECT 1 FROM ALBUMS WHERE artist_id = ARTISTS.id)
+             AND NOT EXISTS (SELECT 1 FROM SONGS WHERE artist_id = ARTISTS.id)",
             []
         )?;
         Ok(())
@@ -1395,7 +1395,7 @@ impl Database {
     /// Obtiene una playlist por nombre.
     pub fn get_playlist_by_name(&self, name: &str) -> Result<Option<PlaylistData>> {
         self.conn.query_row(
-            "SELECT id, name, sort_order, is_system, created_at, last_song_id, last_pos_sec, is_playing, shuffle_active, repeat_mode, shuffle_pos, shuffle_id 
+            "SELECT id, name, sort_order, is_system, created_at, last_song_id, last_pos_sec, is_playing, shuffle_active, repeat_mode, shuffle_pos, shuffle_id
              FROM PLAYLISTS WHERE name = ?1",
             [name],
             |r| {
@@ -1631,11 +1631,11 @@ impl Database {
         shuffle_id: Option<String>,
     ) -> Result<()> {
         self.conn.execute(
-            "UPDATE PLAYLISTS SET 
-                last_song_id = ?1, 
-                last_pos_sec = ?2, 
-                is_playing = ?3, 
-                shuffle_active = ?4, 
+            "UPDATE PLAYLISTS SET
+                last_song_id = ?1,
+                last_pos_sec = ?2,
+                is_playing = ?3,
+                shuffle_active = ?4,
                 repeat_mode = ?5,
                 shuffle_pos = ?6,
                 shuffle_id = ?7
@@ -2248,9 +2248,9 @@ impl Database {
         let query = match filter_type {
             "Genre" => {
                 "
-                SELECT DISTINCT 
-                    COALESCE(NULLIF(al.genre, ''), 'Desconocido') as l1, 
-                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
+                SELECT DISTINCT
+                    COALESCE(NULLIF(al.genre, ''), 'Desconocido') as l1,
+                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2,
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
@@ -2258,9 +2258,9 @@ impl Database {
             }
             "Artist" => {
                 "
-                SELECT DISTINCT 
-                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l1, 
-                    COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l2, 
+                SELECT DISTINCT
+                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l1,
+                    COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l2,
                     NULL as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
@@ -2268,9 +2268,9 @@ impl Database {
             }
             "Album" => {
                 "
-                SELECT DISTINCT 
-                    COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l1, 
-                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
+                SELECT DISTINCT
+                    COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l1,
+                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2,
                     NULL as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
@@ -2278,9 +2278,9 @@ impl Database {
             }
             "Year" => {
                 "
-                SELECT DISTINCT 
-                    COALESCE(NULLIF(al.year, ''), 'Desconocido') as l1, 
-                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
+                SELECT DISTINCT
+                    COALESCE(NULLIF(al.year, ''), 'Desconocido') as l1,
+                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2,
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l3
                 FROM ALBUMS al
                 JOIN ARTISTS ar ON al.artist_id = ar.id
@@ -2288,9 +2288,9 @@ impl Database {
             }
             "Folder" => {
                 "
-                SELECT DISTINCT 
-                    COALESCE(NULLIF(f.name, ''), 'Raiz') as l1, 
-                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2, 
+                SELECT DISTINCT
+                    COALESCE(NULLIF(f.name, ''), 'Raiz') as l1,
+                    COALESCE(NULLIF(ar.name, ''), 'Artista Desconocido') as l2,
                     COALESCE(NULLIF(al.title, ''), 'Álbum Desconocido') as l3
                 FROM SONGS s
                 JOIN FOLDERS f ON s.folder_id = f.id
@@ -2343,9 +2343,9 @@ impl Database {
         params: &LibrarySearchParams,
     ) -> Result<Vec<Arc<SongData>>> {
         let mut sql = "
-            SELECT s.id, s.folder_id, s.artist_id, s.album_id, s.file_path, s.title, 
-                   ar.name as artist_name, al.title as album_title, al.year, al.genre, 
-                   s.track_num, s.duration, s.format, s.bit_depth, s.sample_rate, 
+            SELECT s.id, s.folder_id, s.artist_id, s.album_id, s.file_path, s.title,
+                   ar.name as artist_name, al.title as album_title, al.year, al.genre,
+                   s.track_num, s.duration, s.format, s.bit_depth, s.sample_rate,
                    s.size, s.channels, s.embedded_cover, s.cover_override, s.import_order,
                    al.cover_path, aar.name as album_artist_name
             FROM SONGS s

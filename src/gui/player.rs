@@ -34,6 +34,9 @@ pub struct PlayerUiState {
     pub cached_art_handle: Option<iced::widget::image::Handle>,
     pub prefetched_next_handle: Option<iced::widget::image::Handle>,
     pub preloaded_next_path: Option<String>,
+    /// Marca de tiempo (segundos UNIX) en que terminó la pre-carga actual; el GC
+    /// se reactiva 5s después para no interrumpir la transición de canciones.
+    pub preload_finished_at: Option<u64>,
     pub mouse_pos: Option<iced::Point>,
     pub active_until_tick: u64,
     pub is_active: bool,
@@ -61,6 +64,7 @@ impl Default for PlayerUiState {
             cached_art_handle: None,
             prefetched_next_handle: None,
             preloaded_next_path: None,
+            preload_finished_at: None,
             mouse_pos: None,
             active_until_tick: 0,
             is_active: false,

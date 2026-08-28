@@ -1673,7 +1673,7 @@ pub struct StereoExpanderHybrid {
 impl StereoExpanderHybrid {
     pub fn new() -> Self {
         let sr = 44100.0;
-        let q = 0.7071; // Butterworth Q for LR4 stages
+        let q = std::f32::consts::FRAC_1_SQRT_2; // Butterworth Q for LR4 stages
         Self {
             low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
             low_lp2: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
@@ -1718,7 +1718,7 @@ pub struct StereoExpanderSurround {
 impl StereoExpanderSurround {
     pub fn new() -> Self {
         let sr = 44100.0;
-        let q = 0.7071;
+        let q = std::f32::consts::FRAC_1_SQRT_2;
         Self {
             low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
             low_lp2: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),

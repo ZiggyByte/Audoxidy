@@ -1654,7 +1654,7 @@ pub fn custom_scrollbar_style(
             scroller: iced::widget::scrollable::Scroller {
                 background: if color != Color::TRANSPARENT {
                     iced::Background::Gradient(iced::Gradient::Linear(iced::gradient::Linear {
-                        angle: 3.1415927.into(), // 180 grados (Vertical)
+                        angle: std::f32::consts::PI.into(), // 180 grados (Vertical)
                         stops: [
                             Some(iced::gradient::ColorStop {
                                 offset: 0.49,

@@ -1344,16 +1344,24 @@ mod tests {
                 input[1][i] = v;
             }
             let out_frames = rs.output_frames_next();
-            assert!(out_frames > 0, "output_frames_next() == 0 en chunk {}", chunk);
+            assert!(
+                out_frames > 0,
+                "output_frames_next() == 0 en chunk {}",
+                chunk
+            );
             let mut output: Vec<Vec<f64>> = vec![vec![0.0; out_frames], vec![0.0; out_frames]];
             let in_adapt =
-                audioadapter_buffers::direct::SequentialSliceOfVecs::new(&input, 2, needed).unwrap();
+                audioadapter_buffers::direct::SequentialSliceOfVecs::new(&input, 2, needed)
+                    .unwrap();
             let mut out_adapt = audioadapter_buffers::direct::SequentialSliceOfVecs::new_mut(
-                &mut output, 2, out_frames,
+                &mut output,
+                2,
+                out_frames,
             )
             .unwrap();
             assert!(
-                rs.process_into_buffer(&in_adapt, &mut out_adapt, None).is_ok(),
+                rs.process_into_buffer(&in_adapt, &mut out_adapt, None)
+                    .is_ok(),
                 "process_into_buffer falló en chunk {}",
                 chunk
             );

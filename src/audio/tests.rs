@@ -1026,4 +1026,45 @@ mod tests {
         assert_eq!((192000 * 2 * 100) / 1000, 38400);
         assert_eq!((384000 * 8 * 100) / 1000, 307200);
     }
+
+    // --- Predecode acotado por memoria y avance de posición durante el drenado ---
+
+    #[test]
+    fn test_predecode_cap_memory_bounded() {
+        // El cap del predecode se limita por MEMORIA (~32MB de f64) además de por
+        // tiempo: en salidas multi-canal de alta tasa el tope por tiempo retendría
+        // cientos de MB (384kHz × 8ch × 8s ≈ 196MB).
+        const PRELOAD_MAX_SAMPLES: usize = 4_000_000;
+
+        // 384000 Hz × 8 ch: el cap por tiempo (8s) supera el tope de memoria.
+        let out_rate = 384_000u32;
+        let out_channels = 8usize;
+        let cap_ms = 8000.0f64;
+        let sec_cap = ((cap_ms / 1000.0) * out_rate as f64) as usize * out_channels;
+        assert!(sec_cap > PRELOAD_MAX_SAMPLES);
+        let cap_frames = sec_cap.min(PRELOAD_MAX_SAMPLES).max(out_channels);
+        assert_eq!(cap_frames, PRELOAD_MAX_SAMPLES);
+
+        // 44100 Hz × 2 ch: el cap por tiempo (8s) es menor → gana el tiempo.
+        let sec_cap2 = ((cap_ms / 1000.0) * 44_100f64) as usize * 2;
+        let cap_frames2 = sec_cap2.min(PRELOAD_MAX_SAMPLES).max(2);
+        assert_eq!(cap_frames2, sec_cap2);
+        assert!(cap_frames2 < PRELOAD_MAX_SAMPLES);
+    }
+
+    #[test]
+    fn test_current_pos_advance_during_drain() {
+        // La posición de reproducción avanza durante el drenado de la pre-carga:
+        // batch / (tasa × canales) segundos por lote (~100ms por lote).
+        let rate = 384_000usize;
+        let ch = 2usize;
+        let batch = 76_800usize; // 100ms a 384000×2
+        let batch_secs = batch as f64 / (rate * ch) as f64;
+        assert!((batch_secs - 0.1).abs() < 1e-9);
+
+        // 8s de pre-carga drenados en lotes de 100ms → la suma avanza 8s exactos.
+        let total_samples = batch * 80;
+        let total_secs = total_samples as f64 / (rate * ch) as f64;
+        assert!((total_secs - 8.0).abs() < 1e-9);
+    }
 }

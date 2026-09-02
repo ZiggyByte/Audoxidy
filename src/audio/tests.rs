@@ -57,8 +57,8 @@ mod tests {
         // Volumen y Mezcla — Fades (D-07, D-09, D-10)
         assert_eq!(state.fades_enabled, false);
         assert_eq!(state.smooth_volume_enabled, false);
-        assert!((state.fade_in_ms - 2000.0).abs() < f64::EPSILON as f32);
-        assert!((state.fade_out_ms - 3000.0).abs() < f64::EPSILON as f32);
+        assert!((state.fade_in_ms - 1000.0).abs() < f64::EPSILON as f32);
+        assert!((state.fade_out_ms - 2000.0).abs() < f64::EPSILON as f32);
         assert_eq!(state.fade_in_enabled, false);
         assert_eq!(state.fade_out_enabled, false);
 
@@ -89,8 +89,8 @@ mod tests {
         // Fades (D-07, D-09, D-10)
         assert_eq!(state.fades_enabled, false);
         assert_eq!(state.smooth_volume_enabled, false);
-        assert!((state.fade_in_ms - 2000.0).abs() < f32::EPSILON);
-        assert!((state.fade_out_ms - 3000.0).abs() < f32::EPSILON);
+        assert!((state.fade_in_ms - 1000.0).abs() < f32::EPSILON);
+        assert!((state.fade_out_ms - 2000.0).abs() < f32::EPSILON);
         assert_eq!(state.fade_in_enabled, false);
         assert_eq!(state.fade_out_enabled, false);
 

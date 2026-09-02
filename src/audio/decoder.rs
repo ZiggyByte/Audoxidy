@@ -622,27 +622,49 @@ fn tail_buffer_cap_for(out_rate: u32, out_channels: usize) -> usize {
 /// aditiva sin desvanecimiento, f64) con escala adaptativa de pico: solo si un
 /// canal del frame supera 1.0 se normaliza el pico (evita recorte sin bajar el
 /// nivel de las canciones durante la mezcla).
-fn mix_tail_into_frame(frame: &mut [f64], tail: &mut std::collections::VecDeque<f64>) {
+/// Mezcla la cola de la canción anterior sobre un frame de la primaria
+/// (f64, aditiva) con un coeficiente de desvanecimiento aplicado a la cola.
+/// Se usa durante la mezcla cruzada cuando el fade-out está activo para
+/// la canción anterior: la cola se suma a la primaria pero con el volumen
+/// reducido según la curva de fade-out.
+fn mix_tail_into_frame_faded(
+    frame: &mut [f64],
+    tail: &mut std::collections::VecDeque<f64>,
+    fade_coeff: f64,
+) {
     for s in frame.iter_mut() {
-        let Some(tail) = tail.pop_front() else {
+        let Some(t) = tail.pop_front() else {
             return;
         };
-        *s = *s + tail;
-    }
-    let peak = frame.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
-    if peak > 1.0 {
-        let scale = 1.0 / peak;
-        for v in frame.iter_mut() {
-            *v *= scale;
-        }
+        *s += t * fade_coeff;
     }
 }
 
-/// Decodifica un lote de la CANCIÓN ANTERIOR (cola de la mezcla) y lo añade
-/// (f64 interleaved, ya resampleado a `out_rate × out_channels`) al buffer de cola.
+/// Mezcla la cola de la canción anterior sobre un frame de la primaria
+/// (f64, aditiva sin desvanecimiento). Se usa cuando no hay fade activo
+/// durante la mezcla cruzada (la cola suena a volumen completo).
+fn mix_tail_into_frame(frame: &mut [f64], tail: &mut std::collections::VecDeque<f64>) {
+    for s in frame.iter_mut() {
+        let Some(t) = tail.pop_front() else {
+            return;
+        };
+        *s += t;
+    }
+}
+
+/// Decodifica la CANCIÓN ANTERIOR (cola de la mezcla) y añade su audio
+/// (f64 interleaved, ya resampleado a `out_rate × out_channels`) al buffer
+/// de cola HASTA LLENAR SU CAPACIDAD (~200ms) o alcanzar el EOF.
 ///
-/// Devuelve `true` si queda más audio, `false` si se alcanzó el EOF de la pista
-/// anterior (la mezcla se acorta naturalmente) o hubo un error.
+/// Una sola llamada rellena el buffer completo (decodifica varios paquetes):
+/// el consumo de la mezcla (~100ms por iteración del decoder) queda cubierto
+/// con cada relleno y la cola nunca se queda seca durante la ventana — antes
+/// solo se decodificaba UN paquete por llamada (~43ms en FLAC 96 kHz, ~26ms
+/// en WAV), lo que causaba el underrun de la cola (sonido entrecortado,
+/// peor a 384 kHz).
+///
+/// Devuelve `true` si queda más audio, `false` si se alcanzó el EOF de la
+/// pista anterior (la mezcla se acorta naturalmente) o hubo un error.
 #[allow(clippy::too_many_arguments)]
 fn tail_decode_batch(
     tail_format: &mut Option<Box<dyn FormatReader>>,
@@ -668,170 +690,253 @@ fn tail_decode_batch(
         return true; // Cola llena por ahora: se retoma cuando haya espacio.
     }
 
-    let packet = match fmt.next_packet() {
-        Ok(p) => p,
-        Err(symphonia::core::errors::Error::IoError(e))
-            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-        {
-            return false; // La canción anterior terminó antes de la ventana de mezcla.
-        }
-        Err(e) => {
-            tracing::warn!("Cola decode error (skipping packet): {}", e);
-            return true;
-        }
-    };
-
-    if packet.track_id() != *tail_track_id {
-        return true;
-    }
-
-    let Ok(decoded) = dec.decode(&packet) else {
-        return true;
-    };
-    let spec = *decoded.spec();
-
-    let needs_new_buf = tail_audio_buf
-        .as_ref()
-        .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
-        .unwrap_or(true);
-    if needs_new_buf {
-        *tail_audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
-    }
-    let Some(buf) = tail_audio_buf.as_mut() else {
-        return false;
-    };
-    decoded.convert(buf);
-    let src_channels = spec.channels.count();
-
-    if spec.rate != out_rate {
-        let recreate = tail_resampler_rates
-            .map(|stored| stored != (spec.rate, out_rate, src_channels))
-            .unwrap_or(true);
-        if recreate {
-            let is_low = crate::utils::is_low_resource();
-            let params = if is_low {
-                SincInterpolationParameters {
-                    sinc_len: 64,
-                    f_cutoff: 0.95,
-                    interpolation: SincInterpolationType::Linear,
-                    oversampling_factor: 64,
-                    window: WindowFunction::BlackmanHarris2,
-                }
-            } else {
-                SincInterpolationParameters {
-                    sinc_len: 256,
-                    f_cutoff: 0.99,
-                    interpolation: SincInterpolationType::Cubic,
-                    oversampling_factor: 256,
-                    window: WindowFunction::BlackmanHarris2,
-                }
-            };
-            let chunk_size = if is_low { 256 } else { 1024 };
-            match Async::<f64>::new_sinc(
-                out_rate as f64 / spec.rate as f64,
-                2.0,
-                &params,
-                chunk_size,
-                src_channels,
-                FixedAsync::Input,
-            ) {
-                Ok(r) => {
-                    *tail_resampler = Some(r);
-                    *tail_resampler_rates = Some((spec.rate, out_rate, src_channels));
-                    *tail_resampler_in_buf = (0..src_channels)
-                        .map(|_| {
-                            std::collections::VecDeque::with_capacity(if is_low {
-                                1024
-                            } else {
-                                4096
-                            })
-                        })
-                        .collect();
-                }
-                Err(e) => {
-                    tracing::error!("Cola resampler init failed: {}", e);
-                    *tail_resampler = None;
-                    return false;
-                }
-            }
-        }
-    } else {
-        if tail_resampler.is_some() {
-            *tail_resampler = None;
-            tail_resampler_in_buf.clear();
-            *tail_resampler_rates = None;
-        }
-    }
-
-    let downmix_conf = {
-        let side_val = 0.81f64;
-        (0.74f64, 0.66f64, side_val, (side_val + 0.10).min(2.0))
-    };
-
+    // Rellenar hasta la capacidad: cada llamada decodifica todos los paquetes
+    // necesarios para cubrir ~200ms de cola, de modo que la mezcla nunca
+    // consume más rápido de lo que se recarga (fix del entrecortado).
     let mut batch_out: Vec<f64> = Vec::new();
-    if let Some(rs) = tail_resampler.as_mut() {
-        let planes = buf.planes();
-        let frames = buf.frames();
-        for c in 0..src_channels {
-            if c < tail_resampler_in_buf.len() {
-                let plane = &planes.planes()[c][..frames];
-                tail_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+    while tail_buffer.len() < tail_buffer_cap {
+        batch_out.clear();
+        let packet = match fmt.next_packet() {
+            Ok(p) => p,
+            Err(symphonia::core::errors::Error::IoError(e))
+                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
+            {
+                return false; // La canción anterior terminó antes de la ventana de mezcla.
             }
-        }
-        if tail_input_pool.len() < src_channels {
-            tail_input_pool.resize(src_channels, Vec::new());
-        }
-        if tail_output_pool.len() < src_channels {
-            tail_output_pool.resize(src_channels, Vec::new());
-        }
-        loop {
-            let needed = rs.input_frames_next();
-            if tail_resampler_in_buf.is_empty() || tail_resampler_in_buf[0].len() < needed {
-                break;
+            Err(e) => {
+                tracing::warn!("Cola decode error (skipping packet): {}", e);
+                continue;
             }
-            let out_frames = rs.output_frames_next();
-            for c in 0..src_channels {
-                tail_input_pool[c].clear();
-                if c < tail_resampler_in_buf.len() {
-                    tail_input_pool[c].extend(tail_resampler_in_buf[c].drain(0..needed));
-                } else {
-                    tail_input_pool[c].resize(needed, 0.0);
-                }
-                tail_output_pool[c].clear();
-                tail_output_pool[c].resize(out_frames, 0.0);
-            }
-            let input_adapter =
-                SequentialSliceOfVecs::new(tail_input_pool, src_channels, needed).unwrap();
-            let mut output_adapter =
-                SequentialSliceOfVecs::new_mut(tail_output_pool, src_channels, out_frames).unwrap();
-            if let Ok(_) = rs.process_into_buffer(&input_adapter, &mut output_adapter, None) {
-                AudioEngine::mix_channels_planar(
-                    tail_output_pool,
-                    out_frames,
-                    src_channels,
-                    out_channels,
-                    tail_channel_map,
-                    downmix_conf,
-                    &mut batch_out,
-                );
-            }
-        }
-    } else {
-        AudioEngine::mix_channels_direct(
-            buf,
-            buf.frames(),
-            src_channels,
-            out_channels,
-            tail_channel_map,
-            downmix_conf,
-            &mut batch_out,
-        );
-    }
+        };
 
-    let remaining = tail_buffer_cap.saturating_sub(tail_buffer.len());
-    let to_append = batch_out.len().min(remaining);
-    tail_buffer.extend(batch_out.drain(..to_append));
+        if packet.track_id() != *tail_track_id {
+            continue;
+        }
+
+        let Ok(decoded) = dec.decode(&packet) else {
+            continue;
+        };
+        let spec = *decoded.spec();
+
+        let needs_new_buf = tail_audio_buf
+            .as_ref()
+            .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
+            .unwrap_or(true);
+        if needs_new_buf {
+            *tail_audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
+        }
+        let Some(buf) = tail_audio_buf.as_mut() else {
+            return false;
+        };
+        decoded.convert(buf);
+        let src_channels = spec.channels.count();
+
+        if spec.rate != out_rate {
+            let recreate = tail_resampler_rates
+                .map(|stored| stored != (spec.rate, out_rate, src_channels))
+                .unwrap_or(true);
+            if recreate {
+                let is_low = crate::utils::is_low_resource();
+                let params = if is_low {
+                    SincInterpolationParameters {
+                        sinc_len: 64,
+                        f_cutoff: 0.95,
+                        interpolation: SincInterpolationType::Linear,
+                        oversampling_factor: 64,
+                        window: WindowFunction::BlackmanHarris2,
+                    }
+                } else {
+                    SincInterpolationParameters {
+                        sinc_len: 256,
+                        f_cutoff: 0.99,
+                        interpolation: SincInterpolationType::Cubic,
+                        oversampling_factor: 256,
+                        window: WindowFunction::BlackmanHarris2,
+                    }
+                };
+                let chunk_size = if is_low { 256 } else { 1024 };
+                match Async::<f64>::new_sinc(
+                    out_rate as f64 / spec.rate as f64,
+                    2.0,
+                    &params,
+                    chunk_size,
+                    src_channels,
+                    FixedAsync::Input,
+                ) {
+                    Ok(r) => {
+                        *tail_resampler = Some(r);
+                        *tail_resampler_rates = Some((spec.rate, out_rate, src_channels));
+                        *tail_resampler_in_buf = (0..src_channels)
+                            .map(|_| {
+                                std::collections::VecDeque::with_capacity(if is_low {
+                                    1024
+                                } else {
+                                    4096
+                                })
+                            })
+                            .collect();
+                    }
+                    Err(e) => {
+                        tracing::error!("Cola resampler init failed: {}", e);
+                        *tail_resampler = None;
+                        return false;
+                    }
+                }
+            }
+        } else {
+            if tail_resampler.is_some() {
+                *tail_resampler = None;
+                tail_resampler_in_buf.clear();
+                *tail_resampler_rates = None;
+            }
+        }
+
+        let downmix_conf = {
+            let side_val = 0.81f64;
+            (0.74f64, 0.66f64, side_val, (side_val + 0.10).min(2.0))
+        };
+
+        if let Some(rs) = tail_resampler.as_mut() {
+            let planes = buf.planes();
+            let frames = buf.frames();
+            for c in 0..src_channels {
+                if c < tail_resampler_in_buf.len() {
+                    let plane = &planes.planes()[c][..frames];
+                    tail_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                }
+            }
+            if tail_input_pool.len() < src_channels {
+                tail_input_pool.resize(src_channels, Vec::new());
+            }
+            if tail_output_pool.len() < src_channels {
+                tail_output_pool.resize(src_channels, Vec::new());
+            }
+            loop {
+                let needed = rs.input_frames_next();
+                if tail_resampler_in_buf.is_empty() || tail_resampler_in_buf[0].len() < needed {
+                    break;
+                }
+                let out_frames = rs.output_frames_next();
+                for c in 0..src_channels {
+                    tail_input_pool[c].clear();
+                    if c < tail_resampler_in_buf.len() {
+                        tail_input_pool[c].extend(tail_resampler_in_buf[c].drain(0..needed));
+                    } else {
+                        tail_input_pool[c].resize(needed, 0.0);
+                    }
+                    tail_output_pool[c].clear();
+                    tail_output_pool[c].resize(out_frames, 0.0);
+                }
+                let input_adapter =
+                    SequentialSliceOfVecs::new(tail_input_pool, src_channels, needed).unwrap();
+                let mut output_adapter =
+                    SequentialSliceOfVecs::new_mut(tail_output_pool, src_channels, out_frames)
+                        .unwrap();
+                if let Ok(_) = rs.process_into_buffer(&input_adapter, &mut output_adapter, None) {
+                    AudioEngine::mix_channels_planar(
+                        tail_output_pool,
+                        out_frames,
+                        src_channels,
+                        out_channels,
+                        tail_channel_map,
+                        downmix_conf,
+                        &mut batch_out,
+                    );
+                }
+            }
+        } else {
+            AudioEngine::mix_channels_direct(
+                buf,
+                buf.frames(),
+                src_channels,
+                out_channels,
+                tail_channel_map,
+                downmix_conf,
+                &mut batch_out,
+            );
+        }
+
+        // Agregar TODO el audio decodificado al buffer de cola (sin cap).
+        // Antes se descartaba el excedente cuando tail_buffer alcanzaba su
+        // capacidad, causando pérdida PERMANENTE de audio → la cola sonaba
+        // entrecortada porque cada paquete perdía samples al final. El mix
+        // block consume la cola a tasa real, así que no crece indefinidamente.
+        tail_buffer.extend(batch_out.drain(..));
+    }
     true
+}
+
+/// Libera la cadena de decodificación de la COLA (decoder, resampler, pools)
+/// pero PRESERVA el tail_buffer: el audio ya decodificado puede seguir
+/// mezclándose hasta agotarse naturalmente. Se usa cuando la canción anterior
+/// llega a EOF antes de completar la ventana de la mezcla.
+#[allow(clippy::too_many_arguments)]
+fn clear_tail_decoder_chain(
+    tail_format: &mut Option<Box<dyn FormatReader>>,
+    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_track_id: &mut u32,
+    tail_channel_map: &mut ChannelMap,
+    tail_resampler: &mut Option<Async<f64>>,
+    tail_resampler_rates: &mut Option<(u32, u32, usize)>,
+    tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
+    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_input_pool: &mut Vec<Vec<f64>>,
+    tail_output_pool: &mut Vec<Vec<f64>>,
+) {
+    *tail_format = None;
+    *tail_decoder = None;
+    *tail_track_id = 0;
+    *tail_channel_map = ChannelMap::default();
+    *tail_resampler = None;
+    *tail_resampler_rates = None;
+    tail_resampler_in_buf.clear();
+    *tail_audio_buf = None;
+    tail_input_pool.clear();
+    tail_output_pool.clear();
+}
+
+/// Libera el buffer de la cola y su capacidad retenida: se usa al completar
+/// la ventana de la mezcla o al purgar por Load/Stop.
+fn clear_tail_buffer(
+    tail_buffer: &mut std::collections::VecDeque<f64>,
+    tail_buffer_cap: &mut usize,
+) {
+    tail_buffer.clear();
+    tail_buffer.shrink_to_fit();
+    *tail_buffer_cap = 0;
+}
+
+/// Libera la cadena completa de la COLA de la mezcla (decoder, resampler,
+/// pools y buffer) y su capacidad retenida: se usa al purgar por Load/Stop
+/// donde todo el estado de la mezcla debe desaparecer inmediatamente.
+#[allow(clippy::too_many_arguments)]
+fn clear_tail_state(
+    tail_format: &mut Option<Box<dyn FormatReader>>,
+    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_track_id: &mut u32,
+    tail_channel_map: &mut ChannelMap,
+    tail_resampler: &mut Option<Async<f64>>,
+    tail_resampler_rates: &mut Option<(u32, u32, usize)>,
+    tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
+    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_input_pool: &mut Vec<Vec<f64>>,
+    tail_output_pool: &mut Vec<Vec<f64>>,
+    tail_buffer: &mut std::collections::VecDeque<f64>,
+    tail_buffer_cap: &mut usize,
+) {
+    clear_tail_decoder_chain(
+        tail_format,
+        tail_decoder,
+        tail_track_id,
+        tail_channel_map,
+        tail_resampler,
+        tail_resampler_rates,
+        tail_resampler_in_buf,
+        tail_audio_buf,
+        tail_input_pool,
+        tail_output_pool,
+    );
+    clear_tail_buffer(tail_buffer, tail_buffer_cap);
 }
 
 /// Inicia el crossfade "hacia adelante": la pista pre-cargada pasa a ser la PRIMARIA
@@ -907,7 +1012,7 @@ fn begin_forward_crossfade(
     *tail_input_pool = std::mem::take(resample_input_pool);
     *tail_output_pool = std::mem::take(resample_output_pool);
     tail_buffer.clear();
-    *tail_buffer_cap = (out_rate as usize * out_channels * 200) / 1000;
+    *tail_buffer_cap = tail_buffer_cap_for(out_rate, out_channels);
 
     // 2. La pista pre-cargada pasa a ser la primaria.
     *current_format = preload_format.take();
@@ -972,6 +1077,29 @@ fn begin_forward_crossfade(
             };
         }
     }
+
+    // 6. Pre-llenar el buffer de la cola: decodificar los primeros ~200ms de la
+    //    canción anterior para que la primera iteración del mix tenga datos
+    //    inmediatamente. Sin esto, la cola empieza vacía y el crossfade se
+    //    retrasa una iteración (inaudible en manual, entrecortado en automático).
+    if tail_decoder.is_some() {
+        let _ = tail_decode_batch(
+            tail_format,
+            tail_decoder,
+            tail_track_id,
+            tail_audio_buf,
+            tail_resampler,
+            tail_resampler_rates,
+            tail_resampler_in_buf,
+            tail_input_pool,
+            tail_output_pool,
+            tail_channel_map,
+            tail_buffer,
+            *tail_buffer_cap,
+            out_rate,
+            out_channels,
+        );
+    }
 }
 
 pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: AudioEngine) {
@@ -991,6 +1119,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // Heartbeat de diagnóstico: contador de iteraciones y última vez reportada.
     let mut heartbeat_iters: u64 = 0;
     let mut last_heartbeat: std::time::Instant = std::time::Instant::now();
+
+    // Instrumentación de crossfade: timestamps para diagnóstico de entrecortado
+    let mut crossfade_trace_enabled = false;
+    let mut crossfade_start_time: Option<std::time::Instant> = None;
+    let mut last_trace_time: Option<std::time::Instant> = None;
+    let mut trace_iteration: u64 = 0;
 
     // Zero-Allocation Pool Buffers: Pre-asignados fuera del bucle para evitar GC pressure.
     let mut audio_buf: Option<AudioBuffer<f64>> = None;
@@ -1093,6 +1227,51 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         }
         if output_accumulator_f32.capacity() > 1_000_000 {
             output_accumulator_f32.shrink_to_fit();
+        }
+
+        // === TRAZA DE CROSSFADE: log de inicio de iteración ===
+        if crossfade_active {
+            let now = std::time::Instant::now();
+            let ms_since_start = crossfade_start_time
+                .map(|t| now.duration_since(t).as_millis())
+                .unwrap_or(0);
+            let ms_since_last = last_trace_time
+                .map(|t| now.duration_since(t).as_millis())
+                .unwrap_or(0);
+            last_trace_time = Some(now);
+            trace_iteration += 1;
+
+            let ringbuf_occupied = engine
+                .buffer_producer
+                .lock()
+                .as_ref()
+                .map(|p| p.occupied_len())
+                .unwrap_or(0);
+
+            tracing::debug!(
+                "[XFADE_TRACE] iter={} t={}ms Δ={}ms | ringbuf={}/{} | tail_buf={}/{} | preloaded_pending={}",
+                trace_iteration,
+                ms_since_start,
+                ms_since_last,
+                ringbuf_occupied,
+                engine
+                    .buffer_producer
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.capacity().get())
+                    .unwrap_or(0),
+                tail_buffer.len(),
+                tail_buffer_cap,
+                preloaded_pending.len()
+            );
+        } else {
+            // Reset trace state when crossfade ends
+            if crossfade_start_time.is_some() {
+                tracing::debug!("[XFADE_TRACE] Crossfade ended at iter={}", trace_iteration);
+                crossfade_start_time = None;
+                last_trace_time = None;
+                trace_iteration = 0;
+            }
         }
 
         // Check for commands
@@ -1248,19 +1427,20 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                                 // Limpiar la cola (tail) de una mezcla en curso: la
                                 // pista cargada manualmente no debe heredarla.
-                                tail_format = None;
-                                tail_decoder = None;
-                                tail_track_id = 0;
-                                tail_channel_map = ChannelMap::default();
-                                tail_resampler = None;
-                                tail_resampler_rates = None;
-                                tail_resampler_in_buf.clear();
-                                tail_audio_buf = None;
-                                tail_input_pool.clear();
-                                tail_output_pool.clear();
-                                tail_buffer.clear();
-                                tail_buffer.shrink_to_fit();
-                                tail_buffer_cap = 0;
+                                clear_tail_state(
+                                    &mut tail_format,
+                                    &mut tail_decoder,
+                                    &mut tail_track_id,
+                                    &mut tail_channel_map,
+                                    &mut tail_resampler,
+                                    &mut tail_resampler_rates,
+                                    &mut tail_resampler_in_buf,
+                                    &mut tail_audio_buf,
+                                    &mut tail_input_pool,
+                                    &mut tail_output_pool,
+                                    &mut tail_buffer,
+                                    &mut tail_buffer_cap,
+                                );
 
                                 let mut s = state.read();
                                 // Fade-in on EVERY track start when enabled (D-09).
@@ -1447,7 +1627,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             crossfade_duration_sec = ms / 1000.0;
                             crossfade_elapsed_sec = 0.0;
                             crossfade_active = true;
-                            tracing::info!("Crossfade manual iniciado: {} ms", ms);
+                            // Inicializar traza de diagnóstico
+                            crossfade_trace_enabled = true;
+                            crossfade_start_time = Some(std::time::Instant::now());
+                            last_trace_time = crossfade_start_time;
+                            trace_iteration = 0;
+                            tracing::debug!("[XFADE_TRACE] Crossfade manual iniciado: {} ms", ms);
                         }
                     } else if ms > 0.0 && preload_pending.is_some() {
                         // La pre-carga está EN COLA (la GUI la pidió justo antes al
@@ -1547,8 +1732,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             crossfade_duration_sec = ms / 1000.0;
                             crossfade_elapsed_sec = 0.0;
                             crossfade_active = true;
-                            tracing::info!(
-                                "Crossfade manual iniciado: {} ms (pre-carga abierta)",
+                            // Inicializar traza de diagnóstico
+                            crossfade_trace_enabled = true;
+                            crossfade_start_time = Some(std::time::Instant::now());
+                            last_trace_time = crossfade_start_time;
+                            trace_iteration = 0;
+                            tracing::debug!(
+                                "[XFADE_TRACE] Crossfade manual iniciado: {} ms (pre-carga abierta)",
                                 ms
                             );
                         } else {
@@ -1696,6 +1886,27 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         };
 
         if should_wait {
+            // === TRAZA DE CROSSFADE: rama should_wait ===
+            if crossfade_trace_enabled {
+                let ringbuf_occ = engine
+                    .buffer_producer
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.occupied_len())
+                    .unwrap_or(0);
+                tracing::debug!(
+                    "[XFADE_TRACE]   → should_wait (ringbuf {}/{} >= target {})",
+                    ringbuf_occ,
+                    engine
+                        .buffer_producer
+                        .lock()
+                        .as_ref()
+                        .map(|p| p.capacity().get())
+                        .unwrap_or(0),
+                    target_latency_samples
+                );
+            }
+
             // Tiempo de espera (el ringbuf está al target de latencia): aprovechamos
             // este momento —que es donde el decoder pasa la mayor parte del tiempo—
             // para decodificar la pista pre-cargada en segundo plano. Sin esto, el
@@ -1704,6 +1915,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // Primero se abre la pista pendiente (diferido del handler de comandos
             // para no bloquear la reproducción) y luego se decodifica un lote.
             if preload_pending.is_some() && preload_format.is_none() {
+                let t_open = std::time::Instant::now();
                 open_preload_track(
                     &mut preload_pending,
                     &mut preload_format,
@@ -1719,6 +1931,21 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut predecode_cap_frames,
                     &state,
                 );
+                let open_ms = t_open.elapsed().as_millis();
+                if open_ms > 10 {
+                    let rb_after = engine
+                        .buffer_producer
+                        .lock()
+                        .as_ref()
+                        .map(|p| p.occupied_len())
+                        .unwrap_or(0);
+                    tracing::warn!(
+                        "[AUDIO_HEALTH] open_preload_track tomó {} ms — ringbuf después={} ({:.1}ms)",
+                        open_ms,
+                        rb_after,
+                        rb_after as f64 / out_rate as f64 / out_channels as f64 * 1000.0
+                    );
+                }
             }
             if preload_format.is_some() {
                 let _ = preload_decode_batch(
@@ -1736,6 +1963,59 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     predecode_cap_frames,
                     out_rate,
                     out_channels,
+                );
+            }
+            // Durante la mezcla, mantener la cola de la canción anterior LLENA
+            // (~200ms): el decoder pasa la mayor parte del tiempo en esta rama
+            // (ringbuf al target de latencia), así que es aquí donde la cola se
+            // recarga mientras la primaria consume su buffer en la mezcla. Sin
+            // esta recarga la cola se agota y el crossfade se corta (sonido
+            // entrecortado, peor a 384 kHz; inaudible en el salto manual).
+            let tail_exhausted = if crossfade_active && tail_decoder.is_some() {
+                let before = tail_buffer.len();
+                let result = tail_decode_batch(
+                    &mut tail_format,
+                    &mut tail_decoder,
+                    &mut tail_track_id,
+                    &mut tail_audio_buf,
+                    &mut tail_resampler,
+                    &mut tail_resampler_rates,
+                    &mut tail_resampler_in_buf,
+                    &mut tail_input_pool,
+                    &mut tail_output_pool,
+                    &mut tail_channel_map,
+                    &mut tail_buffer,
+                    tail_buffer_cap,
+                    out_rate,
+                    out_channels,
+                );
+                if crossfade_trace_enabled {
+                    tracing::debug!(
+                        "[XFADE_TRACE]   tail_decode_batch (should_wait): {} → {} samples (result={})",
+                        before,
+                        tail_buffer.len(),
+                        result
+                    );
+                }
+                !result
+            } else {
+                false
+            };
+            if tail_exhausted {
+                // La canción anterior llegó a EOF: se libera la cadena de
+                // decodificación pero se PRESERVA el tail_buffer para que el
+                // audio ya decodificado se mezcle hasta agotarse naturalmente.
+                clear_tail_decoder_chain(
+                    &mut tail_format,
+                    &mut tail_decoder,
+                    &mut tail_track_id,
+                    &mut tail_channel_map,
+                    &mut tail_resampler,
+                    &mut tail_resampler_rates,
+                    &mut tail_resampler_in_buf,
+                    &mut tail_audio_buf,
+                    &mut tail_input_pool,
+                    &mut tail_output_pool,
                 );
             }
             let sleep_ms = if crate::utils::is_low_resource() {
@@ -1768,11 +2048,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 let mut s = state.write();
                 s.current_pos_sec += batch_secs;
             }
-            if preloaded_pending.is_empty() {
-                // Pre-carga totalmente consumida: liberar la capacidad retenida
-                // (decenas de MB) para devolver la RAM al asignador.
-                preloaded_pending.shrink_to_fit();
-            }
+            // NOTA: preloaded_pending.shrink_to_fit() eliminado — causaba un corte
+            // audible al desalocar decenas de MB justo en la transición DRAIN→DECODE.
+            // El buffer se libera naturalmente en la siguiente pre-carga o en Load.
         }
 
         // 2. Llenar buffer si hay espacio
@@ -1786,6 +2064,22 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 false
             }
         };
+
+        // === TRAZA DE CROSSFADE: decisión de rama ===
+        if crossfade_trace_enabled {
+            tracing::debug!(
+                "[XFADE_TRACE]   can_push={} process_preloaded={} → branch: {}",
+                can_push,
+                process_preloaded,
+                if !can_push && !process_preloaded {
+                    "IDLE"
+                } else if !process_preloaded {
+                    "DECODE"
+                } else {
+                    "DRAIN"
+                }
+            );
+        }
 
         // Ruta rápida para decoder custom (DI/mock): leer del trait y pushear directamente
         if can_push && !process_preloaded && engine.custom_decoder.lock().is_some() {
@@ -1875,9 +2169,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if !predecode_buffer.is_empty() {
                                 preloaded_pending.extend(predecode_buffer.drain(..));
                             }
-                            // Liberar la capacidad retenida del predecode (puede ser
-                            // de decenas de MB) — el siguiente pre-carga reasignará.
-                            predecode_buffer.shrink_to_fit();
+                            // NOTA: predecode_buffer.shrink_to_fit() eliminado — causaba
+                            // un corte audible al desalocar hasta 64MB durante la transición
+                            // DRAIN→DECODE, bloqueando el decoder thread (~7s después del
+                            // inicio de la nueva canción). El buffer se reutiliza en la
+                            // siguiente pre-carga y se libera cuando ya no se necesita.
 
                             {
                                 let mut s = state.write();
@@ -2078,6 +2374,43 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                     }
 
+                    // Durante la mezcla: mantener la cola de la canción anterior LLENA
+                    // incluso en la ruta de decode normal (can_push && !process_preloaded).
+                    // Esto asegura que la cola se rellene en TODAS las ramas del decoder,
+                    // no solo en should_wait e idle.
+                    if crossfade_active && tail_decoder.is_some() {
+                        let tail_eof = !tail_decode_batch(
+                            &mut tail_format,
+                            &mut tail_decoder,
+                            &mut tail_track_id,
+                            &mut tail_audio_buf,
+                            &mut tail_resampler,
+                            &mut tail_resampler_rates,
+                            &mut tail_resampler_in_buf,
+                            &mut tail_input_pool,
+                            &mut tail_output_pool,
+                            &mut tail_channel_map,
+                            &mut tail_buffer,
+                            tail_buffer_cap,
+                            out_rate,
+                            out_channels as usize,
+                        );
+                        if tail_eof {
+                            clear_tail_decoder_chain(
+                                &mut tail_format,
+                                &mut tail_decoder,
+                                &mut tail_track_id,
+                                &mut tail_channel_map,
+                                &mut tail_resampler,
+                                &mut tail_resampler_rates,
+                                &mut tail_resampler_in_buf,
+                                &mut tail_audio_buf,
+                                &mut tail_input_pool,
+                                &mut tail_output_pool,
+                            );
+                        }
+                    }
+
                     // Ya no limpiamos aquí, se limpia al inicio del loop
 
                     let downmix_conf = {
@@ -2224,10 +2557,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     out_channels as usize,
                 );
             }
-            // Durante la mezcla: decodificar un lote de la COLA de la canción anterior
-            // (capa de la mezcla, ~200ms de buffer) para no interrumpir la primaria.
-            if crossfade_active && tail_decoder.is_some() {
-                if !tail_decode_batch(
+            // Durante la mezcla: recargar la COLA de la canción anterior (capa de la
+            // mezcla) mientras la primaria no necesita el ringbuf — cada llamada
+            // rellena el buffer completo (~200ms) para no interrumpir la mezcla.
+            let tail_exhausted = if crossfade_active && tail_decoder.is_some() {
+                !tail_decode_batch(
                     &mut tail_format,
                     &mut tail_decoder,
                     &mut tail_track_id,
@@ -2242,23 +2576,38 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     tail_buffer_cap,
                     out_rate,
                     out_channels as usize,
-                ) {
-                    // La canción anterior terminó antes de la ventana de mezcla:
-                    // se libera su estado y la primaria continúa sola.
-                    tail_format = None;
-                    tail_decoder = None;
-                    tail_track_id = 0;
-                    tail_channel_map = ChannelMap::default();
-                    tail_resampler = None;
-                    tail_resampler_rates = None;
-                    tail_resampler_in_buf.clear();
-                    tail_audio_buf = None;
-                    tail_input_pool.clear();
-                    tail_output_pool.clear();
-                    tail_buffer.clear();
-                    tail_buffer.shrink_to_fit();
-                    tail_buffer_cap = 0;
-                }
+                )
+            } else {
+                false
+            };
+            if tail_exhausted {
+                // La canción anterior llegó a EOF: se libera la cadena de
+                // decodificación pero se PRESERVA el tail_buffer para que el
+                // audio ya decodificado se mezcle hasta agotarse naturalmente.
+                clear_tail_decoder_chain(
+                    &mut tail_format,
+                    &mut tail_decoder,
+                    &mut tail_track_id,
+                    &mut tail_channel_map,
+                    &mut tail_resampler,
+                    &mut tail_resampler_rates,
+                    &mut tail_resampler_in_buf,
+                    &mut tail_audio_buf,
+                    &mut tail_input_pool,
+                    &mut tail_output_pool,
+                );
+            }
+            if crossfade_trace_enabled {
+                tracing::debug!(
+                    "[XFADE_TRACE]   → IDLE branch: tail_buf={}/{} sleep={}ms",
+                    tail_buffer.len(),
+                    tail_buffer_cap,
+                    if crate::utils::is_low_resource() {
+                        5
+                    } else {
+                        2
+                    }
+                );
             }
             // Si el buffer está suficientemente lleno, dormimos poco para reaccionar rápido
             let idle_ms = if crate::utils::is_low_resource() {
@@ -2354,7 +2703,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     crossfade_duration_sec = auto_ms / 1000.0;
                     crossfade_elapsed_sec = 0.0;
                     crossfade_active = true;
-                    tracing::info!("Crossfade automático iniciado: {} ms", auto_ms);
+                    // Inicializar traza de diagnóstico
+                    crossfade_trace_enabled = true;
+                    crossfade_start_time = Some(std::time::Instant::now());
+                    last_trace_time = crossfade_start_time;
+                    trace_iteration = 0;
+                    tracing::debug!(
+                        "[XFADE_TRACE] Crossfade automático iniciado: {} ms",
+                        auto_ms
+                    );
                     continue; // Descartar el lote de la canción que sale.
                 }
             }
@@ -2365,41 +2722,140 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // izquierda son independientes). La cola se decodifica en flujo en el
             // tiempo idle y solo se añade lo que haya en su buffer (~200ms); si la
             // canción anterior terminó antes, la mezcla se acorta naturalmente.
-            // Escala adaptativa de pico: solo si un frame supera 1.0 se normaliza
-            // (evita recorte sin bajar el nivel de las canciones durante la mezcla).
+            //
+            // Cuando los desvanecimientos de volumen están activos durante la mezcla:
+            // - fade-in se aplica SOLO a la primaria (canción nueva) ANTES de mezclar
+            //   la cola, para que la nueva canción suba de volumen desde 0.
+            // - fade-out se aplica SOLO a la cola (canción anterior) DURANTE la mezcla,
+            //   para que la canción vieja baje de volumen suavemente.
+            // - No se aplica el fade normal al output final (ya se aplicó a cada canción
+            //   por separado).
+
+            // Pre-calculamos fade_coeff ANTES de la mezcla para poder aplicarlo
+            // a la primaria y a la cola por separado.
+            let fade_coeff = match fade_state {
+                FadeState::Idle => 1.0,
+                FadeState::FadingIn { coeff, .. } => {
+                    if coeff >= 1.0 {
+                        1.0
+                    } else {
+                        (std::f64::consts::PI / 2.0 * coeff).sin().powi(2)
+                    }
+                }
+                FadeState::FadingOut { coeff, .. } => {
+                    if coeff <= 0.0 {
+                        0.0
+                    } else {
+                        (std::f64::consts::PI / 2.0 * coeff).sin().powi(2)
+                    }
+                }
+            };
+
             if crossfade_active {
                 let out_ch = out_channels as usize;
                 if out_ch > 0 {
                     let batch_dt_cf =
                         output_accumulator.len() as f64 / out_ch as f64 / out_rate as f64;
+
+                    // 1) Aplicar fade-in a la PRIMARIA (canción nueva) antes de mezclar
+                    //    la cola, para que solo la nueva canción suba de volumen desde 0.
+                    //    El fade-out (si está activo) se aplica a la cola en el paso 2.
+                    if matches!(fade_state, FadeState::FadingIn { .. }) {
+                        for sample in output_accumulator.iter_mut() {
+                            *sample *= fade_coeff;
+                        }
+                    }
+
+                    // 2) Mezclar la cola sobre la primaria. Si el fade-out está activo
+                    //    (la canción anterior está terminando), se aplica el fade-out
+                    //    a cada sample de la cola para que baje de volumen suavemente.
+                    let tail_before_mix = tail_buffer.len();
                     if !tail_buffer.is_empty() {
+                        let fade_tail = if matches!(fade_state, FadeState::FadingOut { .. }) {
+                            fade_coeff
+                        } else {
+                            1.0
+                        };
                         for frame in output_accumulator.chunks_mut(out_ch) {
                             if tail_buffer.is_empty() {
                                 break;
                             }
-                            mix_tail_into_frame(frame, &mut tail_buffer);
+                            mix_tail_into_frame_faded(frame, &mut tail_buffer, fade_tail);
                         }
                     }
+                    let tail_after_mix = tail_buffer.len();
+                    let tail_consumed = tail_before_mix.saturating_sub(tail_after_mix);
+
+                    if crossfade_trace_enabled {
+                        let peak = output_accumulator
+                            .iter()
+                            .map(|v| v.abs())
+                            .fold(0.0_f64, f64::max);
+                        tracing::debug!(
+                            "[XFADE_TRACE]   MIX: output_acc={} samples ({:.1}ms) | tail {}→{} (consumed {}) | peak={:.3} | elapsed={:.1}/{:.1}s",
+                            output_accumulator.len(),
+                            batch_dt_cf * 1000.0,
+                            tail_before_mix,
+                            tail_after_mix,
+                            tail_consumed,
+                            peak,
+                            crossfade_elapsed_sec,
+                            crossfade_duration_sec
+                        );
+                    }
+
                     crossfade_elapsed_sec += batch_dt_cf;
 
-                    if crossfade_elapsed_sec >= crossfade_duration_sec {
-                        // Mezcla completada: la cola de la canción anterior ya no se
-                        // necesita (se libera su decoder y su buffer) y la primaria
-                        // continúa sola por la cadena normal.
+                    // Log del nivel del ringbuf después de la mezcla.
+                    if crossfade_trace_enabled {
+                        let rb_occ = engine
+                            .buffer_producer
+                            .lock()
+                            .as_ref()
+                            .map(|p| p.occupied_len())
+                            .unwrap_or(0);
+                        tracing::debug!(
+                            "[XFADE_TRACE]   POST_MIX: ringbuf={}/{} ({:.1}ms)",
+                            rb_occ,
+                            engine
+                                .buffer_producer
+                                .lock()
+                                .as_ref()
+                                .map(|p| p.capacity().get())
+                                .unwrap_or(0),
+                            rb_occ as f64 / out_rate as f64 / out_ch as f64 * 1000.0
+                        );
+                    }
+
+                    // La mezcla termina por ventana (tiempo) o naturalmente
+                    // cuando la canción anterior agotó su decoder Y el buffer
+                    // ya se mezcló completo (drenado natural, sin corte abrupto).
+                    let window_done = crossfade_elapsed_sec >= crossfade_duration_sec;
+                    let tail_naturally_done = tail_decoder.is_none() && tail_buffer.is_empty();
+                    if window_done || tail_naturally_done {
+                        if crossfade_trace_enabled {
+                            tracing::debug!(
+                                "[XFADE_TRACE]   CROSSFADE ENDED: window_done={}, tail_naturally_done={}",
+                                window_done,
+                                tail_naturally_done
+                            );
+                        }
                         crossfade_active = false;
-                        tail_format = None;
-                        tail_decoder = None;
-                        tail_track_id = 0;
-                        tail_channel_map = ChannelMap::default();
-                        tail_resampler = None;
-                        tail_resampler_rates = None;
-                        tail_resampler_in_buf.clear();
-                        tail_audio_buf = None;
-                        tail_input_pool.clear();
-                        tail_output_pool.clear();
-                        tail_buffer.clear();
-                        tail_buffer.shrink_to_fit();
-                        tail_buffer_cap = 0;
+                        crossfade_trace_enabled = false;
+                        clear_tail_state(
+                            &mut tail_format,
+                            &mut tail_decoder,
+                            &mut tail_track_id,
+                            &mut tail_channel_map,
+                            &mut tail_resampler,
+                            &mut tail_resampler_rates,
+                            &mut tail_resampler_in_buf,
+                            &mut tail_audio_buf,
+                            &mut tail_input_pool,
+                            &mut tail_output_pool,
+                            &mut tail_buffer,
+                            &mut tail_buffer_cap,
+                        );
                     }
                 }
             }
@@ -2687,7 +3143,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 let out_ch = out_channels as usize;
                 // combined = applied_vol (smoothed or immediate user volume)
                 // × fade_coeff (equal-power musical fade, 1.0 when Idle).
-                let combined = applied_vol * fade_coeff;
+                // Durante la mezcla cruzada, el fade ya se aplicó por separado
+                // a la primaria (fade-in) y a la cola (fade-out) en el bloque
+                // de mezcla anterior, así que no se aplica de nuevo aquí.
+                let combined = if crossfade_active {
+                    applied_vol
+                } else {
+                    applied_vol * fade_coeff
+                };
 
                 // Fix B1 (D-44): Spin-wait for DSP lock up to 5ms before falling back.
                 // Prevents DSP dropout during brief GUI lock contention.
@@ -2781,6 +3244,29 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         pos += pushed;
                     }
                 }
+                // Diagnóstico: detectar gaps en el push (causa de cortes en la canción).
+                // Solo se loggea cuando el ringbuf baja del umbral de seguridad (50ms).
+                let rb_occ = engine
+                    .buffer_producer
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.occupied_len())
+                    .unwrap_or(0);
+                let rb_cap = engine
+                    .buffer_producer
+                    .lock()
+                    .as_ref()
+                    .map(|p| p.capacity().get())
+                    .unwrap_or(0);
+                let threshold = (out_rate as usize * out_channels * 50) / 1000;
+                if rb_occ < threshold && rb_cap > 0 {
+                    tracing::warn!(
+                        "[AUDIO_HEALTH] ringbuf bajo: {}/{} ({:.1}ms < 50ms umbral) — posible corte detectado",
+                        rb_occ,
+                        rb_cap,
+                        rb_occ as f64 / out_rate as f64 / out_channels as f64 * 1000.0
+                    );
+                }
             }
         }
     }
@@ -2790,8 +3276,77 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 mod decoder_tests {
     use super::{
         crossfade_auto_due, mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for,
+        tail_decode_batch,
     };
+    use crate::audio::engine::{AudioEngine, ChannelMap};
     use std::collections::VecDeque;
+    use symphonia::core::codecs::{Decoder, DecoderOptions};
+    use symphonia::core::formats::{FormatOptions, FormatReader};
+    use symphonia::core::io::MediaSourceStream;
+    use symphonia::core::meta::{Limit, MetadataOptions};
+    use symphonia::core::probe::Hint;
+
+    /// Escribe un WAV PCM 16-bit (sine de 440 Hz) para las pruebas de cola.
+    fn write_pcm_wav(path: &str, rate: u32, channels: u16, seconds: f64) {
+        let frames = (rate as f64 * seconds) as u32;
+        let data_len = frames * channels as u32 * 2;
+        let mut wav: Vec<u8> = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&rate.to_le_bytes());
+        wav.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
+        wav.extend_from_slice(&(channels * 2).to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        for i in 0..frames {
+            let sample = ((2.0 * std::f64::consts::PI * 440.0 * i as f64 / rate as f64).sin()
+                * 0.5
+                * i16::MAX as f64) as i16;
+            for _ in 0..channels {
+                wav.extend_from_slice(&sample.to_le_bytes());
+            }
+        }
+        std::fs::write(path, wav).unwrap();
+    }
+
+    /// Abre un WAV con symphonia y devuelve la cadena completa (formato,
+    /// decoder, id de pista y mapa de canales) lista para `tail_decode_batch`.
+    fn open_wav_chain(
+        path: &str,
+    ) -> (
+        Option<Box<dyn FormatReader>>,
+        Option<Box<dyn Decoder>>,
+        u32,
+        ChannelMap,
+    ) {
+        let source = super::open_audio_source(path).unwrap();
+        let mss = MediaSourceStream::new(source, Default::default());
+        let hint = Hint::new();
+        let metadata_opts = MetadataOptions {
+            limit_metadata_bytes: Limit::Maximum(0),
+            limit_visual_bytes: Limit::Maximum(0),
+        };
+        let probed = symphonia::default::get_probe()
+            .format(&hint, mss, &FormatOptions::default(), &metadata_opts)
+            .unwrap();
+        let track = probed.format.default_track().unwrap();
+        let id = track.id;
+        let decoder = symphonia::default::get_codecs()
+            .make(&track.codec_params, &DecoderOptions::default())
+            .unwrap();
+        let ch_map = if let Some(channels) = track.codec_params.channels {
+            AudioEngine::get_channel_map(channels)
+        } else {
+            ChannelMap::default()
+        };
+        (Some(probed.format), Some(decoder), id, ch_map)
+    }
 
     #[test]
     fn crossfade_auto_due_fires_in_time() {
@@ -2863,13 +3418,24 @@ mod decoder_tests {
 
     #[test]
     fn mix_tail_scales_peak_only_when_needed() {
-        // Suma que excede 1.0: se normaliza el pico del frame (evita recorte).
+        // Suma que excede 1.0: la mezcla es puramente aditiva (sin escalado).
+        // El escalado de pico se eliminó para no reducir el volumen de la
+        // primaria — el DSP (limitador) y el clamp f32 se encargan.
         let mut frame = [0.9, 0.9];
         let mut tail = VecDeque::from([0.8, 0.5]);
         mix_tail_into_frame(&mut frame, &mut tail);
+        assert!(
+            (frame[0] - 1.7).abs() < 1e-9,
+            "mezcla aditiva: {}",
+            frame[0]
+        );
+        assert!(
+            (frame[1] - 1.4).abs() < 1e-9,
+            "mezcla aditiva: {}",
+            frame[1]
+        );
         let peak = frame.iter().map(|v| v.abs()).fold(0.0_f64, f64::max);
-        assert!((peak - 1.0).abs() < 1e-9, "pico normalizado a 1.0: {peak}");
-        assert!((frame[0] + frame[1]) > 1.0);
+        assert!(peak > 1.0, "el pico puede exceder 1.0: {peak}");
     }
 
     #[test]
@@ -2882,5 +3448,182 @@ mod decoder_tests {
         assert!((frame[0] - 0.4).abs() < 1e-9);
         assert!((frame[1] - 0.4).abs() < 1e-9);
         assert!((frame[2] - 0.5).abs() < 1e-9);
+    }
+
+    /// Monta la cadena de cola con un WAV temporal y devuelve los parámetros
+    /// junto con el buffer de cola, listos para `tail_decode_batch`.
+    fn setup_tail_chain(
+        path: &str,
+    ) -> (
+        Option<Box<dyn FormatReader>>,
+        Option<Box<dyn Decoder>>,
+        u32,
+        Option<symphonia::core::audio::AudioBuffer<f64>>,
+        Option<rubato::Async<f64>>,
+        Option<(u32, u32, usize)>,
+        Vec<VecDeque<f64>>,
+        Vec<Vec<f64>>,
+        Vec<Vec<f64>>,
+        ChannelMap,
+        VecDeque<f64>,
+    ) {
+        let (fmt, dec, track_id, ch_map) = open_wav_chain(path);
+        (
+            fmt,
+            dec,
+            track_id,
+            None,
+            None,
+            None,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+            ch_map,
+            VecDeque::new(),
+        )
+    }
+
+    #[test]
+    fn tail_decode_batch_fills_buffer_in_single_call() {
+        // Un WAV de 2s produce paquetes de ~1152 frames (~26ms): UNA llamada a
+        // tail_decode_batch debe llenar la capacidad completa (~200ms). Antes
+        // solo se decodificaba un paquete por llamada → la cola se agotaba en
+        // 2-4 iteraciones del decoder (sonido entrecortado, peor a 384 kHz).
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_tail_fill_{}.wav", std::process::id()));
+        write_pcm_wav(path.to_str().unwrap(), 44100, 2, 2.0);
+        let (
+            mut fmt,
+            mut dec,
+            mut track_id,
+            mut audio_buf,
+            mut resampler,
+            mut resampler_rates,
+            mut resampler_in_buf,
+            mut input_pool,
+            mut output_pool,
+            mut ch_map,
+            mut tail,
+        ) = setup_tail_chain(path.to_str().unwrap());
+        let cap = tail_buffer_cap_for(44100, 2);
+
+        let ok = tail_decode_batch(
+            &mut fmt,
+            &mut dec,
+            &mut track_id,
+            &mut audio_buf,
+            &mut resampler,
+            &mut resampler_rates,
+            &mut resampler_in_buf,
+            &mut input_pool,
+            &mut output_pool,
+            &mut ch_map,
+            &mut tail,
+            cap,
+            44100,
+            2,
+        );
+
+        assert!(ok, "quedan ~1.8s de audio por decodificar");
+        assert!(
+            tail.len() >= cap,
+            "una sola llamada debe llenar al menos la capacidad (~200ms): got {}",
+            tail.len()
+        );
+
+        // Consumo simulado de la mezcla (mitad del buffer) y recarga: la
+        // siguiente llamada rellena SOLO el déficit hasta la capacidad.
+        tail.drain(..(cap / 2));
+        let ok2 = tail_decode_batch(
+            &mut fmt,
+            &mut dec,
+            &mut track_id,
+            &mut audio_buf,
+            &mut resampler,
+            &mut resampler_rates,
+            &mut resampler_in_buf,
+            &mut input_pool,
+            &mut output_pool,
+            &mut ch_map,
+            &mut tail,
+            cap,
+            44100,
+            2,
+        );
+        assert!(ok2);
+        assert!(
+            tail.len() >= cap,
+            "recarga al menos hasta la capacidad tras el consumo: got {}",
+            tail.len()
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn tail_decode_batch_stops_at_eof_before_cap() {
+        // WAV más corto que la capacidad (~200ms): el EOF llega antes de llenar
+        // el buffer → la función reporta false y la mezcla se acorta
+        // naturalmente (la primaria continúa sola con lo ya mezclado).
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_tail_eof_{}.wav", std::process::id()));
+        write_pcm_wav(path.to_str().unwrap(), 44100, 2, 0.05); // 50ms
+        let (
+            mut fmt,
+            mut dec,
+            mut track_id,
+            mut audio_buf,
+            mut resampler,
+            mut resampler_rates,
+            mut resampler_in_buf,
+            mut input_pool,
+            mut output_pool,
+            mut ch_map,
+            mut tail,
+        ) = setup_tail_chain(path.to_str().unwrap());
+        let cap = tail_buffer_cap_for(44100, 2);
+
+        let ok = tail_decode_batch(
+            &mut fmt,
+            &mut dec,
+            &mut track_id,
+            &mut audio_buf,
+            &mut resampler,
+            &mut resampler_rates,
+            &mut resampler_in_buf,
+            &mut input_pool,
+            &mut output_pool,
+            &mut ch_map,
+            &mut tail,
+            cap,
+            44100,
+            2,
+        );
+
+        assert!(!ok, "el EOF de la canción anterior acorta la mezcla");
+        let expected = (0.05 * 44100.0) as usize * 2;
+        assert_eq!(tail.len(), expected);
+        assert!(tail.len() < cap);
+
+        // El EOF persiste: una llamada posterior también lo reporta.
+        let ok2 = tail_decode_batch(
+            &mut fmt,
+            &mut dec,
+            &mut track_id,
+            &mut audio_buf,
+            &mut resampler,
+            &mut resampler_rates,
+            &mut resampler_in_buf,
+            &mut input_pool,
+            &mut output_pool,
+            &mut ch_map,
+            &mut tail,
+            cap,
+            44100,
+            2,
+        );
+        assert!(!ok2);
+
+        let _ = std::fs::remove_file(&path);
     }
 }

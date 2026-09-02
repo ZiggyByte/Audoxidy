@@ -361,6 +361,24 @@ pub enum AppFocus {
     AudioCenter,
 }
 
+/// Ventana de seguridad (segundos) tras el fin de la pre-carga durante la cual
+/// el GC global no corre: la transición de canciones aún está consumiendo el
+/// audio pre-cargado (drenado + mezcla cruzada), y una purga la interrumpiría.
+const PRELOAD_GC_SAFETY_SECS: u64 = 20;
+
+/// Indica si el GC global debe quedar bloqueado por la pre-carga: activa o
+/// dentro de la ventana de seguridad posterior a su fin.
+fn gc_blocked_by_preload(
+    now_secs: u64,
+    preload_active: bool,
+    preload_finished_at: Option<u64>,
+) -> bool {
+    preload_active
+        || preload_finished_at
+            .map(|t| now_secs.saturating_sub(t) < PRELOAD_GC_SAFETY_SECS)
+            .unwrap_or(false)
+}
+
 pub struct AudoxidyApp {
     audio_manager: Arc<AudioManager>,
     database: Arc<Mutex<Database>>,
@@ -1254,7 +1272,7 @@ impl AudoxidyApp {
                     self.audio_manager.clear_eof();
                     self.playlist_manager.play_next(&self.audio_manager);
                     // Nueva pista activa: restablecer la pre-carga para la siguiente y
-                    // marcar el fin de la pre-carga (el GC se reactiva 5s después).
+                    // marcar el fin de la pre-carga (el GC se reactiva 20s después).
                     self.player_ui_state.preloaded_next_path = None;
                     self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1319,20 +1337,21 @@ impl AudoxidyApp {
                     .load(std::sync::atomic::Ordering::Relaxed);
 
                 // Seguro de pre-carga: el GC no corre mientras la pre-carga está activa
-                // ni en los 5s posteriores a su fin (evita interrumpir la transición
-                // de canciones). Es el mismo patrón que el seguro de escaneo.
+                // ni en los 20s posteriores a su fin (evita interrumpir la transición
+                // de canciones y la mezcla cruzada). Es el mismo patrón que el seguro
+                // de escaneo.
                 let now_secs = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
                     .unwrap_or(0);
                 let preload_active = self.player_ui_state.preloaded_next_path.is_some();
-                let preload_finished_recently = self
-                    .player_ui_state
-                    .preload_finished_at
-                    .map(|t| now_secs.saturating_sub(t) < 5)
-                    .unwrap_or(false);
+                let preload_finished_recently = gc_blocked_by_preload(
+                    now_secs,
+                    preload_active,
+                    self.player_ui_state.preload_finished_at,
+                );
 
-                if !is_scanning_now && !preload_active && !preload_finished_recently {
+                if !is_scanning_now && !preload_finished_recently {
                     let purge_timer =
                         crate::utils::memory_manager::MemoryManager::should_run_global_purge(
                             2,
@@ -1574,7 +1593,7 @@ impl AudoxidyApp {
 
                 self.playlist_manager.play_next(&self.audio_manager);
                 // Nueva pista activa: restablecer la pre-carga para la siguiente y
-                // marcar el fin de la pre-carga (el GC se reactiva 5s después).
+                // marcar el fin de la pre-carga (el GC se reactiva 20s después).
                 self.player_ui_state.preloaded_next_path = None;
                 self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -5899,5 +5918,38 @@ impl AudoxidyApp {
             },
             Message::LibraryFilteredLoaded,
         )
+    }
+}
+
+#[cfg(test)]
+mod app_tests {
+    use super::{PRELOAD_GC_SAFETY_SECS, gc_blocked_by_preload};
+
+    #[test]
+    fn gc_blocked_while_preload_active() {
+        // La pre-carga está activa: el GC no corre sin importar la marca de fin.
+        assert!(gc_blocked_by_preload(1000, true, None));
+        assert!(gc_blocked_by_preload(1000, true, Some(995)));
+    }
+
+    #[test]
+    fn gc_blocked_within_safety_window_after_preload() {
+        // Dentro de la ventana de 20s posterior al fin de la pre-carga: bloqueado.
+        assert!(gc_blocked_by_preload(1019, false, Some(1000)));
+        // Justo en el límite (t = 20s): la ventana terminó → el GC puede correr.
+        assert!(!gc_blocked_by_preload(1020, false, Some(1000)));
+        assert!(!gc_blocked_by_preload(1025, false, Some(1000)));
+    }
+
+    #[test]
+    fn gc_blocked_by_preload_window_is_20_secs() {
+        // El seguro de pre-carga debe ser de 20s (20000ms) tras la mezcla.
+        assert_eq!(PRELOAD_GC_SAFETY_SECS, 20);
+    }
+
+    #[test]
+    fn gc_runs_when_no_preload_state_at_all() {
+        // Sin pre-carga activa ni marca de fin: el GC corre normalmente.
+        assert!(!gc_blocked_by_preload(1000, false, None));
     }
 }

@@ -2051,6 +2051,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // NOTA: preloaded_pending.shrink_to_fit() eliminado — causaba un corte
             // audible al desalocar decenas de MB justo en la transición DRAIN→DECODE.
             // El buffer se libera naturalmente en la siguiente pre-carga o en Load.
+
         }
 
         // 2. Llenar buffer si hay espacio
@@ -3244,29 +3245,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         pos += pushed;
                     }
                 }
-                // Diagnóstico: detectar gaps en el push (causa de cortes en la canción).
-                // Solo se loggea cuando el ringbuf baja del umbral de seguridad (50ms).
-                let rb_occ = engine
-                    .buffer_producer
-                    .lock()
-                    .as_ref()
-                    .map(|p| p.occupied_len())
-                    .unwrap_or(0);
-                let rb_cap = engine
-                    .buffer_producer
-                    .lock()
-                    .as_ref()
-                    .map(|p| p.capacity().get())
-                    .unwrap_or(0);
-                let threshold = (out_rate as usize * out_channels * 50) / 1000;
-                if rb_occ < threshold && rb_cap > 0 {
-                    tracing::warn!(
-                        "[AUDIO_HEALTH] ringbuf bajo: {}/{} ({:.1}ms < 50ms umbral) — posible corte detectado",
-                        rb_occ,
-                        rb_cap,
-                        rb_occ as f64 / out_rate as f64 / out_channels as f64 * 1000.0
-                    );
-                }
+
             }
         }
     }

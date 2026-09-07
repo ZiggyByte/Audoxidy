@@ -2633,13 +2633,13 @@ fn view_audio_config<'a>(
                     right: 0.0
                 }),
             container(main_divider)
-                .width(Length::Fixed(90.0))
+                .width(Length::Fixed(80.0))
                 .align_x(Alignment::Center)
                 .align_y(Alignment::Center)
                 .padding(iced::Padding {
                     top: -3.0,
                     bottom: 0.0,
-                    left: 30.0,
+                    left: 0.0,
                     right: 0.0
                 }),
             container(right_col)
@@ -4494,12 +4494,43 @@ fn view_volumen_mezcla<'a>(
 
     let right_col = container(column![xfade_group].spacing(18)).width(Length::FillPortion(1));
 
-    container(row![left_col, vert_sep, right_col].align_y(Alignment::Start))
-        .padding(iced::Padding {
-            top: 18.0,
-            right: 15.0,
-            bottom: 0.0,
-            left: 0.0,
-        })
-        .into()
+    column![
+        row![
+            container(left_col)
+                .width(Length::FillPortion(5))
+                .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                    right: 0.0
+                }),
+            container(vert_sep)
+                .width(Length::Fixed(80.0))
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
+                .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 0.0,
+                    right: 0.0
+                }),
+            container(right_col)
+                .width(Length::FillPortion(4))
+                .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 5.0,
+                    right: 0.0
+                })
+        ]
+        .height(Length::Fill)
+        .align_y(Alignment::Center),
+    ]
+    .padding(iced::Padding {
+        top: 18.0,
+        right: 15.0,
+        bottom: 0.0,
+        left: 0.0,
+    })
+    .into()
 }

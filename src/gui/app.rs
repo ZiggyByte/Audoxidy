@@ -498,7 +498,8 @@ impl AudoxidyApp {
 
         let mut playlist_manager = PlaylistManager::default();
         if let Ok(db_lock) = database_arc.lock() {
-            // 0. Cargar persistencia de ajustes de audio del reproductor
+            // 0. Cargar persistencia de ajustes de audio del reproductor.
+            //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
             let host_id = db_lock.get_setting("audio_host").filter(|s| !s.is_empty());
             let device_name = db_lock
                 .get_setting("audio_device")
@@ -528,6 +529,9 @@ impl AudoxidyApp {
                     s.parse::<u32>().ok()
                 }
             });
+            // SIEMPRE aplicar settings: en instalación fresca usa defaults (48000 Hz,
+            // 32-bit Float, 2ch), en reinstalación carga desde DB.
+            // Solo aplicar si hay al menos un ajuste guardado o es reinstalación.
             if host_id.is_some()
                 || device_name.is_some()
                 || sample_rate.is_some()
@@ -537,14 +541,96 @@ impl AudoxidyApp {
                 let settings = crate::audio::engine::AudioSettings {
                     host_id,
                     device_name,
-                    sample_rate,
-                    bit_depth,
+                    sample_rate, // None → auto → 48000 en resolve_settings
+                    bit_depth,   // None → fallback del device
                     channels: crate::audio::engine::ChannelConfig::Manual(
                         channels_val.unwrap_or(2),
                     ),
                     buffer_size,
                 };
                 let _ = audio_manager.apply_audio_settings(settings);
+            }
+
+            // 0b. Aplicar ajustes de PipeWire/PulseAudio guardados ANTES de reproducir.
+            //     Si no se aplican aquí, el stream se conecta al sink con la configuración
+            //     anterior y la reconfiguración llega tarde (después de la primera nota).
+            {
+                let parse_system_sel = |s: &str| -> crate::gui::audio_center::SystemSelection<u32> {
+                    match s {
+                        "default" => crate::gui::audio_center::SystemSelection::Default,
+                        "auto" => crate::gui::audio_center::SystemSelection::Automatic,
+                        s if s.starts_with("fixed:") => {
+                            s["fixed:".len()..]
+                                .parse::<u32>()
+                                .map(crate::gui::audio_center::SystemSelection::Fixed)
+                                .unwrap_or(crate::gui::audio_center::SystemSelection::Default)
+                        }
+                        _ => crate::gui::audio_center::SystemSelection::Default,
+                    }
+                };
+                let sys_rate = db_lock
+                    .get_setting("audio_system_rate")
+                    .map(|s| parse_system_sel(&s))
+                    .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
+                let sys_quantum = db_lock
+                    .get_setting("audio_system_quantum")
+                    .map(|s| parse_system_sel(&s))
+                    .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
+
+                let rate_val = match sys_rate {
+                    crate::gui::audio_center::SystemSelection::Default => None,
+                    crate::gui::audio_center::SystemSelection::Automatic => {
+                        // Usar la tasa del reproductor si está configurada, sino 48000.
+                        db_lock
+                            .get_setting("audio_sample_rate")
+                            .and_then(|s| {
+                                if s == "auto" {
+                                    None
+                                } else {
+                                    s.parse::<u32>().ok()
+                                }
+                            })
+                            .or(Some(48000))
+                    }
+                    crate::gui::audio_center::SystemSelection::Fixed(r) => Some(r),
+                };
+                let quantum_val = match sys_quantum {
+                    crate::gui::audio_center::SystemSelection::Default => None,
+                    crate::gui::audio_center::SystemSelection::Automatic => {
+                        let sr = rate_val.unwrap_or(48000);
+                        let frames = (sr as f64 * 10.0 / 1000.0) as u32;
+                        Some(if frames < 256 {
+                            256
+                        } else if frames < 512 {
+                            512
+                        } else if frames < 1024 {
+                            1024
+                        } else if frames < 2048 {
+                            2048
+                        } else if frames < 4096 {
+                            4096
+                        } else {
+                            8192
+                        })
+                    }
+                    crate::gui::audio_center::SystemSelection::Fixed(q) => Some(q),
+                };
+
+                let has_pw =
+                    crate::integrations::system_audio::is_pipewire_active();
+                if has_pw {
+                    crate::integrations::system_audio::apply_pipewire_clock(
+                        rate_val, quantum_val,
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                    crate::integrations::system_audio::persist_pipewire_conf(
+                        rate_val, quantum_val,
+                    );
+                } else {
+                    crate::integrations::system_audio::persist_pulse_conf(
+                        rate_val, quantum_val,
+                    );
+                }
             }
 
             // 1. Cargar última playlist activa
@@ -662,7 +748,7 @@ impl AudoxidyApp {
                 s.silence_threshold_db = db_lock
                     .get_setting("vol_silence_threshold_db")
                     .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(-50.0);
+                    .unwrap_or(-47.0);
                 s.silence_edge_trim_enabled = db_lock
                     .get_setting("vol_silence_edge_trim_enabled")
                     .map(|v| v == "1")
@@ -1195,6 +1281,11 @@ impl AudoxidyApp {
 
         match message {
             Message::Tick => {
+                // 0. Refrescar caché de estado del sistema de audio (cada 3s, no cada frame)
+                if self.audio_center_manager.open {
+                    self.audio_center_manager.refresh_system_status_cache();
+                }
+
                 // 1. Consultar al scanner si hay datos nuevos en la BD
                 if self
                     .scanner

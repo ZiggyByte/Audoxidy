@@ -690,6 +690,14 @@ impl Database {
             .optional()
     }
 
+    pub fn get_song_format_by_path(&self, path: &str) -> Result<Option<String>> {
+        self.conn
+            .prepare_cached("SELECT format FROM SONGS WHERE file_path = ?1")?
+            .query_row([path], |row| row.get::<_, Option<String>>(0))
+            .optional()
+            .map(|opt| opt.flatten())
+    }
+
     // --- Métodos de Transacción ---
 
     pub fn begin_transaction(&self) -> Result<()> {

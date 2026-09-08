@@ -122,7 +122,7 @@ impl AudioConfig {
             ConfigProfile::LowResource => Self {
                 host: None,
                 device: None,
-                sample_rate: Some(44100),
+                sample_rate: Some(48000),
                 bit_depth: Some(BitDepthConfig::Bits16),
                 channels: Some(2),
                 buffer_size: Some(512),

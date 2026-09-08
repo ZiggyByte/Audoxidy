@@ -182,6 +182,10 @@ pub struct AudioCenterManager {
     pub system_rate: SystemSelection<u32>,
     pub system_quantum: SystemSelection<u32>,
 
+    // Cache for system_sound_status (refresh every 3s, not every frame)
+    pub cached_system_status: (String, String),
+    pub cached_system_status_ts: std::time::Instant,
+
     // Volumen y Mezcla state (Phase 03) — mirrors AudioState for UI display
     pub volumen_fades_enabled: bool,
     pub volumen_smooth_volume_enabled: bool,
@@ -250,13 +254,16 @@ impl Default for AudioCenterManager {
             system_rate: SystemSelection::Default,
             system_quantum: SystemSelection::Default,
 
+            cached_system_status: ("--".to_string(), "--".to_string()),
+            cached_system_status_ts: std::time::Instant::now(),
+
             volumen_fades_enabled: false,
             volumen_smooth_volume_enabled: false,
             volumen_fade_in_ms: 1000.0,
             volumen_fade_out_ms: 2000.0,
             volumen_silence_enabled: true,
             volumen_silence_duration_ms: 1000.0,
-            volumen_silence_threshold_db: -50.0,
+            volumen_silence_threshold_db: -47.0,
             volumen_silence_edge_trim_enabled: true,
             volumen_rg_fixed_enabled: false,
             volumen_rg_fixed_db: 0.0,
@@ -279,6 +286,14 @@ impl Default for AudioCenterManager {
 }
 
 impl AudioCenterManager {
+    /// Refresh cached system_sound_status every 3 seconds (not every frame).
+    pub fn refresh_system_status_cache(&mut self) {
+        if self.cached_system_status_ts.elapsed() >= std::time::Duration::from_secs(3) {
+            self.cached_system_status = crate::integrations::system_audio::system_sound_status();
+            self.cached_system_status_ts = std::time::Instant::now();
+        }
+    }
+
     /// Load custom presets from SQLite into custom_presets vec.
     pub fn load_custom_presets(&mut self, db: &std::sync::Mutex<crate::db::Database>) {
         if let Ok(db_lock) = db.lock() {
@@ -498,15 +513,15 @@ impl AudioCenterManager {
             );
             let _ = db_lock.set_setting(
                 "audio_downmix_center",
-                &format!("{:.1}", state_read.downmix_center),
+                &format!("{:.2}", state_read.downmix_center),
             );
             let _ = db_lock.set_setting(
                 "audio_downmix_lfe",
-                &format!("{:.1}", state_read.downmix_lfe),
+                &format!("{:.2}", state_read.downmix_lfe),
             );
             let _ = db_lock.set_setting(
                 "audio_downmix_surround",
-                &format!("{:.1}", state_read.downmix_surround),
+                &format!("{:.2}", state_read.downmix_surround),
             );
         }
     }
@@ -1157,7 +1172,7 @@ impl AudioCenterManager {
                     SystemSelection::Automatic => {
                         // Quantum estimado: tasa × 10ms de latencia base (no se puede
                         // esperar el negociado real porque el stream aún no existe).
-                        let rate = self.selected_sample_rate.unwrap_or(44100);
+                        let rate = self.selected_sample_rate.unwrap_or(48000);
                         let frames = (rate as f64 * 10.0 / 1000.0) as u32;
                         Some(if frames < 256 {
                             256
@@ -2200,22 +2215,18 @@ fn view_audio_config<'a>(
     };
 
     // Estado del servidor de sonido del sistema (PipeWire / PulseAudio).
-    let (system_sound_status, latency_str) =
-        crate::integrations::system_audio::system_sound_status();
-
-    let audio_server = manager
-        .selected_host
-        .as_deref()
-        .unwrap_or("ALSA")
-        .to_string();
+    // Cachear para no ejecutar pw-metadata cada frame (causaba corte de audio).
+    // Nota: manager es immutable aquí, así que usamos el valor cacheado del último tick.
+    let (system_sound_status, latency_str) = manager.cached_system_status.clone();
 
     let db_opt = audio_manager.get_database();
 
-    let mut file_sample_rate = sample_rate;
+    let mut file_sample_rate = 0u32;
     let mut file_bit_depth = 0;
     let mut file_channels = 0;
     let mut track_gain = None;
     let mut album_gain = None;
+    let mut file_format = String::new();
 
     if !current_path.is_empty() {
         if let Some(ref db_arc) = db_opt {
@@ -2226,6 +2237,9 @@ fn view_audio_config<'a>(
                     }
                     file_bit_depth = bd;
                     file_channels = ch;
+                }
+                if let Ok(Some(fmt)) = db.get_song_format_by_path(&current_path) {
+                    file_format = fmt;
                 }
                 if let Ok((tg, ag)) = db.get_replay_gain_by_path(&current_path) {
                     track_gain = tg;
@@ -2299,17 +2313,6 @@ fn view_audio_config<'a>(
             COLOR_TEXT_PRIMARY,
         )
     };
-
-    let device_name_str = manager
-        .selected_device
-        .as_deref()
-        .unwrap_or("Predeterminado");
-    let device_el = crate::gui::widgets::smart_truncate_text(
-        device_name_str,
-        14.0,
-        FONT_INTER_SANS_MEDIUM,
-        COLOR_TEXT_PRIMARY,
-    );
 
     let quantum_repr = if buffer_size > 0 {
         format!("{}", buffer_size)
@@ -2415,33 +2418,26 @@ fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(100.0)),
+            .width(Length::Fixed(80.0)),
             container(title_el).width(Length::Fill)
         ]
         .align_y(Alignment::Center),
         row![
             container(
-                text("Núcleo:")
+                text("Formato:")
                     .color(COLOR_TEXT_PRIMARY)
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(100.0)),
-            text(audio_server)
+            .width(Length::Fixed(80.0)),
+            text(if file_format.is_empty() {
+                "--".to_string()
+            } else {
+                file_format
+            })
                 .color(COLOR_TEXT_PRIMARY)
                 .size(14)
                 .font(FONT_INTER_SANS_MEDIUM)
-        ]
-        .align_y(Alignment::Center),
-        row![
-            container(
-                text("Dispositivo:")
-                    .color(COLOR_TEXT_PRIMARY)
-                    .size(14)
-                    .font(FONT_INTER_SANS_MEDIUM)
-            )
-            .width(Length::Fixed(100.0)),
-            container(device_el).width(Length::Fill)
         ]
         .align_y(Alignment::Center),
         table_row,
@@ -2616,7 +2612,7 @@ fn view_audio_config<'a>(
     let main_divider = container(
         Space::new()
             .width(Length::Fixed(2.0))
-            .height(Length::Fixed(240.0)),
+            .height(Length::Fixed(220.0)),
     )
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
@@ -2627,17 +2623,20 @@ fn view_audio_config<'a>(
             container(left_col)
                 .width(Length::FillPortion(5))
                 .padding(iced::Padding {
-                    top: -33.0,
+                    top: 16.0,
                     bottom: 0.0,
-                    left: -1.0,
+                    left: 0.0,
                     right: 0.0
                 }),
-            container(main_divider)
+            container(
+                container(main_divider)
+                    .height(Length::Fill)
+                    .align_y(Alignment::Center)
+            )
                 .width(Length::Fixed(80.0))
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
                 .padding(iced::Padding {
-                    top: -3.0,
+                    top: 8.0,
                     bottom: 0.0,
                     left: 0.0,
                     right: 0.0
@@ -2645,7 +2644,7 @@ fn view_audio_config<'a>(
             container(right_col)
                 .width(Length::FillPortion(4))
                 .padding(iced::Padding {
-                    top: -4.0,
+                    top: 18.0,
                     bottom: 0.0,
                     left: 5.0,
                     right: 1.0
@@ -2653,7 +2652,7 @@ fn view_audio_config<'a>(
                 .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
         ]
         .height(Length::Fill)
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Start),
         bottom_actions
     ]
     .into()
@@ -2900,7 +2899,7 @@ fn view_equalizer<'a>(
     .align_x(Alignment::Center);
 
     column![
-        Space::new().height(Length::Fixed(16.0)),
+        Space::new().height(Length::Fixed(19.0)),
         top_row,
         Space::new().height(Length::Fixed(25.0)),
         row![
@@ -3277,13 +3276,13 @@ fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 7.0,
+            top: 6.0,
             right: 15.0,
-            bottom: 7.0,
+            bottom: 4.0,
             left: 15.0,
         }),
         view_effect_with_secondary(
@@ -3413,9 +3412,9 @@ fn view_audio_effects<'a>(
         .width(Length::Fill)
         .center_x(Length::Fill)
         .padding(iced::Padding {
-            top: 0.0,
+            top: -2.0,
             right: 0.0,
-            bottom: 0.0,
+            bottom: -2.0,
             left: 0.0,
         }),
         view_effect_with_secondary(
@@ -3530,13 +3529,13 @@ fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
+            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 7.0,
+            top: 6.0,
             right: 15.0,
-            bottom: 7.0,
+            bottom: 4.0,
             left: 15.0,
         }),
         view_effect_with_secondary(
@@ -3580,7 +3579,7 @@ fn view_audio_effects<'a>(
         .width(Length::Fill),
     ]
     .padding(iced::Padding {
-        top: 0.0,
+        top: 3.0,
         right: 0.0,
         bottom: 0.0,
         left: 0.0,
@@ -3638,7 +3637,7 @@ fn view_volumen_mezcla<'a>(
                 COLOR_TEXT_SECONDARY
             };
             text(name)
-                .size(14)
+                .size(13)
                 .color(color)
                 .font(FONT_INTER_SANS_MEDIUM)
                 .into()
@@ -3937,7 +3936,7 @@ fn view_volumen_mezcla<'a>(
             })
             .on_right_click(|| {
                 crate::gui::app::Message::AudioCenterMsg(
-                    AudioCenterMessage::VolumenSilenceThresholdChanged(-50.0),
+                    AudioCenterMessage::VolumenSilenceThresholdChanged(-47.0),
                 )
             })
             .into()
@@ -4308,7 +4307,7 @@ fn view_volumen_mezcla<'a>(
     // Vertical separator
     let vert_sep = container(Space::new())
         .width(Length::Fixed(2.0))
-        .height(Length::Fill)
+        .height(Length::Fixed(220.0))
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // --- Right column: Crossfade (Mezcla Cruzada) ---
@@ -4337,15 +4336,8 @@ fn view_volumen_mezcla<'a>(
     ]
     .align_y(Alignment::Center);
 
-    // Sub-grupo visual: "Cambio Manual" (sin checkbox — solo ayuda visual).
-    let xfade_manual_label = row![
-        Space::new().width(Length::Fixed(8.0)),
-        subgroup_label("Cambio manual:", xfade_master_on),
-    ]
-    .align_y(Alignment::Center);
-
-    let xfade_manual_row = {
-        let stepper_locked = !xfade_master_on || !manager.crossfade_manual_enabled;
+    // Sub-grupo: "Cambio Manual" — checkbox + texto clicable (patrón Pre-Amplificador).
+    let xfade_manual_label = {
         let chk: iced::Element<'_, _> = if xfade_master_on {
             StandardCheckbox::new(manager.crossfade_manual_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeManualToggle(
@@ -4356,6 +4348,28 @@ fn view_volumen_mezcla<'a>(
         } else {
             StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subgroup_label("Cambio manual:", xfade_master_on && manager.crossfade_manual_enabled),
+                if xfade_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeManualToggle(
+                            !manager.crossfade_manual_enabled,
+                        ),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+    };
+
+    let xfade_manual_row = {
+        let stepper_locked = !xfade_master_on || !manager.crossfade_manual_enabled;
         let stepper: iced::Element<'_, _> = if stepper_locked {
             NumberStepper::new(
                 manager.crossfade_manual_ms,
@@ -4389,22 +4403,10 @@ fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            chk,
-            Space::new().width(Length::Fixed(5.0)),
-            clickable_toggle(
-                subfunc_label(
-                    "Mezclar canción actual con la siguiente",
-                    xfade_master_on && manager.crossfade_manual_enabled,
-                ),
-                if xfade_master_on {
-                    crate::gui::app::Message::AudioCenterMsg(
-                        AudioCenterMessage::CrossfadeManualToggle(
-                            !manager.crossfade_manual_enabled,
-                        ),
-                    )
-                } else {
-                    crate::gui::app::Message::NoOp
-                },
+            Space::new().width(Length::Fixed(8.0)),
+            subfunc_label(
+                "Mezclar canción actual con la siguiente",
+                xfade_master_on && manager.crossfade_manual_enabled,
             ),
             Space::new().width(Length::Fill),
             stepper,
@@ -4412,15 +4414,8 @@ fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    // Sub-grupo visual: "Cambio Automático" (sin checkbox — solo ayuda visual).
-    let xfade_auto_label = row![
-        Space::new().width(Length::Fixed(8.0)),
-        subgroup_label("Cambio automático:", xfade_master_on),
-    ]
-    .align_y(Alignment::Center);
-
-    let xfade_auto_row = {
-        let stepper_locked = !xfade_master_on || !manager.crossfade_auto_enabled;
+    // Sub-grupo: "Cambio Automático" — checkbox + texto clicable (patrón Pre-Amplificador).
+    let xfade_auto_label = {
         let chk: iced::Element<'_, _> = if xfade_master_on {
             StandardCheckbox::new(manager.crossfade_auto_enabled, |b| {
                 crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeAutoToggle(b))
@@ -4429,6 +4424,26 @@ fn view_volumen_mezcla<'a>(
         } else {
             StandardCheckbox::new(false, |_| crate::gui::app::Message::NoOp).into()
         };
+        row![
+            chk,
+            Space::new().width(Length::Fixed(5.0)),
+            clickable_toggle(
+                subgroup_label("Cambio automático:", xfade_master_on && manager.crossfade_auto_enabled),
+                if xfade_master_on {
+                    crate::gui::app::Message::AudioCenterMsg(
+                        AudioCenterMessage::CrossfadeAutoToggle(!manager.crossfade_auto_enabled),
+                    )
+                } else {
+                    crate::gui::app::Message::NoOp
+                },
+            ),
+            Space::new().width(Length::Fill),
+        ]
+        .align_y(Alignment::Center)
+    };
+
+    let xfade_auto_row = {
+        let stepper_locked = !xfade_master_on || !manager.crossfade_auto_enabled;
         let stepper: iced::Element<'_, _> = if stepper_locked {
             NumberStepper::new(
                 manager.crossfade_auto_ms,
@@ -4462,20 +4477,10 @@ fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            chk,
-            Space::new().width(Length::Fixed(5.0)),
-            clickable_toggle(
-                subfunc_label(
-                    "Mezclar canción actual con la siguiente",
-                    xfade_master_on && manager.crossfade_auto_enabled,
-                ),
-                if xfade_master_on {
-                    crate::gui::app::Message::AudioCenterMsg(
-                        AudioCenterMessage::CrossfadeAutoToggle(!manager.crossfade_auto_enabled),
-                    )
-                } else {
-                    crate::gui::app::Message::NoOp
-                },
+            Space::new().width(Length::Fixed(8.0)),
+            subfunc_label(
+                "Mezclar canción actual con la siguiente",
+                xfade_master_on && manager.crossfade_auto_enabled,
             ),
             Space::new().width(Length::Fill),
             stepper,
@@ -4502,16 +4507,19 @@ fn view_volumen_mezcla<'a>(
                     top: 0.0,
                     bottom: 0.0,
                     left: 0.0,
-                    right: 0.0
+                    right: 5.0
                 }),
-            container(vert_sep)
-                .width(Length::Fixed(80.0))
+            container(
+                container(vert_sep)
+                    .height(Length::Fill)
+                    .align_y(Alignment::Center)
+            )
+                .width(Length::Fixed(30.0))
                 .align_x(Alignment::Center)
-                .align_y(Alignment::Center)
                 .padding(iced::Padding {
-                    top: 0.0,
+                    top: -48.0,
                     bottom: 0.0,
-                    left: 0.0,
+                    left: -5.0,
                     right: 0.0
                 }),
             container(right_col)
@@ -4519,16 +4527,16 @@ fn view_volumen_mezcla<'a>(
                 .padding(iced::Padding {
                     top: 0.0,
                     bottom: 0.0,
-                    left: 5.0,
-                    right: 0.0
+                    left: -1.0,
+                    right:0.0
                 })
         ]
         .height(Length::Fill)
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Start),
     ]
     .padding(iced::Padding {
-        top: 18.0,
-        right: 15.0,
+        top: 20.0,
+        right: 0.0,
         bottom: 0.0,
         left: 0.0,
     })

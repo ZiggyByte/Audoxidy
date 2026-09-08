@@ -125,7 +125,7 @@ pub struct AudioState {
     // Volumen y Mezcla — Silence removal (D-14 master, D-16)
     pub silence_enabled: bool,           // default: true
     pub silence_duration_ms: f32,        // default: 1000.0 (range 100–10000, paso 50)
-    pub silence_threshold_db: f32,       // default: -50.0 (range -80..0, paso 0.25)
+    pub silence_threshold_db: f32,       // default: -47.0 (range -80..0, paso 0.25)
     pub silence_edge_trim_enabled: bool, // default: true
 
     // Volumen y Mezcla — Fixed Gain
@@ -157,7 +157,7 @@ impl Default for AudioState {
         Self {
             is_playing: false,
             volume: 0.3,
-            sample_rate: 44100,
+            sample_rate: 48000,
             channels: 2,
             current_pos_sec: 0.0,
             total_duration_sec: 0.0,
@@ -166,8 +166,8 @@ impl Default for AudioState {
             path: String::new(),
             eof_reached: false,
 
-            device_sample_rate: 44100, // Default Match
-            bit_depth_display: "Unknown".to_string(),
+            device_sample_rate: 48000, // Default Match
+            bit_depth_display: "32-bit Float".to_string(),
             buffer_size: 0,
             config_channels: ChannelConfig::Auto,
 
@@ -191,7 +191,7 @@ impl Default for AudioState {
             // Volumen y Mezcla — Silence removal
             silence_enabled: true,
             silence_duration_ms: 1000.0,
-            silence_threshold_db: -50.0,
+            silence_threshold_db: -47.0,
             silence_edge_trim_enabled: true,
 
             // Volumen y Mezcla — Fixed Gain

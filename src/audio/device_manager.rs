@@ -202,21 +202,43 @@ impl AudioDeviceManager {
             .default_output_config()
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
-        let mut stream_config: cpal::StreamConfig = config.clone().into();
-        stream_config.buffer_size = cpal::BufferSize::Default;
-        stream_config.channels = 2;
+        let sample_format = config.sample_format();
+        let def_sr = config.sample_rate();
+
+        // Preferir 48000 Hz si el dispositivo lo soporta.
+        let desired_sr = if def_sr == 48000 {
+            48000
+        } else {
+            let mut found_48k = false;
+            if let Ok(configs) = device.supported_output_configs() {
+                for cfg in configs {
+                    let min = cfg.min_sample_rate();
+                    let max = cfg.max_sample_rate();
+                    if min <= 48000 && max >= 48000 {
+                        found_48k = true;
+                        break;
+                    }
+                }
+            }
+            if found_48k { 48000 } else { def_sr }
+        };
+
+        // Construir StreamConfig manualmente con el SR deseado.
+        let stream_config = cpal::StreamConfig {
+            channels: 2,
+            sample_rate: desired_sr,
+            buffer_size: cpal::BufferSize::Default,
+        };
 
         // Intentar con defaults, fallback a config del dispositivo
-        let sample_format = config.sample_format();
         if self
             .configure_output(host, device.clone(), stream_config.clone(), sample_format)
             .is_err()
         {
             let host_fallback = cpal::default_host();
-            let fmt = config.sample_format();
             let def_conf: cpal::StreamConfig = config.into();
-            self.configure_output(host_fallback, device.clone(), def_conf.clone(), fmt)?;
-            return Ok((cpal::default_host(), device, def_conf, fmt));
+            self.configure_output(host_fallback, device.clone(), def_conf.clone(), sample_format)?;
+            return Ok((cpal::default_host(), device, def_conf, sample_format));
         }
 
         Ok((cpal::default_host(), device, stream_config, sample_format))
@@ -395,7 +417,7 @@ impl AudioDeviceManager {
                     0
                 };
                 let rate_score = req_rate.map_or(
-                    if (current.min_sample_rate()..=current.max_sample_rate()).contains(&44100) {
+                    if (current.min_sample_rate()..=current.max_sample_rate()).contains(&48000) {
                         10
                     } else {
                         0
@@ -429,10 +451,10 @@ impl AudioDeviceManager {
             None => {
                 let min = best.min_sample_rate();
                 let max = best.max_sample_rate();
-                if min <= 44100 && max >= 44100 {
-                    44100
-                } else if min <= 48000 && max >= 48000 {
+                if min <= 48000 && max >= 48000 {
                     48000
+                } else if min <= 44100 && max >= 44100 {
+                    44100
                 } else {
                     max
                 }

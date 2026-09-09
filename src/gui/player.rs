@@ -23,6 +23,66 @@ pub enum WindowAction {
     Close,
 }
 
+/// Estado de animación del medidor VU por canal.
+///
+/// Contiene los valores de visualización (después de la integración de
+/// ballistics), el estado de hold de pico, la integración de ataque/release
+/// y el fade de pausa. Fase 2 del medidor — la Fase 3 (VuMeterWidget) lee
+/// estos campos para renderizar las barras.
+#[derive(Debug, Clone)]
+pub struct MeterUiState {
+    // Current display values (after ballistics, fed to widget)
+    pub display_l: f32,
+    pub display_r: f32,
+
+    // Peak hold state machine (per channel)
+    pub peak_hold_l: f32,
+    pub peak_hold_r: f32,
+    pub peak_hold_start_l: Option<std::time::Instant>,
+    pub peak_hold_start_r: Option<std::time::Instant>,
+    pub peak_decay_l: f32,
+    pub peak_decay_r: f32,
+
+    // Ballistics state (exponential smoothing)
+    pub smooth_peak_l: f32,
+    pub smooth_peak_r: f32,
+    pub smooth_rms_l: f32,
+    pub smooth_rms_r: f32,
+
+    // Pause fade state
+    pub last_playing_l: f32,
+    pub last_playing_r: f32,
+    pub is_fading_out: bool,
+    pub fade_out_start: Option<std::time::Instant>,
+
+    // Track change detection
+    pub last_track_path: String,
+}
+
+impl Default for MeterUiState {
+    fn default() -> Self {
+        Self {
+            display_l: 0.0,
+            display_r: 0.0,
+            peak_hold_l: 0.0,
+            peak_hold_r: 0.0,
+            peak_hold_start_l: None,
+            peak_hold_start_r: None,
+            peak_decay_l: 0.0,
+            peak_decay_r: 0.0,
+            smooth_peak_l: 0.0,
+            smooth_peak_r: 0.0,
+            smooth_rms_l: 0.0,
+            smooth_rms_r: 0.0,
+            last_playing_l: 0.0,
+            last_playing_r: 0.0,
+            is_fading_out: false,
+            fade_out_start: None,
+            last_track_path: String::new(),
+        }
+    }
+}
+
 pub struct PlayerUiState {
     pub hover_zone: HoverZone,
     pub showing_volume: Option<f32>,
@@ -49,6 +109,9 @@ pub struct PlayerUiState {
     pub artist_chars: Vec<char>,
     pub display_title: String,
     pub display_artist: String,
+
+    // Meter animation state (Fase 2 — VU meter subscription & ballistics)
+    pub meter: MeterUiState,
 }
 
 impl Default for PlayerUiState {
@@ -75,6 +138,7 @@ impl Default for PlayerUiState {
             artist_chars: Vec::new(),
             display_title: String::new(),
             display_artist: String::new(),
+            meter: MeterUiState::default(),
         }
     }
 }

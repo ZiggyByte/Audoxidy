@@ -161,6 +161,7 @@ pub enum Message {
     Tick,
     UITick,
     DragTick,
+    MeterTick,
     SearchPulse,
     GlobalMemoryPurge,
     PlayPause,
@@ -1566,6 +1567,10 @@ impl AudoxidyApp {
                     }
                 }
                 Task::none()
+            }
+            Message::MeterTick => {
+                self.update_meter();
+                return Task::none();
             }
             Message::UITick => {
                 self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
@@ -5647,7 +5652,15 @@ impl AudoxidyApp {
             );
         }
 
-        // 5. Search Pulse: 100ms (solo si hay algo en búsqueda para el Grid)
+        // 5. VU Meter Tick: 30ms (~33Hz) — smooth meter animation
+        //    Active when playing OR fading out (pause fade needs ticks to animate)
+        if self.audio_manager.get_state().is_playing || self.player_ui_state.meter.is_fading_out {
+            subs.push(
+                iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::MeterTick),
+            );
+        }
+
+        // 6. Search Pulse: 100ms (solo si hay algo en búsqueda para el Grid)
         if !self.library_manager.search_query.is_empty()
             || !self.filters_manager.search_query.is_empty()
         {
@@ -5736,6 +5749,23 @@ impl AudoxidyApp {
 
     fn update_selection_stats(&mut self) {
         self.library_manager.update_selection_stats();
+    }
+
+    /// Lee los 4 atómicos de la Fase 1 (MeterData) y escribe directamente
+    /// en `player_ui_state.meter` — sin ballistics aún (Fase 2 Task 2 los agrega).
+    fn update_meter(&mut self) {
+        let meter_data = self.audio_manager.meter();
+        let peak_l = meter_data.read_peak_l();
+        let peak_r = meter_data.read_peak_r();
+        let rms_l = meter_data.read_rms_l();
+        let rms_r = meter_data.read_rms_r();
+
+        let m = &mut self.player_ui_state.meter;
+        m.display_l = peak_l.clamp(-60.0, 6.0);
+        m.display_r = peak_r.clamp(-60.0, 6.0);
+        // RMS values stored for Phase 2 ballistics — not displayed yet
+        m.smooth_rms_l = rms_l.clamp(-60.0, 6.0);
+        m.smooth_rms_r = rms_r.clamp(-60.0, 6.0);
     }
 
     fn handle_library_reveal(&mut self, path_opt: Option<String>) -> Task<Message> {

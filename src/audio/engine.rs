@@ -150,6 +150,11 @@ pub struct AudioState {
     pub crossfade_manual_ms: f32, // default: 1000.0 (range 0–10000, paso 50)
     pub crossfade_auto_enabled: bool, // default: false — crossfade en cambio automático
     pub crossfade_auto_ms: f32,  // default: 250.0 (range 0–10000, paso 50)
+
+    // VU Meter — configuración (D-01, D-02, D-06, D-08)
+    pub meter_hold_time_ms: f32,    // default: 1500.0 (range 500–5000, paso 50)
+    pub meter_rms_window_ms: f32,   // default: 300.0 (range 50–1000, paso 50)
+    pub meter_infinite_hold: bool,  // default: false — hold infinito hasta cambio de pista
 }
 
 // Adapters removed (not needed for Rubato 1.0 with Vec<Vec<f32>>)
@@ -216,6 +221,11 @@ impl Default for AudioState {
             crossfade_manual_ms: 1000.0,
             crossfade_auto_enabled: false,
             crossfade_auto_ms: 250.0,
+
+            // VU Meter — configuración
+            meter_hold_time_ms: 1500.0,
+            meter_rms_window_ms: 300.0,
+            meter_infinite_hold: false,
         }
     }
 }

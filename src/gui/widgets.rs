@@ -4985,3 +4985,162 @@ impl<'a, Message: 'a> From<VuMeterWidget> for Element<'a, Message> {
         Element::new(widget)
     }
 }
+
+// ==============================
+// MeterPopup — vista flotante de configuración del VU Meter (D-01, D-02)
+// ==============================
+
+/// Construye el contenido del popup de configuración del medidor VU.
+///
+/// Devuelve un `Element<Message>` que contiene:
+/// 1. Título: "Configuración del Meter"
+/// 2. Tiempo de hold del pico: NumberStepper (500–5000 ms)
+/// 3. Ventana RMS: NumberStepper (50–1000 ms)
+/// 4. Modo M/S: toggle (solo el toggle, la computación M/S es en Plan 2)
+/// 5. Hold infinito: toggle
+pub fn meter_popup_view<'a>(
+    hold_time_ms: f32,
+    rms_window_ms: f32,
+    ms_mode: bool,
+    infinite_hold: bool,
+) -> Element<'a, crate::gui::app::Message> {
+    use crate::gui::app::Message;
+
+    let group_title = |name: &'a str| -> Element<'a, Message> {
+        text(name)
+            .size(14)
+            .color(COLOR_TEXT_PRIMARY)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .into()
+    };
+
+    let subfunc_label =
+        |name: &'a str, enabled: bool| -> Element<'a, Message> {
+            let color = if enabled {
+                COLOR_TEXT_PRIMARY
+            } else {
+                COLOR_TEXT_SECONDARY
+            };
+            text(name)
+                .size(13)
+                .color(color)
+                .font(FONT_INTER_SANS_MEDIUM)
+                .into()
+        };
+
+    let clickable_toggle = |label: Element<'a, Message>, msg: Message| -> Element<'a, Message> {
+        mouse_area(label).on_press(msg).into()
+    };
+
+    // Título
+    let title_row = row![
+        group_title("Configuración del Meter"),
+        Space::new().width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    // Tiempo de hold del pico: NumberStepper (500–5000 ms)
+    let hold_label = text("Tiempo de hold del pico:")
+        .size(13)
+        .color(COLOR_TEXT_PRIMARY)
+        .font(FONT_INTER_SANS_MEDIUM);
+    let hold_stepper: Element<'a, Message> = NumberStepper::new(
+        hold_time_ms as f64,
+        500.0..=5000.0,
+        StepperUnit::Milliseconds,
+        |v| Message::MeterHoldTimeChanged(v as f32),
+    )
+    .on_selected_state_change(|_| Message::NoOp)
+    .into();
+    let hold_row = row![
+        hold_label,
+        Space::new().width(Length::Fill),
+        hold_stepper,
+    ]
+    .align_y(Alignment::Center);
+
+    // Ventana RMS: NumberStepper (50–1000 ms)
+    let rms_label = text("Ventana RMS:")
+        .size(13)
+        .color(COLOR_TEXT_PRIMARY)
+        .font(FONT_INTER_SANS_MEDIUM);
+    let rms_stepper: Element<'a, Message> = NumberStepper::new(
+        rms_window_ms as f64,
+        50.0..=1000.0,
+        StepperUnit::Milliseconds,
+        |v| Message::MeterRmsWindowChanged(v as f32),
+    )
+    .on_selected_state_change(|_| Message::NoOp)
+    .into();
+    let rms_row = row![
+        rms_label,
+        Space::new().width(Length::Fill),
+        rms_stepper,
+    ]
+    .align_y(Alignment::Center);
+
+    // Modo M/S: toggle (solo visual, computación en Plan 2)
+    let ms_checkbox: Element<'a, Message> = StandardCheckbox::new(ms_mode, |b| {
+        Message::MeterMsModeToggle(b)
+    })
+    .into();
+    let ms_row = row![
+        ms_checkbox,
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            subfunc_label("Modo M/S", ms_mode),
+            Message::MeterMsModeToggle(!ms_mode),
+        ),
+        Space::new().width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    // Hold infinito: toggle
+    let inf_checkbox: Element<'a, Message> = StandardCheckbox::new(infinite_hold, |b| {
+        Message::MeterInfiniteHoldToggle(b)
+    })
+    .into();
+    let inf_row = row![
+        inf_checkbox,
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            subfunc_label("Hold infinito", infinite_hold),
+            Message::MeterInfiniteHoldToggle(!infinite_hold),
+        ),
+        Space::new().width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    // Contenedor del popup con fondo COLOR_CONTRAST y bordes redondeados
+    let content = column![
+        title_row,
+        Space::new().height(Length::Fixed(8.0)),
+        hold_row,
+        Space::new().height(Length::Fixed(6.0)),
+        rms_row,
+        Space::new().height(Length::Fixed(8.0)),
+        ms_row,
+        Space::new().height(Length::Fixed(6.0)),
+        inf_row,
+    ]
+    .spacing(0)
+    .padding(iced::Padding {
+        top: 10.0,
+        bottom: 10.0,
+        left: 12.0,
+        right: 12.0,
+    })
+    .width(Length::Fixed(280.0));
+
+    container(content)
+        .style(|_t: &Theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(COLOR_CONTRAST)),
+            border: iced::Border {
+                radius: 6.0.into(),
+                width: 1.0,
+                color: COLOR_TEXT_SECONDARY,
+            },
+            ..Default::default()
+        })
+        .into()
+}

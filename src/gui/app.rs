@@ -307,6 +307,15 @@ pub enum Message {
     PlaylistToggleEnabled(usize),
     PlaylistShowAllTabs(iced::Point),
 
+    // VU Meter — configuración (D-01, D-02, D-06, D-08)
+    MeterRightClicked(iced::Point),
+    MeterPopupClose,
+    MeterHoldTimeChanged(f32),
+    MeterRmsWindowChanged(f32),
+    MeterMsModeToggle(bool),
+    MeterInfiniteHoldToggle(bool),
+    MeterResetPeak,
+
     ModifiersChanged(iced::keyboard::Modifiers),
 
     NoOp,
@@ -4846,6 +4855,14 @@ impl AudoxidyApp {
                 self.playlist_manager.show_tab_dropdown = false;
                 self.update(*msg)
             }
+            // VU Meter — stubs (full implementation in Task 2)
+            Message::MeterRightClicked(_pos) => Task::none(),
+            Message::MeterPopupClose => Task::none(),
+            Message::MeterHoldTimeChanged(_v) => Task::none(),
+            Message::MeterRmsWindowChanged(_v) => Task::none(),
+            Message::MeterMsModeToggle(_v) => Task::none(),
+            Message::MeterInfiniteHoldToggle(_v) => Task::none(),
+            Message::MeterResetPeak => Task::none(),
             Message::NoOp => Task::none(),
         }
     }

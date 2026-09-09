@@ -1156,6 +1156,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut smoothed_rg_offset_track_db: f64 = 0.0;
     let mut smoothed_rg_offset_rt_db: f64 = 0.0;
 
+    // === Meter state (Phase 05) — lock-free peak/RMS for VU meter ===
+    // Peak accumulators: max |sample| per channel across the current batch.
+    let mut meter_peak_l: f64 = 0.0;
+    let mut meter_peak_r: f64 = 0.0;
+    // RMS accumulators: sum-of-squares and count per channel (D-03 running accumulator).
+    let mut rms_sum_l: f64 = 0.0;
+    let mut rms_count_l: u64 = 0;
+    let mut rms_sum_r: f64 = 0.0;
+    let mut rms_count_r: u64 = 0;
+    let mut rms_last_update: std::time::Instant = std::time::Instant::now();
+
     // === Pre-carga de la siguiente canción (transiciones sin cortes) ===
     // Decodifica la siguiente pista por adelantado a un buffer f64 ya resampleado
     // (out_rate × out_channels) para promoverla sin pausa cuando termina la actual.
@@ -3174,6 +3185,21 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             *s *= gain_linear;
                         }
                         dsp_lock.process_frame(frame);
+                        // Meter: peak and RMS accumulation (post-DSP, pre-volume, per D-01).
+                        if out_ch >= 2 {
+                            let pl = frame[0].abs();
+                            let pr = frame[1].abs();
+                            if pl > meter_peak_l {
+                                meter_peak_l = pl;
+                            }
+                            if pr > meter_peak_r {
+                                meter_peak_r = pr;
+                            }
+                            rms_sum_l += pl * pl;
+                            rms_sum_r += pr * pr;
+                        }
+                        rms_count_l += 1;
+                        rms_count_r += 1;
                         for s in frame.iter_mut() {
                             *s *= combined;
                         }
@@ -3189,6 +3215,73 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         for s in frame.iter_mut() {
                             *s *= bypass_gain;
                         }
+                        // Meter: peak and RMS accumulation even when DSP is bypassed (per D-04).
+                        if out_ch >= 2 {
+                            let pl = frame[0].abs();
+                            let pr = frame[1].abs();
+                            if pl > meter_peak_l {
+                                meter_peak_l = pl;
+                            }
+                            if pr > meter_peak_r {
+                                meter_peak_r = pr;
+                            }
+                            rms_sum_l += pl * pl;
+                            rms_sum_r += pr * pr;
+                        }
+                        rms_count_l += 1;
+                        rms_count_r += 1;
+                    }
+                }
+
+                // Meter: batch-level atomic writes — convert accumulated peak/RMS to dBFS
+                // and store to atomics. Peak is reset every batch; RMS accumulates across
+                // batches until the 300ms window expires (IEC 60268-17 VU standard).
+                {
+                    let peak_l_db = if meter_peak_l > 0.0 {
+                        (20.0 * meter_peak_l.log10()).clamp(-60.0, 6.0)
+                    } else {
+                        -60.0
+                    };
+                    let peak_r_db = if meter_peak_r > 0.0 {
+                        (20.0 * meter_peak_r.log10()).clamp(-60.0, 6.0)
+                    } else {
+                        -60.0
+                    };
+                    let rms_l_db = if rms_count_l > 0 {
+                        let rms_val = (rms_sum_l / rms_count_l as f64).sqrt();
+                        if rms_val > 0.0 {
+                            (20.0 * rms_val.log10()).clamp(-60.0, 6.0)
+                        } else {
+                            -60.0
+                        }
+                    } else {
+                        -60.0
+                    };
+                    let rms_r_db = if rms_count_r > 0 {
+                        let rms_val = (rms_sum_r / rms_count_r as f64).sqrt();
+                        if rms_val > 0.0 {
+                            (20.0 * rms_val.log10()).clamp(-60.0, 6.0)
+                        } else {
+                            -60.0
+                        }
+                    } else {
+                        -60.0
+                    };
+
+                    engine
+                        .meter
+                        .write_peak_rms(peak_l_db as f32, rms_l_db as f32, peak_r_db as f32, rms_r_db as f32);
+                    meter_peak_l = 0.0;
+                    meter_peak_r = 0.0;
+
+                    // RMS 300ms window (IEC 60268-17): reset accumulator when window expires.
+                    let now = std::time::Instant::now();
+                    if now.duration_since(rms_last_update).as_millis() >= 300 {
+                        rms_sum_l = 0.0;
+                        rms_count_l = 0;
+                        rms_sum_r = 0.0;
+                        rms_count_r = 0;
+                        rms_last_update = now;
                     }
                 }
             }

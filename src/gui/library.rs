@@ -3019,6 +3019,10 @@ pub fn view<'a>(
         0.0, 0.0, 0.0, // peak_l, rms_l, hold_l
         0.0, 0.0, 0.0, // peak_r, rms_r, hold_r
         false,          // clipping
+        false,          // ms_mode (D-03)
+        0.0,            // phase_corr (D-04)
+        true,           // show_numeric (D-05) — always on per D-05
+        0.0, 0.0,       // crest_l, crest_r (D-07)
     );
 
     // Envolver el medidor con mouse_area para capturar right-click (D-01)

@@ -4623,12 +4623,17 @@ impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {
 pub const METER_MIN_DB: f32 = -60.0;
 const METER_MAX_DB: f32 = 6.0;
 const METER_TOTAL_RANGE: f32 = 66.0;
+/// Base height for compact mode (bars + scale only).
 const METER_HEIGHT: f32 = 24.0;
+/// Extended height when numeric readout, phase correlation, or crest factor are active.
+const METER_HEIGHT_EXTENDED: f32 = 48.0;
 const METER_BAR_HEIGHT: f32 = 6.0;
 const METER_BAR_GAP: f32 = 2.0;
 const METER_LABEL_WIDTH: f32 = 12.0;
 const METER_LED_SIZE: f32 = 8.0;
 const METER_SCALE_HEIGHT: f32 = 8.0;
+/// Numeric readout area width on the right side.
+const METER_NUMERIC_WIDTH: f32 = 110.0;
 
 // Zone colors per D-05
 const ZONE_GREEN: Color = color!(0x4CAF50);
@@ -4660,6 +4665,16 @@ pub struct VuMeterWidget {
     rms_r: f32,
     hold_r: f32,
     clipping: bool,
+    /// M/S mode: when true, labels show "M"/"S" instead of "L"/"R" (D-03).
+    ms_mode: bool,
+    /// Phase correlation: -1.0 (mono) to +1.0 (wide) (D-04).
+    phase_corr: f32,
+    /// Show numeric dBFS readout for peak/RMS values (D-05).
+    show_numeric: bool,
+    /// Crest factor for L channel in dB (peak - RMS) (D-07).
+    crest_l: f32,
+    /// Crest factor for R channel in dB (peak - RMS) (D-07).
+    crest_r: f32,
 }
 
 impl VuMeterWidget {
@@ -4669,6 +4684,11 @@ impl VuMeterWidget {
     /// - `rms_l/r`: current RMS dBFS per channel (bar fill)
     /// - `hold_l/r`: held peak dBFS per channel (peak hold marker)
     /// - `clipping`: whether clipping LED should light up
+    /// - `ms_mode`: when true, labels show "M"/"S" instead of "L"/"R" (D-03)
+    /// - `phase_corr`: phase correlation -1.0..+1.0 (D-04)
+    /// - `show_numeric`: show numeric dBFS readout (D-05)
+    /// - `crest_l/r`: crest factor peak-RMS in dB (D-07)
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         peak_l: f32,
         rms_l: f32,
@@ -4677,6 +4697,11 @@ impl VuMeterWidget {
         rms_r: f32,
         hold_r: f32,
         clipping: bool,
+        ms_mode: bool,
+        phase_corr: f32,
+        show_numeric: bool,
+        crest_l: f32,
+        crest_r: f32,
     ) -> Self {
         Self {
             peak_l,
@@ -4686,6 +4711,11 @@ impl VuMeterWidget {
             rms_r,
             hold_r,
             clipping,
+            ms_mode,
+            phase_corr: phase_corr.clamp(-1.0, 1.0),
+            show_numeric,
+            crest_l,
+            crest_r,
         }
     }
 
@@ -4694,6 +4724,30 @@ impl VuMeterWidget {
         let clamped = db.clamp(METER_MIN_DB, METER_MAX_DB);
         let ratio = (clamped - METER_MIN_DB) / METER_TOTAL_RANGE;
         (bar_left + ratio * bar_width).round()
+    }
+
+    /// Compute the effective widget height: extended when advanced features are active.
+    fn effective_height(&self) -> f32 {
+        if self.show_numeric || self.phase_corr.abs() > 0.001 || self.crest_l.abs() > 0.001 || self.crest_r.abs() > 0.001 {
+            METER_HEIGHT_EXTENDED
+        } else {
+            METER_HEIGHT
+        }
+    }
+
+    /// Format a dBFS value for numeric readout: one decimal place with sign.
+    fn format_db(db: f32) -> String {
+        if db <= METER_MIN_DB {
+            "-inf".to_string()
+        } else {
+            format!("{:+.1}", db)
+        }
+    }
+
+    /// Map a correlation value (-1..+1) to a pixel x in the gauge area.
+    fn corr_to_x(corr: f32, gauge_left: f32, gauge_width: f32) -> f32 {
+        let ratio = (corr + 1.0) / 2.0; // 0..1
+        (gauge_left + ratio * gauge_width).round()
     }
 
     /// Return the zone color for a given dB value per D-05.
@@ -4734,7 +4788,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
             width: Length::Fill,
-            height: Length::Fixed(METER_HEIGHT),
+            height: Length::Fixed(self.effective_height()),
         }
     }
 
@@ -4748,9 +4802,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         _renderer: &iced::Renderer,
         limits: &iced::advanced::layout::Limits,
     ) -> iced::advanced::layout::Node {
+        let height = self.effective_height();
         let size = limits.resolve(
             Length::Fill,
-            Length::Fixed(METER_HEIGHT),
+            Length::Fixed(height),
             iced::Size::ZERO,
         );
         iced::advanced::layout::Node::new(size)
@@ -4773,6 +4828,8 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let bx = bounds.x;
         let by = bounds.y;
         let bw = bounds.width;
+        let bh = bounds.height;
+        let _ = bh; // used indirectly via effective_height
 
         // ── Background ──
         renderer.fill_quad(
@@ -4785,17 +4842,28 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         );
 
         // ── Layout constants ──
-        // Left margin: LED(8) + gap(3) + label(10) = 21px
         let left_margin = METER_LED_SIZE + 3.0 + 10.0;
-        let right_margin = 5.0;
+        let numeric_available = self.show_numeric || self.ms_mode;
+        let right_margin = if numeric_available { METER_NUMERIC_WIDTH + 5.0 } else { 5.0 };
         let bar_left = (bx + left_margin).round();
         let bar_width = (bw - left_margin - right_margin).max(1.0);
         let _bar_right = (bar_left + bar_width).round();
 
-        // Vertical layout: top padding 1px, L bar 6px, gap 1px, R bar 6px, scale 8px
+        // Vertical layout: top padding 1px, L bar 6px, gap 1px, R bar 6px
         let l_bar_y = (by + 1.0).round();
         let r_bar_y = (l_bar_y + METER_BAR_HEIGHT + METER_BAR_GAP).round();
-        let scale_y = (r_bar_y + METER_BAR_HEIGHT + 1.0).round();
+
+        // Phase correlation gauge row (below R bar): 6px tall
+        let gauge_y = (r_bar_y + METER_BAR_HEIGHT + 2.0).round();
+        let gauge_h: f32 = 3.0;
+        let gauge_area_h: f32 = 6.0;
+
+        // Crest factor text row (below gauge): 8px
+        let crest_y = (gauge_y + gauge_area_h + 1.0).round();
+        let crest_h: f32 = 8.0;
+
+        // Scale ticks row (below crest): 8px
+        let scale_y = (crest_y + crest_h + 1.0).round();
 
         // ── Draw L bar ──
         if self.rms_l > METER_MIN_DB {
@@ -4867,7 +4935,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         // ── Draw clipping LED (D-06): small square indicator ──
         let led_x = (bx + 2.0).round();
-        let led_y = (by + (METER_HEIGHT - METER_LED_SIZE) / 2.0).round();
+        let led_y = (by + 1.0).round();
         let led_color = if self.clipping {
             ZONE_RED
         } else {
@@ -4894,13 +4962,14 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             led_color,
         );
 
-        // ── Draw "L" / "R" labels ──
+        // ── Draw "L"/"R" or "M"/"S" labels (D-03) ──
         let label_x = (bx + METER_LED_SIZE + 3.0).round();
         let label_font_size = 8.0;
+        let (label_top, label_bot) = if self.ms_mode { ("M", "S") } else { ("L", "R") };
 
         renderer.fill_text(
             iced::advanced::text::Text {
-                content: "L".to_string(),
+                content: label_top.to_string(),
                 bounds: iced::Size::new(10.0, METER_BAR_HEIGHT),
                 size: iced::Pixels(label_font_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
@@ -4919,7 +4988,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         );
         renderer.fill_text(
             iced::advanced::text::Text {
-                content: "R".to_string(),
+                content: label_bot.to_string(),
                 bounds: iced::Size::new(10.0, METER_BAR_HEIGHT),
                 size: iced::Pixels(label_font_size),
                 line_height: iced::advanced::text::LineHeight::Relative(1.0),
@@ -4936,6 +5005,197 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 iced::Size::new(10.0, METER_BAR_HEIGHT),
             ),
         );
+
+        // ── Numeric dBFS readout (D-05): right side of widget ──
+        if self.show_numeric {
+            let num_x = (bar_left + bar_width + 4.0).round();
+            let num_font = 7.0;
+            let prefix_top = if self.ms_mode { "M: " } else { "" };
+            let prefix_bot = if self.ms_mode { "S: " } else { "" };
+
+            // Top row (L/M): Pk and Rms
+            let top_text = format!(
+                "{}Pk:{} Rms:{}",
+                prefix_top,
+                Self::format_db(self.peak_l),
+                Self::format_db(self.rms_l),
+            );
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: top_text,
+                    bounds: iced::Size::new(METER_NUMERIC_WIDTH, METER_BAR_HEIGHT),
+                    size: iced::Pixels(num_font),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                    font: FONT_INTER_SANS_MEDIUM,
+                    align_x: iced::alignment::Horizontal::Left.into(),
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: iced::advanced::text::Shaping::Basic,
+                    wrapping: iced::advanced::text::Wrapping::None,
+                },
+                iced::Point::new(num_x, l_bar_y),
+                COLOR_TEXT_SECONDARY,
+                iced::Rectangle::new(
+                    iced::Point::new(num_x, l_bar_y),
+                    iced::Size::new(METER_NUMERIC_WIDTH, METER_BAR_HEIGHT),
+                ),
+            );
+
+            // Bottom row (R/S): Pk and Rms
+            let bot_text = format!(
+                "{}Pk:{} Rms:{}",
+                prefix_bot,
+                Self::format_db(self.peak_r),
+                Self::format_db(self.rms_r),
+            );
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: bot_text,
+                    bounds: iced::Size::new(METER_NUMERIC_WIDTH, METER_BAR_HEIGHT),
+                    size: iced::Pixels(num_font),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                    font: FONT_INTER_SANS_MEDIUM,
+                    align_x: iced::alignment::Horizontal::Left.into(),
+                    align_y: iced::alignment::Vertical::Center,
+                    shaping: iced::advanced::text::Shaping::Basic,
+                    wrapping: iced::advanced::text::Wrapping::None,
+                },
+                iced::Point::new(num_x, r_bar_y),
+                COLOR_TEXT_SECONDARY,
+                iced::Rectangle::new(
+                    iced::Point::new(num_x, r_bar_y),
+                    iced::Size::new(METER_NUMERIC_WIDTH, METER_BAR_HEIGHT),
+                ),
+            );
+        }
+
+        // ── Phase correlation gauge (D-04): horizontal bar -1 to +1 ──
+        let gauge_left = bar_left;
+        let gauge_width = bar_width;
+
+        // Background bar
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: iced::Rectangle::new(
+                    iced::Point::new(gauge_left, gauge_y),
+                    iced::Size::new(gauge_width, gauge_h),
+                ),
+                border: iced::Border::default(),
+                ..Default::default()
+            },
+            COLOR_CONTRAST,
+        );
+
+        // Fill from center (0.0) to phase_corr value
+        let center_x = Self::corr_to_x(0.0, gauge_left, gauge_width);
+        let corr_x = Self::corr_to_x(self.phase_corr, gauge_left, gauge_width);
+        let (fill_left, fill_width) = if self.phase_corr >= 0.0 {
+            (center_x, (corr_x - center_x).max(0.0))
+        } else {
+            (corr_x, (center_x - corr_x).max(0.0))
+        };
+        if fill_width > 0.0 {
+            let corr_color = if self.phase_corr > 0.0 { ZONE_GREEN } else { ZONE_RED };
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        iced::Point::new(fill_left, gauge_y),
+                        iced::Size::new(fill_width, gauge_h),
+                    ),
+                    border: iced::Border::default(),
+                    ..Default::default()
+                },
+                corr_color,
+            );
+        }
+
+        // Center marker (0.0)
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: iced::Rectangle::new(
+                    iced::Point::new(center_x - 0.5, gauge_y),
+                    iced::Size::new(1.0, gauge_h),
+                ),
+                border: iced::Border::default(),
+                ..Default::default()
+            },
+            COLOR_TEXT_SECONDARY,
+        );
+
+        // Correlation numeric label to the right of gauge
+        let corr_label = format!("{:.2}", self.phase_corr);
+        let corr_label_color = if self.phase_corr > 0.0 {
+            ZONE_GREEN
+        } else if self.phase_corr < 0.0 {
+            ZONE_RED
+        } else {
+            COLOR_TEXT_SECONDARY
+        };
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: corr_label,
+                bounds: iced::Size::new(40.0, gauge_area_h),
+                size: iced::Pixels(7.0),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Left.into(),
+                align_y: iced::alignment::Vertical::Center,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(bar_left, gauge_y - 1.0),
+            corr_label_color,
+            iced::Rectangle::new(
+                iced::Point::new(bar_left, gauge_y - 1.0),
+                iced::Size::new(40.0, gauge_area_h),
+            ),
+        );
+
+        // ── Crest factor (D-07): numeric text + colored bar ──
+        // Show the dominant channel (whichever has higher crest)
+        let crest_val = self.crest_l.max(self.crest_r);
+        let crest_text = format!("Crest: {:.1} dB", crest_val);
+        let crest_color = if crest_val > 10.0 {
+            ZONE_GREEN  // dynamic
+        } else if crest_val > 3.0 {
+            ZONE_YELLOW // medium
+        } else {
+            ZONE_RED    // compressed
+        };
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: crest_text,
+                bounds: iced::Size::new(METER_NUMERIC_WIDTH, crest_h),
+                size: iced::Pixels(7.0),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Left.into(),
+                align_y: iced::alignment::Vertical::Top,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(bar_left, crest_y),
+            COLOR_TEXT_SECONDARY,
+            iced::Rectangle::new(
+                iced::Point::new(bar_left, crest_y),
+                iced::Size::new(METER_NUMERIC_WIDTH, crest_h),
+            ),
+        );
+
+        // Small colored bar for crest factor visual (3px height, max 60px wide)
+        let crest_bar_w = ((crest_val / 20.0) * 60.0).clamp(0.0, 60.0);
+        if crest_bar_w > 0.0 {
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        iced::Point::new(bar_left, crest_y + 7.0),
+                        iced::Size::new(crest_bar_w, 2.0),
+                    ),
+                    border: iced::Border::default(),
+                    ..Default::default()
+                },
+                crest_color,
+            );
+        }
 
         // ── Draw scale ticks and labels (D-04) ──
         let tick_font_size = 7.0;

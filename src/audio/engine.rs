@@ -11,6 +11,7 @@ use ringbuf::{
     HeapRb,
     traits::{Consumer, Split},
 };
+use crate::audio::meter;
 use std::sync::Arc;
 
 // Define aliases based on ringbuf 0.4 structure
@@ -75,6 +76,7 @@ pub struct AudioEngine {
     pub buffer_producer: Arc<Mutex<Option<HeapProducer<f32>>>>,
     command_tx: Sender<AudioCommand>,
     pub dsp: Arc<RwLock<DspChain>>,
+    pub meter: Arc<meter::MeterData>,
     // Decodificador inyectable para pruebas (None = usar SymphoniaDecoder por defecto)
     pub custom_decoder: Arc<Mutex<Option<Box<dyn AudioDecoder>>>>,
 }
@@ -239,6 +241,7 @@ impl AudioEngine {
         let state = Arc::new(RwLock::new(AudioState::default()));
         let dsp = Arc::new(RwLock::new(DspChain::default()));
         let device_manager = Arc::new(AudioDeviceManager::new());
+        let meter = Arc::new(meter::MeterData::new());
 
         // Hilo de decodificación recibe una copia del Engine para controlarse a sí mismo
         let engine = Self {
@@ -248,6 +251,7 @@ impl AudioEngine {
             buffer_producer: Arc::new(Mutex::new(Some(producer))),
             command_tx,
             dsp,
+            meter: meter.clone(),
             custom_decoder: Arc::new(Mutex::new(decoder)),
         };
 

@@ -43,6 +43,13 @@ impl AudioManager {
         self.engine.state.clone()
     }
 
+    /// Devuelve una referencia clonable a los datos atómicos del medidor.
+    ///
+    /// El hilo decodificador escribe peak/RMS post-DSP; la GUI lee a ~30ms.
+    pub fn meter(&self) -> Arc<crate::audio::meter::MeterData> {
+        self.engine.meter.clone()
+    }
+
     /// Inicia o reanuda la reproducción.
     pub fn play(&self) {
         self.engine.set_playing(true);

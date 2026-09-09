@@ -8,7 +8,7 @@ use iced::{
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 // Import deleted since song row is injected and artist header is in universal_song_list
-use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
+use crate::gui::widgets::{VuMeterWidget, standard_scrollable, standard_scrollbar};
 use crate::utils::{SortColumn, format_duration, format_size};
 
 // Contadores de redraw para diagnóstico — se incrementan cada vez que la vista se reconstruye
@@ -3015,6 +3015,12 @@ pub fn view<'a>(
     .align_y(Alignment::Center)
     .height(Length::Fill);
 
+    let meter_widget = VuMeterWidget::new(
+        0.0, 0.0, 0.0, // peak_l, rms_l, hold_l
+        0.0, 0.0, 0.0, // peak_r, rms_r, hold_r
+        false,          // clipping
+    );
+
     let bottom_bar = row![
         search_input,
         Space::new().width(15.0),
@@ -3022,7 +3028,9 @@ pub fn view<'a>(
             .size(13)
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(Length::Fill),
+        Space::new().width(10.0),
+        meter_widget,
+        Space::new().width(10.0),
         bottom_actions
     ]
     .padding([0, 15])

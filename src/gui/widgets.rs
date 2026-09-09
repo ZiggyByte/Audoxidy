@@ -11,6 +11,8 @@ use iced::{
 };
 use iced::{Event, Rectangle, Size, Vector};
 
+use iced::color;
+
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_MEDIUM, FONT_INTER_SANS_NORMAL,
@@ -4610,5 +4612,376 @@ impl<'a, Message> CustomSlider<'a, Message> {
 impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {
     fn from(slider: CustomSlider<'a, Message>) -> Self {
         Element::new(slider)
+    }
+}
+
+// ==============================
+// VuMeterWidget — stereo L/R horizontal bars with dBFS scale (Phase 07)
+// Display-only: no event handling, no state tree.
+// ==============================
+
+const METER_MIN_DB: f32 = -60.0;
+const METER_MAX_DB: f32 = 6.0;
+const METER_TOTAL_RANGE: f32 = 66.0;
+const METER_HEIGHT: f32 = 24.0;
+const METER_BAR_HEIGHT: f32 = 6.0;
+const METER_BAR_GAP: f32 = 2.0;
+const METER_LABEL_WIDTH: f32 = 12.0;
+const METER_LED_SIZE: f32 = 8.0;
+const METER_SCALE_HEIGHT: f32 = 8.0;
+
+// Zone colors per D-05
+const ZONE_GREEN: Color = color!(0x4CAF50);
+const ZONE_YELLOW: Color = color!(0xFFC107);
+const ZONE_ORANGE: Color = color!(0xFF9800);
+const ZONE_RED: Color = color!(0xF44336);
+
+// Scale ticks: (db, _is_major) — all labeled per D-04
+const METER_TICKS: &[(f32, bool)] = &[
+    (-60.0, true),
+    (-40.0, true),
+    (-20.0, true),
+    (-15.0, true),
+    (-12.0, true),
+    (-9.0, true),
+    (-6.0, true),
+    (-3.0, true),
+    (0.0, true),
+    (3.0, true),
+    (6.0, true),
+];
+
+/// Display-only stereo VU meter widget with horizontal L/R bars.
+pub struct VuMeterWidget {
+    peak_l: f32,
+    rms_l: f32,
+    hold_l: f32,
+    peak_r: f32,
+    rms_r: f32,
+    hold_r: f32,
+    clipping: bool,
+}
+
+impl VuMeterWidget {
+    /// Create a new VuMeterWidget.
+    ///
+    /// - `peak_l/r`: current peak dBFS per channel
+    /// - `rms_l/r`: current RMS dBFS per channel (bar fill)
+    /// - `hold_l/r`: held peak dBFS per channel (peak hold marker)
+    /// - `clipping`: whether clipping LED should light up
+    pub fn new(
+        peak_l: f32,
+        rms_l: f32,
+        hold_l: f32,
+        peak_r: f32,
+        rms_r: f32,
+        hold_r: f32,
+        clipping: bool,
+    ) -> Self {
+        Self {
+            peak_l,
+            rms_l,
+            hold_l,
+            peak_r,
+            rms_r,
+            hold_r,
+            clipping,
+        }
+    }
+
+    /// Convert a dB value to a pixel x-coordinate within the bar area.
+    fn db_to_x(db: f32, bar_left: f32, bar_width: f32) -> f32 {
+        let clamped = db.clamp(METER_MIN_DB, METER_MAX_DB);
+        let ratio = (clamped - METER_MIN_DB) / METER_TOTAL_RANGE;
+        (bar_left + ratio * bar_width).round()
+    }
+
+    /// Return the zone color for a given dB value per D-05.
+    fn zone_color(db: f32) -> Color {
+        if db <= -9.0 {
+            ZONE_GREEN
+        } else if db <= -3.0 {
+            ZONE_YELLOW
+        } else if db <= 0.0 {
+            ZONE_ORANGE
+        } else {
+            ZONE_RED
+        }
+    }
+
+    /// Return the label string for a tick dB value.
+    fn tick_label(db: f32) -> &'static str {
+        match db as i32 {
+            -60 => "-60",
+            -40 => "-40",
+            -20 => "-20",
+            -15 => "-15",
+            -12 => "-12",
+            -9 => "-9",
+            -6 => "-6",
+            -3 => "-3",
+            0 => "0",
+            3 => "+3",
+            6 => "+6",
+            _ => "",
+        }
+    }
+}
+
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
+    for VuMeterWidget
+{
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size {
+            width: Length::Fill,
+            height: Length::Fixed(METER_HEIGHT),
+        }
+    }
+
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(())
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        let size = limits.resolve(
+            Length::Fill,
+            Length::Fixed(METER_HEIGHT),
+            iced::Size::ZERO,
+        );
+        iced::advanced::layout::Node::new(size)
+    }
+
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        _cursor: iced::advanced::mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+        use iced::advanced::Renderer as _;
+        use iced::advanced::text::Renderer as _;
+
+        let bounds = layout.bounds();
+        let bx = bounds.x;
+        let by = bounds.y;
+        let bw = bounds.width;
+
+        // ── Background ──
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds,
+                border: iced::Border::default(),
+                ..Default::default()
+            },
+            COLOR_BG,
+        );
+
+        // ── Layout constants ──
+        // Left margin: LED(8) + gap(3) + label(10) = 21px
+        let left_margin = METER_LED_SIZE + 3.0 + 10.0;
+        let right_margin = 5.0;
+        let bar_left = (bx + left_margin).round();
+        let bar_width = (bw - left_margin - right_margin).max(1.0);
+        let _bar_right = (bar_left + bar_width).round();
+
+        // Vertical layout: top padding 1px, L bar 6px, gap 1px, R bar 6px, scale 8px
+        let l_bar_y = (by + 1.0).round();
+        let r_bar_y = (l_bar_y + METER_BAR_HEIGHT + METER_BAR_GAP).round();
+        let scale_y = (r_bar_y + METER_BAR_HEIGHT + 1.0).round();
+
+        // ── Draw L bar ──
+        if self.rms_l > METER_MIN_DB {
+            let fill_x = Self::db_to_x(self.rms_l, bar_left, bar_width);
+            let fill_w = (fill_x - bar_left).max(0.0);
+            if fill_w > 0.0 {
+                renderer.fill_quad(
+                    iced::advanced::graphics::core::renderer::Quad {
+                        bounds: iced::Rectangle::new(
+                            iced::Point::new(bar_left, l_bar_y),
+                            iced::Size::new(fill_w, METER_BAR_HEIGHT),
+                        ),
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    },
+                    Self::zone_color(self.rms_l),
+                );
+            }
+        }
+
+        // ── Draw R bar ──
+        if self.rms_r > METER_MIN_DB {
+            let fill_x = Self::db_to_x(self.rms_r, bar_left, bar_width);
+            let fill_w = (fill_x - bar_left).max(0.0);
+            if fill_w > 0.0 {
+                renderer.fill_quad(
+                    iced::advanced::graphics::core::renderer::Quad {
+                        bounds: iced::Rectangle::new(
+                            iced::Point::new(bar_left, r_bar_y),
+                            iced::Size::new(fill_w, METER_BAR_HEIGHT),
+                        ),
+                        border: iced::Border::default(),
+                        ..Default::default()
+                    },
+                    Self::zone_color(self.rms_r),
+                );
+            }
+        }
+
+        // ── Draw peak hold markers (D-07): thin vertical lines ──
+        if self.hold_l > METER_MIN_DB {
+            let hx = Self::db_to_x(self.hold_l, bar_left, bar_width);
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        iced::Point::new(hx, l_bar_y),
+                        iced::Size::new(2.0, METER_BAR_HEIGHT),
+                    ),
+                    border: iced::Border::default(),
+                    ..Default::default()
+                },
+                Self::zone_color(self.hold_l),
+            );
+        }
+        if self.hold_r > METER_MIN_DB {
+            let hx = Self::db_to_x(self.hold_r, bar_left, bar_width);
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        iced::Point::new(hx, r_bar_y),
+                        iced::Size::new(2.0, METER_BAR_HEIGHT),
+                    ),
+                    border: iced::Border::default(),
+                    ..Default::default()
+                },
+                Self::zone_color(self.hold_r),
+            );
+        }
+
+        // ── Draw clipping LED (D-06): small square indicator ──
+        let led_x = (bx + 2.0).round();
+        let led_y = (by + (METER_HEIGHT - METER_LED_SIZE) / 2.0).round();
+        let led_color = if self.clipping {
+            ZONE_RED
+        } else {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.3)
+        };
+        let led_border = if self.clipping {
+            ZONE_RED
+        } else {
+            COLOR_TEXT_SECONDARY.scale_alpha(0.5)
+        };
+        renderer.fill_quad(
+            iced::advanced::graphics::core::renderer::Quad {
+                bounds: iced::Rectangle::new(
+                    iced::Point::new(led_x, led_y),
+                    iced::Size::new(METER_LED_SIZE, METER_LED_SIZE),
+                ),
+                border: iced::Border {
+                    radius: 1.0.into(),
+                    width: 1.0,
+                    color: led_border,
+                },
+                ..Default::default()
+            },
+            led_color,
+        );
+
+        // ── Draw "L" / "R" labels ──
+        let label_x = (bx + METER_LED_SIZE + 3.0).round();
+        let label_font_size = 8.0;
+
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: "L".to_string(),
+                bounds: iced::Size::new(10.0, METER_BAR_HEIGHT),
+                size: iced::Pixels(label_font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(label_x, l_bar_y),
+            COLOR_TEXT_SECONDARY,
+            iced::Rectangle::new(
+                iced::Point::new(label_x, l_bar_y),
+                iced::Size::new(10.0, METER_BAR_HEIGHT),
+            ),
+        );
+        renderer.fill_text(
+            iced::advanced::text::Text {
+                content: "R".to_string(),
+                bounds: iced::Size::new(10.0, METER_BAR_HEIGHT),
+                size: iced::Pixels(label_font_size),
+                line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                font: FONT_INTER_SANS_MEDIUM,
+                align_x: iced::alignment::Horizontal::Center.into(),
+                align_y: iced::alignment::Vertical::Center,
+                shaping: iced::advanced::text::Shaping::Basic,
+                wrapping: iced::advanced::text::Wrapping::None,
+            },
+            iced::Point::new(label_x, r_bar_y),
+            COLOR_TEXT_SECONDARY,
+            iced::Rectangle::new(
+                iced::Point::new(label_x, r_bar_y),
+                iced::Size::new(10.0, METER_BAR_HEIGHT),
+            ),
+        );
+
+        // ── Draw scale ticks and labels (D-04) ──
+        let tick_font_size = 7.0;
+        for &(db, _is_major) in METER_TICKS {
+            let tx = Self::db_to_x(db, bar_left, bar_width);
+
+            // Tick line: 4px tall
+            renderer.fill_quad(
+                iced::advanced::graphics::core::renderer::Quad {
+                    bounds: iced::Rectangle::new(
+                        iced::Point::new(tx, scale_y),
+                        iced::Size::new(1.0, 4.0),
+                    ),
+                    border: iced::Border::default(),
+                    ..Default::default()
+                },
+                COLOR_TEXT_SECONDARY,
+            );
+
+            // Tick label
+            let label = Self::tick_label(db);
+            renderer.fill_text(
+                iced::advanced::text::Text {
+                    content: label.to_string(),
+                    bounds: iced::Size::new(20.0, 7.0),
+                    size: iced::Pixels(tick_font_size),
+                    line_height: iced::advanced::text::LineHeight::Relative(1.0),
+                    font: FONT_INTER_SANS_MEDIUM,
+                    align_x: iced::alignment::Horizontal::Center.into(),
+                    align_y: iced::alignment::Vertical::Top,
+                    shaping: iced::advanced::text::Shaping::Basic,
+                    wrapping: iced::advanced::text::Wrapping::None,
+                },
+                iced::Point::new(tx - 10.0, scale_y + 4.0),
+                COLOR_TEXT_SECONDARY,
+                iced::Rectangle::new(
+                    iced::Point::new(tx - 10.0, scale_y + 4.0),
+                    iced::Size::new(20.0, 7.0),
+                ),
+            );
+        }
+    }
+}
+
+impl<'a, Message: 'a> From<VuMeterWidget> for Element<'a, Message> {
+    fn from(widget: VuMeterWidget) -> Self {
+        Element::new(widget)
     }
 }

@@ -1169,7 +1169,7 @@ impl AudoxidyApp {
                 audio_center_manager,
                 player_ui_state: {
                     let mut p = crate::gui::player::PlayerUiState::default();
-                    p.meter_ms_mode = meter_ms_mode;
+                    p.meter.ms_mode = meter_ms_mode;
                     p
                 },
                 window_id: None,
@@ -4920,7 +4920,7 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::MeterMsModeToggle(v) => {
-                self.player_ui_state.meter_ms_mode = v;
+                self.player_ui_state.meter.ms_mode = v;
                 if let Ok(db_lock) = self.database.lock() {
                     let _ = db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" });
                 }
@@ -5084,6 +5084,8 @@ impl AudoxidyApp {
             &self.library_manager,
             &self.database,
             &self.player_ui_state.current_art_id,
+            &self.player_ui_state.meter,
+            false, // clipping — TODO: wire from meter data
         );
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda
@@ -5780,7 +5782,7 @@ impl AudoxidyApp {
                 let popup_content = crate::gui::widgets::meter_popup_view(
                     s.meter_hold_time_ms,
                     s.meter_rms_window_ms,
-                    self.player_ui_state.meter_ms_mode,
+                    self.player_ui_state.meter.ms_mode,
                     s.meter_infinite_hold,
                 );
 
@@ -5971,18 +5973,24 @@ impl AudoxidyApp {
 
     /// Lee los 4 atómicos de la Fase 1 (MeterData), aplica ballistics,
     /// peak hold, pause fade y track reset, y escribe en
-    /// `player_ui_state.meter`.
+    /// `player_ui_state.meter`. Incluye cómputo M/S, correlación de fase,
+    /// crest factor y hold infinito (Phase 08 Plan 2).
     fn update_meter(&mut self) {
         let state = self.audio_manager.get_state();
         let is_playing = state.is_playing;
         let current_path = state.path.clone();
+        let infinite_hold = state.meter_infinite_hold;
 
         let m = &mut self.player_ui_state.meter;
 
-        // Track change reset (D-06)
+        // Track change reset (D-06) — also resets infinite hold values
         if current_path != m.last_track_path {
+            let ms_mode = m.ms_mode;
+            let show_numeric = m.show_numeric;
             *m = crate::gui::player::MeterUiState::default();
             m.last_track_path = current_path;
+            m.ms_mode = ms_mode;
+            m.show_numeric = show_numeric;
             return;
         }
 
@@ -5990,36 +5998,81 @@ impl AudoxidyApp {
         let meter_data = self.audio_manager.meter();
         let raw_peak_l = meter_data.read_peak_l();
         let raw_peak_r = meter_data.read_peak_r();
+        let raw_rms_l = meter_data.read_rms_l();
+        let raw_rms_r = meter_data.read_rms_r();
+
+        // ── M/S computation (D-03): Mid = (L+R)/2, Side = (L-R)/2 ──
+        let (display_peak_l, display_peak_r, display_rms_l, display_rms_r) = if m.ms_mode {
+            let mid_peak = (raw_peak_l + raw_peak_r) / 2.0;
+            let side_peak = (raw_peak_l - raw_peak_r) / 2.0;
+            let mid_rms = (raw_rms_l + raw_rms_r) / 2.0;
+            let side_rms = (raw_rms_l - raw_rms_r) / 2.0;
+            (mid_peak, side_peak, mid_rms, side_rms)
+        } else {
+            (raw_peak_l, raw_peak_r, raw_rms_l, raw_rms_r)
+        };
 
         if is_playing {
             m.is_fading_out = false;
 
             // Peak hold state machine per channel (D-03)
-            let (new_hold_l, new_start_l, new_decay_l) = peak_hold_step(
-                m.peak_hold_l,
-                m.peak_hold_start_l,
-                m.peak_decay_l,
-                raw_peak_l,
-            );
-            m.peak_hold_l = new_hold_l;
-            m.peak_hold_start_l = new_start_l;
-            m.peak_decay_l = new_decay_l;
+            if infinite_hold {
+                // Infinite hold: hold values only increase, never decay (D-06)
+                m.peak_hold_l = m.peak_hold_l.max(display_peak_l);
+                m.peak_hold_r = m.peak_hold_r.max(display_peak_r);
+                m.peak_hold_start_l = None;
+                m.peak_hold_start_r = None;
+                m.peak_decay_l = 0.0;
+                m.peak_decay_r = 0.0;
+            } else {
+                // Normal hold: existing Phase 2 logic (hold timer + decay)
+                let (new_hold_l, new_start_l, new_decay_l) = peak_hold_step(
+                    m.peak_hold_l,
+                    m.peak_hold_start_l,
+                    m.peak_decay_l,
+                    display_peak_l,
+                );
+                m.peak_hold_l = new_hold_l;
+                m.peak_hold_start_l = new_start_l;
+                m.peak_decay_l = new_decay_l;
 
-            let (new_hold_r, new_start_r, new_decay_r) = peak_hold_step(
-                m.peak_hold_r,
-                m.peak_hold_start_r,
-                m.peak_decay_r,
-                raw_peak_r,
-            );
-            m.peak_hold_r = new_hold_r;
-            m.peak_hold_start_r = new_start_r;
-            m.peak_decay_r = new_decay_r;
+                let (new_hold_r, new_start_r, new_decay_r) = peak_hold_step(
+                    m.peak_hold_r,
+                    m.peak_hold_start_r,
+                    m.peak_decay_r,
+                    display_peak_r,
+                );
+                m.peak_hold_r = new_hold_r;
+                m.peak_hold_start_r = new_start_r;
+                m.peak_decay_r = new_decay_r;
+            }
 
             // Asymmetric ballistics — target is max of raw peak and held peak (D-04)
-            let target_l = raw_peak_l.max(m.peak_hold_l);
-            let target_r = raw_peak_r.max(m.peak_hold_r);
+            let target_l = display_peak_l.max(m.peak_hold_l);
+            let target_r = display_peak_r.max(m.peak_hold_r);
             m.display_l = ballistic_step(m.display_l, target_l);
             m.display_r = ballistic_step(m.display_r, target_r);
+
+            // ── Phase correlation (D-04): corr = (L·R) / (|L|·|R|) ──
+            // Use RMS-weighted correlation for smoother readout
+            m.phase_corr = if raw_rms_l.abs() > 0.001 && raw_rms_r.abs() > 0.001 {
+                let corr = (raw_rms_l * raw_rms_r) / (raw_rms_l.abs() * raw_rms_r.abs());
+                corr.clamp(-1.0, 1.0)
+            } else {
+                0.0 // Undefined for silence
+            };
+
+            // ── Crest factor (D-07): peak_dBFS - RMS_dBFS ──
+            m.crest_l = if raw_rms_l > crate::gui::widgets::METER_MIN_DB + 1.0 {
+                raw_peak_l - raw_rms_l
+            } else {
+                0.0
+            };
+            m.crest_r = if raw_rms_r > crate::gui::widgets::METER_MIN_DB + 1.0 {
+                raw_peak_r - raw_rms_r
+            } else {
+                0.0
+            };
         } else if !m.is_fading_out {
             // Transition to pause — capture current display values (D-05)
             m.last_playing_l = m.display_l;

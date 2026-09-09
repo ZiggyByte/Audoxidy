@@ -2398,6 +2398,8 @@ pub fn view<'a>(
     manager: &'a LibraryManager,
     _database: &'a Arc<Mutex<Database>>,
     playing_path: &'a str,
+    meter_state: &'a crate::gui::player::MeterUiState,
+    clipping: bool,
 ) -> Element<'a, Message> {
     library_redraw_count_log();
     // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
@@ -3016,13 +3018,14 @@ pub fn view<'a>(
     .height(Length::Fill);
 
     let meter_widget = VuMeterWidget::new(
-        0.0, 0.0, 0.0, // peak_l, rms_l, hold_l
-        0.0, 0.0, 0.0, // peak_r, rms_r, hold_r
-        false,          // clipping
-        false,          // ms_mode (D-03)
-        0.0,            // phase_corr (D-04)
-        true,           // show_numeric (D-05) — always on per D-05
-        0.0, 0.0,       // crest_l, crest_r (D-07)
+        meter_state.display_l, meter_state.smooth_peak_l, meter_state.peak_hold_l,
+        meter_state.display_r, meter_state.smooth_peak_r, meter_state.peak_hold_r,
+        clipping,
+        meter_state.ms_mode,       // per D-03
+        meter_state.phase_corr,    // per D-04
+        meter_state.show_numeric,  // per D-05
+        meter_state.crest_l,       // per D-07
+        meter_state.crest_r,       // per D-07
     );
 
     // Envolver el medidor con mouse_area para capturar right-click (D-01)

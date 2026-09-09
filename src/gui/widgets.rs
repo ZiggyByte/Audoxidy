@@ -4616,7 +4616,7 @@ impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {
 }
 
 // ==============================
-// VuMeterWidget — stereo L/R horizontal bars with dBFS scale (Phase 07)
+// VuMeterWidget — stereo L/R horizontal bars with dBFS scale
 // Display-only: no event handling, no state tree.
 // ==============================
 
@@ -4635,13 +4635,13 @@ const METER_SCALE_HEIGHT: f32 = 8.0;
 /// Numeric readout area width on the right side.
 const METER_NUMERIC_WIDTH: f32 = 110.0;
 
-// Zone colors per D-05
+// Zone colors for dBFS level ranges
 const ZONE_GREEN: Color = color!(0x4CAF50);
 const ZONE_YELLOW: Color = color!(0xFFC107);
 const ZONE_ORANGE: Color = color!(0xFF9800);
 const ZONE_RED: Color = color!(0xF44336);
 
-// Scale ticks: (db, _is_major) — all labeled per D-04
+// Scale ticks: (db, _is_major) — all labeled for full dBFS visibility
 const METER_TICKS: &[(f32, bool)] = &[
     (-60.0, true),
     (-40.0, true),
@@ -4665,15 +4665,15 @@ pub struct VuMeterWidget {
     rms_r: f32,
     hold_r: f32,
     clipping: bool,
-    /// M/S mode: when true, labels show "M"/"S" instead of "L"/"R" (D-03).
+    /// M/S mode: when true, labels show "M"/"S" instead of "L"/"R"
     ms_mode: bool,
-    /// Phase correlation: -1.0 (mono) to +1.0 (wide) (D-04).
+    /// Phase correlation: -1.0 (mono) to +1.0 (wide)
     phase_corr: f32,
-    /// Show numeric dBFS readout for peak/RMS values (D-05).
+    /// Show numeric dBFS readout for peak/RMS values
     show_numeric: bool,
-    /// Crest factor for L channel in dB (peak - RMS) (D-07).
+    /// Crest factor for L channel in dB (peak - RMS)
     crest_l: f32,
-    /// Crest factor for R channel in dB (peak - RMS) (D-07).
+    /// Crest factor for R channel in dB (peak - RMS)
     crest_r: f32,
 }
 
@@ -4684,10 +4684,10 @@ impl VuMeterWidget {
     /// - `rms_l/r`: current RMS dBFS per channel (bar fill)
     /// - `hold_l/r`: held peak dBFS per channel (peak hold marker)
     /// - `clipping`: whether clipping LED should light up
-    /// - `ms_mode`: when true, labels show "M"/"S" instead of "L"/"R" (D-03)
-    /// - `phase_corr`: phase correlation -1.0..+1.0 (D-04)
-    /// - `show_numeric`: show numeric dBFS readout (D-05)
-    /// - `crest_l/r`: crest factor peak-RMS in dB (D-07)
+    /// - `ms_mode`: when true, labels show "M"/"S" instead of "L"/"R"
+    /// - `phase_corr`: phase correlation -1.0..+1.0
+    /// - `show_numeric`: show numeric dBFS readout
+    /// - `crest_l/r`: crest factor peak-RMS in dB
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         peak_l: f32,
@@ -4750,7 +4750,7 @@ impl VuMeterWidget {
         (gauge_left + ratio * gauge_width).round()
     }
 
-    /// Return the zone color for a given dB value per D-05.
+    /// Return the zone color for a given dB value.
     fn zone_color(db: f32) -> Color {
         if db <= -9.0 {
             ZONE_GREEN
@@ -5068,7 +5068,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             );
         }
 
-        // ── Phase correlation gauge (D-04): horizontal bar -1 to +1 ──
+        // ── Phase correlation gauge: horizontal bar -1 to +1 ──
         let gauge_left = bar_left;
         let gauge_width = bar_width;
 
@@ -5150,7 +5150,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             ),
         );
 
-        // ── Crest factor (D-07): numeric text + colored bar ──
+        // ── Crest factor: numeric text + colored bar ──
         // Show the dominant channel (whichever has higher crest)
         let crest_val = self.crest_l.max(self.crest_r);
         let crest_text = format!("Crest: {:.1} dB", crest_val);
@@ -5197,7 +5197,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             );
         }
 
-        // ── Draw scale ticks and labels (D-04) ──
+        // ── Draw scale ticks and labels ──
         let tick_font_size = 7.0;
         for &(db, _is_major) in METER_TICKS {
             let tx = Self::db_to_x(db, bar_left, bar_width);
@@ -5256,7 +5256,7 @@ impl<'a, Message: 'a> From<VuMeterWidget> for Element<'a, Message> {
 /// 1. Título: "Configuración del Meter"
 /// 2. Tiempo de hold del pico: NumberStepper (500–5000 ms)
 /// 3. Ventana RMS: NumberStepper (50–1000 ms)
-/// 4. Modo M/S: toggle (solo el toggle, la computación M/S es en Plan 2)
+/// 4. Modo M/S: toggle (solo el toggle, la computación M/S es en update_meter)
 /// 5. Hold infinito: toggle
 pub fn meter_popup_view<'a>(
     hold_time_ms: f32,
@@ -5339,7 +5339,7 @@ pub fn meter_popup_view<'a>(
     ]
     .align_y(Alignment::Center);
 
-    // Modo M/S: toggle (solo visual, computación en Plan 2)
+    // Modo M/S: toggle (solo visual, computación en update_meter)
     let ms_checkbox: Element<'a, Message> = StandardCheckbox::new(ms_mode, |b| {
         Message::MeterMsModeToggle(b)
     })

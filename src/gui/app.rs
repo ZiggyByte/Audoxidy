@@ -307,7 +307,7 @@ pub enum Message {
     PlaylistToggleEnabled(usize),
     PlaylistShowAllTabs(iced::Point),
 
-    // VU Meter — configuración (D-01, D-02, D-06, D-08)
+            // VU Meter — configuración
     MeterRightClicked(iced::Point),
     MeterPopupClose,
     MeterHoldTimeChanged(f32),
@@ -390,7 +390,7 @@ fn gc_blocked_by_preload(
 }
 
 // ---------------------------------------------------------------------------
-// VU Meter animation constants and helpers (Fase 2)
+// VU Meter animation constants and helpers
 // ---------------------------------------------------------------------------
 
 /// Duración del hold de pico antes de comenzar el decaimiento (segundos).
@@ -888,7 +888,7 @@ impl AudoxidyApp {
                     .and_then(|v| v.parse::<f32>().ok())
                     .unwrap_or(250.0);
 
-                // VU Meter — cargar configuración al arranque (D-08)
+                // VU Meter — cargar configuración al arranque
                 s.meter_hold_time_ms = db_lock
                     .get_setting("meter_hold_time_ms")
                     .and_then(|v| v.parse::<f32>().ok())
@@ -1148,7 +1148,7 @@ impl AudoxidyApp {
 
         }
 
-        // VU Meter — cargar modo M/S para PlayerUiState (D-03)
+        // VU Meter — cargar modo M/S para PlayerUiState
         let meter_ms_mode = if let Ok(db) = database_arc.lock() {
             db.get_setting("meter_ms_mode")
                 .map(|v| v == "1")
@@ -4883,7 +4883,7 @@ impl AudoxidyApp {
                 self.playlist_manager.show_tab_dropdown = false;
                 self.update(*msg)
             }
-            // VU Meter — configuración (D-01, D-02, D-06, D-08)
+    // VU Meter — configuración
             Message::MeterRightClicked(pos) => {
                 self.player_ui_state.meter_popup_open = true;
                 self.player_ui_state.meter_popup_pos = Some(pos);
@@ -5774,7 +5774,7 @@ impl AudoxidyApp {
             );
         }
 
-        // --- Renderizar Popup de Configuración del VU Meter (D-01, D-02) ---
+        // --- Renderizar Popup de Configuración del VU Meter ---
         if self.player_ui_state.meter_popup_open {
             if let Some(pos) = self.player_ui_state.meter_popup_pos {
                 let state_arc = self.audio_manager.state();
@@ -5971,10 +5971,10 @@ impl AudoxidyApp {
         self.library_manager.update_selection_stats();
     }
 
-    /// Lee los 4 atómicos de la Fase 1 (MeterData), aplica ballistics,
+    /// Lee los 4 atómicos del data layer (MeterData), aplica ballistics,
     /// peak hold, pause fade y track reset, y escribe en
     /// `player_ui_state.meter`. Incluye cómputo M/S, correlación de fase,
-    /// crest factor y hold infinito (Phase 08 Plan 2).
+    /// crest factor y hold infinito.
     fn update_meter(&mut self) {
         let state = self.audio_manager.get_state();
         let is_playing = state.is_playing;
@@ -5983,7 +5983,7 @@ impl AudoxidyApp {
 
         let m = &mut self.player_ui_state.meter;
 
-        // Track change reset (D-06) — also resets infinite hold values
+        // Track change reset — also resets infinite hold values
         if current_path != m.last_track_path {
             let ms_mode = m.ms_mode;
             let show_numeric = m.show_numeric;
@@ -5994,14 +5994,14 @@ impl AudoxidyApp {
             return;
         }
 
-        // Read atomics from Phase 1
+        // Read atomics from data layer
         let meter_data = self.audio_manager.meter();
         let raw_peak_l = meter_data.read_peak_l();
         let raw_peak_r = meter_data.read_peak_r();
         let raw_rms_l = meter_data.read_rms_l();
         let raw_rms_r = meter_data.read_rms_r();
 
-        // ── M/S computation (D-03): Mid = (L+R)/2, Side = (L-R)/2 ──
+        // ── M/S computation: Mid = (L+R)/2, Side = (L-R)/2 ──
         let (display_peak_l, display_peak_r, display_rms_l, display_rms_r) = if m.ms_mode {
             let mid_peak = (raw_peak_l + raw_peak_r) / 2.0;
             let side_peak = (raw_peak_l - raw_peak_r) / 2.0;
@@ -6015,9 +6015,9 @@ impl AudoxidyApp {
         if is_playing {
             m.is_fading_out = false;
 
-            // Peak hold state machine per channel (D-03)
+            // Peak hold state machine per channel
             if infinite_hold {
-                // Infinite hold: hold values only increase, never decay (D-06)
+                // Infinite hold: hold values only increase, never decay
                 m.peak_hold_l = m.peak_hold_l.max(display_peak_l);
                 m.peak_hold_r = m.peak_hold_r.max(display_peak_r);
                 m.peak_hold_start_l = None;
@@ -6025,7 +6025,7 @@ impl AudoxidyApp {
                 m.peak_decay_l = 0.0;
                 m.peak_decay_r = 0.0;
             } else {
-                // Normal hold: existing Phase 2 logic (hold timer + decay)
+                // Normal hold: existing hold timer + decay logic
                 let (new_hold_l, new_start_l, new_decay_l) = peak_hold_step(
                     m.peak_hold_l,
                     m.peak_hold_start_l,
@@ -6047,13 +6047,13 @@ impl AudoxidyApp {
                 m.peak_decay_r = new_decay_r;
             }
 
-            // Asymmetric ballistics — target is max of raw peak and held peak (D-04)
+            // Asymmetric ballistics — target is max of raw peak and held peak
             let target_l = display_peak_l.max(m.peak_hold_l);
             let target_r = display_peak_r.max(m.peak_hold_r);
             m.display_l = ballistic_step(m.display_l, target_l);
             m.display_r = ballistic_step(m.display_r, target_r);
 
-            // ── Phase correlation (D-04): corr = (L·R) / (|L|·|R|) ──
+            // ── Phase correlation: corr = (L·R) / (|L|·|R|) ──
             // Use RMS-weighted correlation for smoother readout
             m.phase_corr = if raw_rms_l.abs() > 0.001 && raw_rms_r.abs() > 0.001 {
                 let corr = (raw_rms_l * raw_rms_r) / (raw_rms_l.abs() * raw_rms_r.abs());
@@ -6062,7 +6062,7 @@ impl AudoxidyApp {
                 0.0 // Undefined for silence
             };
 
-            // ── Crest factor (D-07): peak_dBFS - RMS_dBFS ──
+            // ── Crest factor: peak_dBFS - RMS_dBFS ──
             m.crest_l = if raw_rms_l > crate::gui::widgets::METER_MIN_DB + 1.0 {
                 raw_peak_l - raw_rms_l
             } else {
@@ -6074,7 +6074,7 @@ impl AudoxidyApp {
                 0.0
             };
         } else if !m.is_fading_out {
-            // Transition to pause — capture current display values (D-05)
+            // Transition to pause — capture current display values
             m.last_playing_l = m.display_l;
             m.last_playing_r = m.display_r;
             m.is_fading_out = true;
@@ -6083,7 +6083,7 @@ impl AudoxidyApp {
         // Note: fade-out animation continues even when !is_playing,
         // because the subscription stays active while is_fading_out == true.
 
-        // Pause fade animation (D-05)
+        // Pause fade animation
         if m.is_fading_out {
             if let Some(start) = m.fade_out_start {
                 let elapsed = start.elapsed().as_secs_f32();

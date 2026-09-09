@@ -43,7 +43,7 @@ mod tests {
         let state = AudioState::default();
         assert!(!state.is_playing);
         assert!((state.volume - 0.3).abs() < f64::EPSILON as f32);
-        assert_eq!(state.sample_rate, 44100);
+        assert_eq!(state.sample_rate, 48000);
         assert_eq!(state.channels, 2);
         assert_eq!(state.current_pos_sec, 0.0);
         assert_eq!(state.total_duration_sec, 0.0);
@@ -66,7 +66,7 @@ mod tests {
         assert_eq!(state.silence_enabled, true);
         assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f64::EPSILON as f32);
-        assert!((state.silence_threshold_db - (-50.0)).abs() < f64::EPSILON as f32);
+        assert!((state.silence_threshold_db - (-47.0)).abs() < f64::EPSILON as f32);
 
         // Volumen y Mezcla — Replay gain fijo (reemplaza Normalización, UAT)
         assert_eq!(state.rg_fixed_enabled, false);
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(state.silence_enabled, true);
         assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f32::EPSILON);
-        assert!((state.silence_threshold_db - (-50.0)).abs() < f32::EPSILON);
+        assert!((state.silence_threshold_db - (-47.0)).abs() < f32::EPSILON);
 
         // Replay gain fijo (reemplaza Normalización, UAT)
         assert_eq!(state.rg_fixed_enabled, false);

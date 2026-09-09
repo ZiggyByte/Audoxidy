@@ -58,16 +58,16 @@ pub struct MeterUiState {
     // Track change detection
     pub last_track_path: String,
 
-    // Advanced display state (Phase 08 Plan 2)
-    /// M/S display mode: when true, bars show Mid/Side instead of L/R (D-03).
+    // Advanced meter display state
+    /// M/S display mode: when true, bars show Mid/Side instead of L/R
     pub ms_mode: bool,
-    /// Phase correlation value: -1.0 (mono) to +1.0 (wide stereo) (D-04).
+    /// Phase correlation value: -1.0 (mono) to +1.0 (wide stereo)
     pub phase_corr: f32,
-    /// Whether to show numeric dBFS readout (D-05).
+    /// Whether to show numeric dBFS readout
     pub show_numeric: bool,
-    /// Crest factor for L channel: peak_db - rms_db (D-07).
+    /// Crest factor for L channel: peak_db - rms_db
     pub crest_l: f32,
-    /// Crest factor for R channel: peak_db - rms_db (D-07).
+    /// Crest factor for R channel: peak_db - rms_db
     pub crest_r: f32,
 }
 
@@ -91,10 +91,10 @@ impl Default for MeterUiState {
             is_fading_out: false,
             fade_out_start: None,
             last_track_path: String::new(),
-            // Advanced display defaults (Phase 08)
+            // Advanced display defaults
             ms_mode: false,
             phase_corr: 0.0,
-            show_numeric: true, // always on per D-05
+            show_numeric: true,
             crest_l: 0.0,
             crest_r: 0.0,
         }
@@ -131,7 +131,7 @@ pub struct PlayerUiState {
     // Meter animation state (Fase 2 — VU meter subscription & ballistics)
     pub meter: MeterUiState,
 
-    // VU Meter — popup de configuración (D-01, D-02, D-08)
+    // VU Meter — popup de configuración
     pub meter_popup_open: bool,
     pub meter_popup_pos: Option<iced::Point>,
 }

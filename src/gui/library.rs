@@ -3021,14 +3021,14 @@ pub fn view<'a>(
         meter_state.display_l, meter_state.smooth_peak_l, meter_state.peak_hold_l,
         meter_state.display_r, meter_state.smooth_peak_r, meter_state.peak_hold_r,
         clipping,
-        meter_state.ms_mode,       // per D-03
-        meter_state.phase_corr,    // per D-04
-        meter_state.show_numeric,  // per D-05
-        meter_state.crest_l,       // per D-07
-        meter_state.crest_r,       // per D-07
+        meter_state.ms_mode,
+        meter_state.phase_corr,
+        meter_state.show_numeric,
+        meter_state.crest_l,
+        meter_state.crest_r,
     );
 
-    // Envolver el medidor con mouse_area para capturar right-click (D-01)
+    // Envolver el medidor con mouse_area para capturar right-click
     let meter_with_rightclick: Element<'_, Message> = mouse_area(
         iced::widget::container(meter_widget)
             .padding(0)

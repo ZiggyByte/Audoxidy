@@ -1156,7 +1156,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut smoothed_rg_offset_track_db: f64 = 0.0;
     let mut smoothed_rg_offset_rt_db: f64 = 0.0;
 
-    // === Meter state (Phase 05) — lock-free peak/RMS for VU meter ===
+    // === Meter state — lock-free peak/RMS for VU meter ===
     // Peak accumulators: max |sample| per channel across the current batch.
     let mut meter_peak_l: f64 = 0.0;
     let mut meter_peak_r: f64 = 0.0;

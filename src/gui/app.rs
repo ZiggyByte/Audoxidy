@@ -380,6 +380,73 @@ fn gc_blocked_by_preload(
             .unwrap_or(false)
 }
 
+// ---------------------------------------------------------------------------
+// VU Meter animation constants and helpers (Fase 2)
+// ---------------------------------------------------------------------------
+
+/// Duración del hold de pico antes de comenzar el decaimiento (segundos).
+const METER_HOLD_TIME_SECS: f32 = 1.5;
+/// Tasa de decaimiento del hold de pico (dB por segundo).
+const METER_DECAY_RATE_DB_PER_SEC: f32 = 1.8;
+/// Coeficiente de suavizado de ataque (rise rápido, ~5 ms a 30 ms de tick).
+const METER_ATTACK_ALPHA: f32 = 0.85;
+/// Coeficiente de suavizado de release (caída lenta, ~600 ms a 30 ms de tick).
+const METER_RELEASE_ALPHA: f32 = 0.05;
+/// Duración del fade-out al pausar (segundos).
+const METER_FADE_OUT_SECS: f32 = 0.4;
+
+/// Paso de la máquina de estados de hold de pico.
+///
+/// Retorna `(new_hold_value, new_hold_start, new_decay_value)`.
+fn peak_hold_step(
+    hold_value: f32,
+    hold_start: Option<std::time::Instant>,
+    decay_value: f32,
+    raw_peak: f32,
+) -> (f32, Option<std::time::Instant>, f32) {
+    let (mut new_hold, mut new_start, mut new_decay) = (hold_value, hold_start, decay_value);
+
+    if let Some(start) = new_start {
+        // Estado Holding — el hold está activo
+        if start.elapsed().as_secs_f32() > METER_HOLD_TIME_SECS {
+            // Transición Holding → Decaying
+            new_decay = new_hold;
+            new_start = None;
+        }
+    }
+
+    if new_start.is_none() && new_decay > 0.0 {
+        // Estado Decaying — decaer a METER_DECAY_RATE_DB_PER_SEC por tick
+        new_decay -= METER_DECAY_RATE_DB_PER_SEC * 0.030;
+        if new_decay <= raw_peak {
+            // Transición Decaying → Idle
+            new_decay = 0.0;
+        }
+    }
+
+    // Si la señal supera el hold actual, snap hacia arriba (re-entrar Holding)
+    if raw_peak > new_hold {
+        new_hold = raw_peak;
+        new_start = Some(std::time::Instant::now());
+        new_decay = 0.0;
+    } else if new_start.is_none() && new_decay <= 0.0 {
+        // Idle — el hold sigue al nivel del decay o es cero
+        new_hold = raw_peak.max(new_decay);
+    }
+
+    (new_hold, new_start, new_decay)
+}
+
+/// Paso de ballistics asimétrico: ataque rápido, release lento.
+fn ballistic_step(current: f32, target: f32) -> f32 {
+    let alpha = if target > current {
+        METER_ATTACK_ALPHA
+    } else {
+        METER_RELEASE_ALPHA
+    };
+    current + alpha * (target - current)
+}
+
 pub struct AudoxidyApp {
     audio_manager: Arc<AudioManager>,
     database: Arc<Mutex<Database>>,
@@ -5751,21 +5818,82 @@ impl AudoxidyApp {
         self.library_manager.update_selection_stats();
     }
 
-    /// Lee los 4 atómicos de la Fase 1 (MeterData) y escribe directamente
-    /// en `player_ui_state.meter` — sin ballistics aún (Fase 2 Task 2 los agrega).
+    /// Lee los 4 atómicos de la Fase 1 (MeterData), aplica ballistics,
+    /// peak hold, pause fade y track reset, y escribe en
+    /// `player_ui_state.meter`.
     fn update_meter(&mut self) {
-        let meter_data = self.audio_manager.meter();
-        let peak_l = meter_data.read_peak_l();
-        let peak_r = meter_data.read_peak_r();
-        let rms_l = meter_data.read_rms_l();
-        let rms_r = meter_data.read_rms_r();
+        let state = self.audio_manager.get_state();
+        let is_playing = state.is_playing;
+        let current_path = state.path.clone();
 
         let m = &mut self.player_ui_state.meter;
-        m.display_l = peak_l.clamp(-60.0, 6.0);
-        m.display_r = peak_r.clamp(-60.0, 6.0);
-        // RMS values stored for Phase 2 ballistics — not displayed yet
-        m.smooth_rms_l = rms_l.clamp(-60.0, 6.0);
-        m.smooth_rms_r = rms_r.clamp(-60.0, 6.0);
+
+        // Track change reset (D-06)
+        if current_path != m.last_track_path {
+            *m = crate::gui::player::MeterUiState::default();
+            m.last_track_path = current_path;
+            return;
+        }
+
+        // Read atomics from Phase 1
+        let meter_data = self.audio_manager.meter();
+        let raw_peak_l = meter_data.read_peak_l();
+        let raw_peak_r = meter_data.read_peak_r();
+
+        if is_playing {
+            m.is_fading_out = false;
+
+            // Peak hold state machine per channel (D-03)
+            let (new_hold_l, new_start_l, new_decay_l) = peak_hold_step(
+                m.peak_hold_l,
+                m.peak_hold_start_l,
+                m.peak_decay_l,
+                raw_peak_l,
+            );
+            m.peak_hold_l = new_hold_l;
+            m.peak_hold_start_l = new_start_l;
+            m.peak_decay_l = new_decay_l;
+
+            let (new_hold_r, new_start_r, new_decay_r) = peak_hold_step(
+                m.peak_hold_r,
+                m.peak_hold_start_r,
+                m.peak_decay_r,
+                raw_peak_r,
+            );
+            m.peak_hold_r = new_hold_r;
+            m.peak_hold_start_r = new_start_r;
+            m.peak_decay_r = new_decay_r;
+
+            // Asymmetric ballistics — target is max of raw peak and held peak (D-04)
+            let target_l = raw_peak_l.max(m.peak_hold_l);
+            let target_r = raw_peak_r.max(m.peak_hold_r);
+            m.display_l = ballistic_step(m.display_l, target_l);
+            m.display_r = ballistic_step(m.display_r, target_r);
+        } else if !m.is_fading_out {
+            // Transition to pause — capture current display values (D-05)
+            m.last_playing_l = m.display_l;
+            m.last_playing_r = m.display_r;
+            m.is_fading_out = true;
+            m.fade_out_start = Some(std::time::Instant::now());
+        }
+        // Note: fade-out animation continues even when !is_playing,
+        // because the subscription stays active while is_fading_out == true.
+
+        // Pause fade animation (D-05)
+        if m.is_fading_out {
+            if let Some(start) = m.fade_out_start {
+                let elapsed = start.elapsed().as_secs_f32();
+                let fade_secs = METER_FADE_OUT_SECS;
+                let factor = (1.0 - elapsed / fade_secs).clamp(0.0, 1.0);
+                m.display_l = m.last_playing_l * factor;
+                m.display_r = m.last_playing_r * factor;
+                if factor <= 0.0 {
+                    m.is_fading_out = false;
+                    m.display_l = 0.0;
+                    m.display_r = 0.0;
+                }
+            }
+        }
     }
 
     fn handle_library_reveal(&mut self, path_opt: Option<String>) -> Task<Message> {

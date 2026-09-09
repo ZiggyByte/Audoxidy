@@ -112,6 +112,11 @@ pub struct PlayerUiState {
 
     // Meter animation state (Fase 2 — VU meter subscription & ballistics)
     pub meter: MeterUiState,
+
+    // VU Meter — popup de configuración (D-01, D-02, D-08)
+    pub meter_popup_open: bool,
+    pub meter_popup_pos: Option<iced::Point>,
+    pub meter_ms_mode: bool,
 }
 
 impl Default for PlayerUiState {
@@ -139,6 +144,9 @@ impl Default for PlayerUiState {
             display_title: String::new(),
             display_artist: String::new(),
             meter: MeterUiState::default(),
+            meter_popup_open: false,
+            meter_popup_pos: None,
+            meter_ms_mode: false,
         }
     }
 }

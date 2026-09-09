@@ -3021,6 +3021,17 @@ pub fn view<'a>(
         false,          // clipping
     );
 
+    // Envolver el medidor con mouse_area para capturar right-click (D-01)
+    let meter_with_rightclick: Element<'_, Message> = mouse_area(
+        iced::widget::container(meter_widget)
+            .padding(0)
+            .width(Length::Shrink)
+            .height(Length::Shrink),
+    )
+    .on_press(Message::NoOp)
+    .on_right_press(Message::MeterRightClicked(iced::Point::ORIGIN))
+    .into();
+
     let bottom_bar = row![
         search_input,
         Space::new().width(15.0),
@@ -3029,7 +3040,7 @@ pub fn view<'a>(
             .color(COLOR_TEXT_SECONDARY)
             .font(FONT_INTER_SANS_MEDIUM),
         Space::new().width(10.0),
-        meter_widget,
+        meter_with_rightclick,
         Space::new().width(10.0),
         bottom_actions
     ]

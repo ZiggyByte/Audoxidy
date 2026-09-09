@@ -887,6 +887,20 @@ impl AudoxidyApp {
                     .get_setting("crossfade_auto_ms")
                     .and_then(|v| v.parse::<f32>().ok())
                     .unwrap_or(250.0);
+
+                // VU Meter — cargar configuración al arranque (D-08)
+                s.meter_hold_time_ms = db_lock
+                    .get_setting("meter_hold_time_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(1500.0);
+                s.meter_rms_window_ms = db_lock
+                    .get_setting("meter_rms_window_ms")
+                    .and_then(|v| v.parse::<f32>().ok())
+                    .unwrap_or(300.0);
+                s.meter_infinite_hold = db_lock
+                    .get_setting("meter_infinite_hold")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
             }
 
             // EQ enable / bands_31 / preamp_gain
@@ -1131,7 +1145,17 @@ impl AudoxidyApp {
                     audio_manager.state().write().rg_offset_rt_db = v;
                 }
             }
+
         }
+
+        // VU Meter — cargar modo M/S para PlayerUiState (D-03)
+        let meter_ms_mode = if let Ok(db) = database_arc.lock() {
+            db.get_setting("meter_ms_mode")
+                .map(|v| v == "1")
+                .unwrap_or(false)
+        } else {
+            false
+        };
 
         (
             Self {
@@ -1143,7 +1167,11 @@ impl AudoxidyApp {
                 filters_manager,
                 library_manager,
                 audio_center_manager,
-                player_ui_state: crate::gui::player::PlayerUiState::default(),
+                player_ui_state: {
+                    let mut p = crate::gui::player::PlayerUiState::default();
+                    p.meter_ms_mode = meter_ms_mode;
+                    p
+                },
                 window_id: None,
                 last_artist_header_click: None,
                 last_album_header_click: None,
@@ -4855,14 +4883,71 @@ impl AudoxidyApp {
                 self.playlist_manager.show_tab_dropdown = false;
                 self.update(*msg)
             }
-            // VU Meter — stubs (full implementation in Task 2)
-            Message::MeterRightClicked(_pos) => Task::none(),
-            Message::MeterPopupClose => Task::none(),
-            Message::MeterHoldTimeChanged(_v) => Task::none(),
-            Message::MeterRmsWindowChanged(_v) => Task::none(),
-            Message::MeterMsModeToggle(_v) => Task::none(),
-            Message::MeterInfiniteHoldToggle(_v) => Task::none(),
-            Message::MeterResetPeak => Task::none(),
+            // VU Meter — configuración (D-01, D-02, D-06, D-08)
+            Message::MeterRightClicked(pos) => {
+                self.player_ui_state.meter_popup_open = true;
+                self.player_ui_state.meter_popup_pos = Some(pos);
+                Task::none()
+            }
+            Message::MeterPopupClose => {
+                self.player_ui_state.meter_popup_open = false;
+                Task::none()
+            }
+            Message::MeterHoldTimeChanged(v) => {
+                let clamped = v.clamp(500.0, 5000.0);
+                {
+                    let state_arc = self.audio_manager.state();
+                    let mut s = state_arc.write();
+                    s.meter_hold_time_ms = clamped;
+                }
+                if let Ok(db_lock) = self.database.lock() {
+                    let _ = db_lock.set_setting("meter_hold_time_ms", &format!("{:.0}", clamped));
+                }
+                self.player_ui_state.meter_popup_open = false;
+                Task::none()
+            }
+            Message::MeterRmsWindowChanged(v) => {
+                let clamped = v.clamp(50.0, 1000.0);
+                {
+                    let state_arc = self.audio_manager.state();
+                    let mut s = state_arc.write();
+                    s.meter_rms_window_ms = clamped;
+                }
+                if let Ok(db_lock) = self.database.lock() {
+                    let _ = db_lock.set_setting("meter_rms_window_ms", &format!("{:.0}", clamped));
+                }
+                self.player_ui_state.meter_popup_open = false;
+                Task::none()
+            }
+            Message::MeterMsModeToggle(v) => {
+                self.player_ui_state.meter_ms_mode = v;
+                if let Ok(db_lock) = self.database.lock() {
+                    let _ = db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" });
+                }
+                self.player_ui_state.meter_popup_open = false;
+                Task::none()
+            }
+            Message::MeterInfiniteHoldToggle(v) => {
+                {
+                    let state_arc = self.audio_manager.state();
+                    let mut s = state_arc.write();
+                    s.meter_infinite_hold = v;
+                }
+                if let Ok(db_lock) = self.database.lock() {
+                    let _ = db_lock.set_setting("meter_infinite_hold", if v { "1" } else { "0" });
+                }
+                self.player_ui_state.meter_popup_open = false;
+                Task::none()
+            }
+            Message::MeterResetPeak => {
+                self.player_ui_state.meter.peak_hold_l = crate::gui::widgets::METER_MIN_DB;
+                self.player_ui_state.meter.peak_hold_r = crate::gui::widgets::METER_MIN_DB;
+                self.player_ui_state.meter.peak_hold_start_l = None;
+                self.player_ui_state.meter.peak_hold_start_r = None;
+                self.player_ui_state.meter.peak_decay_l = 0.0;
+                self.player_ui_state.meter.peak_decay_r = 0.0;
+                Task::none()
+            }
             Message::NoOp => Task::none(),
         }
     }
@@ -5685,6 +5770,55 @@ impl AudoxidyApp {
                     .align_x(iced::Alignment::Start)
                     .align_y(iced::Alignment::Start),
             );
+        }
+
+        // --- Renderizar Popup de Configuración del VU Meter (D-01, D-02) ---
+        if self.player_ui_state.meter_popup_open {
+            if let Some(pos) = self.player_ui_state.meter_popup_pos {
+                let state_arc = self.audio_manager.state();
+                let s = state_arc.read();
+                let popup_content = crate::gui::widgets::meter_popup_view(
+                    s.meter_hold_time_ms,
+                    s.meter_rms_window_ms,
+                    self.player_ui_state.meter_ms_mode,
+                    s.meter_infinite_hold,
+                );
+
+                // Área de bloqueo para cerrar el popup al hacer click fuera
+                let popup_blocker = iced::widget::mouse_area(
+                    iced::widget::Space::new()
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill),
+                )
+                .on_press(Message::MeterPopupClose)
+                .on_right_press(Message::MeterPopupClose);
+
+                // Ajuste de bordes (Stay within window)
+                let popup_w = 280.0;
+                let popup_h = 200.0; // aprox
+                let mut target_x = pos.x;
+                let mut target_y = pos.y;
+
+                if target_x + popup_w > self.window_size.0 as f32 {
+                    target_x = (self.window_size.0 as f32 - popup_w - 5.0).max(5.0);
+                }
+                if target_y + popup_h > self.window_size.1 as f32 {
+                    target_y = (self.window_size.1 as f32 - popup_h - 5.0).max(5.0);
+                }
+
+                final_stack = final_stack.push(popup_blocker).push(
+                    iced::widget::container(popup_content)
+                        .width(iced::Length::Fill)
+                        .height(iced::Length::Fill)
+                        .padding(iced::Padding {
+                            top: target_y,
+                            left: target_x,
+                            ..Default::default()
+                        })
+                        .align_x(iced::Alignment::Start)
+                        .align_y(iced::Alignment::Start),
+                );
+            }
         }
 
         let wrapped_app = helpers::CursorOff::new(

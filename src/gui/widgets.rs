@@ -4620,7 +4620,7 @@ impl<'a, Message: 'a> From<CustomSlider<'a, Message>> for Element<'a, Message> {
 // Display-only: no event handling, no state tree.
 // ==============================
 
-const METER_MIN_DB: f32 = -60.0;
+pub const METER_MIN_DB: f32 = -60.0;
 const METER_MAX_DB: f32 = 6.0;
 const METER_TOTAL_RANGE: f32 = 66.0;
 const METER_HEIGHT: f32 = 24.0;

@@ -315,6 +315,7 @@ pub enum Message {
     MeterMsModeToggle(bool),
     MeterInfiniteHoldToggle(bool),
     MeterResetPeak,
+    MeterToggleEnabled(bool),
 
     ModifiersChanged(iced::keyboard::Modifiers),
 
@@ -899,6 +900,10 @@ impl AudoxidyApp {
                     .unwrap_or(300.0);
                 s.meter_infinite_hold = db_lock
                     .get_setting("meter_infinite_hold")
+                    .map(|v| v == "1")
+                    .unwrap_or(false);
+                s.meter_enabled = db_lock
+                    .get_setting("meter_enabled")
                     .map(|v| v == "1")
                     .unwrap_or(false);
             }
@@ -4948,6 +4953,17 @@ impl AudoxidyApp {
                 self.player_ui_state.meter.peak_decay_r = 0.0;
                 Task::none()
             }
+            Message::MeterToggleEnabled(v) => {
+                {
+                    let state_arc = self.audio_manager.state();
+                    let mut s = state_arc.write();
+                    s.meter_enabled = v;
+                }
+                if let Ok(db_lock) = self.database.lock() {
+                    let _ = db_lock.set_setting("meter_enabled", if v { "1" } else { "0" });
+                }
+                Task::none()
+            }
             Message::NoOp => Task::none(),
         }
     }
@@ -5086,6 +5102,7 @@ impl AudoxidyApp {
             &self.player_ui_state.current_art_id,
             &self.player_ui_state.meter,
             false, // clipping — TODO: wire from meter data
+            self.audio_manager.state().read().meter_enabled,
         );
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda
@@ -5784,6 +5801,7 @@ impl AudoxidyApp {
                     s.meter_rms_window_ms,
                     self.player_ui_state.meter.ms_mode,
                     s.meter_infinite_hold,
+                    s.meter_enabled,
                 );
 
                 // Área de bloqueo para cerrar el popup al hacer click fuera

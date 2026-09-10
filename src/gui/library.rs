@@ -2400,6 +2400,7 @@ pub fn view<'a>(
     playing_path: &'a str,
     meter_state: &'a crate::gui::player::MeterUiState,
     clipping: bool,
+    meter_enabled: bool,
 ) -> Element<'a, Message> {
     library_redraw_count_log();
     // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
@@ -3039,21 +3040,37 @@ pub fn view<'a>(
     .on_right_press(Message::MeterRightClicked(iced::Point::ORIGIN))
     .into();
 
-    let bottom_bar = row![
-        search_input,
-        Space::new().width(15.0),
-        text(stats_text)
-            .size(13)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM),
-        Space::new().width(10.0),
-        meter_with_rightclick,
-        Space::new().width(10.0),
-        bottom_actions
-    ]
-    .padding([0, 15])
-    .height(Length::Fill)
-    .align_y(Alignment::Center);
+    let bottom_bar = if meter_enabled {
+        row![
+            search_input,
+            Space::new().width(15.0),
+            text(stats_text)
+                .size(13)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(10.0),
+            meter_with_rightclick,
+            Space::new().width(10.0),
+            bottom_actions
+        ]
+        .padding([0, 15])
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+    } else {
+        row![
+            search_input,
+            Space::new().width(15.0),
+            text(stats_text)
+                .size(13)
+                .color(COLOR_TEXT_SECONDARY)
+                .font(FONT_INTER_SANS_MEDIUM),
+            Space::new().width(Length::Fill),
+            bottom_actions
+        ]
+        .padding([0, 15])
+        .height(Length::Fill)
+        .align_y(Alignment::Center)
+    };
 
     let content_with_deselection = iced::widget::mouse_area(
         container(content)

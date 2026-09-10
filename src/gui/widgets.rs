@@ -4787,7 +4787,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
-            width: Length::Fill,
+            width: Length::Fixed(400.0),
             height: Length::Fixed(self.effective_height()),
         }
     }
@@ -4804,7 +4804,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
     ) -> iced::advanced::layout::Node {
         let height = self.effective_height();
         let size = limits.resolve(
-            Length::Fill,
+            Length::Fixed(400.0),
             Length::Fixed(height),
             iced::Size::ZERO,
         );
@@ -5254,15 +5254,17 @@ impl<'a, Message: 'a> From<VuMeterWidget> for Element<'a, Message> {
 ///
 /// Devuelve un `Element<Message>` que contiene:
 /// 1. Título: "Configuración del Meter"
-/// 2. Tiempo de hold del pico: NumberStepper (500–5000 ms)
-/// 3. Ventana RMS: NumberStepper (50–1000 ms)
-/// 4. Modo M/S: toggle (solo el toggle, la computación M/S es en update_meter)
-/// 5. Hold infinito: toggle
+/// 2. Activar/desactivar medidor: toggle
+/// 3. Tiempo de hold del pico: NumberStepper (500–5000 ms)
+/// 4. Ventana RMS: NumberStepper (50–1000 ms)
+/// 5. Modo M/S: toggle (solo el toggle, la computación M/S es en update_meter)
+/// 6. Hold infinito: toggle
 pub fn meter_popup_view<'a>(
     hold_time_ms: f32,
     rms_window_ms: f32,
     ms_mode: bool,
     infinite_hold: bool,
+    meter_enabled: bool,
 ) -> Element<'a, crate::gui::app::Message> {
     use crate::gui::app::Message;
 
@@ -5295,6 +5297,22 @@ pub fn meter_popup_view<'a>(
     // Título
     let title_row = row![
         group_title("Configuración del Meter"),
+        Space::new().width(Length::Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    // Activar/desactivar medidor: toggle
+    let enabled_checkbox: Element<'a, Message> = StandardCheckbox::new(meter_enabled, |b| {
+        Message::MeterToggleEnabled(b)
+    })
+    .into();
+    let enabled_row = row![
+        enabled_checkbox,
+        Space::new().width(Length::Fixed(5.0)),
+        clickable_toggle(
+            subfunc_label("Mostrar medidor", meter_enabled),
+            Message::MeterToggleEnabled(!meter_enabled),
+        ),
         Space::new().width(Length::Fill),
     ]
     .align_y(Alignment::Center);
@@ -5374,6 +5392,8 @@ pub fn meter_popup_view<'a>(
     // Contenedor del popup con fondo COLOR_CONTRAST y bordes redondeados
     let content = column![
         title_row,
+        Space::new().height(Length::Fixed(8.0)),
+        enabled_row,
         Space::new().height(Length::Fixed(8.0)),
         hold_row,
         Space::new().height(Length::Fixed(6.0)),

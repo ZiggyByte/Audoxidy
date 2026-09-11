@@ -167,6 +167,11 @@ impl MemoryManager {
         0
     }
 
+    /// RAM física usada por este proceso en bytes; fuente para la métrica `ram_usage_bytes`.
+    pub fn current_process_ram_bytes() -> u64 {
+        Self::get_self_ram_mb() * 1024 * 1024
+    }
+
     /// Comprueba si la RAM del propio reproductor supera el tope (500 MB).
     /// Usada por el Tick para forzar purgas tempranas del proceso (no solo del sistema).
     pub fn is_app_ram_over_limit() -> bool {

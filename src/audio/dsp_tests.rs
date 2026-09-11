@@ -1175,16 +1175,16 @@ mod tests {
     }
 
     #[test]
-    fn test_wide_is_finite_blend_pattern() {
+    fn test_wide_is_finite_select_pattern() {
         // Patrón del compresor para enmascarar NaN/Inf → 0 (verificado correcto).
         use wide::f64x4;
         let v = f64x4::new([0.5_f64, f64::NAN, 1.0, f64::INFINITY]);
-        let vf = v.is_finite().blend(v, f64x4::splat(0.0));
+        let vf = v.is_finite().select(v, f64x4::splat(0.0));
         let arr = vf.to_array();
         for (i, val) in arr.iter().enumerate() {
             assert!(
                 val.is_finite(),
-                "is_finite().blend produjo no finito en lane {}: {:?}",
+                "is_finite().select produjo no finito en lane {}: {:?}",
                 i,
                 arr
             );

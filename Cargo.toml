@@ -58,7 +58,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.22", features = ["env-filter", "registry"] }
 usvg = "0.46.0"
 walkdir = "2.5.0"
-wide = "0.7.31"
+wide = "1.7.0"
 zbus = "5.13.2"
 
 [features]

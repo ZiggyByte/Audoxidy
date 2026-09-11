@@ -1,5 +1,3 @@
-use wide::CmpLt;
-
 /// Cadena de procesamiento DSP de Audoxidy.
 ///
 /// Aplica en orden: preamplificador, ecualizador, noise gate, sub-bass, mid-bass,
@@ -551,8 +549,7 @@ impl EqBand {
                     - wide::f64x4::splat(a1) * ys1
                     - wide::f64x4::splat(a2) * ys2;
                 // Snap a cero de los valores despreciables (evita denormales) por
-                // lane — el patrón blend/cmp_lt de wide 0.7 produce NaN aquí, así
-                // que se hace de forma escalar y segura.
+                // lane, de forma escalar y segura.
                 let raw = out.to_array();
                 let arr = [
                     if raw[0].abs() < 1e-20 { 0.0 } else { raw[0] },
@@ -1226,7 +1223,7 @@ impl Compressor {
         let n = seg.len();
         while i + 4 <= n {
             let v = f64x4::new([seg[i], seg[i + 1], seg[i + 2], seg[i + 3]]);
-            let vf = v.is_finite().blend(v, f64x4::splat(0.0));
+            let vf = v.is_finite().select(v, f64x4::splat(0.0));
             acc = vf.mul_add(vf, acc);
             let a = vf.abs();
             let [a0, a1, a2, a3] = a.to_array();
@@ -1453,8 +1450,7 @@ impl BiquadFilter {
                     - wide::f64x4::splat(a1) * ys1
                     - wide::f64x4::splat(a2) * ys2;
                 // Snap a cero de los valores despreciables (evita denormales) por
-                // lane — el patrón blend/cmp_lt de wide 0.7 produce NaN aquí, así
-                // que se hace de forma escalar y segura.
+                // lane, de forma escalar y segura.
                 let raw = out.to_array();
                 let arr = [
                     if raw[0].abs() < 1e-20 { 0.0 } else { raw[0] },

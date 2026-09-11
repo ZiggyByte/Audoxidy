@@ -327,12 +327,14 @@ impl AudioManager {
     }
 
     /// Configura los parámetros del compresor.
-    pub fn set_compressor_params(&self, threshold: f32, ratio: f32, attack: f32, release: f32) {
-        self.engine
-            .dsp
-            .write()
-            .compressor
-            .set_params(threshold, ratio, attack, release);
+    ///
+    /// `ratio`, `attack` y `release` se derivan de `intensity`, por lo que no se
+    /// aplican directamente; se conservan en la firma por compatibilidad.
+    pub fn set_compressor_params(&self, threshold: f32, _ratio: f32, _attack: f32, _release: f32) {
+        let mut dsp = self.engine.dsp.write();
+        dsp.compressor.threshold = threshold;
+        dsp.compressor.intensity = 0.5;
+        dsp.compressor.update_intensity_params();
     }
 
     // --- Direct DSP Access ---

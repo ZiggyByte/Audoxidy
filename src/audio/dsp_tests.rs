@@ -273,10 +273,11 @@ mod tests {
     }
 
     #[test]
-    fn test_compressor_set_params_deprecated_still_works() {
+    fn test_compressor_direct_field_params() {
         let mut c = Compressor::new();
-        #[allow(deprecated)]
-        c.set_params(-20.0, 4.0, 0.005, 0.1);
+        c.threshold = -20.0;
+        c.intensity = 0.5;
+        c.update_intensity_params();
         assert!((c.threshold - (-20.0)).abs() < 1e-6);
         assert!((c.intensity - 0.5).abs() < 1e-6);
     }
@@ -297,7 +298,7 @@ mod tests {
     }
 
     // ========================================================================
-    // Compressor premium tests (D-02, D-03, D-05)
+    // Compressor premium tests
     // ========================================================================
 
     #[test]

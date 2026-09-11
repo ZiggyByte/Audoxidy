@@ -1008,16 +1008,6 @@ impl Compressor {
         self.update_intensity_params();
     }
 
-    /// Configura los parámetros del compresor (deprecated — usar `intensity`).
-    #[deprecated(
-        note = "Use `intensity` field instead. Ratio/attack/release params are now derived from intensity."
-    )]
-    pub fn set_params(&mut self, threshold: f32, _ratio: f32, _attack: f32, _release: f32) {
-        self.threshold = threshold;
-        self.intensity = 0.5;
-        self.update_intensity_params();
-    }
-
     /// Actualiza ratio, attack, release, knee_width y makeup_gain a partir de `intensity` (0..1).
     pub fn update_intensity_params(&mut self) {
         let i = self.intensity.clamp(0.0, 1.0);

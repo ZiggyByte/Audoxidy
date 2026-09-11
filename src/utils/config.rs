@@ -636,6 +636,33 @@ mod config_tests {
             .expect("los campos ausentes deben usar los valores por defecto");
         assert_eq!(config.config_version, 1);
         assert_eq!(config.ui.theme, "dark");
+        assert!(
+            !config.shortcuts.enabled,
+            "la sección de atajos ausente debe quedar deshabilitada"
+        );
+        assert!(
+            config.shortcuts.bindings.is_empty(),
+            "la sección de atajos ausente no debe declarar enlaces"
+        );
+    }
+
+    #[test]
+    fn shortcuts_round_trip() {
+        // El formato RON documentado para la sección de atajos debe
+        // sobrevivir a la serialización y al parseo sin perder enlaces.
+        let mut original = AppConfig::default();
+        original.shortcuts = ShortcutsConfig {
+            enabled: true,
+            bindings: vec![ShortcutBinding {
+                action: ShortcutAction::Next,
+                keys: "Ctrl+Right".into(),
+            }],
+        };
+
+        let encoded = ron::ser::to_string(&original).expect("serializar la configuración");
+        let decoded: AppConfig = ron::from_str(&encoded).expect("releer la configuración");
+
+        assert_eq!(decoded.shortcuts, original.shortcuts);
     }
 
     #[test]

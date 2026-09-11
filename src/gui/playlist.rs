@@ -1672,6 +1672,8 @@ impl PlaylistManager {
                         &song.file_path,
                         song.title.to_string(),
                         song.artist_name.to_string(),
+                        song.album_title.to_string(),
+                        song.cover_path.as_deref().map(str::to_string),
                         None,
                         None,
                     );
@@ -1700,6 +1702,8 @@ impl PlaylistManager {
                                     song.file_path.clone(),
                                     song.title.to_string(),
                                     song.artist_name.to_string(),
+                                    song.album_title.to_string(),
+                                    song.cover_path.as_deref().map(str::to_string),
                                     pos,
                                 ));
                                 break;
@@ -1710,14 +1714,14 @@ impl PlaylistManager {
             }
 
             // Segunda pasada: Si encontramos una canción, actualizamos el estado mutando la sesión
-            if let Some((song_id, l_idx, path, title, artist, new_pos)) = found_next {
+            if let Some((song_id, l_idx, path, title, artist, album, cover, new_pos)) = found_next {
                 if let Some(session) = &mut self.shuffle_session {
                     session.history.push(song_id);
                     session.current_position = new_pos;
                 }
 
                 self.playing_song_idx = Some(l_idx);
-                let _ = audio_manager.load_file(&path, title, artist, None, None);
+                let _ = audio_manager.load_file(&path, title, artist, album, cover, None, None);
                 audio_manager.play();
                 return;
             } else if self.shuffle_active && self.repeat_mode == 1 {
@@ -1746,6 +1750,8 @@ impl PlaylistManager {
                     &song.file_path,
                     song.title.to_string(),
                     song.artist_name.to_string(),
+                    song.album_title.to_string(),
+                    song.cover_path.as_deref().map(str::to_string),
                     None,
                     None,
                 );
@@ -1772,6 +1778,8 @@ impl PlaylistManager {
                                     song.file_path.clone(),
                                     song.title.to_string(),
                                     song.artist_name.to_string(),
+                                    song.album_title.to_string(),
+                                    song.cover_path.as_deref().map(str::to_string),
                                 ))
                             } else {
                                 None
@@ -1789,9 +1797,9 @@ impl PlaylistManager {
                 None
             };
 
-            if let Some((l_idx, path, title, artist)) = prev_song_data {
+            if let Some((l_idx, path, title, artist, album, cover)) = prev_song_data {
                 self.playing_song_idx = Some(l_idx);
-                let _ = audio_manager.load_file(&path, title, artist, None, None);
+                let _ = audio_manager.load_file(&path, title, artist, album, cover, None, None);
                 audio_manager.play();
                 return;
             }
@@ -1830,6 +1838,8 @@ impl PlaylistManager {
                     &song.file_path,
                     song.title.to_string(),
                     song.artist_name.to_string(),
+                    song.album_title.to_string(),
+                    song.cover_path.as_deref().map(str::to_string),
                     None,
                     None,
                 );

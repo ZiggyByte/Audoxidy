@@ -1301,6 +1301,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     path,
                     title,
                     artist,
+                    album,
+                    cover_path,
                     track_gain,
                     album_gain,
                 } => {
@@ -1335,6 +1337,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         let mut s = state.write();
                         s.title = title;
                         s.artist = artist;
+                        s.album = album;
+                        s.cover_path = cover_path;
                         s.path = path.clone();
                         s.replay_gain_track = track_gain.map(|g| g as f32);
                         s.replay_gain_album = album_gain.map(|g| g as f32);

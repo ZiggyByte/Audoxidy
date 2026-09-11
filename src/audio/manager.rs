@@ -115,6 +115,8 @@ impl AudioManager {
         path: &str,
         title: impl Into<String>,
         artist: impl Into<String>,
+        album: impl Into<String>,
+        cover_path: Option<String>,
         track_gain: Option<f64>,
         album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
@@ -133,8 +135,15 @@ impl AudioManager {
             }
         }
 
-        self.engine
-            .decode_file(path, title.into(), artist.into(), tg, ag)
+        self.engine.decode_file(
+            path,
+            title.into(),
+            artist.into(),
+            album.into(),
+            cover_path,
+            tg,
+            ag,
+        )
     }
 
     /// Pre-carga la siguiente canción en el hilo decodificador para transiciones sin cortes.

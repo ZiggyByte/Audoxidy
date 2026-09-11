@@ -758,6 +758,8 @@ impl AudoxidyApp {
                             let path = song.file_path.clone();
                             let title = song.title.clone();
                             let artist = song.artist_name.to_string();
+                            let album = song.album_title.to_string();
+                            let cover_path = song.cover_path.as_deref().map(str::to_string);
 
                             playlist_manager.playing_song_idx = Some(l_idx);
                             let (tg, ag) = db_lock
@@ -767,6 +769,8 @@ impl AudoxidyApp {
                                 &path,
                                 title.to_string(),
                                 artist.to_string(),
+                                album,
+                                cover_path,
                                 tg,
                                 ag,
                             );
@@ -1252,6 +1256,8 @@ impl AudoxidyApp {
         path: &str,
         title: impl Into<String>,
         artist: impl Into<String>,
+        album: impl Into<String>,
+        cover_path: Option<String>,
     ) -> Result<(), AudioError> {
         let (track_gain, album_gain) = if let Ok(db) = self.database.lock() {
             match db.get_replay_gain_by_path(path) {
@@ -1269,8 +1275,9 @@ impl AudoxidyApp {
             tracing::debug!("DB: No se encontró ReplayGain para la ruta: {}", path);
         }
 
-        self.audio_manager
-            .load_file(path, title, artist, track_gain, album_gain)
+        self.audio_manager.load_file(
+            path, title, artist, album, cover_path, track_gain, album_gain,
+        )
     }
 
     /// Reproduce una canción de la playlist por índice. Si es la MISMA canción que
@@ -1283,6 +1290,8 @@ impl AudoxidyApp {
         let path = song.file_path.clone();
         let title = song.title.clone();
         let artist = song.artist_name.to_string();
+        let album = song.album_title.to_string();
+        let cover_path = song.cover_path.as_deref().map(str::to_string);
         let s_id = song.song_id;
 
         let current = self.audio_manager.get_state();
@@ -1293,9 +1302,13 @@ impl AudoxidyApp {
             // Reiniciar la canción actual desde el principio.
             self.audio_manager.seek(0.0);
             self.audio_manager.play();
-        } else if let Err(e) =
-            self.load_file_with_gains(&path, title.to_string(), artist.to_string())
-        {
+        } else if let Err(e) = self.load_file_with_gains(
+            &path,
+            title.to_string(),
+            artist.to_string(),
+            album,
+            cover_path,
+        ) {
             tracing::error!("Error reproduciendo archivo: {}", e);
             return;
         } else {
@@ -2628,6 +2641,8 @@ impl AudoxidyApp {
                                 let path = song.file_path.clone();
                                 let title = song.title.clone();
                                 let artist = song.artist_name.to_string();
+                                let album = song.album_title.to_string();
+                                let cover_path = song.cover_path.as_deref().map(str::to_string);
 
                                 let is_playing_needed =
                                     if auto_play { true } else { p_data.is_playing };
@@ -2643,6 +2658,8 @@ impl AudoxidyApp {
                                     &path,
                                     title.to_string(),
                                     artist.to_string(),
+                                    album,
+                                    cover_path,
                                 );
                                 self.audio_manager.seek(last_pos);
                                 self.audio_manager.set_playing(is_playing_needed);
@@ -3498,12 +3515,18 @@ impl AudoxidyApp {
                         let path = song.file_path.clone();
                         let title = song.title.clone();
                         let artist = song.artist_name.to_string();
+                        let album = song.album_title.to_string();
+                        let cover_path = song.cover_path.as_deref().map(str::to_string);
                         let s_id = song.song_id;
 
                         self.sync_player_art();
-                        if let Err(e) =
-                            self.load_file_with_gains(&path, title.to_string(), artist.to_string())
-                        {
+                        if let Err(e) = self.load_file_with_gains(
+                            &path,
+                            title.to_string(),
+                            artist.to_string(),
+                            album,
+                            cover_path,
+                        ) {
                             tracing::error!("Error reproduciendo archivo de playlist: {}", e);
                         } else {
                             self.audio_manager.play();
@@ -3589,11 +3612,17 @@ impl AudoxidyApp {
                             let path = song.file_path.clone();
                             let title = song.title.clone();
                             let artist = song.artist_name.to_string();
+                            let album = song.album_title.to_string();
+                            let cover_path = song.cover_path.as_deref().map(str::to_string);
 
                             self.sync_player_art();
-                            if let Err(e) =
-                                self.load_file_with_gains(&path, title.to_string(), artist)
-                            {
+                            if let Err(e) = self.load_file_with_gains(
+                                &path,
+                                title.to_string(),
+                                artist,
+                                album,
+                                cover_path,
+                            ) {
                                 tracing::error!("Error reproduciendo archivo: {}", e);
                             } else {
                                 self.audio_manager.play();

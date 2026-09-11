@@ -1,5 +1,6 @@
 use crate::audio::AudioError;
 use crate::audio::AudioManager;
+use crate::audio::engine::{LATENCY_PEAK_US, UNDERRUNS};
 use crate::db::{Database, scanner::Scanner};
 use crate::gui::audio_center::{AudioCenterManager, AudioCenterMessage};
 use crate::gui::library::{LIBRARY_SCROLL_ID, LibraryManager};
@@ -1512,7 +1513,36 @@ impl AudoxidyApp {
                     self.persist_playlist_state();
                 }
 
-                // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente (D-03)
+                // Emisión de métricas desde la ruta no-RT de la GUI: convierte los
+                // contadores atómicos publicados por el callback en eventos
+                // estructurados que consume la capa de métricas.
+                let ram_bytes =
+                    crate::utils::memory_manager::MemoryManager::current_process_ram_bytes();
+                tracing::info!(
+                    target: "audoxidy::metrics",
+                    metric = "ram_usage_bytes",
+                    ram_usage_bytes = ram_bytes
+                );
+
+                let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);
+                if underruns > 0 {
+                    tracing::warn!(
+                        target: "audoxidy::metrics",
+                        metric = "underrun",
+                        count = underruns
+                    );
+                }
+
+                let peak = LATENCY_PEAK_US.load(std::sync::atomic::Ordering::Relaxed);
+                if peak > 0 {
+                    tracing::info!(
+                        target: "audoxidy::metrics",
+                        metric = "audio_latency",
+                        latency_us = peak
+                    );
+                }
+
+                // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente
                 if crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap() {
                     println!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
                     return Task::done(Message::GlobalMemoryPurge);
@@ -1571,7 +1601,7 @@ impl AudoxidyApp {
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
                         .as_secs();
-                    // D-02: Liberar memoria 40s después del escaneo
+                    // Liberar memoria 40s después del escaneo
                     if now.saturating_sub(finished_at) >= 40 {
                         self.scan_finished_at = None;
                         println!("Audoxidy GC: Scan complete, clearing memory");
@@ -1595,7 +1625,7 @@ impl AudoxidyApp {
                 let is_playing = self.audio_manager.is_playing();
                 let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
 
-                // D-06: Descargar listas inactivas (la pestaña activa siempre se conserva)
+                // Descargar listas inactivas (la pestaña activa siempre se conserva)
                 self.playlist_manager.unload(
                     is_playlist_focused,
                     is_playing || is_loaded_in_player,

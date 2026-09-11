@@ -60,13 +60,8 @@ walkdir = "2.5.0"
 wide = "0.7.31"
 zbus = "5.13.2"
 
-# === Features para desarrollo y perfilado ===
 [features]
 default = []
-# pipewire: optimizaciones específicas para Linux PipeWire
-pipewire = []
-# dev: perfil rápido para desarrollo (omite crates pesados opcionales)
-dev = []
 
 [dev-dependencies]
 criterion = { version = "0.6", features = ["html_reports"] }

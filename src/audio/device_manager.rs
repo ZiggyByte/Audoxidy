@@ -3,19 +3,14 @@ use parking_lot::RwLock;
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// Devuelve la latencia base recomendada en milisegundos para la plataforma actual.
-/// - Linux (PipeWire): 5ms (baja latencia nativa)
-/// - Linux (ALSA): 10ms (estable)
+/// Returns the recommended base latency in milliseconds for the current platform.
+/// - Linux (ALSA/PipeWire): 10ms (stable)
 /// - Windows (WASAPI): 5ms (exclusive mode)
 /// - Windows (WASAPI shared): 10ms
-/// - macOS (Core Audio): 5ms (muy estable)
-/// - Otros: 10ms (conservador)
+/// - macOS (Core Audio): 5ms (very stable)
+/// - Others: 10ms (conservative)
 fn platform_base_latency_ms() -> f64 {
-    #[cfg(all(target_os = "linux", feature = "pipewire"))]
-    {
-        5.0
-    }
-    #[cfg(all(target_os = "linux", not(feature = "pipewire")))]
+    #[cfg(target_os = "linux")]
     {
         10.0
     }
@@ -503,5 +498,16 @@ impl AudioDeviceManager {
         }
 
         Ok((host, device, stream_config, best.sample_format()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn linux_base_latency_is_10ms() {
+        assert_eq!(platform_base_latency_ms(), 10.0);
     }
 }

@@ -1,28 +1,14 @@
-mod audio;
-mod db;
-mod gui;
-mod integrations;
-mod utils;
-
-#[cfg(test)]
-#[path = "audio/dsp_tests.rs"]
-mod dsp_tests;
-
-#[cfg(test)]
-#[path = "gui/widgets_tests.rs"]
-mod widgets_tests;
-
-use crate::audio::AudioManager;
-use crate::gui::app::AudoxidyApp;
+use audoxidy::audio::AudioManager;
+use audoxidy::gui::app::AudoxidyApp;
 
 // ── Entry point ──────────────────────────────────────────────
 
 fn main() -> iced::Result {
     // 1. Cargar configuración (crea archivo por defecto si no existe)
-    let app_config = crate::utils::config::load_config();
+    let app_config = audoxidy::utils::config::load_config();
 
     // 2. Inicializar logging con configuración
-    crate::utils::observability::init_logging(&app_config.logging);
+    audoxidy::utils::observability::init_logging(&app_config.logging);
 
     tracing::info!(
         "Audoxidy {} iniciando con perfil {:?}",
@@ -31,7 +17,7 @@ fn main() -> iced::Result {
     );
 
     // 3. Inicializar gestor de memoria
-    crate::utils::memory_manager::MemoryManager::init();
+    audoxidy::utils::memory_manager::MemoryManager::init();
 
     // 4. Inicializar motor de audio
     let audio_manager =

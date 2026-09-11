@@ -114,6 +114,7 @@ impl Scanner {
             if let Err(e) = db.commit_transaction() {
                 tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
             }
+            db.flush_prepared_statements();
         }
 
         crate::utils::covers::clear_all_cover_cache();
@@ -468,6 +469,7 @@ impl Scanner {
             if let Err(e) = db.commit_transaction() {
                 tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
             }
+            db.flush_prepared_statements();
         }
     }
 }

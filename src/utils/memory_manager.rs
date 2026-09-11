@@ -217,6 +217,11 @@ impl MemoryManager {
 mod tests {
     use super::*;
 
+    // Serializa las pruebas que leen el `SYSINFO` global mediante `try_lock`: si dos
+    // hilos compiten por él, `try_lock` falla y la lectura devuelve (0, 0), lo que
+    // hacía fallar estas aserciones de forma intermitente bajo `cargo test` paralelo.
+    static SYSINFO_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn hard_cap_boundary() {
         // Exactamente el 75% NO supera el hard cap (estricto).
@@ -248,6 +253,7 @@ mod tests {
 
     #[test]
     fn self_rss_probe_returns_nonzero() {
+        let _guard = SYSINFO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Ejercita la ruta real de `sysinfo` en la plataforma en la que corre el test;
         // un proceso en ejecución siempre tiene RSS > 0 si el sondeo funciona.
         assert!(
@@ -258,6 +264,7 @@ mod tests {
 
     #[test]
     fn system_ram_is_sane() {
+        let _guard = SYSINFO_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // Ejercita la ruta real de lectura de RAM del sistema: un refresh que omitiera
         // `with_ram()` devolvería total = 0.
         let (used, total) = get_system_ram_bytes();

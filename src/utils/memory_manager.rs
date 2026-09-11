@@ -40,7 +40,7 @@ fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
 /// Usa `sysinfo`; `(0, 0)` si el sistema no expone los valores.
 fn get_system_ram_bytes() -> (u64, u64) {
     if let Some(mut sys) = get_sysinfo().try_lock() {
-        sys.refresh_memory();
+        sys.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
         return (sys.used_memory(), sys.total_memory());
     }
     (0, 0)

@@ -1,57 +1,49 @@
-# ── Configuración optimizada para Audoxidy ──────────────────────
+# ── Optimized configuration for Audoxidy ──────────────────────
 #
-# ## Perfilado y cobertura
+# ## Profiling and coverage
 #
 #   cargo install cargo-llvm-cov
-#   cargo llvm-cov                 # cobertura + informe terminal
-#   cargo llvm-cov --html          # cobertura + reporte HTML
-#   cargo llvm-cov --open          # cobertura + abrir en navegador
+#   cargo llvm-cov                 # coverage + terminal report
+#   cargo llvm-cov --html          # coverage + HTML report
+#   cargo llvm-cov --open          # coverage + open in browser
 #
 # ## Benchmarks
 #
-#   cargo bench                    # todos los benchmarks
-#   cargo bench --bench dsp_bench  # solo DSP
+#   cargo bench                    # all benchmarks
+#   cargo bench --bench dsp_bench  # DSP only
 #   cargo bench --bench engine_bench
 #   cargo bench --bench utils_bench
-#   open target/criterion/report/index.html  # reporte HTML
+#   open target/criterion/report/index.html  # HTML report
 #
-# ## Flamegraph (mapeo de llamadas en caliente)
+# ## Flamegraph (hot call mapping)
 #
 #   cargo install flamegraph
 #   cargo flamegraph --bin audoxidy -- --help
-#   # Para perfilado real: reproducir audio mientras se perfila
+#   # For real profiling: play audio while profiling
 #   cargo flamegraph --bin audoxidy --root --output flame.svg
 #
-# ## Valgrind / Massif (perfilado de memoria)
+# ## Valgrind / Massif (memory profiling)
 #
-#   # Uso de heap de toda la aplicación
+#   # Whole-application heap usage
 #   valgrind --tool=massif --massif-out-file=massif.out ./target/release/audoxidy
-#   # Visualizar: massif-visualizer massif.out
-#   # Ver pico de uso: ms_print massif.out | head -60
+#   # Visualize: massif-visualizer massif.out
+#   # See peak usage: ms_print massif.out | head -60
 #
-#   # Perfilado de llamadas (cachegrind)
+#   # Call profiling (cachegrind)
 #   valgrind --tool=callgrind --dump-instr=yes ./target/release/audoxidy
-#   # Visualizar: qcachegrind callgrind.out.*
+#   # Visualize: qcachegrind callgrind.out.*
 #
-# ## Compilación rápida
+# ## Fast compilation
 #
 #   cargo install sccache
 #   cargo install cargo-nextest
-#   cargo nextest run  # ejecuta tests 2-3x más rápido que cargo test
+#   cargo nextest run  # runs tests 2-3x faster than cargo test
 #
-# ## Enlaces rápidos (linker)
+# ## Fast linkers
 #   Linux: sudo apt install lld clang
-#   macOS: usa ld64 (rápido nativo)
+#   macOS: uses ld64 (fast native)
 #   Windows: rustup component add llvm-tools
 
 [build]
-# rustc-wrapper = "sccache"  # Descomentar tras instalar sccache
-# jobs = 8                    # Ajustar a núcleos de CPU disponibles
-
-# Perfil de desarrollo optimizado para compile rápido
-[profile.dev]
-opt-level = 1
-lto = false
-codegen-units = 256
-debug = true
-incremental = true
+# rustc-wrapper = "sccache"  # Uncomment after installing sccache
+# jobs = 8                   # Adjust to available CPU cores

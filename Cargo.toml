@@ -2,8 +2,17 @@
 name = "audoxidy"
 version = "0.7.0"
 edition = "2024"
+rust-version = "1.95"
 authors = ["ZiggyCrue"]
-description = "Reproductor de audio de alta fidelidad, alto rendimiento y personalizable."
+description = "High-fidelity, high-performance, customizable desktop audio player."
+readme = "README.md"
+repository = "https://github.com/ZiggyByte/Audoxidy"
+homepage = "https://github.com/ZiggyByte/Audoxidy"
+documentation = "https://docs.rs/audoxidy"
+license = "GPL-3.0-only"
+keywords = ["audio", "player", "dsp", "crossfade", "rust"]
+categories = ["multimedia::audio", "gui"]
+exclude = ["/.planning", "/.changelogs-crates-update", "/cache", "/logs", "/graphify-out", "/.criterion", "*.db*"]
 
 [dependencies]
 # Audio Core

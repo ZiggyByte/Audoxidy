@@ -730,6 +730,10 @@ impl Database {
 
     /// Busca canciones usando FTS5 con el término de búsqueda dado.
     pub fn search_songs(&self, query: &str) -> Result<Vec<Arc<SongData>>> {
+        let Some(fts_query) = fts5_match_query(query) else {
+            return Ok(Vec::new());
+        };
+
         let mut stmt = self.conn.prepare(
             "
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
@@ -747,7 +751,7 @@ impl Database {
         ",
         )?;
 
-        let rows = stmt.query_map([format!("{}*", query)], |row| {
+        let rows = stmt.query_map([fts_query.as_str()], |row| {
             let mut song = SongData::default();
             song.id = row.get(0)?;
             song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
@@ -1156,11 +1160,9 @@ impl Database {
         );
 
         let mut params_vec = Vec::new();
-        if let Some(q) = search_query {
-            if !q.is_empty() {
-                sql.push_str(" AND s.id IN (SELECT rowid FROM SONGS_FTS WHERE SONGS_FTS MATCH ?1)");
-                params_vec.push(format!("{}*", q));
-            }
+        if let Some(fts_query) = search_query.and_then(fts5_match_query) {
+            sql.push_str(" AND s.id IN (SELECT rowid FROM SONGS_FTS WHERE SONGS_FTS MATCH ?1)");
+            params_vec.push(fts_query);
         }
 
         sql.push_str(" GROUP BY ar.name ORDER BY ar.name ASC");
@@ -2378,15 +2380,10 @@ impl Database {
         let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
 
         // 1. Integración de Búsqueda FTS5 (si hay query)
-        if let Some(q) = &params.query {
-            if !q.trim().is_empty() {
-                sql.push_str(" JOIN SONGS_FTS fts ON fts.rowid = s.id ");
-                // Limpiar query para FTS5 y añadir asterisco para búsqueda parcial
-                let clean_q = q.replace("\"", "").replace("'", "");
-                let fts_query = format!("{}*", clean_q.trim());
-                conditions.push("SONGS_FTS MATCH ?".to_string());
-                sql_params.push(Box::new(fts_query));
-            }
+        if let Some(fts_query) = params.query.as_deref().and_then(fts5_match_query) {
+            sql.push_str(" JOIN SONGS_FTS fts ON fts.rowid = s.id ");
+            conditions.push("SONGS_FTS MATCH ?".to_string());
+            sql_params.push(Box::new(fts_query));
         }
 
         // 2. Filtros Relacionales
@@ -2574,6 +2571,25 @@ fn deserialize_f32_blob(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
                 .collect(),
         )
     })
+}
+
+/// Convierte texto libre en una expresión `MATCH` segura para FTS5.
+///
+/// Cada término separado por espacios se encierra entre comillas dobles y las
+/// comillas internas se duplican, de modo que los operadores de FTS5 (`*`, `OR`,
+/// `NEAR`, `{`, `}`, `^`, `:`...) se tratan como texto literal. El comodín de
+/// prefijo `*` se coloca fuera de las comillas del último término para conservar
+/// la búsqueda por prefijo. Devuelve `None` cuando la entrada no tiene términos.
+fn fts5_match_query(input: &str) -> Option<String> {
+    let terms: Vec<String> = input
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    if terms.is_empty() {
+        None
+    } else {
+        Some(format!("{} *", terms.join(" ")))
+    }
 }
 
 #[cfg(test)]

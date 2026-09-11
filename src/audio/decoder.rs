@@ -953,6 +953,50 @@ fn clear_tail_state(
     clear_tail_buffer(tail_buffer, tail_buffer_cap);
 }
 
+/// Vuelca en el estado compartido los metadatos de la pista pre-cargada al promoverla
+/// como primaria. Consume (`take`) cada opción pendiente — title/artist/album/cover/path —
+/// para que los metadatos de la canción anterior no puedan resurgir, y fija las ganancias
+/// ReplayGain, la duración, la tasa de muestras, la posición a 0.0 y el flag de EOF.
+///
+/// Lo usan tanto la promoción del crossfade (con `eof_reached = signal_eof`) como la
+/// promoción por fin de pista natural (con `eof_reached = true`), de modo que ambas
+/// rutas escriben exactamente el mismo conjunto de campos.
+#[allow(clippy::too_many_arguments)]
+fn apply_promotion_metadata(
+    state: &mut crate::audio::engine::AudioState,
+    preload_title: &mut Option<String>,
+    preload_artist: &mut Option<String>,
+    preload_album: &mut Option<String>,
+    preload_cover: &mut Option<Option<String>>,
+    preload_path: &mut Option<String>,
+    preload_rg: (Option<f32>, Option<f32>),
+    preload_total_duration_sec: f64,
+    preload_sr: u32,
+    eof_reached: bool,
+) {
+    if let Some(t) = preload_title.take() {
+        state.title = t;
+    }
+    if let Some(a) = preload_artist.take() {
+        state.artist = a;
+    }
+    if let Some(al) = preload_album.take() {
+        state.album = al;
+    }
+    if let Some(c) = preload_cover.take() {
+        state.cover_path = c;
+    }
+    if let Some(p) = preload_path.take() {
+        state.path = p;
+    }
+    state.replay_gain_track = preload_rg.0;
+    state.replay_gain_album = preload_rg.1;
+    state.total_duration_sec = preload_total_duration_sec;
+    state.sample_rate = preload_sr;
+    state.current_pos_sec = 0.0;
+    state.eof_reached = eof_reached;
+}
+
 /// Inicia el crossfade "hacia adelante": la pista pre-cargada pasa a ser la PRIMARIA
 /// (suena desde el segundo 0; su inicio ya decodificado se mueve al buffer pendiente)
 /// y la canción actual pasa a ser la COLA, que se decodifica en flujo y se mezcla por
@@ -1058,29 +1102,20 @@ fn begin_forward_crossfade(
     // 4. Actualizar el estado compartido a la primaria.
     {
         let mut s = state.write();
-        if let Some(t) = preload_title.take() {
-            s.title = t;
-        }
-        if let Some(a) = preload_artist.take() {
-            s.artist = a;
-        }
-        if let Some(al) = preload_album.take() {
-            s.album = al;
-        }
-        if let Some(c) = preload_cover.take() {
-            s.cover_path = c;
-        }
-        if let Some(p) = preload_path.take() {
-            s.path = p;
-        }
-        s.replay_gain_track = preload_rg.0;
-        s.replay_gain_album = preload_rg.1;
-        s.total_duration_sec = *preload_total_duration_sec;
-        s.sample_rate = *preload_sr;
-        s.current_pos_sec = 0.0;
         // En el automático, EOF hace que la GUI avance el índice a la canción nueva;
         // en el manual la GUI ya avanzó al disparar la mezcla.
-        s.eof_reached = signal_eof;
+        apply_promotion_metadata(
+            &mut s,
+            preload_title,
+            preload_artist,
+            preload_album,
+            preload_cover,
+            preload_path,
+            *preload_rg,
+            *preload_total_duration_sec,
+            *preload_sr,
+            signal_eof,
+        );
     }
 
     // Limpiar el resto de la pre-carga ya consumida (el path pendiente NO debe
@@ -2267,27 +2302,19 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                             {
                                 let mut s = state.write();
-                                if let Some(t) = preload_title.take() {
-                                    s.title = t;
-                                }
-                                if let Some(a) = preload_artist.take() {
-                                    s.artist = a;
-                                }
-                                if let Some(al) = preload_album.take() {
-                                    s.album = al;
-                                }
-                                if let Some(c) = preload_cover.take() {
-                                    s.cover_path = c;
-                                }
-                                if let Some(p) = preload_path.take() {
-                                    s.path = p;
-                                }
-                                s.replay_gain_track = preload_rg.0;
-                                s.replay_gain_album = preload_rg.1;
-                                s.total_duration_sec = preload_total_duration_sec;
-                                s.sample_rate = preload_sr;
-                                s.current_pos_sec = 0.0;
-                                s.eof_reached = true; // La GUI avanza el índice/playlist
+                                // `eof_reached = true`: la GUI avanza el índice/playlist.
+                                apply_promotion_metadata(
+                                    &mut s,
+                                    &mut preload_title,
+                                    &mut preload_artist,
+                                    &mut preload_album,
+                                    &mut preload_cover,
+                                    &mut preload_path,
+                                    preload_rg,
+                                    preload_total_duration_sec,
+                                    preload_sr,
+                                    true,
+                                );
                                 // is_playing se mantiene true: la nueva pista continúa.
                             }
 

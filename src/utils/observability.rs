@@ -121,6 +121,30 @@ fn cleanup_old_logs(log_dir: &PathBuf, max_history: u32) {
     }
 }
 
+/// Arranca el hilo vigilante que detecta ciclos de deadlock de `parking_lot`
+/// y los registra con `tracing::error!`. Solo se compila con la feature
+/// `deadlock-detection`; el hilo únicamente duerme y consulta el grafo de
+/// espera, por lo que no toma ningún lock de la aplicación.
+#[cfg(feature = "deadlock-detection")]
+pub fn spawn_deadlock_watchdog() {
+    if let Err(e) = std::thread::Builder::new()
+        .name("audoxidy-deadlock-watchdog".into())
+        .spawn(|| {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                for (i, threads) in parking_lot::deadlock::check_deadlock().iter().enumerate() {
+                    tracing::error!("deadlock cycle #{} detected ({} threads)", i, threads.len());
+                    for t in threads {
+                        tracing::error!("  thread {:?}\n{:?}", t.thread_id(), t.backtrace());
+                    }
+                }
+            }
+        })
+    {
+        tracing::error!("No se pudo iniciar el vigilante de deadlocks: {e}");
+    }
+}
+
 // ── Colector de métricas de rendimiento ──────────────────────
 
 /// Métricas globales de rendimiento accesibles desde cualquier módulo.

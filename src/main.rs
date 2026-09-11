@@ -19,6 +19,10 @@ fn main() -> iced::Result {
     // 3. Inicializar gestor de memoria
     audoxidy::utils::memory_manager::MemoryManager::init();
 
+    // Vigilante de deadlocks: solo en builds de desarrollo con la feature activa.
+    #[cfg(feature = "deadlock-detection")]
+    audoxidy::utils::observability::spawn_deadlock_watchdog();
+
     // 4. Inicializar motor de audio
     let audio_manager =
         std::sync::Arc::new(AudioManager::new().expect("No se pudo inicializar el motor de audio"));

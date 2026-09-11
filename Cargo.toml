@@ -63,6 +63,9 @@ zbus = "5.13.2"
 
 [features]
 default = []
+# Detección opt-in de deadlocks de parking_lot (solo builds de desarrollo;
+# nunca se activa en release).
+deadlock-detection = ["parking_lot/deadlock_detection"]
 
 [dev-dependencies]
 criterion = { version = "0.8.2", features = ["html_reports"] }

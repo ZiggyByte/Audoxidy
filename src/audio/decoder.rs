@@ -1816,7 +1816,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
                 AudioCommand::Stop => {
                     current_format = None;
-                    state.write().is_playing = false;
+                    engine.set_playing(false);
                     state.write().current_pos_sec = 0.0;
 
                     // Volumen y Mezcla: Reset on stop (D-20)
@@ -2114,7 +2114,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
             };
             if custom_eof {
-                state.write().is_playing = false;
+                engine.set_playing(false);
                 state.write().eof_reached = true;
             }
             // Push custom decoded data
@@ -2258,7 +2258,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
 
                     // Sin pre-carga: comportamiento original (purgar al llegar al EOF).
-                    state.write().is_playing = false;
+                    engine.set_playing(false);
                     state.write().eof_reached = true;
 
                     // Autoclean on EOF

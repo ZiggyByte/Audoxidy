@@ -50,6 +50,16 @@ impl AudioManager {
         self.engine.meter.clone()
     }
 
+    /// Devuelve el tamaño de buffer publicado por el callback de salida.
+    ///
+    /// Lectura atómica sin locks: refleja el valor que el callback escribe en
+    /// cada iteración, para que la GUI lo muestre sin bloquear el hilo de audio.
+    pub fn buffer_size(&self) -> u32 {
+        self.engine
+            .buffer_size_published
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Inicia o reanuda la reproducción.
     pub fn play(&self) {
         self.engine.set_playing(true);

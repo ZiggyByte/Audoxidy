@@ -2207,7 +2207,7 @@ fn view_audio_config<'a>(
             state_read.sample_rate,
             state_read.channels,
             state_read.bit_depth_display.clone(),
-            state_read.buffer_size,
+            audio_manager.buffer_size(),
             state_read.title.clone(),
             state_read.path.clone(),
             state_read.device_sample_rate,

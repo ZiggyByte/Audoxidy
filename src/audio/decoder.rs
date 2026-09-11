@@ -2062,9 +2062,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 let mut s = state.write();
                 s.current_pos_sec += batch_secs;
             }
-            // NOTA: preloaded_pending.shrink_to_fit() eliminado — causaba un corte
-            // audible al desalocar decenas de MB justo en la transición DRAIN→DECODE.
-            // El buffer se libera naturalmente en la siguiente pre-carga o en Load.
+            // NOTA: la liberación forzada de capacidad de preloaded_pending fue
+            // eliminada — causaba un corte audible al desalocar decenas de MB justo
+            // en la transición DRAIN→DECODE. El buffer se libera naturalmente en la
+            // siguiente pre-carga o en Load.
         }
 
         // 2. Llenar buffer si hay espacio
@@ -2194,11 +2195,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if !predecode_buffer.is_empty() {
                                 preloaded_pending.extend(predecode_buffer.drain(..));
                             }
-                            // NOTA: predecode_buffer.shrink_to_fit() eliminado — causaba
-                            // un corte audible al desalocar hasta 64MB durante la transición
-                            // DRAIN→DECODE, bloqueando el decoder thread (~7s después del
-                            // inicio de la nueva canción). El buffer se reutiliza en la
-                            // siguiente pre-carga y se libera cuando ya no se necesita.
+                            // NOTA: la liberación forzada de capacidad de predecode_buffer
+                            // fue eliminada — causaba un corte audible al desalocar hasta
+                            // 64MB durante la transición DRAIN→DECODE, bloqueando el decoder
+                            // thread (~7s después del inicio de la nueva canción). El buffer
+                            // se reutiliza en la siguiente pre-carga y se libera cuando ya no
+                            // se necesita.
 
                             {
                                 let mut s = state.write();

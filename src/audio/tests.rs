@@ -1067,4 +1067,24 @@ mod tests {
         let total_secs = total_samples as f64 / (rate * ch) as f64;
         assert!((total_secs - 8.0).abs() < 1e-9);
     }
+
+    #[test]
+    fn no_shrink_to_fit_in_preload_transition() {
+        // Guarda de regresión: la liberación forzada de capacidad no debe reaparecer
+        // en la ventana DRAIN→DECODE del crossfade; desalojar decenas de MB en el
+        // hilo decodificador justo cuando reanuda el decode corta el audio por segundos.
+        const SRC: &str = include_str!("decoder.rs");
+        let start = SRC
+            .find("let process_preloaded = !preloaded_pending.is_empty();")
+            .expect("drain-block anchor missing");
+        let end = SRC
+            .find("s.total_duration_sec = preload_total_duration_sec;")
+            .expect("promotion-block anchor missing");
+        assert!(start < end, "anchors out of order");
+        assert!(
+            !SRC[start..end].contains(".shrink_to_fit"),
+            "shrink_to_fit must not reappear in the preload drain/decode transition: \
+             deallocating the buffers there blocks the decode thread and cuts audio"
+        );
+    }
 }

@@ -338,3 +338,20 @@ mod tests {
         assert_eq!(metrics.audio_latency_peak_us.load(Ordering::Relaxed), 500);
     }
 }
+
+/// Prueba de humo del detector de deadlocks: con el grafo de espera limpio no
+/// debe reportar ciclos y el vigilante debe poder arrancar sin entrar en pánico.
+#[cfg(all(test, feature = "deadlock-detection"))]
+mod deadlock_tests {
+    use super::spawn_deadlock_watchdog;
+
+    #[test]
+    fn deadlock_detector_smoke() {
+        let cycles = parking_lot::deadlock::check_deadlock();
+        assert!(
+            cycles.is_empty(),
+            "unexpected deadlock cycles in a single-threaded test"
+        );
+        spawn_deadlock_watchdog();
+    }
+}

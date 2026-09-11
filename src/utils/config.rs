@@ -43,6 +43,20 @@ impl Default for ConfigProfile {
 
 /// Configuración completa de Audoxidy.
 /// Se serializa como archivo RON en `~/.config/audoxidy/config.ron`.
+///
+/// La sección `shortcuts` documenta el formato previsto para enlazar acciones
+/// a combinaciones de teclas; puede añadirse al archivo sin tocar código:
+///
+/// ```ron
+/// shortcuts: (
+///     enabled: false,
+///     bindings: [
+///         (action: PlayPause, keys: "Space"),
+///         (action: Next, keys: "Ctrl+Right"),
+///         (action: Previous, keys: "Ctrl+Left"),
+///     ],
+/// ),
+/// ```
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AppConfig {
@@ -63,6 +77,9 @@ pub struct AppConfig {
 
     // Comportamiento
     pub behavior: BehaviorConfig,
+
+    // Atajos de teclado globales
+    pub shortcuts: ShortcutsConfig,
 }
 
 impl Default for AppConfig {
@@ -75,6 +92,7 @@ impl Default for AppConfig {
             ui: UiConfig::for_profile(profile),
             logging: LoggingConfig::default(),
             behavior: BehaviorConfig::default(),
+            shortcuts: ShortcutsConfig::default(),
         }
     }
 }
@@ -233,6 +251,56 @@ impl Default for BehaviorConfig {
             prefetch_seconds_before_end: 30.0,
         }
     }
+}
+
+// ── Atajos de teclado ─────────────────────────────────────────
+
+/// Acción de reproducción que un atajo de teclado puede desencadenar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShortcutAction {
+    /// Alternar entre reproducir y pausar.
+    PlayPause,
+    /// Detener la reproducción.
+    Stop,
+    /// Saltar a la pista siguiente.
+    Next,
+    /// Volver a la pista anterior.
+    Previous,
+    /// Avanzar la posición de reproducción.
+    SeekForward,
+    /// Retroceder la posición de reproducción.
+    SeekBackward,
+    /// Subir el volumen.
+    VolumeUp,
+    /// Bajar el volumen.
+    VolumeDown,
+    /// Silenciar o reactivar el audio.
+    Mute,
+}
+
+/// Enlace entre una [`ShortcutAction`] y la combinación de teclas que la
+/// dispara, por ejemplo `"Ctrl+Right"`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ShortcutBinding {
+    /// Acción de reproducción que se ejecuta al pulsar la combinación.
+    pub action: ShortcutAction,
+    /// Combinación de teclas en texto, por ejemplo `"Ctrl+Right"`.
+    pub keys: String,
+}
+
+/// Configuración de atajos de teclado globales.
+///
+/// El flag `enabled` y los enlaces son únicamente datos persistidos: en esta
+/// fase no se registra ningún listener, por lo que activarlo todavía no tiene
+/// efecto. La sección existe para que las combinaciones puedan declararse en
+/// `config.ron` sin cambios de código cuando se añada el listener.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ShortcutsConfig {
+    /// Habilita el sistema de atajos globales (aún sin listener registrado).
+    pub enabled: bool,
+    /// Enlaces previstos: acción → combinación de teclas.
+    pub bindings: Vec<ShortcutBinding>,
 }
 
 // ── Validación ────────────────────────────────────────────────

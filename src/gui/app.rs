@@ -6680,7 +6680,11 @@ impl AudoxidyApp {
 
 #[cfg(test)]
 mod app_tests {
-    use super::{PRELOAD_GC_SAFETY_SECS, gc_blocked_by_preload};
+    use super::{
+        Message, PRELOAD_GC_SAFETY_SECS, SEEK_STEP_SECS, clamp_volume, external_control_to_message,
+        gc_blocked_by_preload, seek_target,
+    };
+    use crate::integrations::control::ExternalControlEvent;
 
     #[test]
     fn gc_blocked_while_preload_active() {
@@ -6708,5 +6712,91 @@ mod app_tests {
     fn gc_runs_when_no_preload_state_at_all() {
         // Sin pre-carga activa ni marca de fin: el GC corre normalmente.
         assert!(!gc_blocked_by_preload(1000, false, None));
+    }
+
+    #[test]
+    fn seek_target_clamps() {
+        // Dentro del rango: se aplica el desplazamiento tal cual.
+        assert_eq!(seek_target(5.0, 10.0, 100.0), 15.0);
+        // Sobrepasa el final: se recorta a la duración total.
+        assert_eq!(seek_target(95.0, 10.0, 100.0), 100.0);
+        // Retrocede antes del inicio: se recorta a cero.
+        assert_eq!(seek_target(2.0, -10.0, 100.0), 0.0);
+        // Sin duración conocida: nunca negativo.
+        assert_eq!(seek_target(-5.0, 1.0, 0.0), 0.0);
+        // Entrada no finita: se ignora y va a cero.
+        assert_eq!(seek_target(f64::NAN, 1.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn clamp_volume_bounds() {
+        assert_eq!(clamp_volume(0.5), 0.5);
+        assert_eq!(clamp_volume(1.5), 1.0);
+        assert_eq!(clamp_volume(-2.0), 0.0);
+        assert_eq!(clamp_volume(f64::NAN), 0.0);
+    }
+
+    #[test]
+    fn external_event_mapping() {
+        let current = 30.0;
+        let total = 100.0;
+
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Play, current, total, false),
+            Message::SetPlaying(true)
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Pause, current, total, true),
+            Message::SetPlaying(false)
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Toggle, current, total, true),
+            Message::SetPlaying(false)
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Toggle, current, total, false),
+            Message::SetPlaying(true)
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Stop, current, total, true),
+            Message::Stop
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Next, current, total, true),
+            Message::NextTrack
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::Previous, current, total, true),
+            Message::PreviousTrack
+        ));
+        // Salto fijo: ±SEEK_STEP_SECS, recortado al rango.
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::SeekForward, current, total, true),
+            Message::SeekTo(v) if v == (current + SEEK_STEP_SECS) as f32
+        ));
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::SeekBackward, current, total, true),
+            Message::SeekTo(v) if v == (current - SEEK_STEP_SECS) as f32
+        ));
+        // Desplazamiento relativo explícito.
+        assert!(matches!(
+            external_control_to_message(
+                ExternalControlEvent::SeekRelative(5.0),
+                current,
+                total,
+                true
+            ),
+            Message::SeekTo(v) if v == 35.0
+        ));
+        // Posición absoluta fuera de rango: recortada al total.
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::SeekTo(250.0), current, total, true),
+            Message::SeekTo(v) if v == total as f32
+        ));
+        // Volumen fuera de rango: recortado.
+        assert!(matches!(
+            external_control_to_message(ExternalControlEvent::SetVolume(1.5), current, total, true),
+            Message::VolumeChanged(v) if v == 1.0
+        ));
     }
 }

@@ -366,4 +366,28 @@ mod tests {
         #[cfg(not(target_arch = "x86_64"))]
         assert!(forced.is_none());
     }
+
+    #[test]
+    fn process_and_save_cover_smoke() {
+        // Imagen RGBA en memoria → PNG en bytes, para recorrer el camino real
+        // de decodificación, redimensionado y codificación AVIF.
+        let img = image::RgbaImage::from_pixel(4, 4, image::Rgba([255, 0, 0, 255]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(img)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("no se pudo codificar el PNG de prueba");
+
+        let path = process_and_save_cover(&bytes, "audoxidy_smoke_test_cover")
+            .expect("process_and_save_cover falló en el smoke test");
+
+        assert!(path.exists(), "la carátula AVIF no se creó en disco");
+        assert_eq!(path.extension().and_then(|e| e.to_str()), Some("avif"));
+
+        // Limpia solo el archivo generado; el directorio cache/covers/ es un
+        // artefacto de runtime ignorado por git y se deja en su sitio.
+        let _ = std::fs::remove_file(&path);
+    }
 }

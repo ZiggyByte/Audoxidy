@@ -1,12 +1,10 @@
 // Benchmark de utilidades — formatting, interner, covers.
+// Enlaza la librería `audoxidy`.
 // Ejecutar: cargo bench --bench utils_bench
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-
-#[path = "../src/utils/mod.rs"]
-mod utils;
-
-use utils::*;
+use audoxidy::utils::*;
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn bench_truncate_text(c: &mut Criterion) {
     let long =

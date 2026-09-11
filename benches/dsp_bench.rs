@@ -1,13 +1,10 @@
 // Benchmark de la cadena DSP de Audoxidy.
-// Incluye el módulo DSP directamente para acceso a types internos.
+// Enlaza la librería `audoxidy` para medir el DSP que se publica.
 // Ejecutar: cargo bench --bench dsp_bench
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-
-#[path = "../src/audio/dsp.rs"]
-mod dsp;
-
-use dsp::*;
+use audoxidy::audio::dsp::*;
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn bench_dsp_chain_full(c: &mut Criterion) {
     let mut chain = DspChain::default();

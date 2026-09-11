@@ -65,7 +65,7 @@ zbus = "5.13.2"
 default = []
 
 [dev-dependencies]
-criterion = { version = "0.6", features = ["html_reports"] }
+criterion = { version = "0.8.2", features = ["html_reports"] }
 
 [[bench]]
 name = "dsp_bench"

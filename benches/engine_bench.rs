@@ -1,12 +1,10 @@
 // Benchmark del motor de audio — mix_channels_planar, ChannelMap, state ops.
+// Enlaza la librería `audoxidy`.
 // Ejecutar: cargo bench --bench engine_bench
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-
-#[path = "../src/audio/engine.rs"]
-mod engine;
-
-use engine::*;
+use audoxidy::audio::engine::{AudioEngine, AudioState, ChannelMap};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn bench_mix_channels_planar_stereo(c: &mut Criterion) {
     let frames = 512;

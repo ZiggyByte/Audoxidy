@@ -1232,6 +1232,42 @@ mod tests {
     }
 
     #[test]
+    fn test_dsp_chain_nan_inf_stress_multichannel() {
+        // La cadena completa debe sanear NaN/±Inf en configuraciones de 4/6/8
+        // canales: los guards de cada efecto (noise gate, limitador) limpian lo
+        // no finito y la salida nunca debe contener NaN/Inf.
+        for ch in [4usize, 6, 8] {
+            let mut chain = DspChain::default();
+            chain.enabled = true;
+            chain.set_sample_rate(192000.0);
+            chain.set_channel_count(ch);
+            chain.equalizer.enabled = true;
+            chain.noise_gate.enabled = true;
+            chain.sub_bass.enabled = true;
+            chain.mid_bass.enabled = true;
+            chain.voice_boost.enabled = true;
+            chain.compressor.enabled = true;
+            chain.reverb.enabled = true;
+            chain.limiter.enabled = true;
+
+            for (case, value) in [
+                ("NaN", f64::NAN),
+                ("+Inf", f64::INFINITY),
+                ("-Inf", f64::NEG_INFINITY),
+            ] {
+                let mut f = vec![value; ch];
+                chain.process_frame(&mut f);
+                for (i, s) in f.iter().enumerate() {
+                    assert!(
+                        s.is_finite(),
+                        "ch={ch}, caso={case}: muestra {i} no finita: {s}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_reverb_lfe_bypassed_and_center_reduced() {
         // El reverb por rol de canal: el LFE (canal 3) pasa sin reverb y el centro
         // (canal 2) lleva menos wet. Con el MISMO input en todos los canales, la

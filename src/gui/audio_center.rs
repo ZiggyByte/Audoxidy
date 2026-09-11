@@ -9,6 +9,19 @@ use std::sync::Arc;
 // Constantes de color de acento temporales
 use crate::gui::theme::*;
 
+/// Registra en el log el fallo de una escritura de ajuste, conservando la clave
+/// afectada y el error para poder diagnosticar por qué no se persistió.
+fn log_persist(key: &str, result: rusqlite::Result<()>) {
+    if let Err(e) = result {
+        tracing::warn!(
+            target: "audoxidy::persistence",
+            key,
+            error = %e,
+            "No se pudo persistir el ajuste"
+        );
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum AudioCenterMessage {
     TabSelected(usize),
@@ -353,20 +366,19 @@ impl AudioCenterManager {
     /// Guarda todos los ajustes del ecualizador en la base de datos.
     pub fn save_eq_settings_to_db(&self, db: &std::sync::Mutex<crate::db::Database>) {
         if let Ok(db_lock) = db.lock() {
-            let _ =
-                db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting(
+            log_persist("eq_enabled", db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" }));
+            log_persist("eq_bands_31", db_lock.set_setting(
                 "eq_bands_31",
                 if self.equalizer_bands_31 { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain));
+            ));
+            log_persist("preamp_gain", db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain)));
             // Save selected preset name
             let preset_name = self
                 .selected_preset
                 .as_ref()
                 .map(|p| p.name.clone())
                 .unwrap_or_default();
-            let _ = db_lock.set_setting("eq_selected_preset", &preset_name);
+            log_persist("eq_selected_preset", db_lock.set_setting("eq_selected_preset", &preset_name));
             // Guardar gains de 20 y 31 bandas como CSV
             let bands_20_str = self
                 .eq_band_gains
@@ -375,7 +387,7 @@ impl AudioCenterManager {
                 .map(|g| format!("{:.1}", g))
                 .collect::<Vec<_>>()
                 .join(",");
-            let _ = db_lock.set_setting("eq_band_gains_20", &bands_20_str);
+            log_persist("eq_band_gains_20", db_lock.set_setting("eq_band_gains_20", &bands_20_str));
             if self.eq_band_gains.len() > 20 {
                 let bands_31_str = self
                     .eq_band_gains
@@ -383,7 +395,7 @@ impl AudioCenterManager {
                     .map(|g| format!("{:.1}", g))
                     .collect::<Vec<_>>()
                     .join(",");
-                let _ = db_lock.set_setting("eq_band_gains_31", &bands_31_str);
+                log_persist("eq_band_gains_31", db_lock.set_setting("eq_band_gains_31", &bands_31_str));
             }
         }
     }
@@ -397,132 +409,130 @@ impl AudioCenterManager {
         if let Ok(db_lock) = db.lock() {
             audio_manager.with_dsp(|dsp| {
                 // Enabled states
-                let _ = db_lock.set_setting(
+                log_persist("dsp_sub_bass_enabled", db_lock.set_setting(
                     "dsp_sub_bass_enabled",
                     if dsp.sub_bass.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_mid_bass_enabled", db_lock.set_setting(
                     "dsp_mid_bass_enabled",
                     if dsp.mid_bass.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_voice_boost_enabled", db_lock.set_setting(
                     "dsp_voice_boost_enabled",
                     if dsp.voice_boost.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_noise_gate_enabled", db_lock.set_setting(
                     "dsp_noise_gate_enabled",
                     if dsp.noise_gate.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_stereo_expander_enabled", db_lock.set_setting(
                     "dsp_stereo_expander_enabled",
                     if dsp.stereo_expander.enabled {
                         "1"
                     } else {
                         "0"
                     },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_stereo_balance_enabled", db_lock.set_setting(
                     "dsp_stereo_balance_enabled",
                     if dsp.stereo_balance.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_compressor_enabled", db_lock.set_setting(
                     "dsp_compressor_enabled",
                     if dsp.compressor.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_limiter_enabled", db_lock.set_setting(
                     "dsp_limiter_enabled",
                     if dsp.limiter.enabled { "1" } else { "0" },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_reverb_enabled", db_lock.set_setting(
                     "dsp_reverb_enabled",
                     if dsp.reverb.enabled { "1" } else { "0" },
-                );
+                ));
                 // Slider values
-                let _ =
-                    db_lock.set_setting("dsp_sub_bass_gain", &format!("{:.1}", dsp.sub_bass.gain));
-                let _ =
-                    db_lock.set_setting("dsp_mid_bass_gain", &format!("{:.1}", dsp.mid_bass.gain));
-                let _ = db_lock.set_setting(
+                log_persist("dsp_sub_bass_gain", db_lock.set_setting("dsp_sub_bass_gain", &format!("{:.1}", dsp.sub_bass.gain)));
+                log_persist("dsp_mid_bass_gain", db_lock.set_setting("dsp_mid_bass_gain", &format!("{:.1}", dsp.mid_bass.gain)));
+                log_persist("dsp_voice_boost_gain", db_lock.set_setting(
                     "dsp_voice_boost_gain",
                     &format!("{:.1}", dsp.voice_boost.gain),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_noise_gate_threshold", db_lock.set_setting(
                     "dsp_noise_gate_threshold",
                     &format!("{:.1}", dsp.noise_gate.threshold),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_stereo_expander_width", db_lock.set_setting(
                     "dsp_stereo_expander_width",
                     &format!("{:.1}", dsp.stereo_expander.width),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_stereo_expander_mode", db_lock.set_setting(
                     "dsp_stereo_expander_mode",
                     if dsp.stereo_expander.mode == crate::audio::dsp::ExpanderMode::Surround {
                         "surround"
                     } else {
                         "hybrid"
                     },
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_stereo_balance_balance", db_lock.set_setting(
                     "dsp_stereo_balance_balance",
                     &format!("{:.1}", dsp.stereo_balance.balance),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_compressor_threshold", db_lock.set_setting(
                     "dsp_compressor_threshold",
                     &format!("{:.1}", dsp.compressor.threshold),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_compressor_intensity", db_lock.set_setting(
                     "dsp_compressor_intensity",
                     &format!("{:.1}", dsp.compressor.intensity),
-                );
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_limiter_ceiling", db_lock.set_setting(
                     "dsp_limiter_ceiling",
                     &format!("{:.1}", dsp.limiter.ceiling),
-                );
-                let _ = db_lock.set_setting("dsp_reverb_wet", &format!("{:.2}", dsp.reverb.wet));
-                let _ = db_lock.set_setting(
+                ));
+                log_persist("dsp_reverb_wet", db_lock.set_setting("dsp_reverb_wet", &format!("{:.2}", dsp.reverb.wet)));
+                log_persist("dsp_reverb_room_size", db_lock.set_setting(
                     "dsp_reverb_room_size",
                     &format!("{:.2}", dsp.reverb.room_size),
-                );
+                ));
             });
 
             let state = audio_manager.state();
             let state_read = state.read();
-            let _ = db_lock.set_setting(
+            log_persist("audio_downmix_center_enabled", db_lock.set_setting(
                 "audio_downmix_center_enabled",
                 if state_read.downmix_center_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("audio_downmix_lfe_enabled", db_lock.set_setting(
                 "audio_downmix_lfe_enabled",
                 if state_read.downmix_lfe_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("audio_downmix_surround_enabled", db_lock.set_setting(
                 "audio_downmix_surround_enabled",
                 if state_read.downmix_surround_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("audio_downmix_center", db_lock.set_setting(
                 "audio_downmix_center",
                 &format!("{:.2}", state_read.downmix_center),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("audio_downmix_lfe", db_lock.set_setting(
                 "audio_downmix_lfe",
                 &format!("{:.2}", state_read.downmix_lfe),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("audio_downmix_surround", db_lock.set_setting(
                 "audio_downmix_surround",
                 &format!("{:.2}", state_read.downmix_surround),
-            );
+            ));
         }
     }
 
@@ -535,81 +545,79 @@ impl AudioCenterManager {
         if let Ok(db_lock) = db.lock() {
             let state = audio_manager.state();
             let s = state.read();
-            let _ =
-                db_lock.set_setting("vol_fades_enabled", if s.fades_enabled { "1" } else { "0" });
-            let _ = db_lock.set_setting(
+            log_persist("vol_fades_enabled", db_lock.set_setting("vol_fades_enabled", if s.fades_enabled { "1" } else { "0" }));
+            log_persist("vol_smooth_volume_enabled", db_lock.set_setting(
                 "vol_smooth_volume_enabled",
                 if s.smooth_volume_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting("vol_fade_in_ms", &format!("{:.0}", s.fade_in_ms));
-            let _ = db_lock.set_setting("vol_fade_out_ms", &format!("{:.0}", s.fade_out_ms));
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_fade_in_ms", db_lock.set_setting("vol_fade_in_ms", &format!("{:.0}", s.fade_in_ms)));
+            log_persist("vol_fade_out_ms", db_lock.set_setting("vol_fade_out_ms", &format!("{:.0}", s.fade_out_ms)));
+            log_persist("vol_silence_enabled", db_lock.set_setting(
                 "vol_silence_enabled",
                 if s.silence_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_silence_duration_ms", db_lock.set_setting(
                 "vol_silence_duration_ms",
                 &format!("{:.0}", s.silence_duration_ms),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_silence_threshold_db", db_lock.set_setting(
                 "vol_silence_threshold_db",
                 &format!("{:.2}", s.silence_threshold_db),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_silence_edge_trim_enabled", db_lock.set_setting(
                 "vol_silence_edge_trim_enabled",
                 if s.silence_edge_trim_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_fixed_enabled", db_lock.set_setting(
                 "vol_rg_fixed_enabled",
                 if s.rg_fixed_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting("vol_rg_fixed_db", &format!("{:.2}", s.rg_fixed_db));
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_fixed_db", db_lock.set_setting("vol_rg_fixed_db", &format!("{:.2}", s.rg_fixed_db)));
+            log_persist("vol_fade_in_enabled", db_lock.set_setting(
                 "vol_fade_in_enabled",
                 if s.fade_in_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_fade_out_enabled", db_lock.set_setting(
                 "vol_fade_out_enabled",
                 if s.fade_out_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_master_enabled", db_lock.set_setting(
                 "vol_rg_master_enabled",
                 if s.rg_master_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_track_enabled", db_lock.set_setting(
                 "vol_rg_track_enabled",
                 if s.replay_gain_track_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_album_enabled", db_lock.set_setting(
                 "vol_rg_album_enabled",
                 if s.replay_gain_album_enabled {
                     "1"
                 } else {
                     "0"
                 },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_analyze_rt_enabled", db_lock.set_setting(
                 "vol_rg_analyze_rt_enabled",
                 if s.rg_analyze_rt_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_offset_album_db", db_lock.set_setting(
                 "vol_rg_offset_album_db",
                 &format!("{:.2}", s.rg_offset_album_db),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("vol_rg_offset_track_db", db_lock.set_setting(
                 "vol_rg_offset_track_db",
                 &format!("{:.2}", s.rg_offset_track_db),
-            );
-            let _ =
-                db_lock.set_setting("vol_rg_offset_rt_db", &format!("{:.2}", s.rg_offset_rt_db));
+            ));
+            log_persist("vol_rg_offset_rt_db", db_lock.set_setting("vol_rg_offset_rt_db", &format!("{:.2}", s.rg_offset_rt_db)));
         }
     }
 
@@ -622,24 +630,23 @@ impl AudioCenterManager {
         if let Ok(db_lock) = db.lock() {
             let state = audio_manager.state();
             let s = state.read();
-            let _ = db_lock.set_setting(
+            log_persist("crossfade_enabled", db_lock.set_setting(
                 "crossfade_enabled",
                 if s.crossfade_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("crossfade_manual_enabled", db_lock.set_setting(
                 "crossfade_manual_enabled",
                 if s.crossfade_manual_enabled { "1" } else { "0" },
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("crossfade_manual_ms", db_lock.set_setting(
                 "crossfade_manual_ms",
                 &format!("{:.0}", s.crossfade_manual_ms),
-            );
-            let _ = db_lock.set_setting(
+            ));
+            log_persist("crossfade_auto_enabled", db_lock.set_setting(
                 "crossfade_auto_enabled",
                 if s.crossfade_auto_enabled { "1" } else { "0" },
-            );
-            let _ =
-                db_lock.set_setting("crossfade_auto_ms", &format!("{:.0}", s.crossfade_auto_ms));
+            ));
+            log_persist("crossfade_auto_ms", db_lock.set_setting("crossfade_auto_ms", &format!("{:.0}", s.crossfade_auto_ms)));
         }
     }
 
@@ -1230,51 +1237,51 @@ impl AudioCenterManager {
                 // Guardar los ajustes en la base de datos para la persistencia
                 if let Some(db_arc) = audio_manager.get_database() {
                     if let Ok(db) = db_arc.lock() {
-                        let _ = db
-                            .set_setting("audio_host", self.selected_host.as_deref().unwrap_or(""));
-                        let _ = db.set_setting(
+                        log_persist("audio_host", db
+                            .set_setting("audio_host", self.selected_host.as_deref().unwrap_or("")));
+                        log_persist("audio_device", db.set_setting(
                             "audio_device",
                             self.selected_device.as_deref().unwrap_or(""),
-                        );
-                        let _ = db.set_setting(
+                        ));
+                        log_persist("audio_sample_rate", db.set_setting(
                             "audio_sample_rate",
                             &self
                                 .selected_sample_rate
                                 .map(|s| s.to_string())
                                 .unwrap_or_else(|| "auto".to_string()),
-                        );
-                        let _ = db.set_setting(
+                        ));
+                        log_persist("audio_bit_depth", db.set_setting(
                             "audio_bit_depth",
                             match self.selected_bit_depth {
                                 BitDepth::Bits16 => "16",
                                 BitDepth::Bits24 => "24",
                                 BitDepth::Bits32Float => "32",
                             },
-                        );
-                        let _ = db.set_setting(
+                        ));
+                        log_persist("audio_channels", db.set_setting(
                             "audio_channels",
                             &self.selected_channels_manual.to_string(),
-                        );
-                        let _ = db.set_setting(
+                        ));
+                        log_persist("audio_buffer_size", db.set_setting(
                             "audio_buffer_size",
                             &self
                                 .selected_buffer_size
                                 .map(|b| b.to_string())
                                 .unwrap_or_else(|| "auto".to_string()),
-                        );
+                        ));
                         let sys_rate_str = match self.system_rate {
                             SystemSelection::Default => "default".to_string(),
                             SystemSelection::Automatic => "auto".to_string(),
                             SystemSelection::Fixed(r) => format!("fixed:{}", r),
                         };
-                        let _ = db.set_setting("audio_system_rate", &sys_rate_str);
+                        log_persist("audio_system_rate", db.set_setting("audio_system_rate", &sys_rate_str));
 
                         let sys_quantum_str = match self.system_quantum {
                             SystemSelection::Default => "default".to_string(),
                             SystemSelection::Automatic => "auto".to_string(),
                             SystemSelection::Fixed(q) => format!("fixed:{}", q),
                         };
-                        let _ = db.set_setting("audio_system_quantum", &sys_quantum_str);
+                        log_persist("audio_system_quantum", db.set_setting("audio_system_quantum", &sys_quantum_str));
                     }
                 }
 
@@ -1430,7 +1437,7 @@ impl AudioCenterManager {
                             self.apply_eq_preset_to_state(&preset, audio_manager);
                         }
                         Err(e) => {
-                            eprintln!("Error parsing EQ preset JSON from {:?}: {e}", path);
+                            tracing::error!("Error parsing EQ preset JSON from {:?}: {e}", path);
                         }
                     }
                 }
@@ -1471,7 +1478,7 @@ impl AudioCenterManager {
                         let _ = std::fs::write(&path, json);
                     }
                     Err(e) => {
-                        eprintln!("Error serializing EQ preset to JSON: {e}");
+                        tracing::error!("Error serializing EQ preset to JSON: {e}");
                     }
                 }
             }

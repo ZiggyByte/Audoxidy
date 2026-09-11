@@ -16,6 +16,18 @@ use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 use iced::{Color, Element, Task, Theme};
 use std::sync::{Arc, Mutex};
 
+/// Registra en el log un fallo al persistir un ajuste, indicando la clave afectada.
+fn log_persist(key: &str, result: rusqlite::Result<()>) {
+    if let Err(e) = result {
+        tracing::warn!(
+            target: "audoxidy::persistence",
+            key,
+            error = %e,
+            "No se pudo persistir el ajuste"
+        );
+    }
+}
+
 pub static DIALOG_TEXT_INPUT_ID: std::sync::LazyLock<iced::widget::Id> =
     std::sync::LazyLock::new(iced::widget::Id::unique);
 
@@ -1472,9 +1484,12 @@ impl AudoxidyApp {
                     if self.playlist_manager.shuffle_active {
                         if let Some(session) = &self.playlist_manager.shuffle_session {
                             if let Ok(mut db) = self.database.lock() {
-                                let _ = db.save_shuffle_session(
-                                    self.playlist_manager.active_playlist_id,
-                                    session,
+                                log_persist(
+                                    "shuffle_session",
+                                    db.save_shuffle_session(
+                                        self.playlist_manager.active_playlist_id,
+                                        session,
+                                    ),
                                 );
                             }
                         }
@@ -1827,9 +1842,12 @@ impl AudoxidyApp {
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
                         if let Ok(mut db) = self.database.lock() {
-                            let _ = db.save_shuffle_session(
-                                self.playlist_manager.active_playlist_id,
-                                session,
+                            log_persist(
+                                "shuffle_session",
+                                db.save_shuffle_session(
+                                    self.playlist_manager.active_playlist_id,
+                                    session,
+                                ),
                             );
                         }
                     }
@@ -1853,9 +1871,12 @@ impl AudoxidyApp {
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
                         if let Ok(mut db) = self.database.lock() {
-                            let _ = db.save_shuffle_session(
-                                self.playlist_manager.active_playlist_id,
-                                session,
+                            log_persist(
+                                "shuffle_session",
+                                db.save_shuffle_session(
+                                    self.playlist_manager.active_playlist_id,
+                                    session,
+                                ),
                             );
                         }
                     }
@@ -1878,9 +1899,12 @@ impl AudoxidyApp {
             }
             Message::VolumeChanged(vol) => {
                 self.audio_manager.set_volume(vol);
-                // Fix B3 (D-43): persist volume across restarts
+                // Persistir el volumen entre reinicios
                 if let Ok(db) = self.database.lock() {
-                    let _ = db.set_setting("player_volume", &format!("{:.4}", vol));
+                    log_persist(
+                        "player_volume",
+                        db.set_setting("player_volume", &format!("{:.4}", vol)),
+                    );
                 }
                 Task::none()
             }
@@ -1899,9 +1923,12 @@ impl AudoxidyApp {
                     self.playlist_manager.activate_shuffle();
                     if let Some(session) = &self.playlist_manager.shuffle_session {
                         if let Ok(mut db) = self.database.lock() {
-                            let _ = db.save_shuffle_session(
-                                self.playlist_manager.active_playlist_id,
-                                session,
+                            log_persist(
+                                "shuffle_session",
+                                db.save_shuffle_session(
+                                    self.playlist_manager.active_playlist_id,
+                                    session,
+                                ),
                             );
                         }
                     }
@@ -2417,7 +2444,13 @@ impl AudoxidyApp {
                         } else {
                             base_target_path
                         };
-                        let _ = std::fs::write(&final_m3u_path, m3u_content);
+                        if let Err(e) = std::fs::write(&final_m3u_path, m3u_content) {
+                            tracing::warn!(
+                                "No se pudo escribir la lista M3U en {:?}: {}",
+                                final_m3u_path,
+                                e
+                            );
+                        }
                     },
                     |_| Message::NoOp,
                 );
@@ -2428,7 +2461,10 @@ impl AudoxidyApp {
                 self.persist_playlist_state();
 
                 if let Ok(db) = self.database.lock() {
-                    let _ = db.set_setting("last_active_playlist_id", &id.to_string());
+                    log_persist(
+                        "last_active_playlist_id",
+                        db.set_setting("last_active_playlist_id", &id.to_string()),
+                    );
                 }
 
                 self.playlist_manager.active_playlist_id = id;
@@ -4924,7 +4960,10 @@ impl AudoxidyApp {
                     s.meter_hold_time_ms = clamped;
                 }
                 if let Ok(db_lock) = self.database.lock() {
-                    let _ = db_lock.set_setting("meter_hold_time_ms", &format!("{:.0}", clamped));
+                    log_persist(
+                        "meter_hold_time_ms",
+                        db_lock.set_setting("meter_hold_time_ms", &format!("{:.0}", clamped)),
+                    );
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -4937,7 +4976,10 @@ impl AudoxidyApp {
                     s.meter_rms_window_ms = clamped;
                 }
                 if let Ok(db_lock) = self.database.lock() {
-                    let _ = db_lock.set_setting("meter_rms_window_ms", &format!("{:.0}", clamped));
+                    log_persist(
+                        "meter_rms_window_ms",
+                        db_lock.set_setting("meter_rms_window_ms", &format!("{:.0}", clamped)),
+                    );
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -4945,7 +4987,10 @@ impl AudoxidyApp {
             Message::MeterMsModeToggle(v) => {
                 self.player_ui_state.meter.ms_mode = v;
                 if let Ok(db_lock) = self.database.lock() {
-                    let _ = db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" });
+                    log_persist(
+                        "meter_ms_mode",
+                        db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" }),
+                    );
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -4957,7 +5002,10 @@ impl AudoxidyApp {
                     s.meter_infinite_hold = v;
                 }
                 if let Ok(db_lock) = self.database.lock() {
-                    let _ = db_lock.set_setting("meter_infinite_hold", if v { "1" } else { "0" });
+                    log_persist(
+                        "meter_infinite_hold",
+                        db_lock.set_setting("meter_infinite_hold", if v { "1" } else { "0" }),
+                    );
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -4978,7 +5026,10 @@ impl AudoxidyApp {
                     s.meter_enabled = v;
                 }
                 if let Ok(db_lock) = self.database.lock() {
-                    let _ = db_lock.set_setting("meter_enabled", if v { "1" } else { "0" });
+                    log_persist(
+                        "meter_enabled",
+                        db_lock.set_setting("meter_enabled", if v { "1" } else { "0" }),
+                    );
                 }
                 Task::none()
             }

@@ -1111,8 +1111,7 @@ impl AudioEngine {
     /// Establece el estado de reproducción (pausa/reanudación).
     pub fn set_playing(&self, playing: bool) {
         self.state.write().is_playing = playing;
-        self.is_playing_published
-            .store(playing, Ordering::Relaxed);
+        self.is_playing_published.store(playing, Ordering::Relaxed);
     }
     /// Establece el volumen de reproducción (0.0 a 1.0).
     ///

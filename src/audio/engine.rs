@@ -13,6 +13,18 @@ use ringbuf::{
     traits::{Consumer, Split},
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+
+/// Contador acumulado de underruns detectados en el callback de salida.
+///
+/// El callback CPAL solo incrementa este atómico (sin trazas); una ruta no
+/// real-time lo sondea y lo convierte en un evento de métrica.
+pub static UNDERRUNS: AtomicU64 = AtomicU64::new(0);
+/// Pico de latencia observado en el motor de audio, en microsegundos.
+///
+/// Fuente compartida que una ruta no real-time lee para emitir la métrica
+/// correspondiente; el callback nunca escribe trazas.
+pub static LATENCY_PEAK_US: AtomicU64 = AtomicU64::new(0);
 
 // Define aliases based on ringbuf 0.4 structure
 /// Productor de anillo circular para audio, con caché habilitada.
@@ -77,6 +89,16 @@ pub struct AudioEngine {
     command_tx: Sender<AudioCommand>,
     pub dsp: Arc<RwLock<DspChain>>,
     pub meter: Arc<meter::MeterData>,
+    /// Tamaño de buffer observado por el callback de salida, publicado sin locks.
+    ///
+    /// El callback escribe `Relaxed` (único escritor); la GUI/manager leen el
+    /// valor con `Relaxed` para mostrarlo sin tomar el lock de `AudioState`.
+    pub buffer_size_published: Arc<AtomicU32>,
+    /// Estado de reproducción publicado sin locks para el callback de salida.
+    ///
+    /// Espeja `AudioState::is_playing`; el callback solo lee este atómico para
+    /// no bloquearse en un `RwLock` desde el hilo real-time.
+    pub is_playing_published: Arc<AtomicBool>,
     // Decodificador inyectable para pruebas (None = usar SymphoniaDecoder por defecto)
     pub custom_decoder: Arc<Mutex<Option<Box<dyn AudioDecoder>>>>,
 }
@@ -264,6 +286,8 @@ impl AudioEngine {
             command_tx,
             dsp,
             meter: meter.clone(),
+            buffer_size_published: Arc::new(AtomicU32::new(0)),
+            is_playing_published: Arc::new(AtomicBool::new(false)),
             custom_decoder: Arc::new(Mutex::new(decoder)),
         };
 
@@ -302,8 +326,9 @@ impl AudioEngine {
         self.device_manager
             .set_output(host, device.clone(), stream_config.clone(), sample_format);
 
-        let state = self.state.clone();
         let consumer_arc = self.buffer_consumer.clone();
+        let buffer_size_arc = self.buffer_size_published.clone();
+        let is_playing_arc = self.is_playing_published.clone();
         let channels = stream_config.channels as usize;
 
         let err_fn = |err| tracing::error!("Stream error: {}", err);
@@ -313,7 +338,13 @@ impl AudioEngine {
                 cpal::SampleFormat::F32 => dev.build_output_stream(
                     cfg,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -321,7 +352,13 @@ impl AudioEngine {
                 cpal::SampleFormat::I16 => dev.build_output_stream(
                     cfg,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -329,7 +366,13 @@ impl AudioEngine {
                 cpal::SampleFormat::U16 => dev.build_output_stream(
                     cfg,
                     move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -337,7 +380,13 @@ impl AudioEngine {
                 cpal::SampleFormat::I32 => dev.build_output_stream(
                     cfg,
                     move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -367,8 +416,9 @@ impl AudioEngine {
             None => return Ok(()),
         };
 
-        let state = self.state.clone();
         let consumer_arc = self.buffer_consumer.clone();
+        let buffer_size_arc = self.buffer_size_published.clone();
+        let is_playing_arc = self.is_playing_published.clone();
         let channels = config.channels as usize;
         let err_fn = |err| tracing::error!("Stream error: {}", err);
 
@@ -377,7 +427,13 @@ impl AudioEngine {
                 cpal::SampleFormat::F32 => dev.build_output_stream(
                     &config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -385,7 +441,13 @@ impl AudioEngine {
                 cpal::SampleFormat::I16 => dev.build_output_stream(
                     &config,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -393,7 +455,13 @@ impl AudioEngine {
                 cpal::SampleFormat::U16 => dev.build_output_stream(
                     &config,
                     move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -401,7 +469,13 @@ impl AudioEngine {
                 cpal::SampleFormat::I32 => dev.build_output_stream(
                     &config,
                     move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
-                        Self::write_data(data, channels, &state, &consumer_arc)
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
                     },
                     err_fn,
                     None,
@@ -435,46 +509,38 @@ impl AudioEngine {
     fn write_data<T>(
         output: &mut [T],
         channels: usize,
-        state: &Arc<RwLock<AudioState>>,
+        buffer_size: &Arc<AtomicU32>,
+        is_playing: &Arc<AtomicBool>,
         consumer_mutex: &Arc<Mutex<Option<HeapConsumer<f32>>>>,
     ) where
         T: cpal::Sample + cpal::FromSample<f32>,
     {
-        Self::write_data_impl(output, channels, state, consumer_mutex)
+        Self::write_data_impl(output, channels, buffer_size, is_playing, consumer_mutex)
     }
 
+    /// Implementación real-time safe del callback de salida.
+    ///
+    /// No realiza trazas, no asigna memoria y no toma el lock de `AudioState`:
+    /// publica el tamaño de buffer y lee el estado de reproducción con atómicos
+    /// `Relaxed`. El único lock es el handle del ringbuffer (`consumer_mutex`),
+    /// inherente al diseño actual del consumidor.
     fn write_data_impl<T>(
         output: &mut [T],
         channels: usize,
-        state: &Arc<RwLock<AudioState>>,
+        buffer_size: &Arc<AtomicU32>,
+        is_playing: &Arc<AtomicBool>,
         consumer_mutex: &Arc<Mutex<Option<HeapConsumer<f32>>>>,
     ) where
         T: cpal::Sample + cpal::FromSample<f32>,
     {
-        // Marca de tiempo del último underrun registrado (diagnóstico, ~1 log/s).
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::time::{SystemTime, UNIX_EPOCH};
-        static LAST_UNDERRUN_LOG: AtomicU64 = AtomicU64::new(0);
         if channels > 0 {
             let current_frames = (output.len() / channels) as u32;
-            if current_frames > 0 {
-                let mut needs_update = false;
-                {
-                    let s = state.read();
-                    if s.buffer_size != current_frames {
-                        needs_update = true;
-                    }
-                }
-                if needs_update {
-                    let mut s = state.write();
-                    s.buffer_size = current_frames;
-                }
+            if current_frames > 0 && buffer_size.load(Ordering::Relaxed) != current_frames {
+                buffer_size.store(current_frames, Ordering::Relaxed);
             }
         }
 
-        let is_playing = state.read().is_playing;
-
-        if !is_playing {
+        if !is_playing.load(Ordering::Relaxed) {
             output.fill(T::from_sample(0.0));
             return;
         }
@@ -491,23 +557,10 @@ impl AudioEngine {
                 let remaining = (out_len - written).min(tmp_buf.len());
                 let n = consumer.pop_slice(&mut tmp_buf[..remaining]);
                 if n == 0 {
-                    // Underrun: llenar el resto con silencio. Log limitado a ~1/s
-                    // (diagnóstico del cambio de tasa: si el decoder no produce a
-                    // la nueva tasa, el callback ve underruns continuos).
-                    let now_secs = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let last = LAST_UNDERRUN_LOG.load(Ordering::Relaxed);
-                    if now_secs.saturating_sub(last) >= 1 {
-                        LAST_UNDERRUN_LOG.store(now_secs, Ordering::Relaxed);
-                        tracing::warn!(
-                            "UNDERRUN: el ringbuf no tiene datos ({}/{} muestras) — \
-                             el decoder podría no estar produciendo a la tasa actual.",
-                            written,
-                            out_len
-                        );
-                    }
+                    // Underrun: llenar el resto con silencio. El callback solo
+                    // incrementa el atómico; una ruta no real-time lo convierte
+                    // en métrica (sin trazas en el hilo de audio).
+                    UNDERRUNS.fetch_add(1, Ordering::Relaxed);
                     for s in output[written..].iter_mut() {
                         *s = T::from_sample(0.0);
                     }
@@ -538,7 +591,7 @@ impl AudioEngine {
 
     /// Realiza una purga profunda de los buffers y reinicia el stream con la configuración actual.
     pub fn purge_buffers(&self) -> Result<(), AudioError> {
-        println!("Audoxidy Audio: Cleaning Audio Engine Buffers");
+        tracing::debug!("Audoxidy Audio: Cleaning Audio Engine Buffers");
         let (host, device, config, fmt) = self
             .device_manager
             .take_output()
@@ -1058,6 +1111,8 @@ impl AudioEngine {
     /// Establece el estado de reproducción (pausa/reanudación).
     pub fn set_playing(&self, playing: bool) {
         self.state.write().is_playing = playing;
+        self.is_playing_published
+            .store(playing, Ordering::Relaxed);
     }
     /// Establece el volumen de reproducción (0.0 a 1.0).
     ///
@@ -1083,5 +1138,53 @@ impl AudioEngine {
         if let Some(mut dsp) = self.dsp.try_write() {
             dsp.limiter.enabled = was_enabled;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ringbuf::traits::{Observer, Producer};
+
+    /// El callback publica el tamaño de buffer medido en frames y copia la
+    /// señal del anillo a la salida.
+    #[test]
+    fn buffer_size_published_via_atomic() {
+        let rb = HeapRb::<f32>::new(1024);
+        let (mut producer, consumer) = rb.split();
+        let samples = [0.1f32, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+        assert_eq!(producer.push_slice(&samples), samples.len());
+
+        let buffer_size = Arc::new(AtomicU32::new(0));
+        let is_playing = Arc::new(AtomicBool::new(true));
+        let consumer_mutex = Arc::new(Mutex::new(Some(consumer)));
+
+        let mut out = [0.0f32; 8];
+        AudioEngine::write_data_impl(&mut out, 2, &buffer_size, &is_playing, &consumer_mutex);
+
+        assert_eq!(buffer_size.load(Ordering::Relaxed), 4);
+        for (dst, src) in out.iter().zip(samples.iter()) {
+            assert_eq!(dst, src);
+        }
+    }
+
+    /// Con `is_playing` en falso el callback entrega silencio sin consumir el anillo.
+    #[test]
+    fn silence_when_not_playing() {
+        let rb = HeapRb::<f32>::new(1024);
+        let (mut producer, consumer) = rb.split();
+        let samples = [1.0f32; 8];
+        assert_eq!(producer.push_slice(&samples), samples.len());
+
+        let buffer_size = Arc::new(AtomicU32::new(0));
+        let is_playing = Arc::new(AtomicBool::new(false));
+        let consumer_mutex = Arc::new(Mutex::new(Some(consumer)));
+
+        let mut out = [1.0f32; 8];
+        AudioEngine::write_data_impl(&mut out, 2, &buffer_size, &is_playing, &consumer_mutex);
+
+        assert!(out.iter().all(|s| *s == 0.0));
+        let guard = consumer_mutex.lock();
+        assert_eq!(guard.as_ref().unwrap().occupied_len(), samples.len());
     }
 }

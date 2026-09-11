@@ -38,15 +38,15 @@ pub type HeapConsumer<T> = Caching<Arc<HeapRb<T>>, false, true>;
 
 /// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
 #[derive(Default, Clone, Copy, Debug)]
-pub(crate) struct ChannelMap {
-    pub(crate) fl: Option<usize>,
-    pub(crate) fr: Option<usize>,
-    pub(crate) c: Option<usize>,
-    pub(crate) lfe: Option<usize>,
-    pub(crate) sl: Option<usize>,
-    pub(crate) sr: Option<usize>,
-    pub(crate) sbl: Option<usize>,
-    pub(crate) sbr: Option<usize>,
+pub struct ChannelMap {
+    pub fl: Option<usize>,
+    pub fr: Option<usize>,
+    pub c: Option<usize>,
+    pub lfe: Option<usize>,
+    pub sl: Option<usize>,
+    pub sr: Option<usize>,
+    pub sbl: Option<usize>,
+    pub sbr: Option<usize>,
 }
 
 /// Comandos enviados al hilo de decodificación de fondo.
@@ -816,7 +816,7 @@ impl AudioEngine {
         Ok(())
     }
 
-    pub(crate) fn mix_channels_planar(
+    pub fn mix_channels_planar(
         input: &Vec<Vec<f64>>,
         frames: usize,
         in_channels: usize,
@@ -920,7 +920,7 @@ impl AudioEngine {
     }
 
     // Helper para mapear canales de entrada a roles
-    pub(crate) fn get_channel_map(channels: symphonia::core::audio::Channels) -> ChannelMap {
+    pub fn get_channel_map(channels: symphonia::core::audio::Channels) -> ChannelMap {
         use symphonia::core::audio::Channels;
         let mut map = ChannelMap::default();
 

@@ -98,7 +98,13 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
             pool.spawn(move || {
                 while let Ok((pic, name)) = rx_worker.recv() {
                     let _ = std::panic::catch_unwind(move || {
-                        let _ = process_and_save_cover(&pic, &name);
+                        if let Err(e) = process_and_save_cover(&pic, &name) {
+                            tracing::warn!(
+                                "No se pudo procesar/guardar la carátula '{}': {}",
+                                name,
+                                e
+                            );
+                        }
                     });
                 }
             });

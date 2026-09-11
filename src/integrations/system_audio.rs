@@ -49,7 +49,9 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
             let _ = std::fs::remove_file(&file_path);
             return;
         }
-        let _ = std::fs::create_dir_all(&dir_path);
+            if let Err(e) = std::fs::create_dir_all(&dir_path) {
+                tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
+            }
 
         let mut content = String::new();
         content.push_str("context.properties = {\n");
@@ -61,7 +63,9 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
             content.push_str(&format!("    default.clock.quantum = {}\n", q));
         }
         content.push_str("}\n");
-        let _ = std::fs::write(&file_path, content);
+        if let Err(e) = std::fs::write(&file_path, content) {
+            tracing::warn!("No se pudo escribir {}: {}", file_path, e);
+        }
     }
 }
 
@@ -92,7 +96,9 @@ pub fn persist_pulse_conf(rate: Option<u32>, quantum: Option<u32>) {
                 }
             }
         } else {
-            let _ = std::fs::create_dir_all(&dir_path);
+        if let Err(e) = std::fs::create_dir_all(&dir_path) {
+            tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
+        }
         }
 
         if rate.is_some() || quantum.is_some() {
@@ -109,7 +115,9 @@ pub fn persist_pulse_conf(rate: Option<u32>, quantum: Option<u32>) {
             }
         }
 
-        let _ = std::fs::write(&file_path, lines.join("\n") + "\n");
+        if let Err(e) = std::fs::write(&file_path, lines.join("\n") + "\n") {
+            tracing::warn!("No se pudo escribir {}: {}", file_path, e);
+        }
     }
 }
 

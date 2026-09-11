@@ -356,7 +356,7 @@ impl LibraryManager {
 
         if let Some(albums) = &mut self.cached_albums {
             if albums.len() > 100 {
-                println!("Audoxidy GC: Cleaning inactive albums from the library");
+                tracing::debug!("Audoxidy GC: Cleaning inactive albums from the library");
                 albums.truncate(100);
                 self.filtered_albums = None;
                 cleared = true;
@@ -365,7 +365,7 @@ impl LibraryManager {
 
         if let Some(songs) = &mut self.cached_all_songs {
             if songs.len() > 500 {
-                println!("Audoxidy GC: Cleaning inactive songs from the library");
+                tracing::debug!("Audoxidy GC: Cleaning inactive songs from the library");
                 songs.truncate(500);
                 self.filtered_songs = None;
                 cleared = true;

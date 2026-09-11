@@ -236,7 +236,7 @@ impl PlaylistManager {
         }
 
         if !self.groups.is_empty() {
-            println!("Audoxidy GC: Unloading inactive Playlist data.");
+            tracing::debug!("Audoxidy GC: Unloading inactive Playlist data.");
             self.groups.clear();
             self.groups.shrink_to_fit();
             self.filtered_groups = None;

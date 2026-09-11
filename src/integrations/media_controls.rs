@@ -1,11 +1,13 @@
-use crate::audio::AudioManager;
-use souvlaki::{MediaControlEvent, MediaControls, MediaMetadata, PlatformConfig};
+use crate::integrations::control::{ExternalControlEvent, ExternalControlSender};
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPosition, PlatformConfig, SeekDirection,
+};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 pub struct SystemMediaControls {
-    controls: Arc<Mutex<MediaControls>>,
+    controls: Mutex<MediaControls>,
     /// Últimos metadatos publicados `(title, artist, album, cover_url)`.
     /// Evita reenviar `set_metadata` en cada mensaje: en Windows souvlaki vuelve
     /// a leer el archivo de la carátula en disco en cada llamada.
@@ -13,7 +15,7 @@ pub struct SystemMediaControls {
 }
 
 impl SystemMediaControls {
-    pub fn new(audio_manager: Arc<AudioManager>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(sender: ExternalControlSender) -> Result<Self, Box<dyn std::error::Error>> {
         #[cfg(target_os = "linux")]
         let hwnd = None;
 
@@ -30,26 +32,73 @@ impl SystemMediaControls {
         };
 
         let mut controls = MediaControls::new(config)?;
-        let am = audio_manager.clone();
 
-        // Configurar capacidades iniciales
-        controls.attach(move |event| match event {
-            MediaControlEvent::Play => am.set_playing(true),
-            MediaControlEvent::Pause => am.set_playing(false),
-            MediaControlEvent::Toggle => {
-                let playing = am.get_state().is_playing;
-                am.set_playing(!playing);
+        // Todos los eventos del panel del sistema se reenvían al canal externo;
+        // la aplicación es la única que traduce cada evento a sus mensajes y
+        // muta el motor de audio, de modo que cada acción se despacha una sola
+        // vez y desde el hilo de la interfaz.
+        controls.attach(move |event| {
+            let mapped = match event {
+                MediaControlEvent::Play => Some(ExternalControlEvent::Play),
+                MediaControlEvent::Pause => Some(ExternalControlEvent::Pause),
+                MediaControlEvent::Toggle => Some(ExternalControlEvent::Toggle),
+                MediaControlEvent::Stop => Some(ExternalControlEvent::Stop),
+                MediaControlEvent::Next => Some(ExternalControlEvent::Next),
+                MediaControlEvent::Previous => Some(ExternalControlEvent::Previous),
+                MediaControlEvent::Seek(SeekDirection::Forward) => {
+                    Some(ExternalControlEvent::SeekForward)
+                }
+                MediaControlEvent::Seek(SeekDirection::Backward) => {
+                    Some(ExternalControlEvent::SeekBackward)
+                }
+                MediaControlEvent::SeekBy(SeekDirection::Forward, delta) => {
+                    Some(ExternalControlEvent::SeekRelative(delta.as_secs_f64()))
+                }
+                MediaControlEvent::SeekBy(SeekDirection::Backward, delta) => {
+                    Some(ExternalControlEvent::SeekRelative(-delta.as_secs_f64()))
+                }
+                MediaControlEvent::SetPosition(MediaPosition(position)) => {
+                    Some(ExternalControlEvent::SeekTo(position.as_secs_f64()))
+                }
+                MediaControlEvent::SetVolume(volume) => {
+                    Some(ExternalControlEvent::SetVolume(volume))
+                }
+                // OpenUri / Raise / Quit se ignoran: no mutan estado local.
+                _ => None,
+            };
+            if let Some(mapped) = mapped {
+                sender.send(mapped);
             }
-            MediaControlEvent::Next => tracing::info!("MPRIS: Next (No implementado)"),
-            MediaControlEvent::Previous => tracing::info!("MPRIS: Previous (No implementado)"),
-            MediaControlEvent::Stop => am.stop(),
-            _ => {}
         })?;
 
         Ok(Self {
-            controls: Arc::new(Mutex::new(controls)),
+            controls: Mutex::new(controls),
             last_metadata: Mutex::new(None),
         })
+    }
+
+    /// Refleja en el panel del sistema el volumen aplicado por la aplicación.
+    ///
+    /// Solo el backend MPRIS implementa `MediaControls::set_volume`; en el
+    /// resto de plataformas el método no existe, por lo que allí esta función
+    /// es un no-op que mantiene el build multiplataforma.
+    #[cfg(all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    ))]
+    pub fn set_volume(&self, volume: f64) {
+        if let Ok(mut controls) = self.controls.lock() {
+            let _ = controls.set_volume(volume.clamp(0.0, 1.0));
+        }
+    }
+
+    /// No-op en plataformas cuyo backend de souvlaki no expone `set_volume`.
+    #[cfg(not(all(
+        unix,
+        not(any(target_os = "macos", target_os = "ios", target_os = "android"))
+    )))]
+    pub fn set_volume(&self, volume: f64) {
+        let _ = volume;
     }
 
     pub fn update(&self, state: &crate::audio::engine::AudioState) {

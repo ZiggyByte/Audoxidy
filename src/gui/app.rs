@@ -11,6 +11,10 @@ use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_NORMAL,
 };
+use crate::integrations::control::{
+    ExternalControlEvent, ExternalControlReceiver, external_control_channel,
+    external_control_stream,
+};
 use crate::integrations::media_controls::SystemMediaControls;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 use iced::{Color, Element, Task, Theme};
@@ -183,6 +187,8 @@ pub enum Message {
     Stop,
     VolumeChanged(f32),
     SeekTo(f32),
+    ExternalControl(ExternalControlEvent),
+    SetPlaying(bool),
     ToggleRepeat,
     ToggleShuffle,
 
@@ -475,6 +481,7 @@ pub struct AudoxidyApp {
     database: Arc<Mutex<Database>>,
     scanner: Arc<Scanner>,
     media_controls: SystemMediaControls,
+    external_control_rx: crossbeam::channel::Receiver<ExternalControlEvent>,
     playlist_manager: PlaylistManager,
     filters_manager: LibraryFiltersManager,
     library_manager: LibraryManager,
@@ -562,7 +569,8 @@ impl AudoxidyApp {
             Database::new().expect("Error al inicializar la base de datos del escáner.");
         let scanner_arc = Arc::new(Scanner::new(Arc::new(Mutex::new(db_scanner))));
 
-        let media_controls = SystemMediaControls::new(audio_manager.clone())
+        let (external_control_tx, external_control_rx) = external_control_channel();
+        let media_controls = SystemMediaControls::new(external_control_tx)
             .expect("Error al inicializar controles multimedia del sistema");
 
         // Detección de Hardware para modo de bajos recursos (RAM < 8GB o Cores < 4)
@@ -1173,6 +1181,7 @@ impl AudoxidyApp {
                 database: database_arc,
                 scanner: scanner_arc,
                 media_controls,
+                external_control_rx,
                 playlist_manager,
                 filters_manager,
                 library_manager,
@@ -1930,6 +1939,30 @@ impl AudoxidyApp {
                 self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
+            Message::SetPlaying(playing) => {
+                self.audio_manager.set_playing(playing);
+
+                // Al pausar, purgar buffers para liberar RAM (mismo criterio que PlayPause).
+                if !playing {
+                    tracing::debug!("Audoxidy Audio: Cleaning Buffers on Pause (Memory Recovery).");
+                    let _ = self.audio_manager.purge_buffers();
+                }
+
+                self.persist_playlist_state();
+                self.wake_up_controls(false)
+            }
+            Message::ExternalControl(event) => match event {
+                ExternalControlEvent::Play => self.update(Message::SetPlaying(true)),
+                ExternalControlEvent::Pause => self.update(Message::SetPlaying(false)),
+                ExternalControlEvent::Toggle => {
+                    let playing = self.audio_manager.is_playing();
+                    self.update(Message::SetPlaying(!playing))
+                }
+                ExternalControlEvent::Stop => self.update(Message::Stop),
+                ExternalControlEvent::Next => self.update(Message::NextTrack),
+                ExternalControlEvent::Previous => self.update(Message::PreviousTrack),
+                _ => Task::none(),
+            },
             Message::ToggleRepeat => {
                 self.playlist_manager.repeat_mode = (self.playlist_manager.repeat_mode + 1) % 3;
                 self.persist_playlist_state();
@@ -6218,6 +6251,18 @@ impl AudoxidyApp {
                 iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::Tick),
             );
         }
+
+        // Eventos externos: controles multimedia del sistema (y, en el futuro,
+        // atajos globales). La suscripción se añade siempre y su receta tiene un
+        // hash estable, de modo que el runtime mantiene vivo un único stream
+        // puente en lugar de recrearlo en cada actualización.
+        subs.push(
+            iced::Subscription::run_with(
+                ExternalControlReceiver(self.external_control_rx.clone()),
+                |rx| external_control_stream(rx.0.clone()),
+            )
+            .map(Message::ExternalControl),
+        );
 
         iced::Subscription::batch(subs)
     }

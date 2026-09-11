@@ -63,7 +63,9 @@ impl Scanner {
         let mut enqueued_covers = std::collections::HashSet::new();
 
         if let Ok(db) = db_m.lock() {
-            let _ = db.begin_transaction();
+            if let Err(e) = db.begin_transaction() {
+                tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
+            }
         }
 
         for (count, entry) in WalkDir::new(root)
@@ -88,8 +90,18 @@ impl Scanner {
 
                         if count % 500 == 0 {
                             if let Ok(db) = db_m.lock() {
-                                let _ = db.commit_transaction();
-                                let _ = db.begin_transaction();
+                                if let Err(e) = db.commit_transaction() {
+                                    tracing::warn!(
+                                        "No se pudo confirmar la transacción del escáner: {}",
+                                        e
+                                    );
+                                }
+                                if let Err(e) = db.begin_transaction() {
+                                    tracing::warn!(
+                                        "No se pudo iniciar la transacción del escáner: {}",
+                                        e
+                                    );
+                                }
                             }
                             dirty_flag.store(true, Ordering::Relaxed);
                         }
@@ -99,7 +111,9 @@ impl Scanner {
         }
 
         if let Ok(db) = db_m.lock() {
-            let _ = db.commit_transaction();
+            if let Err(e) = db.commit_transaction() {
+                tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
+            }
         }
 
         crate::utils::covers::clear_all_cover_cache();
@@ -328,7 +342,9 @@ impl Scanner {
 
         let playlist_id = {
             let mut db = db_m.lock().ok()?;
-            let _ = db.begin_transaction();
+            if let Err(e) = db.begin_transaction() {
+                tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
+            }
             let id = db.create_playlist(&playlist_name, false).ok()?;
 
             let mut enqueued_covers = std::collections::HashSet::new();
@@ -349,10 +365,19 @@ impl Scanner {
                     db.get_song_id_by_path(&p_str).ok().flatten()?
                 };
 
-                let _ = db.add_song_to_playlist(id, song_id);
+                if let Err(e) = db.add_song_to_playlist(id, song_id) {
+                    tracing::warn!(
+                        "No se pudo añadir la canción {} a la playlist {}: {}",
+                        song_id,
+                        id,
+                        e
+                    );
+                }
             }
 
-            let _ = db.commit_transaction();
+            if let Err(e) = db.commit_transaction() {
+                tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
+            }
             id
         };
 
@@ -373,7 +398,9 @@ impl Scanner {
         ];
 
         if let Ok(db) = db_m.lock() {
-            let _ = db.begin_transaction();
+            if let Err(e) = db.begin_transaction() {
+                tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
+            }
         }
 
         for path in paths {
@@ -390,7 +417,14 @@ impl Scanner {
                     if let Ok(db) = db_m.lock() {
                         let path_str = path.to_string_lossy();
                         if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
-                            let _ = db.add_song_to_playlist(playlist_id, song_id);
+                            if let Err(e) = db.add_song_to_playlist(playlist_id, song_id) {
+                                tracing::warn!(
+                                    "No se pudo añadir la canción {} a la playlist {}: {}",
+                                    song_id,
+                                    playlist_id,
+                                    e
+                                );
+                            }
                         }
                     }
                 } else if ext == "m3u" || ext == "m3u8" {
@@ -414,7 +448,14 @@ impl Scanner {
                             if let Ok(db) = db_m.lock() {
                                 let path_str = p.to_string_lossy();
                                 if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
-                                    let _ = db.add_song_to_playlist(playlist_id, song_id);
+                                    if let Err(e) = db.add_song_to_playlist(playlist_id, song_id) {
+                                        tracing::warn!(
+                                            "No se pudo añadir la canción {} a la playlist {}: {}",
+                                            song_id,
+                                            playlist_id,
+                                            e
+                                        );
+                                    }
                                 }
                             }
                         }
@@ -424,7 +465,9 @@ impl Scanner {
         }
 
         if let Ok(db) = db_m.lock() {
-            let _ = db.commit_transaction();
+            if let Err(e) = db.commit_transaction() {
+                tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
+            }
         }
     }
 }

@@ -326,7 +326,13 @@ pub fn load_config() -> AppConfig {
                         }
                         tracing::warn!("Usando configuración por defecto");
                         let default = AppConfig::default();
-                        let _ = save_config(&default);
+                        if let Err(e) = save_config(&default) {
+                            tracing::error!(
+                                "No se pudo escribir la configuración en {}: {}",
+                                path.display(),
+                                e
+                            );
+                        }
                         return default;
                     }
                     // Aplicar perfil
@@ -336,7 +342,13 @@ pub fn load_config() -> AppConfig {
                 Err(e) => {
                     tracing::error!("Error parseando config: {}. Usando defaults", e);
                     let default = AppConfig::default();
-                    let _ = save_config(&default);
+                    if let Err(e) = save_config(&default) {
+                        tracing::error!(
+                            "No se pudo escribir la configuración en {}: {}",
+                            path.display(),
+                            e
+                        );
+                    }
                     default
                 }
             },
@@ -351,7 +363,13 @@ pub fn load_config() -> AppConfig {
             path.display()
         );
         let config = AppConfig::default();
-        let _ = save_config(&config);
+        if let Err(e) = save_config(&config) {
+            tracing::error!(
+                "No se pudo escribir la configuración en {}: {}",
+                path.display(),
+                e
+            );
+        }
         config
     }
 }

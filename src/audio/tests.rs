@@ -49,12 +49,14 @@ mod tests {
         assert_eq!(state.total_duration_sec, 0.0);
         assert_eq!(state.title, "Sin título");
         assert_eq!(state.artist, "Artista desconocido");
+        assert!(state.album.is_empty());
+        assert!(state.cover_path.is_none());
         assert!(state.path.is_empty());
         assert!(!state.eof_reached);
         assert_eq!(state.replay_gain_track_enabled, true);
         assert_eq!(state.replay_gain_album_enabled, true);
 
-        // Volumen y Mezcla — Fades (D-07, D-09, D-10)
+        // Volumen y Mezcla — Fades
         assert_eq!(state.fades_enabled, false);
         assert_eq!(state.smooth_volume_enabled, false);
         assert!((state.fade_in_ms - 1000.0).abs() < f64::EPSILON as f32);
@@ -62,7 +64,7 @@ mod tests {
         assert_eq!(state.fade_in_enabled, false);
         assert_eq!(state.fade_out_enabled, false);
 
-        // Volumen y Mezcla — Silence removal (D-14, D-16)
+        // Volumen y Mezcla — Silence removal
         assert_eq!(state.silence_enabled, true);
         assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f64::EPSILON as f32);
@@ -72,7 +74,7 @@ mod tests {
         assert_eq!(state.rg_fixed_enabled, false);
         assert!((state.rg_fixed_db - 0.0).abs() < f64::EPSILON as f32);
 
-        // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30, D-28)
+        // Volumen y Mezcla — ReplayGain offsets
         assert_eq!(state.rg_master_enabled, true);
         assert!((state.rg_offset_album_db - 0.0).abs() < f64::EPSILON as f32);
         assert!((state.rg_offset_track_db - 0.0).abs() < f64::EPSILON as f32);
@@ -80,7 +82,18 @@ mod tests {
         assert_eq!(state.rg_analyze_rt_enabled, true);
     }
 
-    // --- Volumen y Mezcla: AudioState defaults (D-07 through D-30) ---
+    #[test]
+    fn test_audio_state_clone_preserves_album_cover() {
+        let mut state = AudioState::default();
+        state.album = "Test Album".to_string();
+        state.cover_path = Some("cache/covers/test.avif".to_string());
+
+        let cloned = state.clone();
+        assert_eq!(cloned.album, state.album);
+        assert_eq!(cloned.cover_path, state.cover_path);
+    }
+
+    // --- Volumen y Mezcla: AudioState defaults ---
 
     #[test]
     fn test_audio_state_volumen_defaults() {

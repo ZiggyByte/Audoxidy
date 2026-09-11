@@ -155,6 +155,8 @@ impl AudioManager {
         path: &str,
         title: impl Into<String>,
         artist: impl Into<String>,
+        album: impl Into<String>,
+        cover_path: Option<String>,
         track_gain: Option<f64>,
         album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
@@ -169,8 +171,15 @@ impl AudioManager {
                 }
             }
         }
-        self.engine
-            .preload_file(path, title.into(), artist.into(), tg, ag)
+        self.engine.preload_file(
+            path,
+            title.into(),
+            artist.into(),
+            album.into(),
+            cover_path,
+            tg,
+            ag,
+        )
     }
 
     /// Descarta el estado de pre-carga actual en el hilo decodificador.

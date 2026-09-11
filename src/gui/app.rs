@@ -1470,6 +1470,8 @@ impl AudoxidyApp {
                                         &next_song.file_path,
                                         next_song.title.to_string(),
                                         next_song.artist_name.to_string(),
+                                        next_song.album_title.to_string(),
+                                        next_song.cover_path.as_deref().map(str::to_string),
                                         None,
                                         None,
                                     );
@@ -1830,6 +1832,8 @@ impl AudoxidyApp {
                                 &next_song.file_path,
                                 next_song.title.to_string(),
                                 next_song.artist_name.to_string(),
+                                next_song.album_title.to_string(),
+                                next_song.cover_path.as_deref().map(str::to_string),
                                 None,
                                 None,
                             );

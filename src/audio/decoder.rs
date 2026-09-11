@@ -299,7 +299,15 @@ struct SmoothRamp {
 /// bloquear la reproducción de la pista actual durante la apertura del archivo.
 #[allow(clippy::too_many_arguments)]
 fn open_preload_track(
-    pending: &mut Option<(String, String, String, Option<f64>, Option<f64>)>,
+    pending: &mut Option<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<f64>,
+        Option<f64>,
+    )>,
     preload_format: &mut Option<Box<dyn FormatReader>>,
     preload_decoder: &mut Option<Box<dyn Decoder>>,
     preload_track_id: &mut u32,
@@ -309,11 +317,14 @@ fn open_preload_track(
     preload_path: &mut Option<String>,
     preload_title: &mut Option<String>,
     preload_artist: &mut Option<String>,
+    preload_album: &mut Option<String>,
+    preload_cover: &mut Option<Option<String>>,
     preload_rg: &mut (Option<f32>, Option<f32>),
     predecode_cap_frames: &mut usize,
     state: &std::sync::Arc<parking_lot::RwLock<crate::audio::engine::AudioState>>,
 ) {
-    let Some((path, title, artist, track_gain, album_gain)) = pending.take() else {
+    let Some((path, title, artist, album, cover_path, track_gain, album_gain)) = pending.take()
+    else {
         return;
     };
 
@@ -360,6 +371,8 @@ fn open_preload_track(
                     *preload_path = Some(path.clone());
                     *preload_title = Some(title);
                     *preload_artist = Some(artist);
+                    *preload_album = Some(album);
+                    *preload_cover = Some(cover_path);
                     *preload_rg = (track_gain.map(|g| g as f32), album_gain.map(|g| g as f32));
 
                     // Capacidad del buffer de pre-decode: cubre la mezcla más larga
@@ -987,8 +1000,18 @@ fn begin_forward_crossfade(
     preload_path: &mut Option<String>,
     preload_title: &mut Option<String>,
     preload_artist: &mut Option<String>,
+    preload_album: &mut Option<String>,
+    preload_cover: &mut Option<Option<String>>,
     preload_rg: &mut (Option<f32>, Option<f32>),
-    preload_pending: &mut Option<(String, String, String, Option<f64>, Option<f64>)>,
+    preload_pending: &mut Option<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<f64>,
+        Option<f64>,
+    )>,
     preloaded_pending: &mut Vec<f64>,
     fade_state: &mut FadeState,
     silence_samples: &mut usize,
@@ -1040,6 +1063,12 @@ fn begin_forward_crossfade(
         }
         if let Some(a) = preload_artist.take() {
             s.artist = a;
+        }
+        if let Some(al) = preload_album.take() {
+            s.album = al;
+        }
+        if let Some(c) = preload_cover.take() {
+            s.cover_path = c;
         }
         if let Some(p) = preload_path.take() {
             s.path = p;
@@ -1184,11 +1213,21 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut preload_path: Option<String> = None;
     let mut preload_title: Option<String> = None;
     let mut preload_artist: Option<String> = None;
+    let mut preload_album: Option<String> = None;
+    let mut preload_cover: Option<Option<String>> = None;
     let mut preload_rg: (Option<f32>, Option<f32>) = (None, None);
     // Solicitud de pre-carga pendiente: la apertura del archivo (probe de symphonia)
     // NO se hace en el handler del comando (bloquearía la reproducción) sino en el
     // tiempo idle del loop, donde no interrumpe el flujo de audio.
-    let mut preload_pending: Option<(String, String, String, Option<f64>, Option<f64>)> = None;
+    let mut preload_pending: Option<(
+        String,
+        String,
+        String,
+        String,
+        Option<String>,
+        Option<f64>,
+        Option<f64>,
+    )> = None;
     let mut predecode_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     let mut predecode_cap_frames: usize = 0;
     let mut preloaded_pending: Vec<f64> = Vec::new();
@@ -1426,6 +1465,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 preload_path = None;
                                 preload_title = None;
                                 preload_artist = None;
+                                preload_album = None;
+                                preload_cover = None;
                                 preload_rg = (None, None);
                                 preload_pending = None;
                                 tracing::info!(
@@ -1524,6 +1565,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     path,
                     title,
                     artist,
+                    album,
+                    cover_path,
                     track_gain,
                     album_gain,
                 } => {
@@ -1550,8 +1593,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_path = None;
                     preload_title = None;
                     preload_artist = None;
+                    preload_album = None;
+                    preload_cover = None;
                     preload_rg = (None, None);
-                    preload_pending = Some((path, title, artist, track_gain, album_gain));
+                    preload_pending = Some((
+                        path, title, artist, album, cover_path, track_gain, album_gain,
+                    ));
                 }
                 AudioCommand::ClearPreload => {
                     preload_format = None;
@@ -1566,6 +1613,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_path = None;
                     preload_title = None;
                     preload_artist = None;
+                    preload_album = None;
+                    preload_cover = None;
                     preload_rg = (None, None);
                     preload_pending = None;
                     preloaded_pending.clear();
@@ -1629,6 +1678,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut preload_path,
                                 &mut preload_title,
                                 &mut preload_artist,
+                                &mut preload_album,
+                                &mut preload_cover,
                                 &mut preload_rg,
                                 &mut preload_pending,
                                 &mut preloaded_pending,
@@ -1672,6 +1723,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             &mut preload_path,
                             &mut preload_title,
                             &mut preload_artist,
+                            &mut preload_album,
+                            &mut preload_cover,
                             &mut preload_rg,
                             &mut predecode_cap_frames,
                             &state,
@@ -1734,6 +1787,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut preload_path,
                                 &mut preload_title,
                                 &mut preload_artist,
+                                &mut preload_album,
+                                &mut preload_cover,
                                 &mut preload_rg,
                                 &mut preload_pending,
                                 &mut preloaded_pending,
@@ -1888,6 +1943,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             preload_path = None;
             preload_title = None;
             preload_artist = None;
+            preload_album = None;
+            preload_cover = None;
             preload_rg = (None, None);
             preload_pending = None;
             preloaded_pending.clear();
@@ -1945,6 +2002,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_path,
                     &mut preload_title,
                     &mut preload_artist,
+                    &mut preload_album,
+                    &mut preload_cover,
                     &mut preload_rg,
                     &mut predecode_cap_frames,
                     &state,
@@ -2213,6 +2272,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 }
                                 if let Some(a) = preload_artist.take() {
                                     s.artist = a;
+                                }
+                                if let Some(al) = preload_album.take() {
+                                    s.album = al;
+                                }
+                                if let Some(c) = preload_cover.take() {
+                                    s.cover_path = c;
                                 }
                                 if let Some(p) = preload_path.take() {
                                     s.path = p;
@@ -2570,6 +2635,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_path,
                     &mut preload_title,
                     &mut preload_artist,
+                    &mut preload_album,
+                    &mut preload_cover,
                     &mut preload_rg,
                     &mut predecode_cap_frames,
                     &state,
@@ -2724,6 +2791,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         &mut preload_path,
                         &mut preload_title,
                         &mut preload_artist,
+                        &mut preload_album,
+                        &mut preload_cover,
                         &mut preload_rg,
                         &mut preload_pending,
                         &mut preloaded_pending,

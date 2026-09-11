@@ -569,4 +569,129 @@ mod config_tests {
         assert_eq!(config.config_version, 1);
         assert_eq!(config.ui.theme, "dark");
     }
+
+    #[test]
+    fn test_legacy_config_fixture_loads() {
+        let config: AppConfig = ron::from_str(include_str!("fixtures/config_legacy.ron"))
+            .expect("la configuración heredada debe seguir cargando");
+        assert_eq!(config.config_version, 1);
+        assert_eq!(config.audio.sample_rate, Some(48000));
+        assert_eq!(config.audio.safety_buffer_secs, 2.0);
+        assert_eq!(config.logging.level, "info");
+        assert_eq!(config.behavior.prefetch_seconds_before_end, 30.0);
+    }
+
+    /// Ruta temporal única por prueba, sin tocar `HOME`.
+    fn temp_config_path(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("audoxidy_cfg_{}_{}.ron", std::process::id(), label))
+    }
+
+    /// Copias `{nombre}.bak.` existentes para la ruta dada.
+    fn backups_of(path: &Path) -> Vec<PathBuf> {
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        let prefix = format!("{name}.bak.");
+        let dir = path
+            .parent()
+            .expect("la ruta temporal tiene directorio padre");
+        let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
+            .expect("leer el directorio temporal")
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with(&prefix))
+            })
+            .collect();
+        found.sort();
+        found
+    }
+
+    fn cleanup(path: &Path) {
+        for backup in backups_of(path) {
+            let _ = std::fs::remove_file(backup);
+        }
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_parse_error_backs_up_and_preserves_original() {
+        let path = temp_config_path("parse_error");
+        let original = b"config_version: [";
+        std::fs::write(&path, original).expect("escribir config inválida");
+
+        let config = load_config_from(&path);
+
+        let backups = backups_of(&path);
+        assert!(
+            !backups.is_empty(),
+            "un error de parseo debe crear una copia de seguridad"
+        );
+        assert!(
+            backups
+                .iter()
+                .any(|b| std::fs::read(b).expect("leer backup") == original),
+            "la copia debe conservar los bytes originales"
+        );
+        assert_eq!(config.config_version, 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_validation_error_backs_up() {
+        let path = temp_config_path("validation_error");
+        let mut invalid = AppConfig::default();
+        invalid.audio.safety_buffer_secs = 0.0;
+        save_config_to(&path, &invalid).expect("escribir config inválida");
+        let original = std::fs::read(&path).expect("leer config inválida");
+
+        let config = load_config_from(&path);
+
+        let backups = backups_of(&path);
+        assert!(
+            !backups.is_empty(),
+            "un fallo de validación debe crear una copia de seguridad"
+        );
+        assert!(
+            backups
+                .iter()
+                .any(|b| std::fs::read(b).expect("leer backup") == original),
+            "la copia debe conservar los bytes originales"
+        );
+        assert_eq!(config.config_version, 1);
+        cleanup(&path);
+    }
+
+    #[test]
+    fn test_backup_rotation_keeps_three() {
+        let path = temp_config_path("rotation");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .expect("nombre de archivo")
+            .to_string();
+        for n in 1..=4u64 {
+            std::fs::write(path.with_file_name(format!("{name}.bak.{n}")), b"backup")
+                .expect("escribir backup falso");
+        }
+
+        rotate_config_backups(&path, CONFIG_BACKUP_KEEP).expect("rotar backups");
+
+        let remaining = backups_of(&path);
+        assert_eq!(remaining.len(), 3, "solo deben quedar las 3 más recientes");
+        assert!(
+            !path.with_file_name(format!("{name}.bak.1")).exists(),
+            "la copia más antigua debe eliminarse"
+        );
+        for n in 2..=4u64 {
+            assert!(
+                path.with_file_name(format!("{name}.bak.{n}")).exists(),
+                "la copia {n} debe conservarse"
+            );
+        }
+        cleanup(&path);
+    }
 }

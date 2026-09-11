@@ -308,41 +308,99 @@ pub fn default_config_path() -> PathBuf {
     PathBuf::from(home).join(".config/audoxidy/config.ron")
 }
 
-/// Carga la configuración desde disco.
+/// Número máximo de copias de seguridad de la configuración que se conservan.
+const CONFIG_BACKUP_KEEP: usize = 3;
+
+/// Copia `path` a `{nombre}.bak.{epoch}` en el mismo directorio y recorta las
+/// copias antiguas, conservando solo las más recientes.
+fn backup_config_file(path: &Path, keep: usize) -> Result<(), String> {
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "ruta de configuración inválida".to_string())?;
+    let stamp = SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup = path.with_file_name(format!("{name}.bak.{stamp}"));
+    std::fs::copy(path, &backup).map_err(|e| e.to_string())?;
+    rotate_config_backups(path, keep)
+}
+
+/// Elimina las copias `{nombre}.bak.{n}` más antiguas, conservando las `keep`
+/// más recientes.
+fn rotate_config_backups(path: &Path, keep: usize) -> Result<(), String> {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return Ok(());
+    };
+    let prefix = format!("{name}.bak.");
+    let mut backups: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let fname = e.file_name();
+            let suffix = fname.to_str()?.strip_prefix(&prefix)?;
+            Some((suffix.parse::<u64>().ok()?, e.path()))
+        })
+        .collect();
+    backups.sort_by_key(|(stamp, _)| *stamp);
+    while backups.len() > keep {
+        let (_, oldest) = backups.remove(0);
+        if let Err(e) = std::fs::remove_file(&oldest) {
+            tracing::warn!(
+                "No se pudo borrar backup antiguo {}: {}",
+                oldest.display(),
+                e
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Carga la configuración desde la ruta indicada.
 /// Si el archivo no existe, crea uno con valores por defecto.
-pub fn load_config() -> AppConfig {
-    let path = default_config_path();
-    if path.exists() {
-        match std::fs::read_to_string(&path) {
-            Ok(content) => match ron::from_str(&content) {
-                Ok(config) => {
-                    let validation = validate_config(&config);
-                    for w in &validation.warnings {
-                        tracing::warn!("Config warning: {}", w);
-                    }
-                    if !validation.is_valid() {
-                        for e in &validation.errors {
-                            tracing::error!("Config error: {}", e);
-                        }
-                        tracing::warn!("Usando configuración por defecto");
-                        let default = AppConfig::default();
-                        if let Err(e) = save_config(&default) {
-                            tracing::error!(
-                                "No se pudo escribir la configuración en {}: {}",
-                                path.display(),
-                                e
-                            );
-                        }
-                        return default;
-                    }
-                    // Aplicar perfil
+pub fn load_config_from(path: &Path) -> AppConfig {
+    if !path.exists() {
+        tracing::info!(
+            "No hay archivo de configuración. Creando {} con valores por defecto.",
+            path.display()
+        );
+        let config = AppConfig::default();
+        if let Err(e) = save_config_to(path, &config) {
+            tracing::error!(
+                "No se pudo escribir la configuración en {}: {}",
+                path.display(),
+                e
+            );
+        }
+        return config;
+    }
+
+    match std::fs::read_to_string(path) {
+        Ok(content) => match ron::from_str::<AppConfig>(&content) {
+            Ok(config) => {
+                let validation = validate_config(&config);
+                for w in &validation.warnings {
+                    tracing::warn!("Config warning: {}", w);
+                }
+                if validation.is_valid() {
                     apply_profile(&config);
                     config
-                }
-                Err(e) => {
-                    tracing::error!("Error parseando config: {}. Usando defaults", e);
+                } else {
+                    for e in &validation.errors {
+                        tracing::error!("Config error: {}", e);
+                    }
+                    tracing::warn!("Usando configuración por defecto");
                     let default = AppConfig::default();
-                    if let Err(e) = save_config(&default) {
+                    if let Err(e) = backup_config_file(path, CONFIG_BACKUP_KEEP) {
+                        tracing::error!(
+                            "Backup de config falló, no se sobrescribe {}: {}",
+                            path.display(),
+                            e
+                        );
+                        return default;
+                    }
+                    if let Err(e) = save_config_to(path, &default) {
                         tracing::error!(
                             "No se pudo escribir la configuración en {}: {}",
                             path.display(),
@@ -351,39 +409,54 @@ pub fn load_config() -> AppConfig {
                     }
                     default
                 }
-            },
-            Err(e) => {
-                tracing::warn!("No se pudo leer config: {}. Usando defaults", e);
-                AppConfig::default()
             }
+            Err(e) => {
+                tracing::error!("Error parseando config: {}. Usando defaults", e);
+                let default = AppConfig::default();
+                if let Err(e) = backup_config_file(path, CONFIG_BACKUP_KEEP) {
+                    tracing::error!(
+                        "Backup de config falló, no se sobrescribe {}: {}",
+                        path.display(),
+                        e
+                    );
+                    return default;
+                }
+                if let Err(e) = save_config_to(path, &default) {
+                    tracing::error!(
+                        "No se pudo escribir la configuración en {}: {}",
+                        path.display(),
+                        e
+                    );
+                }
+                default
+            }
+        },
+        Err(e) => {
+            tracing::warn!("No se pudo leer config: {}. Usando defaults", e);
+            AppConfig::default()
         }
-    } else {
-        tracing::info!(
-            "No hay archivo de configuración. Creando {} con valores por defecto.",
-            path.display()
-        );
-        let config = AppConfig::default();
-        if let Err(e) = save_config(&config) {
-            tracing::error!(
-                "No se pudo escribir la configuración en {}: {}",
-                path.display(),
-                e
-            );
-        }
-        config
     }
 }
 
-/// Guarda la configuración a disco.
-pub fn save_config(config: &AppConfig) -> Result<(), String> {
-    let path = default_config_path();
+/// Carga la configuración desde la ruta por defecto.
+pub fn load_config() -> AppConfig {
+    load_config_from(&default_config_path())
+}
+
+/// Guarda la configuración en la ruta indicada.
+pub fn save_config_to(path: &Path, config: &AppConfig) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let content = ron::ser::to_string_pretty(config, ron::ser::PrettyConfig::default())
         .map_err(|e| e.to_string())?;
-    std::fs::write(&path, content).map_err(|e| e.to_string())?;
+    std::fs::write(path, content).map_err(|e| e.to_string())?;
     Ok(())
+}
+
+/// Guarda la configuración en la ruta por defecto.
+pub fn save_config(config: &AppConfig) -> Result<(), String> {
+    save_config_to(&default_config_path(), config)
 }
 
 /// Marca de tiempo del archivo de configuración en disco.

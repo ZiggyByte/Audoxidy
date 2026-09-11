@@ -1165,7 +1165,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // Peak accumulators: max |sample| per channel across the current batch.
     let mut meter_peak_l: f64 = 0.0;
     let mut meter_peak_r: f64 = 0.0;
-    // RMS accumulators: sum-of-squares and count per channel (D-03 running accumulator).
+    // RMS accumulators: sum-of-squares and count per channel (running accumulator).
     let mut rms_sum_l: f64 = 0.0;
     let mut rms_count_l: u64 = 0;
     let mut rms_sum_r: f64 = 0.0;
@@ -1292,8 +1292,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             }
         }
 
-        // Check for commands
-        let cmd_result = if current_format.is_none() {
+        // Check for commands. La búsqueda pendiente vive en el slot atómico
+        // compartido y tiene prioridad sobre la cola: se aplica antes que el
+        // comando en lote y no consume capacidad del canal.
+        let seek_cmd = engine.take_pending_seek().map(AudioCommand::Seek);
+        let cmd_result = if let Some(cmd) = seek_cmd {
+            Ok(cmd)
+        } else if current_format.is_none() {
             command_rx.recv().map_err(|_| ())
         } else {
             command_rx.try_recv().map_err(|_| ())

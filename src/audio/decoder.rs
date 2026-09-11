@@ -1132,6 +1132,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut resample_output_pool: Vec<Vec<f64>> = Vec::new();
     let mut output_accumulator: Vec<f64> = Vec::with_capacity(131072);
     let mut output_accumulator_f32: Vec<f32> = Vec::with_capacity(131072);
+    // Acumulador de frames para la métrica `audio_frames_processed`: se agrega y se
+    // emite un evento como mucho ~1/s (cuando se alcanza `out_rate` frames), en vez
+    // de emitir por cada batch decodificado.
+    let mut frames_since_metric: u64 = 0;
 
     // === Volumen y Mezcla state (Phase 03) ===
     let mut fade_state: FadeState = FadeState::Idle;
@@ -2121,6 +2125,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             if !output_accumulator_f32.is_empty() {
                 if let Some(producer) = producer_mutex.lock().as_mut() {
                     let _ = producer.push_slice(&output_accumulator_f32);
+                }
+                frames_since_metric +=
+                    (output_accumulator_f32.len() / out_channels.max(1)) as u64;
+                if frames_since_metric >= out_rate as u64 {
+                    tracing::info!(
+                        target: "audoxidy::metrics",
+                        metric = "audio_frames_processed",
+                        frames = frames_since_metric
+                    );
+                    frames_since_metric = 0;
                 }
                 output_accumulator_f32.clear();
             }
@@ -3292,6 +3306,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             for &sample in output_accumulator.iter() {
                 output_accumulator_f32.push(sample.clamp(-1.0, 1.0) as f32);
             }
+            frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;
+            if frames_since_metric >= out_rate as u64 {
+                tracing::info!(
+                    target: "audoxidy::metrics",
+                    metric = "audio_frames_processed",
+                    frames = frames_since_metric
+                );
+                frames_since_metric = 0;
+            }
             if !output_accumulator_f32.is_empty() {
                 // Push al RingBuffer (lock breve por iteración)
                 // --- PUSHING ATÓMICO (FRAME ALIGNMENT) ---
@@ -3311,6 +3334,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         if frames_to_push > 0 {
                             pushed = producer.push_slice(
                                 &output_accumulator_f32[pos..pos + (frames_to_push * out_ch_usize)],
+                            );
+                        }
+                        if pushed > 0 {
+                            // Latencia del buffer del ringbuf (µs) publicada como pico
+                            // acumulado para que el camino no-RT la convierta en métrica.
+                            let occupied = producer.occupied_len();
+                            let latency_us = (occupied / out_channels.max(1)) as u64 * 1_000_000
+                                / out_rate.max(1) as u64;
+                            crate::audio::engine::LATENCY_PEAK_US.fetch_max(
+                                latency_us,
+                                std::sync::atomic::Ordering::Relaxed,
                             );
                         }
                     }

@@ -3489,10 +3489,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 #[cfg(test)]
 mod decoder_tests {
     use super::{
-        crossfade_auto_due, mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for,
-        tail_decode_batch,
+        apply_promotion_metadata, crossfade_auto_due, mix_tail_into_frame,
+        predecode_cap_frames_for, tail_buffer_cap_for, tail_decode_batch,
     };
-    use crate::audio::engine::{AudioEngine, ChannelMap};
+    use crate::audio::engine::{AudioEngine, AudioState, ChannelMap};
     use std::collections::VecDeque;
     use symphonia::core::codecs::{Decoder, DecoderOptions};
     use symphonia::core::formats::{FormatOptions, FormatReader};
@@ -3839,5 +3839,87 @@ mod decoder_tests {
         assert!(!ok2);
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn promotion_writes_all_metadata() {
+        // Al promover la pre-carga, TODOS los metadatos deben volcarse en el
+        // AudioState y las opciones pendientes quedar consumidas: así los datos
+        // de la canción anterior no pueden resurgir en una promoción posterior.
+        let mut state = AudioState::default();
+        let mut title = Some("Nueva canción".to_string());
+        let mut artist = Some("Nueva artista".to_string());
+        let mut album = Some("Nuevo álbum".to_string());
+        let mut cover = Some(Some("/tmp/nueva.avif".to_string()));
+        let mut path = Some("/tmp/nueva.flac".to_string());
+
+        apply_promotion_metadata(
+            &mut state,
+            &mut title,
+            &mut artist,
+            &mut album,
+            &mut cover,
+            &mut path,
+            (Some(-3.0), Some(-2.0)),
+            180.0,
+            48000,
+            true,
+        );
+
+        assert_eq!(state.title, "Nueva canción");
+        assert_eq!(state.artist, "Nueva artista");
+        assert_eq!(state.album, "Nuevo álbum");
+        assert_eq!(state.cover_path.as_deref(), Some("/tmp/nueva.avif"));
+        assert_eq!(state.path, "/tmp/nueva.flac");
+        assert_eq!(state.replay_gain_track, Some(-3.0));
+        assert_eq!(state.replay_gain_album, Some(-2.0));
+        assert!((state.total_duration_sec - 180.0).abs() < 1e-9);
+        assert_eq!(state.sample_rate, 48000);
+        assert!(state.current_pos_sec.abs() < 1e-9);
+        assert!(state.eof_reached);
+
+        assert!(title.is_none(), "title pendiente sin consumir");
+        assert!(artist.is_none(), "artist pendiente sin consumir");
+        assert!(album.is_none(), "album pendiente sin consumir");
+        assert!(cover.is_none(), "cover pendiente sin consumir");
+        assert!(path.is_none(), "path pendiente sin consumir");
+    }
+
+    #[test]
+    fn promotion_eof_flag_is_preserved() {
+        // El crossfade promueve con `signal_eof = false` (la GUI ya avanzó en el
+        // cambio manual) y el fin de pista natural con `true`; el helper debe
+        // escribir exactamente el valor recibido.
+        let mut crossfade_state = AudioState::default();
+        let (mut t, mut ar, mut al, mut cv, mut p) = (None, None, None, None, None);
+        apply_promotion_metadata(
+            &mut crossfade_state,
+            &mut t,
+            &mut ar,
+            &mut al,
+            &mut cv,
+            &mut p,
+            (None, None),
+            0.0,
+            0,
+            false,
+        );
+        assert!(!crossfade_state.eof_reached);
+
+        let mut eof_state = AudioState::default();
+        let (mut t2, mut ar2, mut al2, mut cv2, mut p2) = (None, None, None, None, None);
+        apply_promotion_metadata(
+            &mut eof_state,
+            &mut t2,
+            &mut ar2,
+            &mut al2,
+            &mut cv2,
+            &mut p2,
+            (None, None),
+            0.0,
+            0,
+            true,
+        );
+        assert!(eof_state.eof_reached);
     }
 }

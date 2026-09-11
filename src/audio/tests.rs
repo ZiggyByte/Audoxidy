@@ -1091,7 +1091,7 @@ mod tests {
             .find("let process_preloaded = !preloaded_pending.is_empty();")
             .expect("drain-block anchor missing");
         let end = SRC
-            .find("s.total_duration_sec = preload_total_duration_sec;")
+            .find("// `eof_reached = true`: la GUI avanza el índice/playlist.")
             .expect("promotion-block anchor missing");
         assert!(start < end, "anchors out of order");
         assert!(

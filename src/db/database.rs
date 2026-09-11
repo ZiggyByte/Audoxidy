@@ -134,6 +134,7 @@ impl Database {
         let db_path = "library.db";
         let conn = Connection::open(db_path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.set_prepared_statement_cache_capacity(32);
         Self::create_schema(&conn)?;
         Ok(Self { conn })
     }
@@ -143,6 +144,7 @@ impl Database {
     pub fn new_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
+        conn.set_prepared_statement_cache_capacity(32);
         Self::create_schema(&conn)?;
         Ok(Self { conn })
     }
@@ -713,6 +715,15 @@ impl Database {
     pub fn rollback_transaction(&self) -> Result<()> {
         self.conn.execute("ROLLBACK", [])?;
         Ok(())
+    }
+
+    /// Vacía la caché de sentencias preparadas de la conexión.
+    ///
+    /// Se invoca al completar un escaneo masivo para acotar la memoria que
+    /// retiene la caché; las sentencias se vuelven a preparar de forma
+    /// transparente en el siguiente uso.
+    pub fn flush_prepared_statements(&self) {
+        self.conn.flush_prepared_statement_cache();
     }
 
     // --- Consultas de Alto Rendimiento ---
@@ -2638,5 +2649,26 @@ mod eq_preset_tests {
         let loaded = db.load_eq_presets().unwrap();
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].preamp_gain, 5.0);
+    }
+}
+
+#[cfg(test)]
+mod cache_tests {
+    use super::*;
+
+    #[test]
+    fn test_prepared_statement_cache_flush() {
+        let db = Database::new_memory().unwrap();
+
+        // Primer acceso: puebla la caché de sentencias preparadas.
+        let first = db.get_all_songs().unwrap();
+        assert!(first.is_empty());
+
+        // Vaciar la caché no debe afectar a las consultas posteriores:
+        // las sentencias se vuelven a preparar de forma transparente.
+        db.flush_prepared_statements();
+
+        let second = db.get_all_songs().unwrap();
+        assert!(second.is_empty());
     }
 }

@@ -43,7 +43,7 @@ rfd = "0.17.2"
 ringbuf = "0.4.8"
 ron = "0.12.2"
 rubato = "1.0.1"
-rusqlite = { version = "0.38.0", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"

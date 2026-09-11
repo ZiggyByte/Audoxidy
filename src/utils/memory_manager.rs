@@ -255,4 +255,13 @@ mod tests {
             "el sondeo de RSS vía sysinfo devolvió 0"
         );
     }
+
+    #[test]
+    fn system_ram_is_sane() {
+        // Ejercita la ruta real de lectura de RAM del sistema: un refresh que omitiera
+        // `with_ram()` devolvería total = 0.
+        let (used, total) = get_system_ram_bytes();
+        assert!(total > 0, "sysinfo no reportó RAM total");
+        assert!(used <= total, "RAM usada > total");
+    }
 }

@@ -131,6 +131,20 @@ pub fn generate_pic_hash(data: &[u8]) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Devuelve la extensión de CPU a forzar, o `None` para conservar el default
+/// de la librería (que ya selecciona la mejor extensión disponible en runtime).
+///
+/// Solo se fuerza AVX2 cuando el procesador la soporta; si no, no se toca nada.
+fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::is_x86_feature_detected!("avx2") {
+            return Some(fast_image_resize::CpuExtensions::Avx2);
+        }
+    }
+    None
+}
+
 /// Extrae de un buffer raw de imagen, recorta/escala a 400x400 y guarda como .avif 90% de calidad.
 pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
     let cache_dir = PathBuf::from("cache/covers");
@@ -184,10 +198,13 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
 
     let mut resizer = Resizer::new();
 
-    // Activar opcionalmente extensiones de procesador modernas en x86 para super-velocidad
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        resizer.set_cpu_extensions(fast_image_resize::CpuExtensions::Avx2);
+    if let Some(ext) = forced_cpu_extension() {
+        // SAFETY: `forced_cpu_extension` solo devuelve `Avx2` tras comprobar en
+        // runtime con `is_x86_feature_detected!("avx2")` que el procesador la
+        // soporta, de modo que la extensión está garantizada en este punto.
+        unsafe {
+            resizer.set_cpu_extensions(ext);
+        }
     }
 
     let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
@@ -333,4 +350,20 @@ pub fn clear_raw_cache() {
     let mut cache = cache_mtx.lock();
     cache.map.clear();
     cache.order.clear();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn avx2_selection_matches_detection() {
+        let forced = forced_cpu_extension();
+        // En x86_64: forzamos Avx2 solo si el host lo soporta.
+        #[cfg(target_arch = "x86_64")]
+        assert_eq!(forced.is_some(), std::is_x86_feature_detected!("avx2"));
+        // Fuera de x86_64 nunca forzamos nada.
+        #[cfg(not(target_arch = "x86_64"))]
+        assert!(forced.is_none());
+    }
 }

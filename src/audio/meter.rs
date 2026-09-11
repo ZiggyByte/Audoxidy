@@ -35,13 +35,7 @@ impl MeterData {
     /// This is the ONLY write method — called by the decoder thread after DSP
     /// processing, once per batch. Uses `Ordering::Relaxed` (no cross-field
     /// consistency needed — best-effort visual data).
-    pub fn write_peak_rms(
-        &self,
-        peak_l_db: f32,
-        rms_l_db: f32,
-        peak_r_db: f32,
-        rms_r_db: f32,
-    ) {
+    pub fn write_peak_rms(&self, peak_l_db: f32, rms_l_db: f32, peak_r_db: f32, rms_r_db: f32) {
         self.peak_l.store(peak_l_db.to_bits(), Ordering::Relaxed);
         self.rms_l.store(rms_l_db.to_bits(), Ordering::Relaxed);
         self.peak_r.store(peak_r_db.to_bits(), Ordering::Relaxed);

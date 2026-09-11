@@ -3,6 +3,7 @@ use crate::audio::decoder::AudioDecoder;
 use crate::audio::device_manager::AudioDeviceManager;
 pub use crate::audio::device_manager::{AudioDeviceInfo, AudioSettings, BitDepth, ChannelConfig};
 use crate::audio::dsp::DspChain;
+use crate::audio::meter;
 use cpal::traits::DeviceTrait;
 use crossbeam::channel::{Sender, unbounded};
 use parking_lot::{Mutex, RwLock};
@@ -11,7 +12,6 @@ use ringbuf::{
     HeapRb,
     traits::{Consumer, Split},
 };
-use crate::audio::meter;
 use std::sync::Arc;
 
 // Define aliases based on ringbuf 0.4 structure
@@ -152,10 +152,10 @@ pub struct AudioState {
     pub crossfade_auto_ms: f32,  // default: 250.0 (range 0–10000, paso 50)
 
     // VU Meter — configuración
-    pub meter_hold_time_ms: f32,    // default: 1500.0 (range 500–5000, paso 50)
-    pub meter_rms_window_ms: f32,   // default: 300.0 (range 50–1000, paso 50)
-    pub meter_infinite_hold: bool,  // default: false — hold infinito hasta cambio de pista
-    pub meter_enabled: bool,        // default: false — medidor desactivado en instalación nueva
+    pub meter_hold_time_ms: f32, // default: 1500.0 (range 500–5000, paso 50)
+    pub meter_rms_window_ms: f32, // default: 300.0 (range 50–1000, paso 50)
+    pub meter_infinite_hold: bool, // default: false — hold infinito hasta cambio de pista
+    pub meter_enabled: bool,     // default: false — medidor desactivado en instalación nueva
 }
 
 // Adapters removed (not needed for Rubato 1.0 with Vec<Vec<f32>>)

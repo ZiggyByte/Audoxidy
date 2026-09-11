@@ -307,7 +307,7 @@ pub enum Message {
     PlaylistToggleEnabled(usize),
     PlaylistShowAllTabs(iced::Point),
 
-            // VU Meter — configuración
+    // VU Meter — configuración
     MeterRightClicked(iced::Point),
     MeterPopupClose,
     MeterHoldTimeChanged(f32),
@@ -637,12 +637,10 @@ impl AudoxidyApp {
                     match s {
                         "default" => crate::gui::audio_center::SystemSelection::Default,
                         "auto" => crate::gui::audio_center::SystemSelection::Automatic,
-                        s if s.starts_with("fixed:") => {
-                            s["fixed:".len()..]
-                                .parse::<u32>()
-                                .map(crate::gui::audio_center::SystemSelection::Fixed)
-                                .unwrap_or(crate::gui::audio_center::SystemSelection::Default)
-                        }
+                        s if s.starts_with("fixed:") => s["fixed:".len()..]
+                            .parse::<u32>()
+                            .map(crate::gui::audio_center::SystemSelection::Fixed)
+                            .unwrap_or(crate::gui::audio_center::SystemSelection::Default),
                         _ => crate::gui::audio_center::SystemSelection::Default,
                     }
                 };
@@ -694,20 +692,13 @@ impl AudoxidyApp {
                     crate::gui::audio_center::SystemSelection::Fixed(q) => Some(q),
                 };
 
-                let has_pw =
-                    crate::integrations::system_audio::is_pipewire_active();
+                let has_pw = crate::integrations::system_audio::is_pipewire_active();
                 if has_pw {
-                    crate::integrations::system_audio::apply_pipewire_clock(
-                        rate_val, quantum_val,
-                    );
+                    crate::integrations::system_audio::apply_pipewire_clock(rate_val, quantum_val);
                     std::thread::sleep(std::time::Duration::from_millis(250));
-                    crate::integrations::system_audio::persist_pipewire_conf(
-                        rate_val, quantum_val,
-                    );
+                    crate::integrations::system_audio::persist_pipewire_conf(rate_val, quantum_val);
                 } else {
-                    crate::integrations::system_audio::persist_pulse_conf(
-                        rate_val, quantum_val,
-                    );
+                    crate::integrations::system_audio::persist_pulse_conf(rate_val, quantum_val);
                 }
             }
 
@@ -1150,7 +1141,6 @@ impl AudoxidyApp {
                     audio_manager.state().write().rg_offset_rt_db = v;
                 }
             }
-
         }
 
         // VU Meter — cargar modo M/S para PlayerUiState
@@ -4888,7 +4878,7 @@ impl AudoxidyApp {
                 self.playlist_manager.show_tab_dropdown = false;
                 self.update(*msg)
             }
-    // VU Meter — configuración
+            // VU Meter — configuración
             Message::MeterRightClicked(pos) => {
                 self.player_ui_state.meter_popup_open = true;
                 self.player_ui_state.meter_popup_pos = Some(pos);

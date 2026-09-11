@@ -3019,8 +3019,12 @@ pub fn view<'a>(
     .height(Length::Fill);
 
     let meter_widget = VuMeterWidget::new(
-        meter_state.display_l, meter_state.smooth_peak_l, meter_state.peak_hold_l,
-        meter_state.display_r, meter_state.smooth_peak_r, meter_state.peak_hold_r,
+        meter_state.display_l,
+        meter_state.smooth_peak_l,
+        meter_state.peak_hold_l,
+        meter_state.display_r,
+        meter_state.smooth_peak_r,
+        meter_state.peak_hold_r,
         clipping,
         meter_state.ms_mode,
         meter_state.phase_corr,

@@ -237,7 +237,12 @@ impl AudioDeviceManager {
         {
             let host_fallback = cpal::default_host();
             let def_conf: cpal::StreamConfig = config.into();
-            self.configure_output(host_fallback, device.clone(), def_conf.clone(), sample_format)?;
+            self.configure_output(
+                host_fallback,
+                device.clone(),
+                def_conf.clone(),
+                sample_format,
+            )?;
             return Ok((cpal::default_host(), device, def_conf, sample_format));
         }
 

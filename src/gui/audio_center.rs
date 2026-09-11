@@ -2435,9 +2435,9 @@ fn view_audio_config<'a>(
             } else {
                 file_format
             })
-                .color(COLOR_TEXT_PRIMARY)
-                .size(14)
-                .font(FONT_INTER_SANS_MEDIUM)
+            .color(COLOR_TEXT_PRIMARY)
+            .size(14)
+            .font(FONT_INTER_SANS_MEDIUM)
         ]
         .align_y(Alignment::Center),
         table_row,
@@ -2633,14 +2633,14 @@ fn view_audio_config<'a>(
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )
-                .width(Length::Fixed(80.0))
-                .align_x(Alignment::Center)
-                .padding(iced::Padding {
-                    top: 8.0,
-                    bottom: 0.0,
-                    left: 0.0,
-                    right: 0.0
-                }),
+            .width(Length::Fixed(80.0))
+            .align_x(Alignment::Center)
+            .padding(iced::Padding {
+                top: 8.0,
+                bottom: 0.0,
+                left: 0.0,
+                right: 0.0
+            }),
             container(right_col)
                 .width(Length::FillPortion(4))
                 .padding(iced::Padding {
@@ -4352,7 +4352,10 @@ fn view_volumen_mezcla<'a>(
             chk,
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
-                subgroup_label("Cambio manual:", xfade_master_on && manager.crossfade_manual_enabled),
+                subgroup_label(
+                    "Cambio manual:",
+                    xfade_master_on && manager.crossfade_manual_enabled
+                ),
                 if xfade_master_on {
                     crate::gui::app::Message::AudioCenterMsg(
                         AudioCenterMessage::CrossfadeManualToggle(
@@ -4428,7 +4431,10 @@ fn view_volumen_mezcla<'a>(
             chk,
             Space::new().width(Length::Fixed(5.0)),
             clickable_toggle(
-                subgroup_label("Cambio automático:", xfade_master_on && manager.crossfade_auto_enabled),
+                subgroup_label(
+                    "Cambio automático:",
+                    xfade_master_on && manager.crossfade_auto_enabled
+                ),
                 if xfade_master_on {
                     crate::gui::app::Message::AudioCenterMsg(
                         AudioCenterMessage::CrossfadeAutoToggle(!manager.crossfade_auto_enabled),
@@ -4514,21 +4520,21 @@ fn view_volumen_mezcla<'a>(
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )
-                .width(Length::Fixed(30.0))
-                .align_x(Alignment::Center)
-                .padding(iced::Padding {
-                    top: -48.0,
-                    bottom: 0.0,
-                    left: -5.0,
-                    right: 0.0
-                }),
+            .width(Length::Fixed(30.0))
+            .align_x(Alignment::Center)
+            .padding(iced::Padding {
+                top: -48.0,
+                bottom: 0.0,
+                left: -5.0,
+                right: 0.0
+            }),
             container(right_col)
                 .width(Length::FillPortion(4))
                 .padding(iced::Padding {
                     top: 0.0,
                     bottom: 0.0,
                     left: -1.0,
-                    right:0.0
+                    right: 0.0
                 })
         ]
         .height(Length::Fill)

@@ -2062,7 +2062,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // NOTA: preloaded_pending.shrink_to_fit() eliminado — causaba un corte
             // audible al desalocar decenas de MB justo en la transición DRAIN→DECODE.
             // El buffer se libera naturalmente en la siguiente pre-carga o en Load.
-
         }
 
         // 2. Llenar buffer si hay espacio
@@ -3268,9 +3267,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         -60.0
                     };
 
-                    engine
-                        .meter
-                        .write_peak_rms(peak_l_db as f32, rms_l_db as f32, peak_r_db as f32, rms_r_db as f32);
+                    engine.meter.write_peak_rms(
+                        peak_l_db as f32,
+                        rms_l_db as f32,
+                        peak_r_db as f32,
+                        rms_r_db as f32,
+                    );
                     meter_peak_l = 0.0;
                     meter_peak_r = 0.0;
 
@@ -3338,7 +3340,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         pos += pushed;
                     }
                 }
-
             }
         }
     }

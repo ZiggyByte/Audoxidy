@@ -4728,7 +4728,11 @@ impl VuMeterWidget {
 
     /// Compute the effective widget height: extended when advanced features are active.
     fn effective_height(&self) -> f32 {
-        if self.show_numeric || self.phase_corr.abs() > 0.001 || self.crest_l.abs() > 0.001 || self.crest_r.abs() > 0.001 {
+        if self.show_numeric
+            || self.phase_corr.abs() > 0.001
+            || self.crest_l.abs() > 0.001
+            || self.crest_r.abs() > 0.001
+        {
             METER_HEIGHT_EXTENDED
         } else {
             METER_HEIGHT
@@ -4782,9 +4786,7 @@ impl VuMeterWidget {
     }
 }
 
-impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
-    for VuMeterWidget
-{
+impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeterWidget {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
             width: Length::Fixed(400.0),
@@ -4844,7 +4846,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         // ── Layout constants ──
         let left_margin = METER_LED_SIZE + 3.0 + 10.0;
         let numeric_available = self.show_numeric || self.ms_mode;
-        let right_margin = if numeric_available { METER_NUMERIC_WIDTH + 5.0 } else { 5.0 };
+        let right_margin = if numeric_available {
+            METER_NUMERIC_WIDTH + 5.0
+        } else {
+            5.0
+        };
         let bar_left = (bx + left_margin).round();
         let bar_width = (bw - left_margin - right_margin).max(1.0);
         let _bar_right = (bar_left + bar_width).round();
@@ -5094,7 +5100,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
             (corr_x, (center_x - corr_x).max(0.0))
         };
         if fill_width > 0.0 {
-            let corr_color = if self.phase_corr > 0.0 { ZONE_GREEN } else { ZONE_RED };
+            let corr_color = if self.phase_corr > 0.0 {
+                ZONE_GREEN
+            } else {
+                ZONE_RED
+            };
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: iced::Rectangle::new(
@@ -5155,11 +5165,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
         let crest_val = self.crest_l.max(self.crest_r);
         let crest_text = format!("Crest: {:.1} dB", crest_val);
         let crest_color = if crest_val > 10.0 {
-            ZONE_GREEN  // dynamic
+            ZONE_GREEN // dynamic
         } else if crest_val > 3.0 {
             ZONE_YELLOW // medium
         } else {
-            ZONE_RED    // compressed
+            ZONE_RED // compressed
         };
         renderer.fill_text(
             iced::advanced::text::Text {
@@ -5276,19 +5286,18 @@ pub fn meter_popup_view<'a>(
             .into()
     };
 
-    let subfunc_label =
-        |name: &'a str, enabled: bool| -> Element<'a, Message> {
-            let color = if enabled {
-                COLOR_TEXT_PRIMARY
-            } else {
-                COLOR_TEXT_SECONDARY
-            };
-            text(name)
-                .size(13)
-                .color(color)
-                .font(FONT_INTER_SANS_MEDIUM)
-                .into()
+    let subfunc_label = |name: &'a str, enabled: bool| -> Element<'a, Message> {
+        let color = if enabled {
+            COLOR_TEXT_PRIMARY
+        } else {
+            COLOR_TEXT_SECONDARY
         };
+        text(name)
+            .size(13)
+            .color(color)
+            .font(FONT_INTER_SANS_MEDIUM)
+            .into()
+    };
 
     let clickable_toggle = |label: Element<'a, Message>, msg: Message| -> Element<'a, Message> {
         mouse_area(label).on_press(msg).into()
@@ -5302,10 +5311,8 @@ pub fn meter_popup_view<'a>(
     .align_y(Alignment::Center);
 
     // Activar/desactivar medidor: toggle
-    let enabled_checkbox: Element<'a, Message> = StandardCheckbox::new(meter_enabled, |b| {
-        Message::MeterToggleEnabled(b)
-    })
-    .into();
+    let enabled_checkbox: Element<'a, Message> =
+        StandardCheckbox::new(meter_enabled, |b| Message::MeterToggleEnabled(b)).into();
     let enabled_row = row![
         enabled_checkbox,
         Space::new().width(Length::Fixed(5.0)),
@@ -5330,12 +5337,8 @@ pub fn meter_popup_view<'a>(
     )
     .on_selected_state_change(|_| Message::NoOp)
     .into();
-    let hold_row = row![
-        hold_label,
-        Space::new().width(Length::Fill),
-        hold_stepper,
-    ]
-    .align_y(Alignment::Center);
+    let hold_row = row![hold_label, Space::new().width(Length::Fill), hold_stepper,]
+        .align_y(Alignment::Center);
 
     // Ventana RMS: NumberStepper (50–1000 ms)
     let rms_label = text("Ventana RMS:")
@@ -5350,18 +5353,12 @@ pub fn meter_popup_view<'a>(
     )
     .on_selected_state_change(|_| Message::NoOp)
     .into();
-    let rms_row = row![
-        rms_label,
-        Space::new().width(Length::Fill),
-        rms_stepper,
-    ]
-    .align_y(Alignment::Center);
+    let rms_row =
+        row![rms_label, Space::new().width(Length::Fill), rms_stepper,].align_y(Alignment::Center);
 
     // Modo M/S: toggle (solo visual, computación en update_meter)
-    let ms_checkbox: Element<'a, Message> = StandardCheckbox::new(ms_mode, |b| {
-        Message::MeterMsModeToggle(b)
-    })
-    .into();
+    let ms_checkbox: Element<'a, Message> =
+        StandardCheckbox::new(ms_mode, |b| Message::MeterMsModeToggle(b)).into();
     let ms_row = row![
         ms_checkbox,
         Space::new().width(Length::Fixed(5.0)),
@@ -5374,10 +5371,8 @@ pub fn meter_popup_view<'a>(
     .align_y(Alignment::Center);
 
     // Hold infinito: toggle
-    let inf_checkbox: Element<'a, Message> = StandardCheckbox::new(infinite_hold, |b| {
-        Message::MeterInfiniteHoldToggle(b)
-    })
-    .into();
+    let inf_checkbox: Element<'a, Message> =
+        StandardCheckbox::new(infinite_hold, |b| Message::MeterInfiniteHoldToggle(b)).into();
     let inf_row = row![
         inf_checkbox,
         Space::new().width(Length::Fixed(5.0)),

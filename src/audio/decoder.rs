@@ -10,6 +10,7 @@ use rubato::{
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
+use std::sync::atomic::Ordering;
 use symphonia::core::audio::{AudioBuffer, Signal};
 use symphonia::core::codecs::{Decoder, DecoderOptions};
 use symphonia::core::formats::{FormatOptions, FormatReader};
@@ -267,7 +268,7 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
     }
 }
 
-use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap};
+use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap, LATENCY_PEAK_US};
 use std::time::Instant;
 
 // Volumen y Mezcla (Phase 03): Fade state machine (D-07-D-13)
@@ -2128,8 +2129,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 if let Some(producer) = producer_mutex.lock().as_mut() {
                     let _ = producer.push_slice(&output_accumulator_f32);
                 }
-                frames_since_metric +=
-                    (output_accumulator_f32.len() / out_channels.max(1)) as u64;
+                frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;
                 if frames_since_metric >= out_rate as u64 {
                     tracing::info!(
                         target: "audoxidy::metrics",
@@ -2522,7 +2522,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 rs.process_into_buffer(&input_adapter, &mut output_adapter, None)
                             {
                                 if tracing::enabled!(tracing::Level::TRACE) {
-                                    tracing::trace!("Resampled: {} -> {} frames", needed, out_frames);
+                                    tracing::trace!(
+                                        "Resampled: {} -> {} frames",
+                                        needed,
+                                        out_frames
+                                    );
                                 }
                                 AudioEngine::mix_channels_planar(
                                     &resample_output_pool,
@@ -3350,10 +3354,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             let occupied = producer.occupied_len();
                             let latency_us = (occupied / out_channels.max(1)) as u64 * 1_000_000
                                 / out_rate.max(1) as u64;
-                            crate::audio::engine::LATENCY_PEAK_US.fetch_max(
-                                latency_us,
-                                std::sync::atomic::Ordering::Relaxed,
-                            );
+                            LATENCY_PEAK_US.fetch_max(latency_us, Ordering::Relaxed);
                         }
                     }
 

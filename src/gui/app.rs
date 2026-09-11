@@ -409,6 +409,75 @@ fn gc_blocked_by_preload(
             .unwrap_or(false)
 }
 
+/// Salto fijo (segundos) que aplican los eventos `Seek` sin desplazamiento.
+/// `SeekBy` lleva su propio desplazamiento y no usa este valor.
+const SEEK_STEP_SECS: f64 = 10.0;
+
+/// Calcula el destino de una búsqueda relativa, acotado al rango válido.
+///
+/// Las posiciones llegan del servicio multimedia del sistema, por lo que son
+/// entrada no confiable: una entrada no finita se resuelve a `0.0`, y el
+/// resultado nunca sale de `[0, total]` (o de `[0, ∞)` si la duración aún no
+/// se conoce).
+fn seek_target(current: f64, delta: f64, total: f64) -> f64 {
+    let target = current + delta;
+    if !target.is_finite() {
+        return 0.0;
+    }
+    if total > 0.0 {
+        target.clamp(0.0, total)
+    } else {
+        target.max(0.0)
+    }
+}
+
+/// Acota el volumen recibido del sistema a `[0.0, 1.0]`.
+///
+/// Un valor no finito se resuelve a `0.0` para que nunca se propague al motor
+/// de audio ni al reflejo en el panel.
+fn clamp_volume(v: f64) -> f32 {
+    if !v.is_finite() {
+        return 0.0;
+    }
+    v.clamp(0.0, 1.0) as f32
+}
+
+/// Traduce un evento externo a su mensaje interno equivalente.
+///
+/// Reutiliza los mensajes existentes para que el comportamiento (mezcla
+/// cruzada, persistencia, recarga de carátulas) sea idéntico al de los
+/// controles propios de la aplicación.
+fn external_control_to_message(
+    event: ExternalControlEvent,
+    current_pos: f64,
+    total_duration: f64,
+    is_playing: bool,
+) -> Message {
+    match event {
+        ExternalControlEvent::Play => Message::SetPlaying(true),
+        ExternalControlEvent::Pause => Message::SetPlaying(false),
+        ExternalControlEvent::Toggle => Message::SetPlaying(!is_playing),
+        ExternalControlEvent::Stop => Message::Stop,
+        ExternalControlEvent::Next => Message::NextTrack,
+        ExternalControlEvent::Previous => Message::PreviousTrack,
+        ExternalControlEvent::SeekForward | ExternalControlEvent::SeekBackward => {
+            let delta = if matches!(event, ExternalControlEvent::SeekForward) {
+                SEEK_STEP_SECS
+            } else {
+                -SEEK_STEP_SECS
+            };
+            Message::SeekTo(seek_target(current_pos, delta, total_duration) as f32)
+        }
+        ExternalControlEvent::SeekRelative(delta) => {
+            Message::SeekTo(seek_target(current_pos, delta, total_duration) as f32)
+        }
+        ExternalControlEvent::SeekTo(target) => {
+            Message::SeekTo(seek_target(target, 0.0, total_duration) as f32)
+        }
+        ExternalControlEvent::SetVolume(volume) => Message::VolumeChanged(clamp_volume(volume)),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // VU Meter animation constants and helpers
 // ---------------------------------------------------------------------------
@@ -1951,18 +2020,21 @@ impl AudoxidyApp {
                 self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
-            Message::ExternalControl(event) => match event {
-                ExternalControlEvent::Play => self.update(Message::SetPlaying(true)),
-                ExternalControlEvent::Pause => self.update(Message::SetPlaying(false)),
-                ExternalControlEvent::Toggle => {
-                    let playing = self.audio_manager.is_playing();
-                    self.update(Message::SetPlaying(!playing))
+            Message::ExternalControl(event) => {
+                // El reflejo del volumen hacia el panel solo responde a un
+                // evento entrante de volumen (nunca desde `update`), para no
+                // realimentar el bucle.
+                if let ExternalControlEvent::SetVolume(volume) = event {
+                    self.media_controls.set_volume(clamp_volume(volume) as f64);
                 }
-                ExternalControlEvent::Stop => self.update(Message::Stop),
-                ExternalControlEvent::Next => self.update(Message::NextTrack),
-                ExternalControlEvent::Previous => self.update(Message::PreviousTrack),
-                _ => Task::none(),
-            },
+                let message = external_control_to_message(
+                    event,
+                    state.current_pos_sec,
+                    state.total_duration_sec,
+                    state.is_playing,
+                );
+                self.update(message)
+            }
             Message::ToggleRepeat => {
                 self.playlist_manager.repeat_mode = (self.playlist_manager.repeat_mode + 1) % 3;
                 self.persist_playlist_state();

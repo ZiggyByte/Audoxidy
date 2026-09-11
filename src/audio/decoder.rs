@@ -1245,7 +1245,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         }
 
         // === TRAZA DE CROSSFADE: log de inicio de iteración ===
-        if crossfade_active {
+        // El guard de nivel evita calcular timestamps y tomar el lock del productor
+        // cuando el nivel DEBUG está desactivado (era 2 locks por iteración).
+        if crossfade_active && tracing::enabled!(tracing::Level::DEBUG) {
             let now = std::time::Instant::now();
             let ms_since_start = crossfade_start_time
                 .map(|t| now.duration_since(t).as_millis())
@@ -1902,7 +1904,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
         if should_wait {
             // === TRAZA DE CROSSFADE: rama should_wait ===
-            if crossfade_trace_enabled {
+            if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                 let ringbuf_occ = engine
                     .buffer_producer
                     .lock()
@@ -2004,7 +2006,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     out_rate,
                     out_channels,
                 );
-                if crossfade_trace_enabled {
+                if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                     tracing::debug!(
                         "[XFADE_TRACE]   tail_decode_batch (should_wait): {} → {} samples (result={})",
                         before,
@@ -2081,7 +2083,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         };
 
         // === TRAZA DE CROSSFADE: decisión de rama ===
-        if crossfade_trace_enabled {
+        if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
             tracing::debug!(
                 "[XFADE_TRACE]   can_push={} process_preloaded={} → branch: {}",
                 can_push,
@@ -2165,7 +2167,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         continue; // Saltar paquetes corruptos en lugar de detener la canción
                     }
                 };
-                tracing::trace!("Packet next: ts={}, frames={}", packet.ts(), packet.dur());
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!("Packet next: ts={}, frames={}", packet.ts(), packet.dur());
+                }
 
                 if eof {
                     // Si hay una pista pre-cargada lista, promovemos sin purgar:
@@ -2517,7 +2521,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if let Ok(_) =
                                 rs.process_into_buffer(&input_adapter, &mut output_adapter, None)
                             {
-                                tracing::trace!("Resampled: {} -> {} frames", needed, out_frames);
+                                if tracing::enabled!(tracing::Level::TRACE) {
+                                    tracing::trace!("Resampled: {} -> {} frames", needed, out_frames);
+                                }
                                 AudioEngine::mix_channels_planar(
                                     &resample_output_pool,
                                     out_frames,
@@ -2622,7 +2628,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_output_pool,
                 );
             }
-            if crossfade_trace_enabled {
+            if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                 tracing::debug!(
                     "[XFADE_TRACE]   → IDLE branch: tail_buf={}/{} sleep={}ms",
                     tail_buffer.len(),
@@ -2733,10 +2739,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     crossfade_start_time = Some(std::time::Instant::now());
                     last_trace_time = crossfade_start_time;
                     trace_iteration = 0;
-                    tracing::debug!(
-                        "[XFADE_TRACE] Crossfade automático iniciado: {} ms",
-                        auto_ms
-                    );
+                    if tracing::enabled!(tracing::Level::DEBUG) {
+                        tracing::debug!(
+                            "[XFADE_TRACE] Crossfade automático iniciado: {} ms",
+                            auto_ms
+                        );
+                    }
                     continue; // Descartar el lote de la canción que sale.
                 }
             }
@@ -2811,7 +2819,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     let tail_after_mix = tail_buffer.len();
                     let tail_consumed = tail_before_mix.saturating_sub(tail_after_mix);
 
-                    if crossfade_trace_enabled {
+                    if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                         let peak = output_accumulator
                             .iter()
                             .map(|v| v.abs())
@@ -2832,7 +2840,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     crossfade_elapsed_sec += batch_dt_cf;
 
                     // Log del nivel del ringbuf después de la mezcla.
-                    if crossfade_trace_enabled {
+                    if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                         let rb_occ = engine
                             .buffer_producer
                             .lock()
@@ -2858,7 +2866,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     let window_done = crossfade_elapsed_sec >= crossfade_duration_sec;
                     let tail_naturally_done = tail_decoder.is_none() && tail_buffer.is_empty();
                     if window_done || tail_naturally_done {
-                        if crossfade_trace_enabled {
+                        if crossfade_trace_enabled && tracing::enabled!(tracing::Level::DEBUG) {
                             tracing::debug!(
                                 "[XFADE_TRACE]   CROSSFADE ENDED: window_done={}, tail_naturally_done={}",
                                 window_done,

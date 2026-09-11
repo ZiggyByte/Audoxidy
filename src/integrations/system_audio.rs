@@ -49,9 +49,9 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
             let _ = std::fs::remove_file(&file_path);
             return;
         }
-            if let Err(e) = std::fs::create_dir_all(&dir_path) {
-                tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
-            }
+        if let Err(e) = std::fs::create_dir_all(&dir_path) {
+            tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
+        }
 
         let mut content = String::new();
         content.push_str("context.properties = {\n");
@@ -96,9 +96,9 @@ pub fn persist_pulse_conf(rate: Option<u32>, quantum: Option<u32>) {
                 }
             }
         } else {
-        if let Err(e) = std::fs::create_dir_all(&dir_path) {
-            tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
-        }
+            if let Err(e) = std::fs::create_dir_all(&dir_path) {
+                tracing::warn!("No se pudo crear el directorio {}: {}", dir_path, e);
+            }
         }
 
         if rate.is_some() || quantum.is_some() {

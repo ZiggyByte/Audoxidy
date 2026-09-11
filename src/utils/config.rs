@@ -44,6 +44,7 @@ impl Default for ConfigProfile {
 /// Configuración completa de Audoxidy.
 /// Se serializa como archivo RON en `~/.config/audoxidy/config.ron`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AppConfig {
     // Metadatos del archivo
     pub config_version: u32,
@@ -81,6 +82,7 @@ impl Default for AppConfig {
 // ── Subconfiguraciones ────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct AudioConfig {
     /// Host de audio (ALSA, PipeWire, WASAPI, CoreAudio, etc.)
     pub host: Option<String>,
@@ -132,6 +134,12 @@ impl AudioConfig {
     }
 }
 
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self::for_profile(ConfigProfile::default())
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BitDepthConfig {
     Bits16,
@@ -140,6 +148,7 @@ pub enum BitDepthConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct UiConfig {
     /// Ancho de ventana
     pub window_width: f32,
@@ -178,7 +187,14 @@ impl UiConfig {
     }
 }
 
+impl Default for UiConfig {
+    fn default() -> Self {
+        Self::for_profile(ConfigProfile::default())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct LoggingConfig {
     /// Nivel global (trace, debug, info, warn, error)
     pub level: String,
@@ -202,6 +218,7 @@ impl Default for LoggingConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct BehaviorConfig {
     /// Intervalo de autoguardado de estado (segundos)
     pub auto_save_interval_secs: u64,
@@ -514,5 +531,42 @@ fn apply_profile(config: &AppConfig) {
         _ => {
             crate::utils::LOW_RESOURCE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
         }
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn test_missing_fields_use_defaults() {
+        // Omite `config_version` (campo de nivel superior) y `ui.theme`
+        // (campo anidado); ambos deben caer en sus valores por defecto.
+        let ron_text = r#"
+        (
+            profile: Default,
+            audio: (
+                safety_buffer_secs: 1.0,
+            ),
+            ui: (
+                window_width: 1024.0,
+                window_height: 720.0,
+            ),
+            logging: (
+                level: "info",
+                max_file_size_mb: 10,
+                max_history_files: 5,
+                directory: "logs",
+            ),
+            behavior: (
+                auto_save_interval_secs: 20,
+                prefetch_seconds_before_end: 30.0,
+            ),
+        )
+        "#;
+        let config: AppConfig = ron::from_str(ron_text)
+            .expect("los campos ausentes deben usar los valores por defecto");
+        assert_eq!(config.config_version, 1);
+        assert_eq!(config.ui.theme, "dark");
     }
 }

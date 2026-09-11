@@ -1,0 +1,28 @@
+(
+    config_version: 1,
+    profile: HighFidelity,
+    audio: (
+        host: Some("ALSA"),
+        device: Some("Built-in Audio Analog Stereo"),
+        sample_rate: Some(48000),
+        bit_depth: Some(Bits32Float),
+        channels: Some(2),
+        buffer_size: Some(512),
+        safety_buffer_secs: 2.0,
+    ),
+    ui: (
+        window_width: 1360.0,
+        window_height: 880.0,
+        theme: "dark",
+    ),
+    logging: (
+        level: "info",
+        max_file_size_mb: 10,
+        max_history_files: 5,
+        directory: "logs",
+    ),
+    behavior: (
+        auto_save_interval_secs: 20,
+        prefetch_seconds_before_end: 30.0,
+    ),
+)

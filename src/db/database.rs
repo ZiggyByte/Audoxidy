@@ -2669,6 +2669,110 @@ mod eq_preset_tests {
 }
 
 #[cfg(test)]
+mod fts_tests {
+    use super::*;
+
+    fn make_song(path: &str, title: &str, artist: &str) -> SongData {
+        SongData {
+            full_file_path: Arc::from(path.to_string().into_boxed_str()),
+            title: Some(Arc::from(title.to_string().into_boxed_str())),
+            artist: Some(Arc::from(artist.to_string().into_boxed_str())),
+            ..Default::default()
+        }
+    }
+
+    fn seed_song(db: &mut Database, path: &str, title: &str, artist: &str) {
+        let song = make_song(path, title, artist);
+        db.insert_song_full(&song, &SongMetadataExtended::default(), None, vec![], false)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_fts5_match_query_quotes_operators() {
+        assert_eq!(
+            fts5_match_query("foo OR bar").as_deref(),
+            Some("\"foo\" \"OR\" \"bar\" *")
+        );
+        assert_eq!(fts5_match_query("a:b").as_deref(), Some("\"a:b\" *"));
+        assert_eq!(fts5_match_query("\"").as_deref(), Some("\"\"\"\" *"));
+        assert_eq!(fts5_match_query(""), None);
+        assert_eq!(fts5_match_query("   "), None);
+    }
+
+    #[test]
+    fn test_search_songs_operator_input_never_errors() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(&mut db, "/music/op.flac", "Operator Test", "Artist");
+
+        let result = db.search_songs("* OR AND NOT NEAR { } ^ :");
+        assert!(result.is_ok(), "la entrada con operadores no debe fallar");
+    }
+
+    #[test]
+    fn test_search_songs_prefix_match() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(&mut db, "/music/another.flac", "Another Title", "Artist");
+
+        let results = db.search_songs("Ano").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title.as_deref(), Some("Another Title"));
+    }
+
+    #[test]
+    fn test_search_songs_empty_query() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(&mut db, "/music/empty.flac", "Empty Test", "Artist");
+
+        assert!(db.search_songs("").unwrap().is_empty());
+        assert!(db.search_songs("   ").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_filtered_search_operator_input_never_errors() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(&mut db, "/music/filtered.flac", "Filtered Test", "Artist");
+
+        let params = LibrarySearchParams {
+            query: Some("* OR { } :".into()),
+            ..Default::default()
+        };
+        assert!(db.get_library_songs_filtered(&params).is_ok());
+    }
+
+    #[test]
+    fn test_artist_groups_operator_input_never_errors() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(
+            &mut db,
+            "/music/artist.flac",
+            "Artist Group Test",
+            "Grouped Artist",
+        );
+
+        assert!(db.get_artist_groups_sql(Some("* NEAR :")).is_ok());
+    }
+
+    #[test]
+    fn test_playlist_like_search_untouched() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(
+            &mut db,
+            "/music/pl.flac",
+            "Playlist Song",
+            "Playlist Artist",
+        );
+
+        let playlist_id = db.create_playlist("Test Playlist", false).unwrap();
+        let song_id = db.get_all_songs().unwrap()[0].id;
+        db.add_song_to_playlist(playlist_id, song_id).unwrap();
+
+        // La búsqueda de playlists usa LIKE, no FTS5: los operadores son texto literal.
+        let results = db.search_playlist_songs(playlist_id, "* OR { } :").unwrap();
+        assert!(results.is_empty());
+    }
+}
+
+#[cfg(test)]
 mod cache_tests {
     use super::*;
 

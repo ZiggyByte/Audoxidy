@@ -30,9 +30,6 @@ const RAM_HARD_CAP_PERCENT: f64 = 75.0;
 /// inmediata aunque el sistema no esté al límite.
 const APP_RAM_MAX_MB: u64 = 500;
 
-/// Tamaño de página del sistema (Linux: 4096 bytes típicamente).
-const PAGE_SIZE_BYTES: u64 = 4096;
-
 /// Obtiene o inicializa la instancia global de `sysinfo::System`.
 fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
     SYSINFO.get_or_init(|| parking_lot::Mutex::new(sysinfo::System::new()))
@@ -107,7 +104,7 @@ impl MemoryManager {
     }
 
     /// Verifica si han pasado 120 segundos desde la última purga global.
-    /// Usa un intervalo fijo de 2 minutos (D-01), sin lógica adaptativa.
+    /// Usa un intervalo fijo de 2 minutos, sin lógica adaptativa.
     /// No se activa durante escaneos.
     pub fn should_run_global_purge(_ignored: u64, is_scanning: bool) -> bool {
         if is_scanning {
@@ -176,20 +173,23 @@ impl MemoryManager {
         }
     }
 
-    /// Devuelve la RAM física usada por este proceso en MB (Linux: /proc/self/statm).
+    /// Devuelve la RAM física usada por este proceso en MB.
+    ///
+    /// Lee el RSS vía `sysinfo` (multiplataforma: Linux, macOS y Windows), reutilizando
+    /// el `System` cacheado y refrescando únicamente el proceso actual. Sin `unwrap`:
+    /// si no se puede resolver el PID o el proceso, devuelve 0 para no romper el Tick.
     fn get_self_ram_mb() -> u64 {
-        #[cfg(target_os = "linux")]
-        {
-            use std::io::Read;
-            if let Ok(mut f) = std::fs::File::open("/proc/self/statm") {
-                let mut buf = String::new();
-                if f.read_to_string(&mut buf).is_ok() {
-                    // statm: size resident shared text lib data dt (páginas).
-                    if let Some(rss_pages) = buf.split_whitespace().nth(1) {
-                        if let Ok(pages) = rss_pages.parse::<u64>() {
-                            return (pages * PAGE_SIZE_BYTES) / (1024 * 1024);
-                        }
-                    }
+        if let Some(mut sys) = get_sysinfo().try_lock() {
+            if let Ok(pid) = sysinfo::get_current_pid() {
+                sys.refresh_processes_specifics(
+                    sysinfo::ProcessesToUpdate::Some(&[pid]),
+                    false,
+                    sysinfo::ProcessRefreshKind::nothing().with_memory(),
+                );
+                if let Some(process) = sys.process(pid) {
+                    // Process::memory() devuelve el RSS en bytes; se conserva la
+                    // semántica entera en MB que usan el tope de 500 MB y la métrica.
+                    return process.memory() / (1024 * 1024);
                 }
             }
         }
@@ -244,5 +244,15 @@ mod tests {
         assert_eq!(ram_purge_decision(true, 1_009, 1_000), None);
         assert_eq!(ram_purge_decision(true, 1_010, 1_000), Some(1_010));
         assert_eq!(ram_purge_decision(true, 1_011, 1_000), Some(1_011));
+    }
+
+    #[test]
+    fn self_rss_probe_returns_nonzero() {
+        // Ejercita la ruta real de `sysinfo` en la plataforma en la que corre el test;
+        // un proceso en ejecución siempre tiene RSS > 0 si el sondeo funciona.
+        assert!(
+            MemoryManager::get_self_ram_mb() > 0,
+            "el sondeo de RSS vía sysinfo devolvió 0"
+        );
     }
 }

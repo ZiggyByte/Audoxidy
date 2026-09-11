@@ -1,54 +1,90 @@
-use std::fmt;
+use thiserror::Error;
 
 /// Errores del motor de audio de Audoxidy.
 ///
 /// Abarca problemas de dispositivo, stream, configuración, decodificación y E/S.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum AudioError {
+    #[error("No audio device found")]
     NoDevice,
+    #[error("No hay una salida de audio activa para purgar")]
     NoActiveOutput,
+    #[error("Host no encontrado")]
     HostNotFound,
+    #[error("Dispositivo no encontrado")]
     DeviceNotFound,
+    #[error("Formato de muestra no soportado")]
     UnsupportedSampleFormat,
+    #[error("Config error: {0}")]
     ConfigError(String),
+    #[error("Stream error: {0}")]
     StreamError(String),
+    #[error("Device error: {0}")]
     DeviceError(String),
+    #[error("Decode error: {0}")]
     DecodeError(String),
-    IoError(std::io::Error),
+    /// Envuelve un fallo de E/S; `#[from]` genera `From<std::io::Error>` y expone la
+    /// causa subyacente a través de `source()`.
+    #[error("I/O error: {0}")]
+    IoError(#[from] std::io::Error),
 }
 
-/// Convierte un `std::io::Error` en `AudioError::IoError`.
-impl From<std::io::Error> for AudioError {
-    fn from(e: std::io::Error) -> Self {
-        AudioError::IoError(e)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::error::Error as _;
+
+    #[test]
+    fn display_messages_are_byte_identical() {
+        assert_eq!(AudioError::NoDevice.to_string(), "No audio device found");
+        assert_eq!(
+            AudioError::NoActiveOutput.to_string(),
+            "No hay una salida de audio activa para purgar"
+        );
+        assert_eq!(AudioError::HostNotFound.to_string(), "Host no encontrado");
+        assert_eq!(
+            AudioError::DeviceNotFound.to_string(),
+            "Dispositivo no encontrado"
+        );
+        assert_eq!(
+            AudioError::UnsupportedSampleFormat.to_string(),
+            "Formato de muestra no soportado"
+        );
+        assert_eq!(
+            AudioError::ConfigError("x".into()).to_string(),
+            "Config error: x"
+        );
+        assert_eq!(
+            AudioError::StreamError("x".into()).to_string(),
+            "Stream error: x"
+        );
+        assert_eq!(
+            AudioError::DeviceError("x".into()).to_string(),
+            "Device error: x"
+        );
+        assert_eq!(
+            AudioError::DecodeError("x".into()).to_string(),
+            "Decode error: x"
+        );
+        assert_eq!(
+            AudioError::IoError(std::io::Error::other("boom")).to_string(),
+            "I/O error: boom"
+        );
     }
-}
 
-impl fmt::Display for AudioError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            AudioError::NoDevice => write!(f, "No audio device found"),
-            AudioError::NoActiveOutput => {
-                write!(f, "No hay una salida de audio activa para purgar")
-            }
-            AudioError::HostNotFound => write!(f, "Host no encontrado"),
-            AudioError::DeviceNotFound => write!(f, "Dispositivo no encontrado"),
-            AudioError::UnsupportedSampleFormat => write!(f, "Formato de muestra no soportado"),
-            AudioError::ConfigError(msg) => write!(f, "Config error: {msg}"),
-            AudioError::StreamError(msg) => write!(f, "Stream error: {msg}"),
-            AudioError::DeviceError(msg) => write!(f, "Device error: {msg}"),
-            AudioError::DecodeError(msg) => write!(f, "Decode error: {msg}"),
-            AudioError::IoError(e) => write!(f, "I/O error: {e}"),
-        }
+    #[test]
+    fn source_is_present_only_for_io_error() {
+        assert!(
+            AudioError::IoError(std::io::Error::other("boom"))
+                .source()
+                .is_some()
+        );
+        assert!(AudioError::NoDevice.source().is_none());
     }
-}
 
-/// Implementación del trait `Error` para compatibilidad con la biblioteca estándar.
-impl std::error::Error for AudioError {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            AudioError::IoError(e) => Some(e),
-            _ => None,
-        }
+    #[test]
+    fn from_io_error_converts() {
+        let e: AudioError = std::io::Error::other("x").into();
+        assert!(matches!(e, AudioError::IoError(_)));
     }
 }

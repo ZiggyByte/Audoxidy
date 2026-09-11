@@ -5,7 +5,7 @@ pub use crate::audio::device_manager::{AudioDeviceInfo, AudioSettings, BitDepth,
 use crate::audio::dsp::DspChain;
 use crate::audio::meter;
 use cpal::traits::DeviceTrait;
-use crossbeam::channel::{Sender, unbounded};
+use crossbeam::channel::{Sender, TrySendError, bounded};
 use parking_lot::{Mutex, RwLock};
 use ringbuf::wrap::caching::Caching;
 use ringbuf::{
@@ -25,6 +25,16 @@ pub static UNDERRUNS: AtomicU64 = AtomicU64::new(0);
 /// Fuente compartida que una ruta no real-time lee para emitir la métrica
 /// correspondiente; el callback nunca escribe trazas.
 pub static LATENCY_PEAK_US: AtomicU64 = AtomicU64::new(0);
+
+/// Capacidad del canal de comandos hacia el hilo de decodificación.
+///
+/// Solo los comandos de control ocupan espacio en la cola: `Seek` se coalesce
+/// en un slot atómico y `PreloadNext` es best-effort.
+const AUDIO_COMMAND_CAPACITY: usize = 64;
+/// Centinela del slot de `Seek`: indica que no hay búsqueda pendiente.
+///
+/// Las posiciones reales siempre son finitas, así que `u64::MAX` no colisiona.
+const NO_SEEK: u64 = u64::MAX;
 
 // Define aliases based on ringbuf 0.4 structure
 /// Productor de anillo circular para audio, con caché habilitada.
@@ -72,8 +82,53 @@ pub enum AudioCommand {
     ClearPreload,
     /// Dispara un crossfade manual con la duración en milisegundos especificada.
     CrossfadeNext(f64),
+    /// Búsqueda de posición (segundos). El slot atómico compartido es el
+    /// autoritativo y este variante ya no se encola; se usa para reutilizar el
+    /// handler del decoder.
     Seek(f64),
     Stop,
+}
+
+/// Envía un comando de control al hilo de decodificación sin perderlo.
+///
+/// Intenta el envío no bloqueante y, si la cola está llena, recurre al envío
+/// bloqueante. El decoder drena en cada iteración, así que con la capacidad
+/// acotada la espera es breve; los comandos de control nunca se descartan.
+fn send_control(tx: &Sender<AudioCommand>, cmd: AudioCommand) {
+    match tx.try_send(cmd) {
+        Ok(()) => {}
+        Err(TrySendError::Full(cmd)) => {
+            if let Err(e) = tx.send(cmd) {
+                tracing::warn!("command channel disconnected: {e}");
+            }
+        }
+        Err(TrySendError::Disconnected(_)) => {
+            tracing::warn!("command channel disconnected; command dropped");
+        }
+    }
+}
+
+/// Encola una pre-carga best-effort: si la cola está llena se descarta.
+///
+/// El decoder ya reemplaza una pre-carga pendiente por la más reciente, así que
+/// perderla solo degrada a una transición sin crossfade.
+fn send_preload(tx: &Sender<AudioCommand>, cmd: AudioCommand) {
+    if let Err(TrySendError::Full(_)) = tx.try_send(cmd) {
+        tracing::debug!("preload command dropped (queue full; preload is best-effort)");
+    }
+}
+
+/// Guarda la posición de búsqueda más reciente, ignorando valores no finitos.
+fn store_latest_seek(slot: &AtomicU64, pos: f64) {
+    if pos.is_finite() {
+        slot.store(pos.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// Toma la búsqueda pendiente más reciente y limpia el slot.
+fn take_latest_seek(slot: &AtomicU64) -> Option<f64> {
+    let bits = slot.swap(NO_SEEK, Ordering::Relaxed);
+    (bits != NO_SEEK).then(|| f64::from_bits(bits))
 }
 
 /// Motor de audio principal de Audoxidy.
@@ -99,6 +154,12 @@ pub struct AudioEngine {
     /// Espeja `AudioState::is_playing`; el callback solo lee este atómico para
     /// no bloquearse en un `RwLock` desde el hilo real-time.
     pub is_playing_published: Arc<AtomicBool>,
+    /// Posición de búsqueda pendiente compartida con el hilo de decodificación.
+    ///
+    /// Guarda los bits de un `f64` (centinela `NO_SEEK`); el decoder la drena
+    /// con `swap`, de modo que la búsqueda más reciente siempre gana y no
+    /// consume capacidad del canal.
+    latest_seek: Arc<AtomicU64>,
     // Decodificador inyectable para pruebas (None = usar SymphoniaDecoder por defecto)
     pub custom_decoder: Arc<Mutex<Option<Box<dyn AudioDecoder>>>>,
 }
@@ -140,7 +201,7 @@ pub struct AudioState {
     /// Activar/desactivar ganancia de álbum (independiente)
     pub replay_gain_album_enabled: bool,
 
-    // Volumen y Mezcla — Fades (D-07 master, D-09, D-10)
+    // Volumen y Mezcla — Fades
     pub fades_enabled: bool, // default: false — group master "Cambio de Volumen"
     pub smooth_volume_enabled: bool, // default: false — individual "Suavizar el cambio de volumen"
     pub fade_in_ms: f32,     // default: 1000.0 (range 0–10000, paso 50)
@@ -260,7 +321,7 @@ impl AudioEngine {
     /// Si se proporciona `decoder`, se usará en lugar del SymphoniaDecoder por defecto
     /// (útil para inyección de dependencias en pruebas).
     pub fn new_with_decoder(decoder: Option<Box<dyn AudioDecoder>>) -> Result<Self, AudioError> {
-        let (command_tx, command_rx) = unbounded::<AudioCommand>();
+        let (command_tx, command_rx) = bounded::<AudioCommand>(AUDIO_COMMAND_CAPACITY);
 
         // Aumentado significativamente para evitar underruns a 384kHz 7.1ch (~2 segundos de audio)
         // Modo low-resource: reduce a ~0.5 segundos (~2 MiB máx)
@@ -288,6 +349,7 @@ impl AudioEngine {
             meter: meter.clone(),
             buffer_size_published: Arc::new(AtomicU32::new(0)),
             is_playing_published: Arc::new(AtomicBool::new(false)),
+            latest_seek: Arc::new(AtomicU64::new(NO_SEEK)),
             custom_decoder: Arc::new(Mutex::new(decoder)),
         };
 
@@ -765,13 +827,16 @@ impl AudioEngine {
         track_gain: Option<f64>,
         album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
-        let _ = self.command_tx.send(AudioCommand::Load {
-            path: path.to_string(),
-            title,
-            artist,
-            track_gain,
-            album_gain,
-        });
+        send_control(
+            &self.command_tx,
+            AudioCommand::Load {
+                path: path.to_string(),
+                title,
+                artist,
+                track_gain,
+                album_gain,
+            },
+        );
         Ok(())
     }
 
@@ -786,19 +851,22 @@ impl AudioEngine {
         track_gain: Option<f64>,
         album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
-        let _ = self.command_tx.send(AudioCommand::PreloadNext {
-            path: path.to_string(),
-            title,
-            artist,
-            track_gain,
-            album_gain,
-        });
+        send_preload(
+            &self.command_tx,
+            AudioCommand::PreloadNext {
+                path: path.to_string(),
+                title,
+                artist,
+                track_gain,
+                album_gain,
+            },
+        );
         Ok(())
     }
 
     /// Descarta el estado de pre-carga actual en el hilo decodificador.
     pub fn clear_preload(&self) -> Result<(), AudioError> {
-        let _ = self.command_tx.send(AudioCommand::ClearPreload);
+        send_control(&self.command_tx, AudioCommand::ClearPreload);
         Ok(())
     }
 
@@ -806,13 +874,13 @@ impl AudioEngine {
     /// (a diferencia de `purge_buffers`, que reinicia el stream): descarta el buffer
     /// de pre-decode y el pendiente. La GUI la vuelve a disparar a ~15s del final.
     pub fn purge_preload(&self) -> Result<(), AudioError> {
-        let _ = self.command_tx.send(AudioCommand::ClearPreload);
+        send_control(&self.command_tx, AudioCommand::ClearPreload);
         Ok(())
     }
 
     /// Dispara un crossfade manual con la duración especificada en milisegundos.
     pub fn crossfade_next(&self, ms: f64) -> Result<(), AudioError> {
-        let _ = self.command_tx.send(AudioCommand::CrossfadeNext(ms));
+        send_control(&self.command_tx, AudioCommand::CrossfadeNext(ms));
         Ok(())
     }
 
@@ -1097,15 +1165,21 @@ impl AudioEngine {
 
     /// Busca a una posición específica en segundos.
     ///
-    /// Envía un comando `AudioCommand::Seek` al hilo de decodificación.
+    /// Publica la posición en el slot atómico compartido; el hilo de
+    /// decodificación lo drena en su siguiente iteración y aplica siempre la
+    /// búsqueda más reciente.
     pub fn seek(&self, pos: f64) {
-        let _ = self.command_tx.send(AudioCommand::Seek(pos));
+        store_latest_seek(&self.latest_seek, pos);
+    }
+    /// Toma la búsqueda pendiente más reciente para el hilo de decodificación.
+    pub(crate) fn take_pending_seek(&self) -> Option<f64> {
+        take_latest_seek(&self.latest_seek)
     }
     /// Detiene la reproducción y resetea el estado.
     ///
     /// Envía un comando `AudioCommand::Stop` y marca `is_playing = false`.
     pub fn stop(&self) {
-        let _ = self.command_tx.send(AudioCommand::Stop);
+        send_control(&self.command_tx, AudioCommand::Stop);
         self.set_playing(false);
     }
     /// Establece el estado de reproducción (pausa/reanudación).
@@ -1185,5 +1259,49 @@ mod tests {
         assert!(out.iter().all(|s| *s == 0.0));
         let guard = consumer_mutex.lock();
         assert_eq!(guard.as_ref().unwrap().occupied_len(), samples.len());
+    }
+
+    /// Un comando de control nunca se pierde: con la cola llena el envío
+    /// bloqueante espera a que el receptor libere espacio y luego lo entrega.
+    #[test]
+    fn control_command_survives_full_channel() {
+        let (tx, rx) = bounded::<AudioCommand>(1);
+        assert!(tx.try_send(AudioCommand::ClearPreload).is_ok());
+
+        let tx_control = tx.clone();
+        let sender = std::thread::spawn(move || {
+            send_control(&tx_control, AudioCommand::Stop);
+        });
+
+        // Liberar un hueco desbloquea el envío de control.
+        assert!(matches!(rx.recv(), Ok(AudioCommand::ClearPreload)));
+        assert!(matches!(rx.recv(), Ok(AudioCommand::Stop)));
+        sender.join().expect("control sender thread panicked");
+    }
+
+    /// Una pre-carga es best-effort: con la cola llena se descarta sin bloquear.
+    #[test]
+    fn preload_command_dropped_when_full() {
+        let (tx, rx) = bounded::<AudioCommand>(1);
+        assert!(tx.try_send(AudioCommand::ClearPreload).is_ok());
+
+        send_preload(&tx, AudioCommand::CrossfadeNext(5.0));
+
+        assert!(matches!(rx.try_recv(), Ok(AudioCommand::ClearPreload)));
+        assert!(rx.try_recv().is_err());
+    }
+
+    /// El slot de búsqueda guarda solo la posición más reciente y se limpia al tomarla.
+    #[test]
+    fn latest_seek_wins_and_clears() {
+        let slot = AtomicU64::new(NO_SEEK);
+        store_latest_seek(&slot, 1.0);
+        store_latest_seek(&slot, 2.0);
+        assert_eq!(take_latest_seek(&slot), Some(2.0));
+        assert_eq!(take_latest_seek(&slot), None);
+
+        store_latest_seek(&slot, f64::NAN);
+        store_latest_seek(&slot, f64::INFINITY);
+        assert_eq!(take_latest_seek(&slot), None);
     }
 }

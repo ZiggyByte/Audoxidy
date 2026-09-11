@@ -1935,7 +1935,10 @@ impl AudoxidyApp {
                 } else {
                     self.playlist_manager.deactivate_shuffle();
                     if let Ok(db) = self.database.lock() {
-                        let _ = db.clear_shuffle_session(self.playlist_manager.active_playlist_id);
+                        log_persist(
+                            "shuffle_session",
+                            db.clear_shuffle_session(self.playlist_manager.active_playlist_id),
+                        );
                     }
                 }
                 self.persist_playlist_state();
@@ -1947,7 +1950,15 @@ impl AudoxidyApp {
                 return Task::perform(
                     async move {
                         if let Ok(db) = db_arc.lock() {
-                            let _ = db.add_song_to_playlist(active_id, song.id);
+                            if let Err(e) = db.add_song_to_playlist(active_id, song.id) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = active_id,
+                                    song_id = song.id,
+                                    error = %e,
+                                    "No se pudo añadir la canción a la playlist"
+                                );
+                            }
                         }
                         active_id
                     },
@@ -1961,7 +1972,15 @@ impl AudoxidyApp {
                 return Task::perform(
                     async move {
                         if let Ok(mut db) = db_arc.lock() {
-                            let _ = db.add_songs_to_playlist(active_id, &song_ids);
+                            if let Err(e) = db.add_songs_to_playlist(active_id, &song_ids) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = active_id,
+                                    count = song_ids.len(),
+                                    error = %e,
+                                    "No se pudieron añadir las canciones a la playlist"
+                                );
+                            }
                         }
                         active_id
                     },
@@ -1994,7 +2013,14 @@ impl AudoxidyApp {
             Message::ClearPlaylist => {
                 self.focus = AppFocus::Playlist;
                 if let Ok(db) = self.database.lock() {
-                    let _ = db.clear_playlist(self.playlist_manager.active_playlist_id);
+                    if let Err(e) = db.clear_playlist(self.playlist_manager.active_playlist_id) {
+                        tracing::warn!(
+                            target: "audoxidy::persistence",
+                            playlist_id = self.playlist_manager.active_playlist_id,
+                            error = %e,
+                            "No se pudo vaciar la playlist"
+                        );
+                    }
                     self.playlist_manager.clear_groups();
                     self.playlist_manager.playing_song_idx = None;
                     self.audio_manager.stop();
@@ -2022,16 +2048,32 @@ impl AudoxidyApp {
                 if let Ok(db) = self.database.lock() {
                     if let Some(song_id) = song_id_to_update {
                         if let Some(state) = force_state {
-                            let _ = db.set_song_enabled_in_playlist(
+                            if let Err(e) = db.set_song_enabled_in_playlist(
                                 self.playlist_manager.active_playlist_id,
                                 song_id,
                                 state,
-                            );
+                            ) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = self.playlist_manager.active_playlist_id,
+                                    song_id,
+                                    error = %e,
+                                    "No se pudo actualizar el estado de la canción en la playlist"
+                                );
+                            }
                         } else {
-                            let _ = db.toggle_song_enabled_in_playlist(
+                            if let Err(e) = db.toggle_song_enabled_in_playlist(
                                 self.playlist_manager.active_playlist_id,
                                 song_id,
-                            );
+                            ) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = self.playlist_manager.active_playlist_id,
+                                    song_id,
+                                    error = %e,
+                                    "No se pudo alternar el estado de la canción en la playlist"
+                                );
+                            }
                         }
                     }
                 }
@@ -2063,16 +2105,32 @@ impl AudoxidyApp {
                 if let Some(path) = folder_to_update {
                     if let Ok(db) = self.database.lock() {
                         if let Some(state) = force_state {
-                            let _ = db.set_folder_enabled_in_playlist(
+                            if let Err(e) = db.set_folder_enabled_in_playlist(
                                 self.playlist_manager.active_playlist_id,
                                 &path,
                                 state,
-                            );
+                            ) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = self.playlist_manager.active_playlist_id,
+                                    path = %path,
+                                    error = %e,
+                                    "No se pudo actualizar el estado del folder en la playlist"
+                                );
+                            }
                         } else {
-                            let _ = db.toggle_folder_enabled_in_playlist(
+                            if let Err(e) = db.toggle_folder_enabled_in_playlist(
                                 self.playlist_manager.active_playlist_id,
                                 &path,
-                            );
+                            ) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = self.playlist_manager.active_playlist_id,
+                                    path = %path,
+                                    error = %e,
+                                    "No se pudo alternar el estado del folder en la playlist"
+                                );
+                            }
                         }
                     }
                 }
@@ -2189,8 +2247,17 @@ impl AudoxidyApp {
                                     if let Ok(new_id) = db_lock.create_playlist(&final_name, false)
                                     {
                                         if !target_songs.is_empty() {
-                                            let _ = db_lock
-                                                .add_songs_to_playlist(new_id, &target_songs);
+                                            if let Err(e) =
+                                                db_lock.add_songs_to_playlist(new_id, &target_songs)
+                                            {
+                                                tracing::warn!(
+                                                    target: "audoxidy::persistence",
+                                                    playlist_id = new_id,
+                                                    count = target_songs.len(),
+                                                    error = %e,
+                                                    "No se pudieron añadir las canciones a la nueva playlist"
+                                                );
+                                            }
                                         }
                                         return Some(new_id);
                                     }
@@ -2222,8 +2289,17 @@ impl AudoxidyApp {
                                                 if let Ok(all_songs) =
                                                     db_lock.get_playlist_all_song_ids(source_id)
                                                 {
-                                                    let _ = db_lock
-                                                        .add_songs_to_playlist(new_id, &all_songs);
+                                                    if let Err(e) = db_lock
+                                                        .add_songs_to_playlist(new_id, &all_songs)
+                                                    {
+                                                        tracing::warn!(
+                                                            target: "audoxidy::persistence",
+                                                            playlist_id = new_id,
+                                                            count = all_songs.len(),
+                                                            error = %e,
+                                                            "No se pudieron copiar las canciones a la nueva playlist"
+                                                        );
+                                                    }
                                                 }
                                                 return Some(new_id);
                                             }
@@ -2421,8 +2497,21 @@ impl AudoxidyApp {
                                     base_target_path.join(&artist_dir).join(&album_dir);
                                 let full_target_path = full_target_dir.join(song_file.as_ref());
 
-                                let _ = std::fs::create_dir_all(&full_target_dir);
-                                let _ = std::fs::copy(&*song.file_path, &full_target_path);
+                                if let Err(e) = std::fs::create_dir_all(&full_target_dir) {
+                                    tracing::warn!(
+                                        "No se pudo crear el directorio {:?}: {}",
+                                        full_target_dir,
+                                        e
+                                    );
+                                }
+                                if let Err(e) = std::fs::copy(&*song.file_path, &full_target_path) {
+                                    tracing::warn!(
+                                        "No se pudo copiar {:?} a {:?}: {}",
+                                        song.file_path,
+                                        full_target_path,
+                                        e
+                                    );
+                                }
                                 relative_path
                             } else {
                                 song.file_path.to_string()
@@ -3775,10 +3864,35 @@ impl AudoxidyApp {
                         covers_to_check.dedup();
 
                         if let Ok(db) = db_arc.lock() {
-                            let _ = db.begin_transaction();
-                            let _ = db.batch_delete_songs(&ids_to_delete);
-                            let _ = db.cleanup_empty_metadata();
-                            let _ = db.commit_transaction();
+                            if let Err(e) = db.begin_transaction() {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    error = %e,
+                                    "No se pudo iniciar la transacción de borrado de canciones"
+                                );
+                            }
+                            if let Err(e) = db.batch_delete_songs(&ids_to_delete) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    count = ids_to_delete.len(),
+                                    error = %e,
+                                    "No se pudieron borrar las canciones en lote"
+                                );
+                            }
+                            if let Err(e) = db.cleanup_empty_metadata() {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    error = %e,
+                                    "No se pudieron limpiar los metadatos vacíos"
+                                );
+                            }
+                            if let Err(e) = db.commit_transaction() {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    error = %e,
+                                    "No se pudo confirmar la transacción de borrado de canciones"
+                                );
+                            }
 
                             for hash in covers_to_check {
                                 if let Ok(false) = db.is_cover_hash_in_use(&hash) {
@@ -3907,10 +4021,18 @@ impl AudoxidyApp {
                         Task::perform(
                             async move {
                                 if let Ok(mut db) = db_arc.lock() {
-                                    let _ = db.batch_remove_songs_from_playlist(
+                                    if let Err(e) = db.batch_remove_songs_from_playlist(
                                         active_playlist_id,
                                         &target_songs,
-                                    );
+                                    ) {
+                                        tracing::warn!(
+                                            target: "audoxidy::persistence",
+                                            playlist_id = active_playlist_id,
+                                            count = target_songs.len(),
+                                            error = %e,
+                                            "No se pudieron quitar las canciones de la playlist"
+                                        );
+                                    }
                                 }
                                 Some(active_playlist_id)
                             },
@@ -4083,7 +4205,17 @@ impl AudoxidyApp {
                     return Task::perform(
                         async move {
                             if let Ok(mut db) = db_arc.lock() {
-                                let _ = db.add_songs_to_playlist(target_playlist_id, &target_songs);
+                                if let Err(e) =
+                                    db.add_songs_to_playlist(target_playlist_id, &target_songs)
+                                {
+                                    tracing::warn!(
+                                        target: "audoxidy::persistence",
+                                        playlist_id = target_playlist_id,
+                                        count = target_songs.len(),
+                                        error = %e,
+                                        "No se pudieron añadir las canciones a la playlist"
+                                    );
+                                }
                             }
                         },
                         |_| Message::NoOp,
@@ -5144,7 +5276,7 @@ impl AudoxidyApp {
         };
 
         if let Ok(db) = self.database.lock() {
-            let _ = db.update_playlist_persistence(
+            if let Err(e) = db.update_playlist_persistence(
                 playlist_id,
                 last_song_id,
                 pos,
@@ -5153,7 +5285,14 @@ impl AudoxidyApp {
                 repeat,
                 s_pos,
                 s_id,
-            );
+            ) {
+                tracing::warn!(
+                    target: "audoxidy::persistence",
+                    playlist_id,
+                    error = %e,
+                    "No se pudo guardar el estado de reproducción de la playlist"
+                );
+            }
         }
     }
 

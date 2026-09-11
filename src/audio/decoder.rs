@@ -1222,16 +1222,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut tail_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     let mut tail_buffer_cap: usize = 0;
 
-    // bumpalo arena para asignaciones temporales por ciclo.
-    // Se resetea completo al inicio de cada iteración, liberando toda la memoria
-    // sin necesidad de drop individual. Ideal para pequeños Vecs temporales.
-    let mut arena = bumpalo::Bump::new();
-
     loop {
-        // Resetear arena bumpalo: todas las asignaciones temporales del ciclo anterior
-        // se liberan en O(1) — sin recorrer cada Vec individualmente.
-        arena.reset();
-
         // Limpieza TOTAL por ciclo para evitar que datos fantasmas (basura residual) se queden en el acumulador.
         // Esto erradica los pitidos y zumbidos al cambiar de canción o al procesar OGG irregulares.
         output_accumulator.clear();

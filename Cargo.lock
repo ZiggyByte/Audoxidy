@@ -430,7 +430,6 @@ dependencies = [
  "audioadapter-buffers",
  "audioadapter-sample",
  "base64",
- "bumpalo",
  "color-thief",
  "cpal",
  "criterion",

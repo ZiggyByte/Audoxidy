@@ -565,10 +565,8 @@ impl AudoxidyApp {
             .store(low_resource_mode, std::sync::atomic::Ordering::Relaxed);
 
         if low_resource_mode {
-            println!(
-                "Audoxidy Performance: Low resource mode ENABLED (RAM: {}GB, Cores: {})",
-                total_ram_gb, cpu_cores
-            );
+            #[rustfmt::skip]
+            tracing::info!("Audoxidy Performance: Low resource mode ENABLED (RAM: {}GB, Cores: {})", total_ram_gb, cpu_cores);
         }
 
         // Construir el índice de filtros con las canciones ya cargadas
@@ -1544,7 +1542,7 @@ impl AudoxidyApp {
 
                 // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente
                 if crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap() {
-                    println!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
+                    tracing::debug!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
                     return Task::done(Message::GlobalMemoryPurge);
                 }
 
@@ -1604,7 +1602,7 @@ impl AudoxidyApp {
                     // Liberar memoria 40s después del escaneo
                     if now.saturating_sub(finished_at) >= 40 {
                         self.scan_finished_at = None;
-                        println!("Audoxidy GC: Scan complete, clearing memory");
+                        tracing::debug!("Audoxidy GC: Scan complete, clearing memory");
                         crate::utils::covers::purge_old_covers(32); // Vaciar caché de covers generado por escáner
 
                         // Reiniciar el temporizador global para que no haga otra purga en 2 mins
@@ -1617,7 +1615,7 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::GlobalMemoryPurge => {
-                println!("Audoxidy GC: Purging Memory (Ghost Mode)");
+                tracing::debug!("Audoxidy GC: Purging Memory (Ghost Mode)");
 
                 // 1. Unload de recursos pesados con márgenes de seguridad
                 let is_library_focused = self.focus == AppFocus::Library;
@@ -1774,7 +1772,7 @@ impl AudoxidyApp {
 
                 // Si acabamos de pausar (no está reproduciendo), purgamos buffers para liberar RAM
                 if !self.audio_manager.is_playing() {
-                    println!("Audoxidy Audio: Cleaning Buffers on Pause (Memory Recovery).");
+                    tracing::debug!("Audoxidy Audio: Cleaning Buffers on Pause (Memory Recovery).");
                     let _ = self.audio_manager.purge_buffers();
                 }
 
@@ -3611,7 +3609,7 @@ impl AudoxidyApp {
                         }
                     }
                 }
-                println!(
+                tracing::debug!(
                     "Audoxidy Debug: PlaylistShowInLibrary path_opt: {:?}",
                     path_opt
                 );
@@ -6139,7 +6137,7 @@ impl AudoxidyApp {
     }
 
     fn handle_library_reveal(&mut self, path_opt: Option<String>) -> Task<Message> {
-        println!(
+        tracing::debug!(
             "Audoxidy Debug: handle_library_reveal path_opt: {:?}",
             path_opt
         );
@@ -6150,7 +6148,7 @@ impl AudoxidyApp {
                     .find(|s| s.full_file_path.as_ref() == path)
                     .cloned()
                 {
-                    println!("Audoxidy Debug: lib_song found in cached_all_songs");
+                    tracing::debug!("Audoxidy Debug: lib_song found in cached_all_songs");
                     self.focus = crate::gui::app::AppFocus::Library;
 
                     // 1. Determinar si la canción es visible actualmente en la lista procesada
@@ -6161,7 +6159,7 @@ impl AudoxidyApp {
                         .map(|songs| songs.iter().any(|s| s.full_file_path.as_ref() == path))
                         .unwrap_or(false); // Si no hay filtered_songs, NO es visible (lista vacía)
 
-                    println!("Audoxidy Debug: is_visible: {}", is_visible);
+                    tracing::debug!("Audoxidy Debug: is_visible: {}", is_visible);
 
                     if !is_visible {
                         // Si no es visible, limpiamos todo y disparamos una recarga asíncrona.

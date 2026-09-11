@@ -3,7 +3,7 @@
 // Ejecutar: cargo bench --bench engine_bench
 
 use audoxidy::audio::engine::{AudioEngine, AudioState, ChannelMap};
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 fn bench_mix_channels_planar_stereo(c: &mut Criterion) {
@@ -17,7 +17,10 @@ fn bench_mix_channels_planar_stereo(c: &mut Criterion) {
         ..Default::default()
     };
 
-    c.bench_function("mix_stereo_to_stereo_512frames", |b| {
+    // Elemento = una muestra de salida (frames * canales de salida) por iteración.
+    let mut group = c.benchmark_group("mix_planar");
+    group.throughput(Throughput::Elements((frames * out_ch) as u64));
+    group.bench_function("stereo_to_stereo_512frames", |b| {
         b.iter(|| {
             let mut out = Vec::with_capacity(frames * out_ch);
             AudioEngine::mix_channels_planar(
@@ -31,6 +34,7 @@ fn bench_mix_channels_planar_stereo(c: &mut Criterion) {
             );
         });
     });
+    group.finish();
 }
 
 fn bench_mix_channels_planar_51_to_stereo(c: &mut Criterion) {
@@ -55,7 +59,10 @@ fn bench_mix_channels_planar_51_to_stereo(c: &mut Criterion) {
         ..Default::default()
     };
 
-    c.bench_function("mix_51_to_stereo_512frames", |b| {
+    // Elemento = una muestra de salida (frames * canales de salida) por iteración.
+    let mut group = c.benchmark_group("mix_planar");
+    group.throughput(Throughput::Elements((frames * out_ch) as u64));
+    group.bench_function("51_to_stereo_512frames", |b| {
         b.iter(|| {
             let mut out = Vec::with_capacity(frames * out_ch);
             AudioEngine::mix_channels_planar(
@@ -69,6 +76,7 @@ fn bench_mix_channels_planar_51_to_stereo(c: &mut Criterion) {
             );
         });
     });
+    group.finish();
 }
 
 fn bench_channel_map_construction(c: &mut Criterion) {
@@ -94,13 +102,17 @@ fn bench_channel_map_construction(c: &mut Criterion) {
             | Channels::SIDE_RIGHT,
     ];
 
-    c.bench_function("channel_map_construction_4configs", |b| {
+    // Elemento = una configuración de canales mapeada por iteración.
+    let mut group = c.benchmark_group("channel_map_construction");
+    group.throughput(Throughput::Elements(4));
+    group.bench_function("4configs", |b| {
         b.iter(|| {
             for cfg in &configs {
                 let _ = AudioEngine::get_channel_map(*cfg);
             }
         });
     });
+    group.finish();
 }
 
 fn bench_audio_state_read(c: &mut Criterion) {

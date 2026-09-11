@@ -3,7 +3,7 @@
 // Ejecutar: cargo bench --bench dsp_bench
 
 use audoxidy::audio::dsp::*;
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use std::hint::black_box;
 
 fn bench_dsp_chain_full(c: &mut Criterion) {
@@ -19,11 +19,15 @@ fn bench_dsp_chain_full(c: &mut Criterion) {
     // Frame 5.1 (6 canales) para medir carga real
     let mut frame = [0.5f64, -0.3f64, 0.1f64, -0.7f64, 0.2f64, 0.0f64];
 
-    c.bench_function("dsp_chain_51_full", |b| {
+    // Elemento = una muestra del frame (6 canales) procesada por iteración.
+    let mut group = c.benchmark_group("dsp_chain_51_full");
+    group.throughput(Throughput::Elements(6));
+    group.bench_function("full", |b| {
         b.iter(|| {
             chain.process_frame(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 fn bench_dsp_chain_disabled(c: &mut Criterion) {
@@ -32,11 +36,15 @@ fn bench_dsp_chain_disabled(c: &mut Criterion) {
 
     let mut frame = [0.5f64, -0.3f64];
 
-    c.bench_function("dsp_chain_disabled_bypass", |b| {
+    // Elemento = una muestra del frame (estéreo) procesada por iteración.
+    let mut group = c.benchmark_group("dsp_chain_disabled_bypass");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("bypass", |b| {
         b.iter(|| {
             chain.process_frame(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 fn bench_equalizer_31band_stereo(c: &mut Criterion) {
@@ -50,11 +58,15 @@ fn bench_equalizer_31band_stereo(c: &mut Criterion) {
 
     let mut frame = [0.5f64, -0.3f64];
 
-    c.bench_function("eq_31band_stereo", |b| {
+    // Elemento = una muestra del frame (estéreo) procesada por iteración.
+    let mut group = c.benchmark_group("eq_31band_stereo");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("31band", |b| {
         b.iter(|| {
             eq.process_frame(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 fn bench_biquad_simd_vs_scalar(c: &mut Criterion) {
@@ -63,17 +75,21 @@ fn bench_biquad_simd_vs_scalar(c: &mut Criterion) {
     let mut frame_2ch = [0.5f64, -0.3f64];
     let mut frame_4ch = [0.5f64, -0.3f64, 0.1f64, -0.7f64];
 
-    c.bench_function("biquad_peak_stereo", |b| {
+    // Elemento = una muestra del frame procesada por iteración.
+    let mut group = c.benchmark_group("biquad_peak");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("stereo", |b| {
         b.iter(|| {
             filter.process_frame(black_box(&mut frame_2ch));
         });
     });
-
-    c.bench_function("biquad_peak_4ch_simd_candidate", |b| {
+    group.throughput(Throughput::Elements(4));
+    group.bench_function("4ch_simd_candidate", |b| {
         b.iter(|| {
             filter.process_frame(black_box(&mut frame_4ch));
         });
     });
+    group.finish();
 }
 
 fn bench_reverb_processing(c: &mut Criterion) {
@@ -81,11 +97,15 @@ fn bench_reverb_processing(c: &mut Criterion) {
     reverb.enabled = true;
     let mut frame = [0.5f64, -0.3f64];
 
-    c.bench_function("reverb_stereo_frame", |b| {
+    // Elemento = una muestra del frame (estéreo) procesada por iteración.
+    let mut group = c.benchmark_group("reverb_stereo_frame");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("stereo", |b| {
         b.iter(|| {
             reverb.process(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 fn bench_compressor_processing(c: &mut Criterion) {
@@ -94,11 +114,15 @@ fn bench_compressor_processing(c: &mut Criterion) {
     // Señal por encima del threshold para activar reducción
     let mut frame = [0.5f64, -0.3f64];
 
-    c.bench_function("compressor_above_threshold", |b| {
+    // Elemento = una muestra del frame (estéreo) procesada por iteración.
+    let mut group = c.benchmark_group("compressor_above_threshold");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("above_threshold", |b| {
         b.iter(|| {
             comp.process(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 fn bench_stereo_expander(c: &mut Criterion) {
@@ -107,11 +131,15 @@ fn bench_stereo_expander(c: &mut Criterion) {
     expander.width = 1.5;
     let mut frame = [0.5f64, -0.3f64];
 
-    c.bench_function("stereo_expander_width_150", |b| {
+    // Elemento = una muestra del frame (estéreo) procesada por iteración.
+    let mut group = c.benchmark_group("stereo_expander_width_150");
+    group.throughput(Throughput::Elements(2));
+    group.bench_function("width_150", |b| {
         b.iter(|| {
             expander.process(black_box(&mut frame));
         });
     });
+    group.finish();
 }
 
 criterion_group!(

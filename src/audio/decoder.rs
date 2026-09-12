@@ -3,7 +3,7 @@
 
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use crossbeam::channel::Receiver;
-use ringbuf::traits::{Consumer, Observer, Producer};
+use ringbuf::traits::{Observer, Producer};
 use rubato::{
     Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
     WindowFunction,
@@ -1444,9 +1444,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             let _ = dec.open(&path);
                         }
                         state.write().eof_reached = false;
-                        if let Some(consumer) = engine.buffer_consumer.lock().as_mut() {
-                            consumer.skip(usize::MAX);
-                        }
+                        engine.drain_ring_buffer();
                         continue;
                     }
 
@@ -1611,11 +1609,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 }
                             }
 
-                            // Clear RingBuffer to remove old audio
-                            if let Some(consumer) = engine.buffer_consumer.lock().as_mut() {
-                                // Drain all available samples
-                                consumer.skip(usize::MAX);
-                            }
+                            // Descartar el audio anterior del anillo en lotes
+                            // acotados para no bloquear el callback real-time.
+                            engine.drain_ring_buffer();
                         }
                         Err(e) => tracing::error!("Error abriendo archivo: {}", e),
                     }
@@ -1938,10 +1934,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         in_silence = false;
                         track_start_trimmed = false;
 
-                        // Clear RingBuffer
-                        if let Some(consumer) = engine.buffer_consumer.lock().as_mut() {
-                            consumer.skip(usize::MAX);
-                        }
+                        // Descartar el audio anterior del anillo en lotes acotados.
+                        engine.drain_ring_buffer();
                     }
                 }
                 AudioCommand::Stop => {

@@ -92,6 +92,29 @@ fn store_stream_metadata(
     state.bit_depth_display = bit_depth_label(sample_format).to_string();
 }
 
+/// Vacía el consumidor del anillo en lotes acotados, soltando el lock entre
+/// lotes para no bloquear el callback real-time.
+///
+/// El `skip` completo del consumidor es O(muestras ocupadas); mantener el lock
+/// durante todo el drenado dejaría al hilo de audio esperando un futex.
+fn drain_consumer(consumer_mutex: &Mutex<Option<HeapConsumer<f32>>>) {
+    const DRAIN_BATCH: usize = 4096;
+    let mut scratch = [0.0f32; DRAIN_BATCH];
+    loop {
+        let popped = {
+            let mut guard = consumer_mutex.lock();
+            let Some(consumer) = guard.as_mut() else {
+                return;
+            };
+            consumer.pop_slice(&mut scratch)
+        };
+        // Un lote incompleto significa que el anillo quedó vacío.
+        if popped < DRAIN_BATCH {
+            return;
+        }
+    }
+}
+
 /// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
 #[derive(Default, Clone, Copy, Debug)]
 pub struct ChannelMap {
@@ -706,8 +729,9 @@ impl AudioEngine {
     ///
     /// No realiza trazas, no asigna memoria y no toma el lock de `AudioState`:
     /// publica el tamaño de buffer y lee el estado de reproducción con atómicos
-    /// `Relaxed`. El único lock es el handle del ringbuffer (`consumer_mutex`),
-    /// inherente al diseño actual del consumidor.
+    /// `Relaxed`. El handle del ringbuffer se toma con `try_lock` para no
+    /// bloquear el hilo de audio: si el decodificador lo mantiene ocupado, el
+    /// callback entrega silencio en lugar de quedarse a la espera de un futex.
     fn write_data_impl<T>(
         output: &mut [T],
         channels: usize,
@@ -729,7 +753,15 @@ impl AudioEngine {
             return;
         }
 
-        if let Some(consumer) = consumer_mutex.lock().as_mut() {
+        // Nunca bloquear: si el hilo decodificador mantiene el lock (por ejemplo
+        // drenando el anillo tras un load/seek), se entrega silencio en vez de
+        // perder el deadline en un futex.
+        let Some(mut guard) = consumer_mutex.try_lock() else {
+            output.fill(T::from_sample(0.0));
+            return;
+        };
+
+        if let Some(consumer) = guard.as_mut() {
             // Buffer intermedio f32 en pila para pop_slice.
             // pop_slice requiere &mut [f32] (formato nativo del ringbuffer).
             // Luego convertimos cada frame de f32 a T.
@@ -761,6 +793,17 @@ impl AudioEngine {
         } else {
             output.fill(T::from_sample(0.0));
         }
+    }
+
+    /// Drena el anillo de audio descartando lo que quede por reproducir.
+    ///
+    /// Se usa tras un load o un seek para no arrastrar el audio anterior. El
+    /// `skip` del consumidor es O(muestras ocupadas); hacerlo entero bajo el
+    /// lock del consumidor bloquearía el callback real-time. Aquí se vacía por
+    /// lotes acotados, soltando el lock entre lotes para que el hilo de audio
+    /// pueda tomarlo via `try_lock`.
+    pub(crate) fn drain_ring_buffer(&self) {
+        drain_consumer(&self.buffer_consumer);
     }
 
     /// Devuelve la lista de hosts de audio disponibles (ALSA, PipeWire, WASAPI, etc.).
@@ -1402,5 +1445,21 @@ mod tests {
         assert_eq!(state.buffer_size, 0);
         assert_eq!(state.bit_depth_display, "32-bit Float");
         assert_eq!(state.device_id, None);
+    }
+
+    /// El drenado vacía el anillo completo aunque supere el tamaño de lote,
+    /// cediendo el lock entre lotes.
+    #[test]
+    fn drain_consumer_empties_ring_above_batch_size() {
+        let rb = HeapRb::<f32>::new(16_384);
+        let (mut producer, consumer) = rb.split();
+        let samples = vec![1.0f32; 10_000];
+        assert_eq!(producer.push_slice(&samples), samples.len());
+
+        let consumer_mutex = Arc::new(Mutex::new(Some(consumer)));
+        drain_consumer(&consumer_mutex);
+
+        let guard = consumer_mutex.lock();
+        assert_eq!(guard.as_ref().unwrap().occupied_len(), 0);
     }
 }

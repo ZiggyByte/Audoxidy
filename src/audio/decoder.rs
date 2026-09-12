@@ -125,8 +125,6 @@ impl AudioDecoder for SymphoniaDecoder {
     }
 
     fn decode_next(&mut self) -> Result<Option<DecodedPacket>, super::AudioError> {
-        use symphonia::core::audio::AudioBuffer;
-
         let fmt = self
             .format
             .as_mut()
@@ -138,37 +136,32 @@ impl AudioDecoder for SymphoniaDecoder {
 
         loop {
             let packet = match fmt.next_packet() {
-                Ok(p) => p,
-                Err(symphonia::core::errors::Error::IoError(e))
-                    if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                {
-                    return Ok(None);
-                }
+                Ok(Some(p)) => p,
+                Ok(None) => return Ok(None),
                 Err(e) => {
                     tracing::warn!("Symphonia decode error: {}", e);
                     continue;
                 }
             };
 
-            if packet.track_id() != self.track_id {
+            if packet.track_id != self.track_id {
                 continue;
             }
 
             if let Ok(decoded) = dec.decode(&packet) {
-                let spec = *decoded.spec();
+                let spec = decoded.spec().clone();
                 let frames = decoded.frames();
-                let channels = spec.channels.count();
-                let sr = spec.rate;
+                let channels = spec.channels().count();
+                let sr = spec.rate();
 
                 // Convertir a f64 plano (interleaved)
-                let mut buf = AudioBuffer::<f64>::new(frames as u64, spec);
-                decoded.convert(&mut buf);
-                let planes = buf.planes();
+                let mut buf = AudioBuffer::<f64>::new(spec, decoded.capacity());
+                decoded.copy_to(&mut buf);
 
                 let mut data = Vec::with_capacity(frames * channels);
                 for i in 0..frames {
                     for ch in 0..channels {
-                        data.push(planes.planes()[ch][i]);
+                        data.push(buf.plane(ch).unwrap()[i]);
                     }
                 }
 
@@ -296,6 +289,18 @@ fn derive_duration_sec(track: &symphonia::core::formats::Track, fallback_rate: u
         return None;
     }
     track.num_frames.map(|f| f as f64 / sr as f64)
+}
+
+/// Calcula la relación de resampleo `out_rate / in_rate`.
+///
+/// Devuelve `None` cuando alguna de las tasas es 0: una relación no finita
+/// pasada a `Async::new_sinc` produce un resampler inválido, así que el
+/// llamador debe omitir el resampleo en ese caso.
+fn resample_ratio(in_rate: u32, out_rate: u32) -> Option<f64> {
+    if in_rate == 0 || out_rate == 0 {
+        return None;
+    }
+    Some(out_rate as f64 / in_rate as f64)
 }
 
 use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap, LATENCY_PEAK_US};
@@ -454,43 +459,39 @@ fn preload_decode_batch(
     }
 
     let packet = match fmt.next_packet() {
-        Ok(p) => p,
-        Err(symphonia::core::errors::Error::IoError(e))
-            if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-        {
-            return false; // EOF de la pista pre-cargada.
-        }
+        Ok(Some(p)) => p,
+        Ok(None) => return false, // EOF de la pista pre-cargada.
         Err(e) => {
             tracing::warn!("Pre-carga decode error (skipping packet): {}", e);
             return true;
         }
     };
 
-    if packet.track_id() != *preload_track_id {
+    if packet.track_id != *preload_track_id {
         return true;
     }
 
     let Ok(decoded) = dec.decode(&packet) else {
         return true;
     };
-    let spec = *decoded.spec();
+    let spec = decoded.spec().clone();
 
     let needs_new_buf = preload_audio_buf
         .as_ref()
         .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
         .unwrap_or(true);
     if needs_new_buf {
-        *preload_audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
+        *preload_audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
     }
     let Some(buf) = preload_audio_buf.as_mut() else {
         return false;
     };
-    decoded.convert(buf);
-    let src_channels = spec.channels.count();
+    decoded.copy_to(buf);
+    let src_channels = spec.channels().count();
 
-    if spec.rate != out_rate {
+    if spec.rate() != out_rate {
         let recreate = preload_resampler_rates
-            .map(|stored| stored != (spec.rate, out_rate, src_channels))
+            .map(|stored| stored != (spec.rate(), out_rate, src_channels))
             .unwrap_or(true);
         if recreate {
             let is_low = crate::utils::is_low_resource();
@@ -512,8 +513,14 @@ fn preload_decode_batch(
                 }
             };
             let chunk_size = if is_low { 256 } else { 1024 };
+            let Some(ratio) = resample_ratio(spec.rate(), out_rate) else {
+                tracing::warn!("Pre-carga sin resampleo: tasa de entrada inválida (0).");
+                *preload_resampler = None;
+                *preload_resampler_rates = None;
+                return false;
+            };
             match Async::<f64>::new_sinc(
-                out_rate as f64 / spec.rate as f64,
+                ratio,
                 2.0,
                 &params,
                 chunk_size,
@@ -522,7 +529,7 @@ fn preload_decode_batch(
             ) {
                 Ok(r) => {
                     *preload_resampler = Some(r);
-                    *preload_resampler_rates = Some((spec.rate, out_rate, src_channels));
+                    *preload_resampler_rates = Some((spec.rate(), out_rate, src_channels));
                     *preload_resampler_in_buf = (0..src_channels)
                         .map(|_| {
                             std::collections::VecDeque::with_capacity(if is_low {
@@ -555,12 +562,11 @@ fn preload_decode_batch(
 
     let mut batch_out: Vec<f64> = Vec::new();
     if let Some(rs) = preload_resampler.as_mut() {
-        let planes = buf.planes();
-        let frames = buf.frames();
         for c in 0..src_channels {
             if c < preload_resampler_in_buf.len() {
-                let plane = &planes.planes()[c][..frames];
-                preload_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                if let Some(plane) = buf.plane(c) {
+                    preload_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                }
             }
         }
         if preload_input_pool.len() < src_channels {
@@ -727,43 +733,39 @@ fn tail_decode_batch(
     while tail_buffer.len() < tail_buffer_cap {
         batch_out.clear();
         let packet = match fmt.next_packet() {
-            Ok(p) => p,
-            Err(symphonia::core::errors::Error::IoError(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return false; // La canción anterior terminó antes de la ventana de mezcla.
-            }
+            Ok(Some(p)) => p,
+            Ok(None) => return false, // La canción anterior terminó antes de la ventana de mezcla.
             Err(e) => {
                 tracing::warn!("Cola decode error (skipping packet): {}", e);
                 continue;
             }
         };
 
-        if packet.track_id() != *tail_track_id {
+        if packet.track_id != *tail_track_id {
             continue;
         }
 
         let Ok(decoded) = dec.decode(&packet) else {
             continue;
         };
-        let spec = *decoded.spec();
+        let spec = decoded.spec().clone();
 
         let needs_new_buf = tail_audio_buf
             .as_ref()
             .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
             .unwrap_or(true);
         if needs_new_buf {
-            *tail_audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
+            *tail_audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
         }
         let Some(buf) = tail_audio_buf.as_mut() else {
             return false;
         };
-        decoded.convert(buf);
-        let src_channels = spec.channels.count();
+        decoded.copy_to(buf);
+        let src_channels = spec.channels().count();
 
-        if spec.rate != out_rate {
+        if spec.rate() != out_rate {
             let recreate = tail_resampler_rates
-                .map(|stored| stored != (spec.rate, out_rate, src_channels))
+                .map(|stored| stored != (spec.rate(), out_rate, src_channels))
                 .unwrap_or(true);
             if recreate {
                 let is_low = crate::utils::is_low_resource();
@@ -785,8 +787,14 @@ fn tail_decode_batch(
                     }
                 };
                 let chunk_size = if is_low { 256 } else { 1024 };
+                let Some(ratio) = resample_ratio(spec.rate(), out_rate) else {
+                    tracing::warn!("Cola sin resampleo: tasa de entrada inválida (0).");
+                    *tail_resampler = None;
+                    *tail_resampler_rates = None;
+                    return false;
+                };
                 match Async::<f64>::new_sinc(
-                    out_rate as f64 / spec.rate as f64,
+                    ratio,
                     2.0,
                     &params,
                     chunk_size,
@@ -795,7 +803,7 @@ fn tail_decode_batch(
                 ) {
                     Ok(r) => {
                         *tail_resampler = Some(r);
-                        *tail_resampler_rates = Some((spec.rate, out_rate, src_channels));
+                        *tail_resampler_rates = Some((spec.rate(), out_rate, src_channels));
                         *tail_resampler_in_buf = (0..src_channels)
                             .map(|_| {
                                 std::collections::VecDeque::with_capacity(if is_low {
@@ -827,12 +835,11 @@ fn tail_decode_batch(
         };
 
         if let Some(rs) = tail_resampler.as_mut() {
-            let planes = buf.planes();
-            let frames = buf.frames();
             for c in 0..src_channels {
                 if c < tail_resampler_in_buf.len() {
-                    let plane = &planes.planes()[c][..frames];
-                    tail_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                    if let Some(plane) = buf.plane(c) {
+                        tail_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                    }
                 }
             }
             if tail_input_pool.len() < src_channels {
@@ -2279,22 +2286,18 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             let fmt_opt = current_format.as_mut();
 
             if let (Some(dec), Some(fmt)) = (dec_opt, fmt_opt) {
+                let mut eof = false;
                 let packet = match fmt.next_packet() {
-                    Ok(p) => p,
-                    Err(symphonia::core::errors::Error::IoError(e))
-                        if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-                    {
+                    Ok(Some(p)) => Some(p),
+                    Ok(None) => {
                         eof = true;
-                        symphonia::core::formats::Packet::new_from_slice(0, 0, 0, &[])
+                        None
                     }
                     Err(e) => {
                         tracing::warn!("Symphonia decode error (skipping packet): {}", e);
                         continue; // Saltar paquetes corruptos en lugar de detener la canción
                     }
                 };
-                if tracing::enabled!(tracing::Level::TRACE) {
-                    tracing::trace!("Packet next: ts={}, frames={}", packet.ts(), packet.dur());
-                }
 
                 if eof {
                     // Si hay una pista pre-cargada lista, promovemos sin purgar:
@@ -2427,13 +2430,24 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     continue;
                 }
 
-                if packet.track_id() != track_id {
+                let Some(packet) = packet else {
+                    continue;
+                };
+                if tracing::enabled!(tracing::Level::TRACE) {
+                    tracing::trace!(
+                        "Packet next: ts={}, frames={}",
+                        packet.pts.get(),
+                        packet.dur.get()
+                    );
+                }
+
+                if packet.track_id != track_id {
                     continue;
                 }
 
                 if let Ok(decoded) = dec.decode(&packet) {
-                    let spec = *decoded.spec();
-                    state.write().current_pos_sec = packet.ts() as f64 / spec.rate as f64;
+                    let spec = decoded.spec().clone();
+                    state.write().current_pos_sec = packet.pts.get() as f64 / spec.rate() as f64;
 
                     // Reuse or allocate audio_buf only when spec changes or capacity is insufficient
                     let needs_new_buf = audio_buf
@@ -2441,11 +2455,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
                         .unwrap_or(true);
                     if needs_new_buf {
-                        audio_buf = Some(AudioBuffer::<f64>::new(decoded.capacity() as u64, spec));
+                        audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
                     }
 
                     if let Some(ref mut buf) = audio_buf {
-                        decoded.convert(buf);
+                        decoded.copy_to(buf);
                     }
 
                     let (out_rate, out_channels) = {
@@ -2456,9 +2470,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     // Resampleo adaptativo: calidad superior vs velocidad según recursos disponibles.
                     // En modo normal: SincInterpolation con oversampling masivo (calidad audiófila).
                     // En low-resource: Linear interpolation rápida con menor overhead de CPU.
-                    if spec.rate != out_rate {
+                    if spec.rate() != out_rate {
                         let recreate = if let Some(stored) = resampler_rates {
-                            stored != (spec.rate, out_rate, spec.channels.count())
+                            stored != (spec.rate(), out_rate, spec.channels().count())
                         } else {
                             true
                         };
@@ -2485,38 +2499,43 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 }
                             };
                             let chunk_size = if is_low { 256 } else { 1024 };
-
-                            match Async::<f64>::new_sinc(
-                                out_rate as f64 / spec.rate as f64,
-                                2.0,
-                                &params,
-                                chunk_size,
-                                spec.channels.count(),
-                                FixedAsync::Input,
-                            ) {
-                                Ok(r) => {
-                                    resampler = Some(r);
-                                    resampler_rates =
-                                        Some((spec.rate, out_rate, spec.channels.count()));
-                                    resampler_in_buf =
-                                        (0..spec.channels.count())
+                            let src_channels = spec.channels().count();
+                            if let Some(ratio) = resample_ratio(spec.rate(), out_rate) {
+                                match Async::<f64>::new_sinc(
+                                    ratio,
+                                    2.0,
+                                    &params,
+                                    chunk_size,
+                                    src_channels,
+                                    FixedAsync::Input,
+                                ) {
+                                    Ok(r) => {
+                                        resampler = Some(r);
+                                        resampler_rates =
+                                            Some((spec.rate(), out_rate, src_channels));
+                                        resampler_in_buf = (0..src_channels)
                                             .map(|_| {
                                                 std::collections::VecDeque::with_capacity(
                                                     if is_low { 1024 } else { 4096 },
                                                 )
                                             })
                                             .collect();
-                                    tracing::info!(
-                                        "Resampler initialized: {} -> {} ({} mode, 64-bit)",
-                                        spec.rate,
-                                        out_rate,
-                                        if is_low { "low-resource" } else { "audiophile" }
-                                    );
+                                        tracing::info!(
+                                            "Resampler initialized: {} -> {} ({} mode, 64-bit)",
+                                            spec.rate(),
+                                            out_rate,
+                                            if is_low { "low-resource" } else { "audiophile" }
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::error!("Resampler init failed: {}", e);
+                                        resampler = None;
+                                    }
                                 }
-                                Err(e) => {
-                                    tracing::error!("Resampler init failed: {}", e);
-                                    resampler = None;
-                                }
+                            } else {
+                                tracing::warn!("Sin resampleo: tasa de entrada inválida (0).");
+                                resampler = None;
+                                resampler_rates = None;
                             }
                         }
                     } else {
@@ -2590,14 +2609,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     };
 
                     if let (Some(rs), Some(ref buf)) = (resampler.as_mut(), audio_buf.as_ref()) {
-                        let planes = buf.planes();
-                        let frames = buf.frames();
-                        let src_channels = spec.channels.count();
+                        let src_channels = spec.channels().count();
 
                         for c in 0..src_channels {
                             if c < resampler_in_buf.len() {
-                                let plane = &planes.planes()[c][..frames];
-                                resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                                if let Some(plane) = buf.plane(c) {
+                                    resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                                }
                             }
                         }
 
@@ -2667,7 +2685,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         AudioEngine::mix_channels_direct(
                             buf,
                             buf.frames(),
-                            spec.channels.count(),
+                            spec.channels().count(),
                             out_channels as usize,
                             &channel_map,
                             downmix_conf,

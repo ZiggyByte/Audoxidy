@@ -1545,7 +1545,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         "Audio Engine State Purged (Load): Buffers & DSP Reset."
                                     );
 
-                                    // Volumen y Mezcla: State resets + fade-in trigger (D-09, D-20)
+                                    // Volumen y mezcla: reinicio del estado y disparo del fade-in
                                     silence_samples = 0;
                                     in_silence = false;
                                     track_start_trimmed = false;
@@ -1574,7 +1574,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     );
 
                                     let mut s = state.read();
-                                    // Fade-in on EVERY track start when enabled (D-09).
+                                    // Fade-in on EVERY track start when enabled.
                                     // (Not gated on natural EOF — user expects a smooth rise
                                     // whenever a song begins.)
                                     if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
@@ -1582,7 +1582,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         if fade_ms > 0.0 {
                                             // rate_per_sec: fraction of the fade completed per
                                             // second of *real* audio time. Independent of sample
-                                            // rate and batch size (robust timing, UAT round 4).
+                                            // rate and batch size (robust timing).
                                             let rate_per_sec = 1.0 / (fade_ms / 1000.0);
                                             fade_state = FadeState::FadingIn {
                                                 coeff: 0.0,

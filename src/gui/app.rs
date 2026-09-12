@@ -438,7 +438,7 @@ fn seek_target(current: f64, delta: f64, total: f64) -> f64 {
 /// indeterminada y cualquier salto debe ignorarse. Un valor negativo o no
 /// finito (`NaN`) también devuelve `false`, porque la comparación es falsa.
 pub(crate) fn fine_seek_enabled(total_duration: f64) -> bool {
-    total_duration > 0.0
+    total_duration.is_finite() && total_duration > 0.0
 }
 
 /// Acota el volumen recibido del sistema a `[0.0, 1.0]`.

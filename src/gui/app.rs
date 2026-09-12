@@ -431,6 +431,16 @@ fn seek_target(current: f64, delta: f64, total: f64) -> f64 {
     }
 }
 
+/// Indica si la búsqueda fina está habilitada para una duración dada.
+///
+/// La búsqueda fina solo tiene sentido cuando se conoce la duración de la
+/// pista: si la duración no puede derivarse (`0.0`), la posición queda
+/// indeterminada y cualquier salto debe ignorarse. Un valor negativo o no
+/// finito (`NaN`) también devuelve `false`, porque la comparación es falsa.
+pub(crate) fn fine_seek_enabled(total_duration: f64) -> bool {
+    total_duration > 0.0
+}
+
 /// Acota el volumen recibido del sistema a `[0.0, 1.0]`.
 ///
 /// Un valor no finito se resuelve a `0.0` para que nunca se propague al motor
@@ -2024,6 +2034,12 @@ impl AudoxidyApp {
                 Task::none()
             }
             Message::SeekTo(pos) => {
+                // Con la duración indeterminada no hay posición a la que saltar:
+                // se ignoran todos los orígenes de búsqueda fina (barra,
+                // teclado y controles multimedia externos).
+                if !fine_seek_enabled(state.total_duration_sec) {
+                    return Task::none();
+                }
                 self.audio_manager.seek(pos as f64);
                 self.persist_playlist_state();
                 self.wake_up_controls(false)
@@ -6774,7 +6790,7 @@ impl AudoxidyApp {
 mod app_tests {
     use super::{
         Message, PRELOAD_GC_SAFETY_SECS, SEEK_STEP_SECS, clamp_volume, external_control_to_message,
-        gc_blocked_by_preload, seek_target,
+        fine_seek_enabled, gc_blocked_by_preload, seek_target,
     };
     use crate::integrations::control::ExternalControlEvent;
 
@@ -6818,6 +6834,17 @@ mod app_tests {
         assert_eq!(seek_target(-5.0, 1.0, 0.0), 0.0);
         // Entrada no finita: se ignora y va a cero.
         assert_eq!(seek_target(f64::NAN, 1.0, 100.0), 0.0);
+    }
+
+    #[test]
+    fn fine_seek_enabled_requires_known_duration() {
+        // Duración desconocida o inválida: la búsqueda fina queda deshabilitada.
+        assert!(!fine_seek_enabled(0.0));
+        assert!(!fine_seek_enabled(-1.0));
+        assert!(!fine_seek_enabled(f64::NAN));
+        // Duración conocida y finita: la búsqueda fina se habilita.
+        assert!(fine_seek_enabled(1.0));
+        assert!(fine_seek_enabled(3_600.0));
     }
 
     #[test]

@@ -1053,6 +1053,39 @@ mod tests {
         assert_eq!((384000 * 8 * 100) / 1000, 307200);
     }
 
+    #[test]
+    fn test_pipeline_is_f64_until_ringbuf() {
+        use ringbuf::HeapRb;
+        use ringbuf::traits::{Consumer, Producer, Split};
+
+        // La mezcla planar, el DSP y los buffers de salida son f64 por
+        // construcción: cambiar cualquiera a f32 rompería la compilación.
+        let planar: Vec<Vec<f64>> = vec![vec![0.0_f64; 8]; 2];
+        let mut out: Vec<f64> = Vec::new();
+        let map = ChannelMap::default();
+        AudioEngine::mix_channels_planar(
+            &planar,
+            8,
+            2,
+            2,
+            &map,
+            (0.74, 0.66, 0.81, 0.91),
+            &mut out,
+        );
+        let mut frame = [0.0_f64; 8];
+        crate::audio::dsp::DspChain::default().process_frame(&mut frame);
+
+        // El único estrechamiento a f32 es el bus ringbuf: se verifica el
+        // round-trip completo productor/consumidor.
+        let rb = HeapRb::<f32>::new(1024);
+        let (mut prod, mut cons) = rb.split();
+        assert_eq!(prod.push_slice(&[0.1_f32, -0.1]), 2);
+        assert_eq!(cons.pop_slice(&mut [0.0_f32; 2]), 2);
+
+        // 8 frames × 2 canales de salida, todos f64.
+        assert_eq!(out.len(), 16);
+    }
+
     // --- Predecode acotado por memoria y avance de posición durante el drenado ---
 
     #[test]

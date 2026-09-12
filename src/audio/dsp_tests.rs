@@ -1307,7 +1307,7 @@ mod tests {
         };
         let params = SincInterpolationParameters {
             sinc_len: 256,
-            f_cutoff: 0.99,
+            f_cutoff: Some(0.99),
             interpolation: SincInterpolationType::Cubic,
             oversampling_factor: 256,
             window: WindowFunction::BlackmanHarris2,
@@ -1362,7 +1362,7 @@ mod tests {
         };
         let params = SincInterpolationParameters {
             sinc_len: 256,
-            f_cutoff: 0.99,
+            f_cutoff: Some(0.99),
             interpolation: SincInterpolationType::Cubic,
             oversampling_factor: 256,
             window: WindowFunction::BlackmanHarris2,
@@ -1414,6 +1414,111 @@ mod tests {
             total_out_frames > 100_000,
             "producción demasiado baja: {}",
             total_out_frames
+        );
+    }
+
+    #[test]
+    fn test_resampler_antialiasing_preserved_with_explicit_cutoff() {
+        // Downsample 48 kHz -> 44.1 kHz. La banda de paso (1 kHz) debe sobrevivir y
+        // un tono por encima del Nyquist de salida (por ejemplo 23 kHz > 22.05 kHz)
+        // debe quedar eliminado por el filtro anti-aliasing. El `f_cutoff` explícito
+        // fija el rolloff medido antes de la migración de rubato; cambiarlo por el
+        // cutoff automático o por `None` altera silenciosamente estas cifras.
+        use rubato::{
+            Async, FixedAsync, Resampler, SincInterpolationParameters, SincInterpolationType,
+            WindowFunction,
+        };
+
+        const STEREO: usize = 2;
+        const CHUNK: usize = 1024;
+        const CHUNKS: usize = 40;
+        const WARMUP_CHUNKS: usize = 20;
+
+        fn steady_state_peak(
+            in_rate: f64,
+            out_rate: f64,
+            freq: f64,
+            params: &SincInterpolationParameters,
+        ) -> f64 {
+            let mut resampler = Async::<f64>::new_sinc(
+                out_rate / in_rate,
+                2.0,
+                params,
+                CHUNK,
+                STEREO,
+                FixedAsync::Input,
+            )
+            .expect("new_sinc debe construirse");
+            let mut sample_index = 0.0_f64;
+            let mut peak = 0.0_f64;
+            for chunk in 0..CHUNKS {
+                let needed = resampler.input_frames_next();
+                let mut input: Vec<Vec<f64>> = vec![vec![0.0; needed]; STEREO];
+                for frame in 0..needed {
+                    let v =
+                        0.5 * (2.0 * std::f64::consts::PI * freq * sample_index / in_rate).sin();
+                    input[0][frame] = v;
+                    input[1][frame] = v;
+                    sample_index += 1.0;
+                }
+                let out_frames = resampler.output_frames_next();
+                let mut output: Vec<Vec<f64>> = vec![vec![0.0; out_frames]; STEREO];
+                let in_adapt = audioadapter_buffers::direct::SequentialSliceOfVecs::new(
+                    &input, STEREO, needed,
+                )
+                .unwrap();
+                let mut out_adapt = audioadapter_buffers::direct::SequentialSliceOfVecs::new_mut(
+                    &mut output,
+                    STEREO,
+                    out_frames,
+                )
+                .unwrap();
+                resampler
+                    .process_into_buffer(&in_adapt, &mut out_adapt, None)
+                    .expect("process_into_buffer debe tener éxito");
+                if chunk >= WARMUP_CHUNKS {
+                    for &s in &output[0] {
+                        let a = s.abs();
+                        if a > peak {
+                            peak = a;
+                        }
+                    }
+                }
+            }
+            peak
+        }
+
+        let params = SincInterpolationParameters {
+            sinc_len: 256,
+            f_cutoff: Some(0.99),
+            interpolation: SincInterpolationType::Cubic,
+            oversampling_factor: 256,
+            window: WindowFunction::BlackmanHarris2,
+        };
+
+        let passband_peak = steady_state_peak(48000.0, 44100.0, 1000.0, &params);
+        let rolloff_peak = steady_state_peak(48000.0, 44100.0, 21500.0, &params);
+        let stopband_peak = steady_state_peak(48000.0, 44100.0, 23000.0, &params);
+
+        println!(
+            "resampler anti-aliasing: passband_peak={:.6} rolloff_peak={:.6} stopband_peak={:.6}",
+            passband_peak, rolloff_peak, stopband_peak
+        );
+
+        assert!(
+            passband_peak > 0.4,
+            "la banda de paso 1 kHz se atenuó demasiado: {passband_peak}"
+        );
+        // Baseline medido con `f_cutoff = 0.99`: 21.5 kHz conserva ~0.4369. La cota
+        // superior descarta un cutoff más alto (que dejaría pasar la banda casi
+        // intacta) y la inferior uno más bajo (que la atenuaría de más).
+        assert!(
+            (0.38..0.49).contains(&rolloff_peak),
+            "el rolloff no coincide con el baseline medido: {rolloff_peak}"
+        );
+        assert!(
+            stopband_peak < 0.05,
+            "la banda eliminada no se atenuó lo suficiente: {stopband_peak}"
         );
     }
 }

@@ -481,7 +481,7 @@ fn preload_decode_batch(
             let params = if is_low {
                 SincInterpolationParameters {
                     sinc_len: 64,
-                    f_cutoff: 0.95,
+                    f_cutoff: Some(0.95),
                     interpolation: SincInterpolationType::Linear,
                     oversampling_factor: 64,
                     window: WindowFunction::BlackmanHarris2,
@@ -489,7 +489,7 @@ fn preload_decode_batch(
             } else {
                 SincInterpolationParameters {
                     sinc_len: 256,
-                    f_cutoff: 0.99,
+                    f_cutoff: Some(0.99),
                     interpolation: SincInterpolationType::Cubic,
                     oversampling_factor: 256,
                     window: WindowFunction::BlackmanHarris2,
@@ -754,7 +754,7 @@ fn tail_decode_batch(
                 let params = if is_low {
                     SincInterpolationParameters {
                         sinc_len: 64,
-                        f_cutoff: 0.95,
+                        f_cutoff: Some(0.95),
                         interpolation: SincInterpolationType::Linear,
                         oversampling_factor: 64,
                         window: WindowFunction::BlackmanHarris2,
@@ -762,7 +762,7 @@ fn tail_decode_batch(
                 } else {
                     SincInterpolationParameters {
                         sinc_len: 256,
-                        f_cutoff: 0.99,
+                        f_cutoff: Some(0.99),
                         interpolation: SincInterpolationType::Cubic,
                         oversampling_factor: 256,
                         window: WindowFunction::BlackmanHarris2,
@@ -2439,7 +2439,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 // Perfil rápido: Linear + Sinc corto, mínimo overhead de CPU
                                 SincInterpolationParameters {
                                     sinc_len: 64,
-                                    f_cutoff: 0.95,
+                                    f_cutoff: Some(0.95),
                                     interpolation: SincInterpolationType::Linear,
                                     oversampling_factor: 64,
                                     window: WindowFunction::BlackmanHarris2,
@@ -2448,7 +2448,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 // Perfil audiófilo: Cubic + Sinc largo, aliasing eliminado
                                 SincInterpolationParameters {
                                     sinc_len: 256,
-                                    f_cutoff: 0.99,
+                                    f_cutoff: Some(0.99),
                                     interpolation: SincInterpolationType::Cubic,
                                     oversampling_factor: 256,
                                     window: WindowFunction::BlackmanHarris2,

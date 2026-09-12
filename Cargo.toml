@@ -16,9 +16,9 @@ exclude = ["/.planning", "/.changelogs-crates-update", "/cache", "/logs", "/grap
 
 [dependencies]
 async_ftp = "6.0.0"
-audioadapter = "2.0.0"
-audioadapter-buffers = "2.0.0"
-audioadapter-sample = "2.0.0"
+audioadapter = "5.0"
+audioadapter-buffers = "5.2.0"
+audioadapter-sample = "5.2"
 base64 = "0.22.1"
 color-thief = "0.2.2"
 cpal = "0.18.2"
@@ -42,7 +42,7 @@ resvg = "0.46.0"
 rfd = "0.17.2"
 ringbuf = "0.5.1"
 ron = "0.12.2"
-rubato = "1.0.1"
+rubato = "5.0.0"
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 rustfft = "6.4.1"
 serde = { version = "1.0.229", features = ["derive"] }

@@ -1029,41 +1029,6 @@ impl AudioEngine {
         }
     }
 
-    pub(crate) fn mix_channels_direct(
-        buffer: &symphonia::core::audio::AudioBuffer<f64>,
-        frames: usize,
-        src_ch: usize,
-        dst_ch: usize,
-        map: &ChannelMap,
-        dm_conf: (f64, f64, f64, f64),
-        out_buf: &mut Vec<f64>,
-    ) {
-        use symphonia::core::audio::Audio;
-
-        let get_sample = |plane_idx: usize, frame_idx: usize| -> f64 {
-            if plane_idx < src_ch {
-                buffer.plane(plane_idx).map(|p| p[frame_idx]).unwrap_or(0.0)
-            } else {
-                0.0
-            }
-        };
-
-        for i in 0..frames {
-            let fl = map.fl.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let fr = map.fr.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let c = map.c.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let lfe = map.lfe.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let sl = map.sl.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let sr = map.sr.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let sbl = map.sbl.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-            let sbr = map.sbr.map(|idx| get_sample(idx, i)).unwrap_or(0.0);
-
-            Self::mix_sample_into_vec(
-                out_buf, dst_ch, fl, fr, c, lfe, sl, sr, sbl, sbr, src_ch, dm_conf,
-            );
-        }
-    }
-
     // Helper para mapear canales de entrada a roles
     pub fn get_channel_map(channels: symphonia::core::audio::Channels) -> ChannelMap {
         use symphonia::core::audio::{Channels, Position};

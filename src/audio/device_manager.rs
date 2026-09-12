@@ -97,6 +97,90 @@ pub struct AudioDeviceInfo {
     pub supported_configs: Vec<cpal::SupportedStreamConfigRange>,
 }
 
+/// Indica si el callback de salida sabe convertir un formato de muestra.
+///
+/// Solo se aceptan los formatos que `cpal::Sample::from_sample::<f32>()` puede
+/// convertir: `F32` (copia directa desde el anillo `f32`), `F64`, `I16`, `I32`
+/// y `U16`. Los formatos de 24/8 bits, los enteros sin signo de 32 bits y los
+/// flujos DSD quedan fuera y se rechazan con un error nombrado.
+fn accepted_sample_format(fmt: cpal::SampleFormat) -> bool {
+    matches!(
+        fmt,
+        cpal::SampleFormat::F32
+            | cpal::SampleFormat::F64
+            | cpal::SampleFormat::I16
+            | cpal::SampleFormat::I32
+            | cpal::SampleFormat::U16
+    )
+}
+
+/// Nombre legible del dispositivo para los errores de formato de muestra.
+fn device_display_name(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map(|desc| desc.name().to_string())
+        .unwrap_or_else(|_| "desconocido".into())
+}
+
+/// Elige una salida cuyo formato de muestra sea convertible.
+///
+/// Orden de preferencia: una configuración `F32` en la tasa y canales pedidos
+/// (sin conversión en el callback); la configuración por defecto del
+/// dispositivo si su formato es aceptable; cualquier otra configuración
+/// aceptada. Si ninguna lo es, devuelve `UnsupportedSampleFormat` nombrando el
+/// dispositivo y el formato rechazado, en lugar de dejar la salida muda.
+fn select_accepted_output(
+    device: &cpal::Device,
+    preferred_rate: u32,
+    preferred_channels: u16,
+) -> Result<(cpal::StreamConfig, cpal::SampleFormat), AudioError> {
+    let mut fallback: Option<cpal::SupportedStreamConfigRange> = None;
+    let mut rejected: Option<cpal::SampleFormat> = None;
+
+    if let Ok(ranges) = device.supported_output_configs() {
+        for range in ranges {
+            if !accepted_sample_format(range.sample_format()) {
+                rejected.get_or_insert(range.sample_format());
+                continue;
+            }
+            if range.sample_format() == cpal::SampleFormat::F32
+                && range.channels() == preferred_channels
+                && range.contains_rate(preferred_rate)
+            {
+                let cfg: cpal::StreamConfig = range.with_sample_rate(preferred_rate).into();
+                return Ok((cfg, cpal::SampleFormat::F32));
+            }
+            if fallback.is_none() {
+                fallback = Some(range);
+            }
+        }
+    }
+
+    if let Ok(default) = device.default_output_config() {
+        if accepted_sample_format(default.sample_format()) {
+            return Ok((default.config(), default.sample_format()));
+        }
+        rejected.get_or_insert(default.sample_format());
+    }
+
+    if let Some(range) = fallback {
+        let rate = if range.contains_rate(preferred_rate) {
+            preferred_rate
+        } else {
+            range.max_sample_rate()
+        };
+        let cfg: cpal::StreamConfig = range.with_sample_rate(rate).into();
+        return Ok((cfg, range.sample_format()));
+    }
+
+    Err(AudioError::UnsupportedSampleFormat {
+        device: device_display_name(device),
+        format: rejected
+            .map(|fmt| format!("{fmt:?}"))
+            .unwrap_or_else(|| "desconocido".to_string()),
+    })
+}
+
 struct AudioOutput {
     host: cpal::Host,
     device: cpal::Device,
@@ -179,7 +263,9 @@ impl AudioDeviceManager {
 
     /// Inicializa la salida de audio por defecto del sistema.
     ///
-    /// Usa el host y dispositivo predeterminados de CPAL.
+    /// Usa el host y dispositivo predeterminados de CPAL y selecciona un formato
+    /// de muestra que el callback de salida sepa convertir, prefiriendo F32 para
+    /// evitar conversiones en el camino caliente.
     pub fn init_default_output(
         &self,
     ) -> Result<
@@ -193,53 +279,17 @@ impl AudioDeviceManager {
     > {
         let host = cpal::default_host();
         let device = host.default_output_device().ok_or(AudioError::NoDevice)?;
-        let config = device
-            .default_output_config()
-            .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
-        let sample_format = config.sample_format();
-        let def_sr = config.sample_rate();
+        // Preferir 48000 Hz: el selector busca primero una salida F32 en esa
+        // tasa y recurre a la configuración por defecto del sistema.
+        let (stream_config, sample_format) = select_accepted_output(&device, 48000, 2)?;
 
-        // Preferir 48000 Hz si el dispositivo lo soporta.
-        let desired_sr = if def_sr == 48000 {
-            48000
-        } else {
-            let mut found_48k = false;
-            if let Ok(configs) = device.supported_output_configs() {
-                for cfg in configs {
-                    let min = cfg.min_sample_rate();
-                    let max = cfg.max_sample_rate();
-                    if min <= 48000 && max >= 48000 {
-                        found_48k = true;
-                        break;
-                    }
-                }
-            }
-            if found_48k { 48000 } else { def_sr }
-        };
-
-        // Construir StreamConfig manualmente con el SR deseado.
-        let stream_config = cpal::StreamConfig {
-            channels: 2,
-            sample_rate: desired_sr,
-            buffer_size: cpal::BufferSize::Default,
-        };
-
-        // Intentar con defaults, fallback a config del dispositivo
-        if self
-            .configure_output(host, device.clone(), stream_config.clone(), sample_format)
-            .is_err()
-        {
-            let host_fallback = cpal::default_host();
-            let def_conf: cpal::StreamConfig = config.into();
-            self.configure_output(
-                host_fallback,
-                device.clone(),
-                def_conf.clone(),
-                sample_format,
-            )?;
-            return Ok((cpal::default_host(), device, def_conf, sample_format));
-        }
+        self.configure_output(
+            cpal::default_host(),
+            device.clone(),
+            stream_config,
+            sample_format,
+        )?;
 
         Ok((cpal::default_host(), device, stream_config, sample_format))
     }
@@ -406,6 +456,25 @@ impl AudioDeviceManager {
             }
         }
 
+        // Rechazar los formatos que el callback no sabe convertir antes de
+        // puntuar, para que `best` nunca devuelva un formato no soportado. cpal
+        // 0.18 enumera un `I24` distinto que este camino excluye a propósito:
+        // esos dispositivos reciben el error nombrado de abajo. El mapeo
+        // `Bits24` -> `I32` de arriba se mantiene.
+        let rejected_format = supported_configs
+            .iter()
+            .find(|c| !accepted_sample_format(c.sample_format()))
+            .map(|c| c.sample_format());
+        supported_configs.retain(|c| accepted_sample_format(c.sample_format()));
+        if supported_configs.is_empty() {
+            return Err(AudioError::UnsupportedSampleFormat {
+                device: device_display_name(&device),
+                format: rejected_format
+                    .map(|fmt| format!("{fmt:?}"))
+                    .unwrap_or_else(|| "desconocido".to_string()),
+            });
+        }
+
         let req_channels = match settings.channels {
             ChannelConfig::Auto => 2,
             ChannelConfig::Manual(c) => c,
@@ -515,5 +584,49 @@ mod tests {
     #[cfg(target_os = "linux")]
     fn linux_base_latency_is_10ms() {
         assert_eq!(platform_base_latency_ms(), 10.0);
+    }
+
+    /// `accepted_sample_format` acepta exactamente los formatos que el callback
+    /// puede convertir y rechaza el resto. `SampleFormat` es `#[non_exhaustive]`,
+    /// así que las variantes conocidas se enumeran explícitamente.
+    #[test]
+    fn test_cpal_format_mapping_exhaustive() {
+        let all_formats = [
+            cpal::SampleFormat::I8,
+            cpal::SampleFormat::I16,
+            cpal::SampleFormat::I24,
+            cpal::SampleFormat::I32,
+            cpal::SampleFormat::I64,
+            cpal::SampleFormat::U8,
+            cpal::SampleFormat::U16,
+            cpal::SampleFormat::U24,
+            cpal::SampleFormat::U32,
+            cpal::SampleFormat::U64,
+            cpal::SampleFormat::F32,
+            cpal::SampleFormat::F64,
+            cpal::SampleFormat::DsdU8,
+            cpal::SampleFormat::DsdU16,
+            cpal::SampleFormat::DsdU32,
+        ];
+
+        for fmt in all_formats {
+            let expected = matches!(
+                fmt,
+                cpal::SampleFormat::F32
+                    | cpal::SampleFormat::F64
+                    | cpal::SampleFormat::I16
+                    | cpal::SampleFormat::I32
+                    | cpal::SampleFormat::U16
+            );
+            assert_eq!(
+                accepted_sample_format(fmt),
+                expected,
+                "mapeo inesperado para {fmt:?}"
+            );
+        }
+
+        assert!(accepted_sample_format(cpal::SampleFormat::F32));
+        assert!(!accepted_sample_format(cpal::SampleFormat::I24));
+        assert!(!accepted_sample_format(cpal::SampleFormat::U32));
     }
 }

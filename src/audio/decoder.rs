@@ -1552,7 +1552,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         &mut tail_buffer_cap,
                                     );
 
-                                    let mut s = state.read();
+                                    let s = state.read();
                                     // Fade-in on EVERY track start when enabled.
                                     // (Not gated on natural EOF — user expects a smooth rise
                                     // whenever a song begins.)

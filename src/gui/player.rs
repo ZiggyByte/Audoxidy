@@ -1,5 +1,5 @@
 use crate::audio::AudioManager;
-use crate::gui::app::Message;
+use crate::gui::app::{Message, fine_seek_enabled};
 use crate::gui::theme::*;
 use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
 use crate::utils::format_duration;
@@ -310,24 +310,42 @@ pub fn view<'a>(
         0.0
     };
 
-    let slider_el = slider(0.0..=1.0, progress, move |v| {
-        Message::SeekTo(v * state.total_duration_sec as f32)
-    })
-    .step(0.001)
-    .style(move |theme: &Theme, status| {
-        let mut st = iced::widget::slider::default(theme, status);
-        st.handle.background = Color::TRANSPARENT.into();
-        st.handle.border_color = Color::TRANSPARENT;
-        if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
-            *radius = 0.0;
-        }
-        st.rail.width = 5.0;
-        st.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
-        st
-    });
+    let progress_el: Element<'a, Message> = if fine_seek_enabled(state.total_duration_sec) {
+        slider(0.0..=1.0, progress, move |v| {
+            Message::SeekTo(v * state.total_duration_sec as f32)
+        })
+        .step(0.001)
+        .style(move |theme: &Theme, status| {
+            let mut st = iced::widget::slider::default(theme, status);
+            st.handle.background = Color::TRANSPARENT.into();
+            st.handle.border_color = Color::TRANSPARENT;
+            if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
+                *radius = 0.0;
+            }
+            st.rail.width = 5.0;
+            st.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
+            st
+        })
+        .into()
+    } else {
+        // Duración indeterminada: se muestra un riel plano no interactivo, sin
+        // mango ni salto, para que la posición no se pueda arrastrar.
+        container(Space::new().height(Length::Fixed(5.0)))
+            .width(Length::Fill)
+            .height(Length::Fixed(5.0))
+            .style(|_t: &Theme| {
+                container::Style::default().background(Color::from_rgba(
+                    COLOR_CONTRAST.r,
+                    COLOR_CONTRAST.g,
+                    COLOR_CONTRAST.b,
+                    0.5,
+                ))
+            })
+            .into()
+    };
 
     let progress_bar = mouse_area(
-        container(slider_el)
+        container(progress_el)
             .padding([15, 13])
             .height(Length::Fill)
             .center_y(Length::Fill),

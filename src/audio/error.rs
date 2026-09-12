@@ -13,8 +13,11 @@ pub enum AudioError {
     HostNotFound,
     #[error("Dispositivo no encontrado")]
     DeviceNotFound,
-    #[error("Formato de muestra no soportado")]
-    UnsupportedSampleFormat,
+    /// El dispositivo de salida no ofrece ningún formato de muestra que el
+    /// motor pueda convertir; nombra el dispositivo y el formato rechazado
+    /// para que la interfaz muestre un aviso en vez de un silencio.
+    #[error("Formato de muestra no soportado por el dispositivo '{device}': {format}")]
+    UnsupportedSampleFormat { device: String, format: String },
     #[error("Config error: {0}")]
     ConfigError(String),
     #[error("Stream error: {0}")]
@@ -47,8 +50,12 @@ mod tests {
             "Dispositivo no encontrado"
         );
         assert_eq!(
-            AudioError::UnsupportedSampleFormat.to_string(),
-            "Formato de muestra no soportado"
+            AudioError::UnsupportedSampleFormat {
+                device: "DAC".into(),
+                format: "I24".into(),
+            }
+            .to_string(),
+            "Formato de muestra no soportado por el dispositivo 'DAC': I24"
         );
         assert_eq!(
             AudioError::ConfigError("x".into()).to_string(),

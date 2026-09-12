@@ -7,7 +7,6 @@ use crate::audio::meter;
 use cpal::traits::DeviceTrait;
 use crossbeam::channel::{Sender, TrySendError, bounded};
 use parking_lot::{Mutex, RwLock};
-use ringbuf::wrap::caching::Caching;
 use ringbuf::{
     HeapRb,
     traits::{Consumer, Split},
@@ -36,15 +35,26 @@ const AUDIO_COMMAND_CAPACITY: usize = 64;
 /// Las posiciones reales siempre son finitas, así que `u64::MAX` no colisiona.
 const NO_SEEK: u64 = u64::MAX;
 
-// Define aliases based on ringbuf 0.4 structure
-/// Productor de anillo circular para audio, con caché habilitada.
+/// Productor del anillo circular de audio compartido.
 ///
-/// Tipo alias para `Caching<Arc<HeapRb<T>>, true, false>` (ringbuf 0.4).
-pub type HeapProducer<T> = Caching<Arc<HeapRb<T>>, true, false>;
-/// Consumidor de anillo circular para audio, con caché habilitada.
+/// Es el extremo de escritura (`HeapRb<f32>`) que usa el hilo decodificador
+/// para publicar los frames ya estrechados a `f32`.
+pub type HeapProducer<T> = ringbuf::HeapProd<T>;
+/// Consumidor del anillo circular de audio compartido.
 ///
-/// Tipo alias para `Caching<Arc<HeapRb<T>>, false, true>` (ringbuf 0.4).
-pub type HeapConsumer<T> = Caching<Arc<HeapRb<T>>, false, true>;
+/// Es el extremo de lectura que drena el callback de salida de CPAL.
+pub type HeapConsumer<T> = ringbuf::HeapCons<T>;
+
+/// Nombre legible del dispositivo para los errores de formato de muestra.
+///
+/// Si la descripción no está disponible se usa un marcador genérico: el error
+/// nunca debe impedir el arranque por no poder etiquetar el dispositivo.
+fn device_label(device: &cpal::Device) -> String {
+    device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "desconocido".into())
+}
 
 /// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
 #[derive(Default, Clone, Copy, Debug)]
@@ -419,6 +429,20 @@ impl AudioEngine {
                     err_fn,
                     None,
                 ),
+                cpal::SampleFormat::F64 => dev.build_output_stream(
+                    cfg,
+                    move |data: &mut [f64], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
+                    },
+                    err_fn,
+                    None,
+                ),
                 cpal::SampleFormat::I16 => dev.build_output_stream(
                     cfg,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
@@ -461,7 +485,12 @@ impl AudioEngine {
                     err_fn,
                     None,
                 ),
-                _ => return Err(AudioError::UnsupportedSampleFormat),
+                _ => {
+                    return Err(AudioError::UnsupportedSampleFormat {
+                        device: device_label(dev),
+                        format: format!("{fmt:?}"),
+                    });
+                }
             }
             .map_err(|e| AudioError::StreamError(e.to_string()))?;
 
@@ -495,7 +524,7 @@ impl AudioEngine {
         self.device_manager.start_stream(|dev, _cfg, _sample_fmt| {
             let stream = match fmt {
                 cpal::SampleFormat::F32 => dev.build_output_stream(
-                    &config,
+                    config,
                     move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(
                             data,
@@ -508,8 +537,22 @@ impl AudioEngine {
                     err_fn,
                     None,
                 ),
+                cpal::SampleFormat::F64 => dev.build_output_stream(
+                    config,
+                    move |data: &mut [f64], _: &cpal::OutputCallbackInfo| {
+                        Self::write_data(
+                            data,
+                            channels,
+                            &buffer_size_arc,
+                            &is_playing_arc,
+                            &consumer_arc,
+                        )
+                    },
+                    err_fn,
+                    None,
+                ),
                 cpal::SampleFormat::I16 => dev.build_output_stream(
-                    &config,
+                    config,
                     move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(
                             data,
@@ -523,7 +566,7 @@ impl AudioEngine {
                     None,
                 ),
                 cpal::SampleFormat::U16 => dev.build_output_stream(
-                    &config,
+                    config,
                     move |data: &mut [u16], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(
                             data,
@@ -537,7 +580,7 @@ impl AudioEngine {
                     None,
                 ),
                 cpal::SampleFormat::I32 => dev.build_output_stream(
-                    &config,
+                    config,
                     move |data: &mut [i32], _: &cpal::OutputCallbackInfo| {
                         Self::write_data(
                             data,
@@ -550,7 +593,12 @@ impl AudioEngine {
                     err_fn,
                     None,
                 ),
-                _ => return Err(AudioError::UnsupportedSampleFormat),
+                _ => {
+                    return Err(AudioError::UnsupportedSampleFormat {
+                        device: device_label(dev),
+                        format: format!("{fmt:?}"),
+                    });
+                }
             }
             .map_err(|e| {
                 tracing::error!(
@@ -775,6 +823,7 @@ impl AudioEngine {
                 cpal::SampleFormat::U16 => "16-bit Int (U)",
                 cpal::SampleFormat::I32 => "24/32-bit Int",
                 cpal::SampleFormat::F32 => "32-bit Float",
+                cpal::SampleFormat::F64 => "64-bit Float",
                 _ => "Unknown",
             }
             .to_string();

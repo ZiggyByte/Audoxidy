@@ -269,7 +269,7 @@ impl AudioDeviceManager {
     where
         F: FnOnce(
             &cpal::Device,
-            &cpal::StreamConfig,
+            cpal::StreamConfig,
             cpal::SampleFormat,
         ) -> Result<cpal::Stream, AudioError>,
     {
@@ -278,7 +278,7 @@ impl AudioDeviceManager {
             if output.stream.is_some() {
                 return Ok(());
             }
-            let stream = build_stream(&output.device, &output.stream_config, output.sample_format)?;
+            let stream = build_stream(&output.device, output.stream_config, output.sample_format)?;
             stream
                 .play()
                 .map_err(|e| AudioError::StreamError(e.to_string()))?;
@@ -321,8 +321,10 @@ impl AudioDeviceManager {
         if let Ok(devices) = host.output_devices() {
             devices
                 .map(|d| {
-                    #[allow(deprecated)]
-                    let name = d.name().unwrap_or_else(|_| "Unknown".into());
+                    let name = d
+                        .description()
+                        .map(|desc| desc.name().to_string())
+                        .unwrap_or_else(|_| "Unknown".into());
                     let supported_configs = d
                         .supported_output_configs()
                         .map(|c| c.collect())
@@ -366,10 +368,14 @@ impl AudioDeviceManager {
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
         let device = if let Some(ref dev_name) = settings.device_name {
-            #[allow(deprecated)]
             host.output_devices()
                 .map_err(|e| AudioError::DeviceError(e.to_string()))?
-                .find(|d| d.name().unwrap_or_default() == *dev_name)
+                .find(|d| {
+                    d.description()
+                        .map(|desc| desc.name().to_string())
+                        .unwrap_or_default()
+                        == *dev_name
+                })
                 .ok_or(AudioError::DeviceNotFound)?
         } else {
             host.default_output_device().ok_or(AudioError::NoDevice)?

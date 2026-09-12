@@ -679,9 +679,14 @@ mod tests {
 
     #[test]
     fn test_audio_error_display_unsupported_format() {
-        let err = AudioError::UnsupportedSampleFormat;
+        let err = AudioError::UnsupportedSampleFormat {
+            device: "DAC".into(),
+            format: "I24".into(),
+        };
         let msg = format!("{err}");
         assert!(msg.contains("Formato de muestra no soportado"));
+        assert!(msg.contains("DAC"));
+        assert!(msg.contains("I24"));
     }
 
     #[test]

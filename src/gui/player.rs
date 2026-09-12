@@ -314,7 +314,7 @@ pub fn view<'a>(
         slider(0.0..=1.0, progress, move |v| {
             Message::SeekTo(v * state.total_duration_sec as f32)
         })
-        .step(0.001)
+        .step(0.001_f32)
         .style(move |theme: &Theme, status| {
             let mut st = iced::widget::slider::default(theme, status);
             st.handle.background = Color::TRANSPARENT.into();

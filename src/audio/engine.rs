@@ -872,7 +872,7 @@ impl AudioEngine {
             let mut s = self.state.write();
             s.config_channels = settings.channels.clone();
             // Escribir la nueva tasa/canales antes de reconstruir el stream: el decoder
-            // reacciona recreando su resampler al leer la tasa nueva (fix B5).
+            // reacciona recreando su resampler al leer la tasa nueva.
             s.device_sample_rate = stream_config.sample_rate;
             // Aviso no modal si la salida guardada ya no existe; la reproducción continúa.
             s.audio_notice = audio_notice;
@@ -931,7 +931,7 @@ impl AudioEngine {
     ) -> Result<(), AudioError> {
         // Config PREVIA guardada en el device_manager (ANTES de sobrescribirla).
         // No se lee del estado compartido: apply_settings ya escribió la tasa nueva
-        // ahí antes de reconstruir (fix B5), y compararla impediría recrear el ringbuf.
+        // ahí antes de reconstruir, y compararla impediría recrear el ringbuf.
         let prev = self.device_manager.get_stream_config();
         // Publica tasa, canales, buffer, id estable del dispositivo y
         // profundidad de bits con el mismo helper que el arranque inicial.

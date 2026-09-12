@@ -1928,7 +1928,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                         tracing::info!("Audio Engine State Purged (Seek).");
 
-                        // Volumen y Mezcla: Reset on seek (D-20)
+                        // Volumen y Mezcla: Reset on seek
                         fade_state = FadeState::Idle;
                         silence_samples = 0;
                         in_silence = false;
@@ -1943,7 +1943,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     engine.set_playing(false);
                     state.write().current_pos_sec = 0.0;
 
-                    // Volumen y Mezcla: Reset on stop (D-20)
+                    // Volumen y Mezcla: Reset on stop
                     fade_state = FadeState::Idle;
                     silence_samples = 0;
                     in_silence = false;

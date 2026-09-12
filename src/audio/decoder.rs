@@ -634,7 +634,7 @@ fn crossfade_auto_due(total_duration_sec: f64, current_pos_sec: f64, auto_ms: f6
 /// tope de memoria de ~64 MB de f64 (~8M muestras): en configs normales el cap por
 /// tiempo cubre la mezcla completa; en configs extremas (384kHz × 8 ch) el tope de
 /// memoria acota el adelanto y el decoder cubre el resto en vivo.
-fn predecode_cap_frames_for(cap_ms: f64, out_rate: u32, out_channels: usize) -> usize {
+pub(crate) fn predecode_cap_frames_for(cap_ms: f64, out_rate: u32, out_channels: usize) -> usize {
     const PRELOAD_MAX_SAMPLES: usize = 8_000_000;
     let cap_ms = (cap_ms + 2000.0).clamp(0.0, 8000.0);
     let sec_cap = ((cap_ms as f64 / 1000.0) * out_rate as f64) as usize * out_channels;

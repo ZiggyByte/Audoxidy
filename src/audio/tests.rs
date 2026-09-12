@@ -1169,25 +1169,30 @@ mod tests {
 
     #[test]
     fn test_predecode_cap_memory_bounded() {
-        // El cap del predecode se limita por MEMORIA (~32MB de f64) además de por
-        // tiempo: en salidas multi-canal de alta tasa el tope por tiempo retendría
-        // cientos de MB (384kHz × 8ch × 8s ≈ 196MB).
-        const PRELOAD_MAX_SAMPLES: usize = 4_000_000;
+        use crate::audio::decoder::predecode_cap_frames_for;
+
+        // El cap del predecode se limita por MEMORIA (~64MB de f64, 8M muestras)
+        // además de por tiempo: en salidas multi-canal de alta tasa el tope por
+        // tiempo retendría cientos de MB (384kHz × 8ch × 8s ≈ 196MB).
+        //
+        // Se llama a la función de producción para que el test falle si el tope
+        // real cambia.
+        const PRELOAD_MAX_SAMPLES: usize = 8_000_000;
 
         // 384000 Hz × 8 ch: el cap por tiempo (8s) supera el tope de memoria.
-        let out_rate = 384_000u32;
-        let out_channels = 8usize;
-        let cap_ms = 8000.0f64;
-        let sec_cap = ((cap_ms / 1000.0) * out_rate as f64) as usize * out_channels;
-        assert!(sec_cap > PRELOAD_MAX_SAMPLES);
-        let cap_frames = sec_cap.min(PRELOAD_MAX_SAMPLES).max(out_channels);
-        assert_eq!(cap_frames, PRELOAD_MAX_SAMPLES);
+        let cap = predecode_cap_frames_for(10_000.0, 384_000, 8);
+        assert_eq!(cap, PRELOAD_MAX_SAMPLES);
+        let secs = cap as f64 / 384_000.0 / 8.0;
+        assert!(secs < 4.0, "memoria acotada: {secs}s");
 
         // 44100 Hz × 2 ch: el cap por tiempo (8s) es menor → gana el tiempo.
-        let sec_cap2 = ((cap_ms / 1000.0) * 44_100f64) as usize * 2;
-        let cap_frames2 = sec_cap2.min(PRELOAD_MAX_SAMPLES).max(2);
-        assert_eq!(cap_frames2, sec_cap2);
-        assert!(cap_frames2 < PRELOAD_MAX_SAMPLES);
+        let cap = predecode_cap_frames_for(10_000.0, 44_100, 2);
+        let secs = cap as f64 / 44_100.0 / 2.0;
+        assert!((secs - 8.0).abs() < 0.01, "cap por tiempo ~8s: {secs}");
+        assert!(cap < PRELOAD_MAX_SAMPLES);
+
+        // Nunca por debajo de un frame de salida.
+        assert!(predecode_cap_frames_for(0.0, 384_000, 8) >= 8);
     }
 
     #[test]

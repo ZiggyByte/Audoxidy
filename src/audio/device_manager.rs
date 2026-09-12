@@ -179,19 +179,64 @@ fn choose_device_lookup(
     }
 }
 
+/// Puntúa una configuración de salida aceptada para elegir la mejor entre las
+/// alternativas cuando no hay una coincidencia exacta.
+///
+/// Prioriza el formato sin conversión (`F32`/`F64`) por encima de los enteros,
+/// y dentro de cada grupo la cercanía al número de canales y a la tasa pedidos.
+/// Los pesos garantizan que un grupo de formato nunca quede por debajo de otro
+/// (la diferencia entre grupos supera la suma de los otros dos criterios).
+fn score_output_range(
+    range: &cpal::SupportedStreamConfigRange,
+    preferred_rate: u32,
+    preferred_channels: u16,
+) -> u32 {
+    let format_score = match range.sample_format() {
+        cpal::SampleFormat::F32 => 400,
+        cpal::SampleFormat::F64 => 300,
+        _ => 200,
+    };
+
+    let channels = range.channels();
+    let channel_score = if channels == preferred_channels {
+        40
+    } else if channels > preferred_channels {
+        20
+    } else {
+        20u32.saturating_sub(u32::from(preferred_channels - channels))
+    };
+
+    let rate_score = if range.contains_rate(preferred_rate) {
+        40
+    } else {
+        let min = range.min_sample_rate();
+        let max = range.max_sample_rate();
+        let distance = if preferred_rate < min {
+            min - preferred_rate
+        } else {
+            preferred_rate - max
+        };
+        // ~1 punto por cada kHz de cercanía, con un mínimo de 1.
+        (40u32.saturating_sub(distance / 1000)).max(1)
+    };
+
+    format_score + channel_score + rate_score
+}
+
 /// Elige una salida cuyo formato de muestra sea convertible.
 ///
 /// Orden de preferencia: una configuración `F32` en la tasa y canales pedidos
 /// (sin conversión en el callback); la configuración por defecto del
-/// dispositivo si su formato es aceptable; cualquier otra configuración
-/// aceptada. Si ninguna lo es, devuelve `UnsupportedSampleFormat` nombrando el
-/// dispositivo y el formato rechazado, en lugar de dejar la salida muda.
+/// dispositivo si su formato es aceptable; la mejor configuración aceptada
+/// según [`score_output_range`]. Si ninguna lo es, devuelve
+/// `UnsupportedSampleFormat` nombrando el dispositivo y el formato rechazado,
+/// en lugar de dejar la salida muda.
 fn select_accepted_output(
     device: &cpal::Device,
     preferred_rate: u32,
     preferred_channels: u16,
 ) -> Result<(cpal::StreamConfig, cpal::SampleFormat), AudioError> {
-    let mut fallback: Option<cpal::SupportedStreamConfigRange> = None;
+    let mut fallback: Option<(u32, cpal::SupportedStreamConfigRange)> = None;
     let mut rejected: Option<cpal::SampleFormat> = None;
 
     if let Ok(ranges) = device.supported_output_configs() {
@@ -207,8 +252,13 @@ fn select_accepted_output(
                 let cfg: cpal::StreamConfig = range.with_sample_rate(preferred_rate).into();
                 return Ok((cfg, cpal::SampleFormat::F32));
             }
-            if fallback.is_none() {
-                fallback = Some(range);
+            // El orden de `supported_output_configs` no está garantizado
+            // best-first: se guarda la mejor candidata por puntuación en vez de
+            // la primera que aparezca.
+            let score = score_output_range(&range, preferred_rate, preferred_channels);
+            match fallback {
+                Some((best_score, _)) if best_score >= score => {}
+                _ => fallback = Some((score, range)),
             }
         }
     }
@@ -220,9 +270,11 @@ fn select_accepted_output(
         rejected.get_or_insert(default.sample_format());
     }
 
-    if let Some(range) = fallback {
+    if let Some((_, range)) = fallback {
         let rate = if range.contains_rate(preferred_rate) {
             preferred_rate
+        } else if preferred_rate < range.min_sample_rate() {
+            range.min_sample_rate()
         } else {
             range.max_sample_rate()
         };

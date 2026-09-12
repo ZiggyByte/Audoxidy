@@ -80,26 +80,26 @@ fn bench_mix_channels_planar_51_to_stereo(c: &mut Criterion) {
 }
 
 fn bench_channel_map_construction(c: &mut Criterion) {
-    use symphonia::core::audio::Channels;
+    use symphonia::core::audio::{Channels, Position};
 
     // Simular varios formatos multicanal
-    let configs = [
-        Channels::FRONT_LEFT | Channels::FRONT_RIGHT,
-        Channels::FRONT_LEFT | Channels::FRONT_RIGHT | Channels::FRONT_CENTRE | Channels::LFE1,
-        Channels::FRONT_LEFT
-            | Channels::FRONT_RIGHT
-            | Channels::FRONT_CENTRE
-            | Channels::LFE1
-            | Channels::REAR_LEFT
-            | Channels::REAR_RIGHT,
-        Channels::FRONT_LEFT
-            | Channels::FRONT_RIGHT
-            | Channels::FRONT_CENTRE
-            | Channels::LFE1
-            | Channels::REAR_LEFT
-            | Channels::REAR_RIGHT
-            | Channels::SIDE_LEFT
-            | Channels::SIDE_RIGHT,
+    let layouts = [
+        Position::FRONT_LEFT | Position::FRONT_RIGHT,
+        Position::FRONT_LEFT | Position::FRONT_RIGHT | Position::FRONT_CENTER | Position::LFE1,
+        Position::FRONT_LEFT
+            | Position::FRONT_RIGHT
+            | Position::FRONT_CENTER
+            | Position::LFE1
+            | Position::REAR_LEFT
+            | Position::REAR_RIGHT,
+        Position::FRONT_LEFT
+            | Position::FRONT_RIGHT
+            | Position::FRONT_CENTER
+            | Position::LFE1
+            | Position::REAR_LEFT
+            | Position::REAR_RIGHT
+            | Position::SIDE_LEFT
+            | Position::SIDE_RIGHT,
     ];
 
     // Elemento = una configuración de canales mapeada por iteración.
@@ -107,8 +107,8 @@ fn bench_channel_map_construction(c: &mut Criterion) {
     group.throughput(Throughput::Elements(4));
     group.bench_function("4configs", |b| {
         b.iter(|| {
-            for cfg in &configs {
-                let _ = AudioEngine::get_channel_map(*cfg);
+            for pos in &layouts {
+                let _ = AudioEngine::get_channel_map(Channels::Positioned(*pos));
             }
         });
     });

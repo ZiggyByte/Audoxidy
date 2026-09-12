@@ -1038,11 +1038,11 @@ impl AudioEngine {
         dm_conf: (f64, f64, f64, f64),
         out_buf: &mut Vec<f64>,
     ) {
-        let planes = buffer.planes();
+        use symphonia::core::audio::Audio;
 
         let get_sample = |plane_idx: usize, frame_idx: usize| -> f64 {
             if plane_idx < src_ch {
-                planes.planes()[plane_idx][frame_idx] as f64
+                buffer.plane(plane_idx).map(|p| p[frame_idx]).unwrap_or(0.0)
             } else {
                 0.0
             }
@@ -1066,81 +1066,36 @@ impl AudioEngine {
 
     // Helper para mapear canales de entrada a roles
     pub fn get_channel_map(channels: symphonia::core::audio::Channels) -> ChannelMap {
-        use symphonia::core::audio::Channels;
+        use symphonia::core::audio::{Channels, Position};
         let mut map = ChannelMap::default();
 
-        let mut index = 0;
-
-        // Standard iterator order in Symphonia (WAVEFORMATEXTENSIBLE order)
-        if channels.contains(Channels::FRONT_LEFT) {
-            map.fl = Some(index);
-            index += 1;
+        match channels {
+            // Los canales posicionados exponen su índice canónico en el buffer:
+            // se consulta por posición en lugar de recorrer una máscara de bits.
+            Channels::Positioned(pos) => {
+                let positioned = Channels::Positioned(pos);
+                let idx = |p: Position| positioned.get_canonical_index_for_positioned_channel(p);
+                map.fl = idx(Position::FRONT_LEFT);
+                map.fr = idx(Position::FRONT_RIGHT);
+                map.c = idx(Position::FRONT_CENTER);
+                map.lfe = idx(Position::LFE1);
+                map.sbl = idx(Position::REAR_LEFT);
+                map.sbr = idx(Position::REAR_RIGHT);
+                map.sl = idx(Position::SIDE_LEFT);
+                map.sr = idx(Position::SIDE_RIGHT);
+            }
+            // Sin posiciones conocidas (discreto, ambisónico, personalizado o
+            // vacío): se asume el orden secuencial FL, FR.
+            other => {
+                let count = other.count();
+                if count >= 1 {
+                    map.fl = Some(0);
+                }
+                if count >= 2 {
+                    map.fr = Some(1);
+                }
+            }
         }
-        if channels.contains(Channels::FRONT_RIGHT) {
-            map.fr = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::FRONT_CENTRE) {
-            map.c = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::LFE1) {
-            map.lfe = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::REAR_LEFT) {
-            map.sbl = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::REAR_RIGHT) {
-            map.sbr = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::FRONT_LEFT_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::FRONT_RIGHT_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::REAR_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::SIDE_LEFT) {
-            map.sl = Some(index);
-            index += 1;
-        }
-        if channels.contains(Channels::SIDE_RIGHT) {
-            map.sr = Some(index);
-            index += 1;
-        }
-        // Ignore other channels but increment index to keep sequence correct if they exist in valid stream
-        // But here we are mapping logic logic purely for map construction.
-        // If we don't use 'index' afterwards, and we don't use the map entries for these channels, we can just increment index or do nothing if we want to "skip" them in our map but they are present in the stream.
-        // Actually, 'index' tracks the channel position in the planar/interleaved stream.
-        // So we MUST increment index for every channel present in 'channels'.
-        if channels.contains(Channels::TOP_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_FRONT_LEFT) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_FRONT_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_FRONT_RIGHT) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_REAR_LEFT) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_REAR_CENTRE) {
-            index += 1;
-        }
-        if channels.contains(Channels::TOP_REAR_RIGHT) {
-            index += 1;
-        }
-
-        let _ = index; // Silence unused variable warning at the end
 
         map
     }

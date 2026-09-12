@@ -18,6 +18,12 @@ pub enum AudioError {
     /// para que la interfaz muestre un aviso en vez de un silencio.
     #[error("Formato de muestra no soportado por el dispositivo '{device}': {format}")]
     UnsupportedSampleFormat { device: String, format: String },
+    /// El archivo no se pudo abrir o decodificar: el probe no reconoce el
+    /// contenedor o el códec, o faltan la pista/parámetros de audio. Se nombra
+    /// el motivo para que el jugador muestre el aviso en vez de fallar en
+    /// silencio.
+    #[error("Formato de audio no soportado: {0}")]
+    UnsupportedFormat(String),
     #[error("Config error: {0}")]
     ConfigError(String),
     #[error("Stream error: {0}")]
@@ -56,6 +62,10 @@ mod tests {
             }
             .to_string(),
             "Formato de muestra no soportado por el dispositivo 'DAC': I24"
+        );
+        assert_eq!(
+            AudioError::UnsupportedFormat("FLAC corrupto".into()).to_string(),
+            "Formato de audio no soportado: FLAC corrupto"
         );
         assert_eq!(
             AudioError::ConfigError("x".into()).to_string(),

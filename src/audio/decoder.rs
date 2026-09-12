@@ -155,7 +155,8 @@ impl AudioDecoder for SymphoniaDecoder {
                 let sr = spec.rate();
 
                 // Convertir a f64 plano (interleaved)
-                let mut buf = AudioBuffer::<f64>::new(spec, decoded.capacity());
+                let mut buf = AudioBuffer::<f64>::new(spec.clone(), decoded.capacity());
+                buf.resize_uninit(decoded.frames());
                 decoded.copy_to(&mut buf);
 
                 let mut data = Vec::with_capacity(frames * channels);
@@ -481,11 +482,12 @@ fn preload_decode_batch(
         .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
         .unwrap_or(true);
     if needs_new_buf {
-        *preload_audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
+        *preload_audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
     }
     let Some(buf) = preload_audio_buf.as_mut() else {
         return false;
     };
+    buf.resize_uninit(decoded.frames());
     decoded.copy_to(buf);
     let src_channels = spec.channels().count();
 
@@ -755,11 +757,12 @@ fn tail_decode_batch(
             .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
             .unwrap_or(true);
         if needs_new_buf {
-            *tail_audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
+            *tail_audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
         }
         let Some(buf) = tail_audio_buf.as_mut() else {
             return false;
         };
+        buf.resize_uninit(decoded.frames());
         decoded.copy_to(buf);
         let src_channels = spec.channels().count();
 
@@ -1474,142 +1477,156 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 .limit_tag_bytes(Limit::Maximum(0)) // No cargar metadatos, ya los tenemos en la DB
                                 .limit_visual_bytes(Limit::Maximum(0));
 
-                            if let Ok(format) = symphonia::default::get_probe().probe(
+                            match symphonia::default::get_probe().probe(
                                 &hint,
                                 mss,
                                 FormatOptions::default(),
                                 metadata_opts,
                             ) {
-                                let Some(track) = format.default_track(TrackType::Audio) else {
-                                    tracing::error!(
-                                        "Formato de audio no soportado: sin pista de audio"
-                                    );
-                                    continue;
-                                };
-                                track_id = track.id;
-                                let Some(audio_params) =
-                                    track.codec_params.as_ref().and_then(|p| p.audio())
-                                else {
-                                    tracing::error!(
-                                        "Formato de audio no soportado: parámetros de audio ausentes"
-                                    );
-                                    continue;
-                                };
-                                let sr = audio_params.sample_rate.unwrap_or(44100);
-                                let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
-                                state.write().total_duration_sec = dur;
-                                state.write().sample_rate = sr;
+                                Ok(format) => {
+                                    let Some(track) = format.default_track(TrackType::Audio) else {
+                                        let msg =
+                                            "Formato de audio no soportado: sin pista de audio"
+                                                .to_string();
+                                        tracing::error!("{}", msg);
+                                        state.write().audio_notice = Some(msg);
+                                        continue;
+                                    };
+                                    track_id = track.id;
+                                    let Some(audio_params) =
+                                        track.codec_params.as_ref().and_then(|p| p.audio())
+                                    else {
+                                        let msg = "Formato de audio no soportado: parámetros de audio ausentes".to_string();
+                                        tracing::error!("{}", msg);
+                                        state.write().audio_notice = Some(msg);
+                                        continue;
+                                    };
+                                    let sr = audio_params.sample_rate.unwrap_or(44100);
+                                    let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
+                                    state.write().total_duration_sec = dur;
+                                    state.write().sample_rate = sr;
 
-                                // --- PURGA MAESTRA DE ESTADO (Anti-Residuos) ---
-                                resampler = None;
-                                resampler_rates = None;
-                                resampler_in_buf.clear();
-                                resample_input_pool.clear();
-                                resample_output_pool.clear();
-                                output_accumulator.clear();
-                                output_accumulator_f32.clear();
-                                audio_buf = None; // CRITICO: Evita reusar layout de buffer de canción anterior
-                                channel_map = ChannelMap::default();
-                                {
-                                    if let Some(mut dsp_lock) = engine.dsp.try_write() {
-                                        dsp_lock.reset_state();
+                                    // --- PURGA MAESTRA DE ESTADO (Anti-Residuos) ---
+                                    resampler = None;
+                                    resampler_rates = None;
+                                    resampler_in_buf.clear();
+                                    resample_input_pool.clear();
+                                    resample_output_pool.clear();
+                                    output_accumulator.clear();
+                                    output_accumulator_f32.clear();
+                                    audio_buf = None; // CRITICO: Evita reusar layout de buffer de canción anterior
+                                    channel_map = ChannelMap::default();
+                                    {
+                                        if let Some(mut dsp_lock) = engine.dsp.try_write() {
+                                            dsp_lock.reset_state();
+                                        }
                                     }
-                                }
-                                // Liberar también la pre-carga (decenas/cientos de MB del
-                                // predecode + el mmap del archivo): el Load manual inicia
-                                // una pista nueva y la pre-carga vieja ya no sirve.
-                                preload_format = None;
-                                preload_decoder = None;
-                                preload_resampler = None;
-                                preload_resampler_rates = None;
-                                preload_resampler_in_buf.clear();
-                                preload_audio_buf = None;
-                                preload_input_pool.clear();
-                                preload_output_pool.clear();
-                                predecode_buffer.clear();
-                                predecode_buffer.shrink_to_fit();
-                                preload_path = None;
-                                preload_title = None;
-                                preload_artist = None;
-                                preload_album = None;
-                                preload_cover = None;
-                                preload_rg = (None, None);
-                                preload_pending = None;
-                                tracing::info!(
-                                    "Audio Engine State Purged (Load): Buffers & DSP Reset."
-                                );
+                                    // Liberar también la pre-carga (decenas/cientos de MB del
+                                    // predecode + el mmap del archivo): el Load manual inicia
+                                    // una pista nueva y la pre-carga vieja ya no sirve.
+                                    preload_format = None;
+                                    preload_decoder = None;
+                                    preload_resampler = None;
+                                    preload_resampler_rates = None;
+                                    preload_resampler_in_buf.clear();
+                                    preload_audio_buf = None;
+                                    preload_input_pool.clear();
+                                    preload_output_pool.clear();
+                                    predecode_buffer.clear();
+                                    predecode_buffer.shrink_to_fit();
+                                    preload_path = None;
+                                    preload_title = None;
+                                    preload_artist = None;
+                                    preload_album = None;
+                                    preload_cover = None;
+                                    preload_rg = (None, None);
+                                    preload_pending = None;
+                                    tracing::info!(
+                                        "Audio Engine State Purged (Load): Buffers & DSP Reset."
+                                    );
 
-                                // Volumen y Mezcla: State resets + fade-in trigger (D-09, D-20)
-                                silence_samples = 0;
-                                in_silence = false;
-                                track_start_trimmed = false;
+                                    // Volumen y Mezcla: State resets + fade-in trigger (D-09, D-20)
+                                    silence_samples = 0;
+                                    in_silence = false;
+                                    track_start_trimmed = false;
 
-                                // Reset del crossfade: una pista nueva arranca sin mezcla.
-                                crossfade_active = false;
-                                crossfade_elapsed_sec = 0.0;
-                                crossfade_duration_sec = 0.0;
-                                preloaded_pending.clear();
+                                    // Reset del crossfade: una pista nueva arranca sin mezcla.
+                                    crossfade_active = false;
+                                    crossfade_elapsed_sec = 0.0;
+                                    crossfade_duration_sec = 0.0;
+                                    preloaded_pending.clear();
 
-                                // Limpiar la cola (tail) de una mezcla en curso: la
-                                // pista cargada manualmente no debe heredarla.
-                                clear_tail_state(
-                                    &mut tail_format,
-                                    &mut tail_decoder,
-                                    &mut tail_track_id,
-                                    &mut tail_channel_map,
-                                    &mut tail_resampler,
-                                    &mut tail_resampler_rates,
-                                    &mut tail_resampler_in_buf,
-                                    &mut tail_audio_buf,
-                                    &mut tail_input_pool,
-                                    &mut tail_output_pool,
-                                    &mut tail_buffer,
-                                    &mut tail_buffer_cap,
-                                );
+                                    // Limpiar la cola (tail) de una mezcla en curso: la
+                                    // pista cargada manualmente no debe heredarla.
+                                    clear_tail_state(
+                                        &mut tail_format,
+                                        &mut tail_decoder,
+                                        &mut tail_track_id,
+                                        &mut tail_channel_map,
+                                        &mut tail_resampler,
+                                        &mut tail_resampler_rates,
+                                        &mut tail_resampler_in_buf,
+                                        &mut tail_audio_buf,
+                                        &mut tail_input_pool,
+                                        &mut tail_output_pool,
+                                        &mut tail_buffer,
+                                        &mut tail_buffer_cap,
+                                    );
 
-                                let mut s = state.read();
-                                // Fade-in on EVERY track start when enabled (D-09).
-                                // (Not gated on natural EOF — user expects a smooth rise
-                                // whenever a song begins.)
-                                if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
-                                    let fade_ms = s.fade_in_ms as f64;
-                                    if fade_ms > 0.0 {
-                                        // rate_per_sec: fraction of the fade completed per
-                                        // second of *real* audio time. Independent of sample
-                                        // rate and batch size (robust timing, UAT round 4).
-                                        let rate_per_sec = 1.0 / (fade_ms / 1000.0);
-                                        fade_state = FadeState::FadingIn {
-                                            coeff: 0.0,
-                                            rate_per_sec,
-                                        };
+                                    let mut s = state.read();
+                                    // Fade-in on EVERY track start when enabled (D-09).
+                                    // (Not gated on natural EOF — user expects a smooth rise
+                                    // whenever a song begins.)
+                                    if s.fades_enabled && s.fade_in_enabled && s.fade_in_ms > 0.0 {
+                                        let fade_ms = s.fade_in_ms as f64;
+                                        if fade_ms > 0.0 {
+                                            // rate_per_sec: fraction of the fade completed per
+                                            // second of *real* audio time. Independent of sample
+                                            // rate and batch size (robust timing, UAT round 4).
+                                            let rate_per_sec = 1.0 / (fade_ms / 1000.0);
+                                            fade_state = FadeState::FadingIn {
+                                                coeff: 0.0,
+                                                rate_per_sec,
+                                            };
+                                        }
+                                    } else {
+                                        fade_state = FadeState::Idle;
                                     }
-                                } else {
-                                    fade_state = FadeState::Idle;
-                                }
-                                drop(s);
+                                    drop(s);
 
-                                if let Ok(decoder) = symphonia::default::get_codecs()
-                                    .make_audio_decoder(
+                                    match symphonia::default::get_codecs().make_audio_decoder(
                                         audio_params,
                                         &AudioDecoderOptions::default(),
-                                    )
-                                {
-                                    current_decoder = Some(decoder);
+                                    ) {
+                                        Ok(decoder) => {
+                                            current_decoder = Some(decoder);
 
-                                    // Update Channel Map
-                                    if let Some(channels) = audio_params.channels.as_ref() {
-                                        channel_map =
-                                            AudioEngine::get_channel_map(channels.clone());
-                                    } else {
-                                        // Fallback for no layout
-                                        channel_map = ChannelMap::default();
-                                        channel_map.fl = Some(0);
-                                        channel_map.fr = Some(1);
+                                            // Update Channel Map
+                                            if let Some(channels) = audio_params.channels.as_ref() {
+                                                channel_map =
+                                                    AudioEngine::get_channel_map(channels.clone());
+                                            } else {
+                                                // Fallback for no layout
+                                                channel_map = ChannelMap::default();
+                                                channel_map.fl = Some(0);
+                                                channel_map.fr = Some(1);
+                                            }
+
+                                            current_format = Some(format);
+                                            let mut s = state.write();
+                                            s.eof_reached = false;
+                                        }
+                                        Err(e) => {
+                                            let msg = format!("Formato de audio no soportado: {e}");
+                                            tracing::error!("{}", msg);
+                                            state.write().audio_notice = Some(msg);
+                                        }
                                     }
-
-                                    current_format = Some(format);
-                                    let mut s = state.write();
-                                    s.eof_reached = false;
+                                }
+                                Err(e) => {
+                                    let msg = format!("Formato de audio no soportado: {e}");
+                                    tracing::error!("{}", msg);
+                                    state.write().audio_notice = Some(msg);
                                 }
                             }
 
@@ -2281,7 +2298,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
         }
 
         if can_push && !process_preloaded {
-            let mut eof = false;
             let dec_opt = current_decoder.as_mut();
             let fmt_opt = current_format.as_mut();
 
@@ -2455,10 +2471,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
                         .unwrap_or(true);
                     if needs_new_buf {
-                        audio_buf = Some(AudioBuffer::<f64>::new(spec, decoded.capacity()));
+                        audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
                     }
 
                     if let Some(ref mut buf) = audio_buf {
+                        buf.resize_uninit(decoded.frames());
                         decoded.copy_to(buf);
                     }
 

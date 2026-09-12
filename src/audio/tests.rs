@@ -690,6 +690,14 @@ mod tests {
     }
 
     #[test]
+    fn test_audio_error_display_unsupported_file_format() {
+        let err = AudioError::UnsupportedFormat("contenedor desconocido".into());
+        let msg = format!("{err}");
+        assert!(msg.contains("Formato de audio no soportado"));
+        assert!(msg.contains("contenedor desconocido"));
+    }
+
+    #[test]
     fn test_audio_error_display_host_not_found() {
         let err = AudioError::HostNotFound;
         let msg = format!("{err}");

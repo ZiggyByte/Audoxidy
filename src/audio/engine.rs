@@ -56,6 +56,42 @@ fn device_label(device: &cpal::Device) -> String {
         .unwrap_or_else(|_| "desconocido".into())
 }
 
+/// Etiqueta legible de la profundidad de bits para un formato de muestra.
+fn bit_depth_label(format: cpal::SampleFormat) -> &'static str {
+    match format {
+        cpal::SampleFormat::I16 => "16-bit Int",
+        cpal::SampleFormat::U16 => "16-bit Int (U)",
+        cpal::SampleFormat::I32 => "24/32-bit Int",
+        cpal::SampleFormat::F32 => "32-bit Float",
+        cpal::SampleFormat::F64 => "64-bit Float",
+        _ => "Unknown",
+    }
+}
+
+/// Vuelca en el estado compartido los metadatos del stream resuelto.
+///
+/// Es la única fuente de verdad de esta contabilidad: el hilo decodificador
+/// lee `channels` para dimensionar el anillo y el layout del callback, así que
+/// el arranque inicial y la recreación del stream deben escribir exactamente
+/// los mismos campos para no divergir.
+fn store_stream_metadata(
+    state: &mut AudioState,
+    sample_rate: u32,
+    channels: u16,
+    buffer_size: cpal::BufferSize,
+    sample_format: cpal::SampleFormat,
+    device_id: Option<String>,
+) {
+    state.device_sample_rate = sample_rate;
+    state.channels = channels;
+    state.buffer_size = match buffer_size {
+        cpal::BufferSize::Fixed(f) => f,
+        _ => 0,
+    };
+    state.device_id = device_id;
+    state.bit_depth_display = bit_depth_label(sample_format).to_string();
+}
+
 /// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
 #[derive(Default, Clone, Copy, Debug)]
 pub struct ChannelMap {
@@ -395,10 +431,31 @@ impl AudioEngine {
 
     fn init_default_output(&self) -> Result<(), AudioError> {
         let (host, device, config, sample_fmt) = self.device_manager.init_default_output()?;
-        let sample_rate = config.sample_rate;
-        self.state.write().device_sample_rate = sample_rate;
 
         self.start_stream_with_device(host, device, config, sample_fmt)
+    }
+
+    /// Publica en el estado los parámetros del stream resuelto (tasa, canales,
+    /// buffer, id de dispositivo y profundidad de bits).
+    ///
+    /// Lo usan tanto el arranque inicial como la recreación del stream para que
+    /// la contabilidad no pueda divergir.
+    fn publish_stream_state(
+        &self,
+        device: &cpal::Device,
+        stream_config: &cpal::StreamConfig,
+        sample_format: cpal::SampleFormat,
+    ) {
+        let resolved_device_id = device.id().map(|id| id.to_string()).ok();
+        let mut s = self.state.write();
+        store_stream_metadata(
+            &mut s,
+            stream_config.sample_rate,
+            stream_config.channels,
+            stream_config.buffer_size,
+            sample_format,
+            resolved_device_id,
+        );
     }
 
     fn start_stream_with_device(
@@ -411,6 +468,9 @@ impl AudioEngine {
         // Configurar el manager
         self.device_manager
             .set_output(host, device.clone(), stream_config, sample_format);
+        // Publicar canales/tasa/buffer/bit-depth ANTES de arrancar el stream:
+        // el decodificador dimensiona el anillo con estos valores.
+        self.publish_stream_state(&device, &stream_config, sample_format);
 
         let consumer_arc = self.buffer_consumer.clone();
         let buffer_size_arc = self.buffer_size_published.clone();
@@ -818,28 +878,9 @@ impl AudioEngine {
         // No se lee del estado compartido: apply_settings ya escribió la tasa nueva
         // ahí antes de reconstruir (fix B5), y compararla impediría recrear el ringbuf.
         let prev = self.device_manager.get_stream_config();
-        // Id estable del dispositivo resuelto: se persiste en el estado para que la
-        // GUI pueda backfillarlo tras una coincidencia por nombre heredado.
-        let resolved_device_id = device.id().map(|id| id.to_string()).ok();
-        {
-            let mut s = self.state.write();
-            s.device_sample_rate = stream_config.sample_rate;
-            s.channels = stream_config.channels;
-            s.buffer_size = match stream_config.buffer_size {
-                cpal::BufferSize::Fixed(f) => f,
-                _ => 0,
-            };
-            s.device_id = resolved_device_id;
-            s.bit_depth_display = match sample_format {
-                cpal::SampleFormat::I16 => "16-bit Int",
-                cpal::SampleFormat::U16 => "16-bit Int (U)",
-                cpal::SampleFormat::I32 => "24/32-bit Int",
-                cpal::SampleFormat::F32 => "32-bit Float",
-                cpal::SampleFormat::F64 => "64-bit Float",
-                _ => "Unknown",
-            }
-            .to_string();
-        }
+        // Publica tasa, canales, buffer, id estable del dispositivo y
+        // profundidad de bits con el mismo helper que el arranque inicial.
+        self.publish_stream_state(&device, &stream_config, sample_format);
 
         self.device_manager
             .set_output(host, device.clone(), stream_config, sample_format);
@@ -1326,5 +1367,40 @@ mod tests {
         store_latest_seek(&slot, f64::NAN);
         store_latest_seek(&slot, f64::INFINITY);
         assert_eq!(take_latest_seek(&slot), None);
+    }
+
+    /// La contabilidad del stream publica canales, buffer, id y profundidad de
+    /// bits; sin ella el decodificador llena el anillo con un layout que no
+    /// coincide con el del callback.
+    #[test]
+    fn stream_metadata_publishes_channels_buffer_and_bit_depth() {
+        let mut state = AudioState::default();
+        store_stream_metadata(
+            &mut state,
+            96_000,
+            6,
+            cpal::BufferSize::Fixed(512),
+            cpal::SampleFormat::I32,
+            Some("alsa:card".to_string()),
+        );
+        assert_eq!(state.device_sample_rate, 96_000);
+        assert_eq!(state.channels, 6);
+        assert_eq!(state.buffer_size, 512);
+        assert_eq!(state.bit_depth_display, "24/32-bit Int");
+        assert_eq!(state.device_id.as_deref(), Some("alsa:card"));
+
+        // Sin buffer fijo se publica 0; el formato define la etiqueta.
+        store_stream_metadata(
+            &mut state,
+            48_000,
+            2,
+            cpal::BufferSize::Default,
+            cpal::SampleFormat::F32,
+            None,
+        );
+        assert_eq!(state.channels, 2);
+        assert_eq!(state.buffer_size, 0);
+        assert_eq!(state.bit_depth_display, "32-bit Float");
+        assert_eq!(state.device_id, None);
     }
 }

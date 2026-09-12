@@ -684,7 +684,7 @@ impl AudioDeviceManager {
             // usaba la pedida aunque fuera inválida → el stream no se construía y el
             // audio quedaba mudo hasta pausa/play).
             Some(r) if r < best.min_sample_rate() => best.min_sample_rate(),
-            Some(r) => best.max_sample_rate(),
+            Some(_) => best.max_sample_rate(),
             None => {
                 let min = best.min_sample_rate();
                 let max = best.max_sample_rate();

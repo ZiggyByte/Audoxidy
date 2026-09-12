@@ -1407,7 +1407,8 @@ impl AudioCenterManager {
                     tracing::error!(
                         "No se pudo aplicar la configuración de audio ({}): el dispositivo \
                          puede no soportar la combinación de tasa de muestreo y canales \
-                         elegida. Se conserva la configuración anterior.",
+                         elegida. La reproducción queda detenida hasta aplicar una \
+                         configuración válida.",
                         e
                     );
                 }

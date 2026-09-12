@@ -834,9 +834,23 @@ impl AudioEngine {
     /// para que el hilo decodificador reajuste su resampler sin desajustes de tasa.
     ///
     /// Si la construcción del nuevo stream falla (p. ej. el dispositivo no está listo
-    /// aún tras liberar el anterior), se reintenta con más tiempo de asentamiento y,
-    /// si persiste, se RESTAURA la configuración anterior para que el audio continúe.
+    /// aún tras liberar el anterior), se reintenta con más tiempo de asentamiento. Si
+    /// persiste, se devuelve el error y se publica un aviso no modal en
+    /// `audio_notice`; el stream queda detenido hasta que el usuario aplique una
+    /// configuración válida.
     pub fn apply_settings(&self, settings: AudioSettings) -> Result<(), AudioError> {
+        match self.apply_settings_inner(settings) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // Hacer visible el error en la GUI: sin esto el reproductor
+                // queda mudo sin ningún aviso (la vista de audio lo renderiza).
+                self.state.write().audio_notice = Some(format!("{e}"));
+                Err(e)
+            }
+        }
+    }
+
+    fn apply_settings_inner(&self, settings: AudioSettings) -> Result<(), AudioError> {
         self.device_manager.stop_stream();
         // Tiempo de asentamiento: el dispositivo necesita liberar el stream anterior
         // antes de construir el nuevo — si se construye inmediatamente, puede quedar

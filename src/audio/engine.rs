@@ -1031,15 +1031,23 @@ impl AudioEngine {
 
     // Helper para mapear canales de entrada a roles
     pub fn get_channel_map(channels: symphonia::core::audio::Channels) -> ChannelMap {
-        use symphonia::core::audio::{Channels, Position};
+        use symphonia::core::audio::{ChannelLabel, Channels, Position};
         let mut map = ChannelMap::default();
 
         match channels {
-            // Los canales posicionados exponen su índice canónico en el buffer:
-            // se consulta por posición en lugar de recorrer una máscara de bits.
+            // Los canales posicionados exponen su índice canónico en el buffer,
+            // pero `get_canonical_index_for_positioned_channel` devuelve el
+            // índice del canal que queda en esa posición aunque la posición no
+            // esté presente. Por eso cada rol se consulta solo si su posición
+            // forma parte del layout; un rol ausente queda en `None` en vez de
+            // apuntar por accidente al canal equivocado.
             Channels::Positioned(pos) => {
                 let positioned = Channels::Positioned(pos);
-                let idx = |p: Position| positioned.get_canonical_index_for_positioned_channel(p);
+                let idx = |p: Position| {
+                    pos.contains(p)
+                        .then(|| positioned.get_canonical_index_for_positioned_channel(p))
+                        .flatten()
+                };
                 map.fl = idx(Position::FRONT_LEFT);
                 map.fr = idx(Position::FRONT_RIGHT);
                 map.c = idx(Position::FRONT_CENTER);
@@ -1049,8 +1057,26 @@ impl AudioEngine {
                 map.sl = idx(Position::SIDE_LEFT);
                 map.sr = idx(Position::SIDE_RIGHT);
             }
-            // Sin posiciones conocidas (discreto, ambisónico, personalizado o
-            // vacío): se asume el orden secuencial FL, FR.
+            // Canales etiquetados: cada rol se busca por su etiqueta posicionada
+            // exacta. Las etiquetas discretas o ambisónicas no aportan posición.
+            Channels::Custom(labels) => {
+                let idx = |target: Position| {
+                    labels.iter().position(|label| match label {
+                        ChannelLabel::Positioned(p) => *p == target,
+                        _ => false,
+                    })
+                };
+                map.fl = idx(Position::FRONT_LEFT);
+                map.fr = idx(Position::FRONT_RIGHT);
+                map.c = idx(Position::FRONT_CENTER);
+                map.lfe = idx(Position::LFE1);
+                map.sbl = idx(Position::REAR_LEFT);
+                map.sbr = idx(Position::REAR_RIGHT);
+                map.sl = idx(Position::SIDE_LEFT);
+                map.sr = idx(Position::SIDE_RIGHT);
+            }
+            // Sin posiciones conocidas (discreto, ambisónico o vacío): se asume
+            // el orden secuencial FL, FR.
             other => {
                 let count = other.count();
                 if count >= 1 {

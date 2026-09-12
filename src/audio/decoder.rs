@@ -11,7 +11,6 @@ use rubato::{
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::Ordering;
-use symphonia::core::audio::{Audio, AudioBuffer};
 use symphonia::core::codecs::audio::{AudioDecoder as SymphoniaAudioDecoder, AudioDecoderOptions};
 use symphonia::core::common::Limit;
 use symphonia::core::formats::probe::Hint;
@@ -64,6 +63,9 @@ pub struct SymphoniaDecoder {
     format: Option<Box<dyn FormatReader>>,
     decoder: Option<Box<dyn SymphoniaAudioDecoder>>,
     track_id: u32,
+    /// Pool planar reutilizado por las copias de decodificación: evita
+    /// asignar un buffer por paquete en `decode_next`.
+    decode_plane_pool: Vec<Vec<f64>>,
 }
 
 impl SymphoniaDecoder {
@@ -73,6 +75,7 @@ impl SymphoniaDecoder {
             format: None,
             decoder: None,
             track_id: 0,
+            decode_plane_pool: Vec::new(),
         }
     }
 }
@@ -154,15 +157,13 @@ impl AudioDecoder for SymphoniaDecoder {
                 let channels = spec.channels().count();
                 let sr = spec.rate();
 
-                // Convertir a f64 plano (interleaved)
-                let mut buf = AudioBuffer::<f64>::new(spec.clone(), decoded.capacity());
-                buf.resize_uninit(decoded.frames());
-                decoded.copy_to(&mut buf);
+                // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
+                decoded.copy_to_vecs_planar::<f64>(&mut self.decode_plane_pool);
 
                 let mut data = Vec::with_capacity(frames * channels);
                 for i in 0..frames {
                     for ch in 0..channels {
-                        data.push(buf.plane(ch).unwrap()[i]);
+                        data.push(self.decode_plane_pool[ch][i]);
                     }
                 }
 
@@ -439,7 +440,7 @@ fn preload_decode_batch(
     preload_format: &mut Option<Box<dyn FormatReader>>,
     preload_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     preload_track_id: &mut u32,
-    preload_audio_buf: &mut Option<AudioBuffer<f64>>,
+    preload_plane_pool: &mut Vec<Vec<f64>>,
     preload_resampler: &mut Option<Async<f64>>,
     preload_resampler_rates: &mut Option<(u32, u32, usize)>,
     preload_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
@@ -477,18 +478,8 @@ fn preload_decode_batch(
     };
     let spec = decoded.spec().clone();
 
-    let needs_new_buf = preload_audio_buf
-        .as_ref()
-        .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
-        .unwrap_or(true);
-    if needs_new_buf {
-        *preload_audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
-    }
-    let Some(buf) = preload_audio_buf.as_mut() else {
-        return false;
-    };
-    buf.resize_uninit(decoded.frames());
-    decoded.copy_to(buf);
+    // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
+    decoded.copy_to_vecs_planar::<f64>(preload_plane_pool);
     let src_channels = spec.channels().count();
 
     if spec.rate() != out_rate {
@@ -566,8 +557,8 @@ fn preload_decode_batch(
     if let Some(rs) = preload_resampler.as_mut() {
         for c in 0..src_channels {
             if c < preload_resampler_in_buf.len() {
-                if let Some(plane) = buf.plane(c) {
-                    preload_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                if let Some(plane) = preload_plane_pool.get(c) {
+                    preload_resampler_in_buf[c].extend(plane.iter().copied());
                 }
             }
         }
@@ -611,9 +602,9 @@ fn preload_decode_batch(
             }
         }
     } else {
-        AudioEngine::mix_channels_direct(
-            buf,
-            buf.frames(),
+        AudioEngine::mix_channels_planar(
+            preload_plane_pool,
+            decoded.frames(),
             src_channels,
             out_channels,
             preload_channel_map,
@@ -708,7 +699,7 @@ fn tail_decode_batch(
     tail_format: &mut Option<Box<dyn FormatReader>>,
     tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
-    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_plane_pool: &mut Vec<Vec<f64>>,
     tail_resampler: &mut Option<Async<f64>>,
     tail_resampler_rates: &mut Option<(u32, u32, usize)>,
     tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
@@ -752,18 +743,8 @@ fn tail_decode_batch(
         };
         let spec = decoded.spec().clone();
 
-        let needs_new_buf = tail_audio_buf
-            .as_ref()
-            .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
-            .unwrap_or(true);
-        if needs_new_buf {
-            *tail_audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
-        }
-        let Some(buf) = tail_audio_buf.as_mut() else {
-            return false;
-        };
-        buf.resize_uninit(decoded.frames());
-        decoded.copy_to(buf);
+        // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
+        decoded.copy_to_vecs_planar::<f64>(tail_plane_pool);
         let src_channels = spec.channels().count();
 
         if spec.rate() != out_rate {
@@ -840,8 +821,8 @@ fn tail_decode_batch(
         if let Some(rs) = tail_resampler.as_mut() {
             for c in 0..src_channels {
                 if c < tail_resampler_in_buf.len() {
-                    if let Some(plane) = buf.plane(c) {
-                        tail_resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                    if let Some(plane) = tail_plane_pool.get(c) {
+                        tail_resampler_in_buf[c].extend(plane.iter().copied());
                     }
                 }
             }
@@ -885,9 +866,9 @@ fn tail_decode_batch(
                 }
             }
         } else {
-            AudioEngine::mix_channels_direct(
-                buf,
-                buf.frames(),
+            AudioEngine::mix_channels_planar(
+                tail_plane_pool,
+                decoded.frames(),
                 src_channels,
                 out_channels,
                 tail_channel_map,
@@ -919,7 +900,7 @@ fn clear_tail_decoder_chain(
     tail_resampler: &mut Option<Async<f64>>,
     tail_resampler_rates: &mut Option<(u32, u32, usize)>,
     tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
-    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_plane_pool: &mut Vec<Vec<f64>>,
     tail_input_pool: &mut Vec<Vec<f64>>,
     tail_output_pool: &mut Vec<Vec<f64>>,
 ) {
@@ -930,7 +911,7 @@ fn clear_tail_decoder_chain(
     *tail_resampler = None;
     *tail_resampler_rates = None;
     tail_resampler_in_buf.clear();
-    *tail_audio_buf = None;
+    tail_plane_pool.clear();
     tail_input_pool.clear();
     tail_output_pool.clear();
 }
@@ -958,7 +939,7 @@ fn clear_tail_state(
     tail_resampler: &mut Option<Async<f64>>,
     tail_resampler_rates: &mut Option<(u32, u32, usize)>,
     tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
-    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_plane_pool: &mut Vec<Vec<f64>>,
     tail_input_pool: &mut Vec<Vec<f64>>,
     tail_output_pool: &mut Vec<Vec<f64>>,
     tail_buffer: &mut std::collections::VecDeque<f64>,
@@ -972,7 +953,7 @@ fn clear_tail_state(
         tail_resampler,
         tail_resampler_rates,
         tail_resampler_in_buf,
-        tail_audio_buf,
+        tail_plane_pool,
         tail_input_pool,
         tail_output_pool,
     );
@@ -1041,7 +1022,7 @@ fn begin_forward_crossfade(
     resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
     resample_input_pool: &mut Vec<Vec<f64>>,
     resample_output_pool: &mut Vec<Vec<f64>>,
-    audio_buf: &mut Option<AudioBuffer<f64>>,
+    decode_plane_pool: &mut Vec<Vec<f64>>,
     tail_format: &mut Option<Box<dyn FormatReader>>,
     tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
@@ -1049,7 +1030,7 @@ fn begin_forward_crossfade(
     tail_resampler: &mut Option<Async<f64>>,
     tail_resampler_rates: &mut Option<(u32, u32, usize)>,
     tail_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
-    tail_audio_buf: &mut Option<AudioBuffer<f64>>,
+    tail_plane_pool: &mut Vec<Vec<f64>>,
     tail_input_pool: &mut Vec<Vec<f64>>,
     tail_output_pool: &mut Vec<Vec<f64>>,
     tail_buffer: &mut std::collections::VecDeque<f64>,
@@ -1063,7 +1044,7 @@ fn begin_forward_crossfade(
     preload_resampler: &mut Option<Async<f64>>,
     preload_resampler_rates: &mut Option<(u32, u32, usize)>,
     preload_resampler_in_buf: &mut Vec<std::collections::VecDeque<f64>>,
-    preload_audio_buf: &mut Option<AudioBuffer<f64>>,
+    preload_plane_pool: &mut Vec<Vec<f64>>,
     preload_input_pool: &mut Vec<Vec<f64>>,
     preload_output_pool: &mut Vec<Vec<f64>>,
     predecode_buffer: &mut std::collections::VecDeque<f64>,
@@ -1102,7 +1083,7 @@ fn begin_forward_crossfade(
     *tail_resampler = resampler.take();
     *tail_resampler_rates = resampler_rates.take();
     *tail_resampler_in_buf = std::mem::take(resampler_in_buf);
-    *tail_audio_buf = audio_buf.take();
+    *tail_plane_pool = std::mem::take(decode_plane_pool);
     *tail_input_pool = std::mem::take(resample_input_pool);
     *tail_output_pool = std::mem::take(resample_output_pool);
     tail_buffer.clear();
@@ -1116,7 +1097,7 @@ fn begin_forward_crossfade(
     *resampler = preload_resampler.take();
     *resampler_rates = preload_resampler_rates.take();
     *resampler_in_buf = std::mem::take(preload_resampler_in_buf);
-    *audio_buf = preload_audio_buf.take();
+    *decode_plane_pool = std::mem::take(preload_plane_pool);
     *resample_input_pool = std::mem::take(preload_input_pool);
     *resample_output_pool = std::mem::take(preload_output_pool);
 
@@ -1178,7 +1159,7 @@ fn begin_forward_crossfade(
             tail_format,
             tail_decoder,
             tail_track_id,
-            tail_audio_buf,
+            tail_plane_pool,
             tail_resampler,
             tail_resampler_rates,
             tail_resampler_in_buf,
@@ -1218,7 +1199,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut trace_iteration: u64 = 0;
 
     // Zero-Allocation Pool Buffers: Pre-asignados fuera del bucle para evitar GC pressure.
-    let mut audio_buf: Option<AudioBuffer<f64>> = None;
+    let mut decode_plane_pool: Vec<Vec<f64>> = Vec::new();
     let mut resample_input_pool: Vec<Vec<f64>> = Vec::new();
     let mut resample_output_pool: Vec<Vec<f64>> = Vec::new();
     let mut output_accumulator: Vec<f64> = Vec::with_capacity(131072);
@@ -1296,7 +1277,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut preload_resampler: Option<Async<f64>> = None;
     let mut preload_resampler_rates: Option<(u32, u32, usize)> = None;
     let mut preload_resampler_in_buf: Vec<std::collections::VecDeque<f64>> = Vec::new();
-    let mut preload_audio_buf: Option<AudioBuffer<f64>> = None;
+    let mut preload_plane_pool: Vec<Vec<f64>> = Vec::new();
     let mut preload_input_pool: Vec<Vec<f64>> = Vec::new();
     let mut preload_output_pool: Vec<Vec<f64>> = Vec::new();
 
@@ -1316,7 +1297,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut tail_resampler: Option<Async<f64>> = None;
     let mut tail_resampler_rates: Option<(u32, u32, usize)> = None;
     let mut tail_resampler_in_buf: Vec<std::collections::VecDeque<f64>> = Vec::new();
-    let mut tail_audio_buf: Option<AudioBuffer<f64>> = None;
+    let mut tail_plane_pool: Vec<Vec<f64>> = Vec::new();
     let mut tail_input_pool: Vec<Vec<f64>> = Vec::new();
     let mut tail_output_pool: Vec<Vec<f64>> = Vec::new();
     let mut tail_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
@@ -1514,7 +1495,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     resample_output_pool.clear();
                                     output_accumulator.clear();
                                     output_accumulator_f32.clear();
-                                    audio_buf = None; // CRITICO: Evita reusar layout de buffer de canción anterior
+                                    decode_plane_pool.clear(); // CRITICO: Evita reusar layout de buffer de canción anterior
                                     channel_map = ChannelMap::default();
                                     {
                                         if let Some(mut dsp_lock) = engine.dsp.try_write() {
@@ -1529,7 +1510,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     preload_resampler = None;
                                     preload_resampler_rates = None;
                                     preload_resampler_in_buf.clear();
-                                    preload_audio_buf = None;
+                                    preload_plane_pool.clear();
                                     preload_input_pool.clear();
                                     preload_output_pool.clear();
                                     predecode_buffer.clear();
@@ -1566,7 +1547,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         &mut tail_resampler,
                                         &mut tail_resampler_rates,
                                         &mut tail_resampler_in_buf,
-                                        &mut tail_audio_buf,
+                                        &mut tail_plane_pool,
                                         &mut tail_input_pool,
                                         &mut tail_output_pool,
                                         &mut tail_buffer,
@@ -1664,7 +1645,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_resampler = None;
                     preload_resampler_rates = None;
                     preload_resampler_in_buf.clear();
-                    preload_audio_buf = None;
+                    preload_plane_pool.clear();
                     preload_input_pool.clear();
                     preload_output_pool.clear();
                     predecode_buffer.clear();
@@ -1684,7 +1665,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_resampler = None;
                     preload_resampler_rates = None;
                     preload_resampler_in_buf.clear();
-                    preload_audio_buf = None;
+                    preload_plane_pool.clear();
                     preload_input_pool.clear();
                     preload_output_pool.clear();
                     predecode_buffer.clear();
@@ -1727,7 +1708,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut resampler_in_buf,
                                 &mut resample_input_pool,
                                 &mut resample_output_pool,
-                                &mut audio_buf,
+                                &mut decode_plane_pool,
                                 &mut tail_format,
                                 &mut tail_decoder,
                                 &mut tail_track_id,
@@ -1735,7 +1716,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut tail_resampler,
                                 &mut tail_resampler_rates,
                                 &mut tail_resampler_in_buf,
-                                &mut tail_audio_buf,
+                                &mut tail_plane_pool,
                                 &mut tail_input_pool,
                                 &mut tail_output_pool,
                                 &mut tail_buffer,
@@ -1749,7 +1730,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut preload_resampler,
                                 &mut preload_resampler_rates,
                                 &mut preload_resampler_in_buf,
-                                &mut preload_audio_buf,
+                                &mut preload_plane_pool,
                                 &mut preload_input_pool,
                                 &mut preload_output_pool,
                                 &mut predecode_buffer,
@@ -1814,7 +1795,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut preload_format,
                                 &mut preload_decoder,
                                 &mut preload_track_id,
-                                &mut preload_audio_buf,
+                                &mut preload_plane_pool,
                                 &mut preload_resampler,
                                 &mut preload_resampler_rates,
                                 &mut preload_resampler_in_buf,
@@ -1838,7 +1819,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut resampler_in_buf,
                                 &mut resample_input_pool,
                                 &mut resample_output_pool,
-                                &mut audio_buf,
+                                &mut decode_plane_pool,
                                 &mut tail_format,
                                 &mut tail_decoder,
                                 &mut tail_track_id,
@@ -1846,7 +1827,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut tail_resampler,
                                 &mut tail_resampler_rates,
                                 &mut tail_resampler_in_buf,
-                                &mut tail_audio_buf,
+                                &mut tail_plane_pool,
                                 &mut tail_input_pool,
                                 &mut tail_output_pool,
                                 &mut tail_buffer,
@@ -1860,7 +1841,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut preload_resampler,
                                 &mut preload_resampler_rates,
                                 &mut preload_resampler_in_buf,
-                                &mut preload_audio_buf,
+                                &mut preload_plane_pool,
                                 &mut preload_input_pool,
                                 &mut preload_output_pool,
                                 &mut predecode_buffer,
@@ -1943,7 +1924,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         resample_output_pool.clear();
                         output_accumulator.clear();
                         output_accumulator_f32.clear();
-                        audio_buf = None; // Reset buffer layout
+                        decode_plane_pool.clear(); // Reset buffer layout
                         {
                             if let Some(mut dsp_lock) = engine.dsp.try_write() {
                                 dsp_lock.reset_state();
@@ -2023,7 +2004,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             preload_resampler = None;
             preload_resampler_rates = None;
             preload_resampler_in_buf.clear();
-            preload_audio_buf = None;
+            preload_plane_pool.clear();
             preload_input_pool.clear();
             preload_output_pool.clear();
             predecode_buffer.clear();
@@ -2118,7 +2099,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_format,
                     &mut preload_decoder,
                     &mut preload_track_id,
-                    &mut preload_audio_buf,
+                    &mut preload_plane_pool,
                     &mut preload_resampler,
                     &mut preload_resampler_rates,
                     &mut preload_resampler_in_buf,
@@ -2143,7 +2124,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_format,
                     &mut tail_decoder,
                     &mut tail_track_id,
-                    &mut tail_audio_buf,
+                    &mut tail_plane_pool,
                     &mut tail_resampler,
                     &mut tail_resampler_rates,
                     &mut tail_resampler_in_buf,
@@ -2179,7 +2160,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_resampler,
                     &mut tail_resampler_rates,
                     &mut tail_resampler_in_buf,
-                    &mut tail_audio_buf,
+                    &mut tail_plane_pool,
                     &mut tail_input_pool,
                     &mut tail_output_pool,
                 );
@@ -2376,7 +2357,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             resampler = preload_resampler.take();
                             resampler_rates = preload_resampler_rates.take();
                             resampler_in_buf = std::mem::take(&mut preload_resampler_in_buf);
-                            audio_buf = preload_audio_buf.take();
+                            decode_plane_pool = std::mem::take(&mut preload_plane_pool);
                             resample_input_pool = std::mem::take(&mut preload_input_pool);
                             resample_output_pool = std::mem::take(&mut preload_output_pool);
                             {
@@ -2432,7 +2413,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         resampler_in_buf.clear();
                         resample_input_pool.clear();
                         resample_output_pool.clear();
-                        audio_buf = None; // Reset buffer layout
+                        decode_plane_pool.clear(); // Reset buffer layout
                         channel_map = ChannelMap::default();
                         {
                             if let Some(mut dsp_lock) = engine.dsp.try_write() {
@@ -2465,19 +2446,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     let spec = decoded.spec().clone();
                     state.write().current_pos_sec = packet.pts.get() as f64 / spec.rate() as f64;
 
-                    // Reuse or allocate audio_buf only when spec changes or capacity is insufficient
-                    let needs_new_buf = audio_buf
-                        .as_ref()
-                        .map(|b| b.spec() != &spec || b.capacity() < decoded.capacity())
-                        .unwrap_or(true);
-                    if needs_new_buf {
-                        audio_buf = Some(AudioBuffer::<f64>::new(spec.clone(), decoded.capacity()));
-                    }
-
-                    if let Some(ref mut buf) = audio_buf {
-                        buf.resize_uninit(decoded.frames());
-                        decoded.copy_to(buf);
-                    }
+                    // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
+                    decoded.copy_to_vecs_planar::<f64>(&mut decode_plane_pool);
 
                     let (out_rate, out_channels) = {
                         let s = state.read();
@@ -2572,7 +2542,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             &mut tail_format,
                             &mut tail_decoder,
                             &mut tail_track_id,
-                            &mut tail_audio_buf,
+                            &mut tail_plane_pool,
                             &mut tail_resampler,
                             &mut tail_resampler_rates,
                             &mut tail_resampler_in_buf,
@@ -2593,7 +2563,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 &mut tail_resampler,
                                 &mut tail_resampler_rates,
                                 &mut tail_resampler_in_buf,
-                                &mut tail_audio_buf,
+                                &mut tail_plane_pool,
                                 &mut tail_input_pool,
                                 &mut tail_output_pool,
                             );
@@ -2625,13 +2595,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         )
                     };
 
-                    if let (Some(rs), Some(ref buf)) = (resampler.as_mut(), audio_buf.as_ref()) {
+                    if let Some(rs) = resampler.as_mut() {
                         let src_channels = spec.channels().count();
 
                         for c in 0..src_channels {
                             if c < resampler_in_buf.len() {
-                                if let Some(plane) = buf.plane(c) {
-                                    resampler_in_buf[c].extend(plane.iter().map(|&s| s as f64));
+                                if let Some(plane) = decode_plane_pool.get(c) {
+                                    resampler_in_buf[c].extend(plane.iter().copied());
                                 }
                             }
                         }
@@ -2698,10 +2668,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 );
                             }
                         }
-                    } else if let Some(ref buf) = audio_buf {
-                        AudioEngine::mix_channels_direct(
-                            buf,
-                            buf.frames(),
+                    } else {
+                        AudioEngine::mix_channels_planar(
+                            &decode_plane_pool,
+                            decoded.frames(),
                             spec.channels().count(),
                             out_channels as usize,
                             &channel_map,
@@ -2742,7 +2712,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_format,
                     &mut preload_decoder,
                     &mut preload_track_id,
-                    &mut preload_audio_buf,
+                    &mut preload_plane_pool,
                     &mut preload_resampler,
                     &mut preload_resampler_rates,
                     &mut preload_resampler_in_buf,
@@ -2763,7 +2733,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_format,
                     &mut tail_decoder,
                     &mut tail_track_id,
-                    &mut tail_audio_buf,
+                    &mut tail_plane_pool,
                     &mut tail_resampler,
                     &mut tail_resampler_rates,
                     &mut tail_resampler_in_buf,
@@ -2790,7 +2760,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_resampler,
                     &mut tail_resampler_rates,
                     &mut tail_resampler_in_buf,
-                    &mut tail_audio_buf,
+                    &mut tail_plane_pool,
                     &mut tail_input_pool,
                     &mut tail_output_pool,
                 );
@@ -2856,7 +2826,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         &mut resampler_in_buf,
                         &mut resample_input_pool,
                         &mut resample_output_pool,
-                        &mut audio_buf,
+                        &mut decode_plane_pool,
                         &mut tail_format,
                         &mut tail_decoder,
                         &mut tail_track_id,
@@ -2864,7 +2834,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         &mut tail_resampler,
                         &mut tail_resampler_rates,
                         &mut tail_resampler_in_buf,
-                        &mut tail_audio_buf,
+                        &mut tail_plane_pool,
                         &mut tail_input_pool,
                         &mut tail_output_pool,
                         &mut tail_buffer,
@@ -2878,7 +2848,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         &mut preload_resampler,
                         &mut preload_resampler_rates,
                         &mut preload_resampler_in_buf,
-                        &mut preload_audio_buf,
+                        &mut preload_plane_pool,
                         &mut preload_input_pool,
                         &mut preload_output_pool,
                         &mut predecode_buffer,
@@ -3052,7 +3022,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             &mut tail_resampler,
                             &mut tail_resampler_rates,
                             &mut tail_resampler_in_buf,
-                            &mut tail_audio_buf,
+                            &mut tail_plane_pool,
                             &mut tail_input_pool,
                             &mut tail_output_pool,
                             &mut tail_buffer,
@@ -3742,7 +3712,7 @@ mod decoder_tests {
         Option<Box<dyn FormatReader>>,
         Option<Box<dyn SymphoniaAudioDecoder>>,
         u32,
-        Option<symphonia::core::audio::AudioBuffer<f64>>,
+        Vec<Vec<f64>>,
         Option<rubato::Async<f64>>,
         Option<(u32, u32, usize)>,
         Vec<VecDeque<f64>>,
@@ -3756,7 +3726,7 @@ mod decoder_tests {
             fmt,
             dec,
             track_id,
-            None,
+            Vec::new(),
             None,
             None,
             Vec::new(),
@@ -3780,7 +3750,7 @@ mod decoder_tests {
             mut fmt,
             mut dec,
             mut track_id,
-            mut audio_buf,
+            mut decode_plane_pool,
             mut resampler,
             mut resampler_rates,
             mut resampler_in_buf,
@@ -3795,7 +3765,7 @@ mod decoder_tests {
             &mut fmt,
             &mut dec,
             &mut track_id,
-            &mut audio_buf,
+            &mut decode_plane_pool,
             &mut resampler,
             &mut resampler_rates,
             &mut resampler_in_buf,
@@ -3822,7 +3792,7 @@ mod decoder_tests {
             &mut fmt,
             &mut dec,
             &mut track_id,
-            &mut audio_buf,
+            &mut decode_plane_pool,
             &mut resampler,
             &mut resampler_rates,
             &mut resampler_in_buf,
@@ -3856,7 +3826,7 @@ mod decoder_tests {
             mut fmt,
             mut dec,
             mut track_id,
-            mut audio_buf,
+            mut decode_plane_pool,
             mut resampler,
             mut resampler_rates,
             mut resampler_in_buf,
@@ -3871,7 +3841,7 @@ mod decoder_tests {
             &mut fmt,
             &mut dec,
             &mut track_id,
-            &mut audio_buf,
+            &mut decode_plane_pool,
             &mut resampler,
             &mut resampler_rates,
             &mut resampler_in_buf,
@@ -3894,7 +3864,7 @@ mod decoder_tests {
             &mut fmt,
             &mut dec,
             &mut track_id,
-            &mut audio_buf,
+            &mut decode_plane_pool,
             &mut resampler,
             &mut resampler_rates,
             &mut resampler_in_buf,

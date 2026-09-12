@@ -58,7 +58,7 @@ pub trait AudioDecoder: Send {
 
 /// Decodificador basado en Symphonia (backend por defecto).
 ///
-/// Soporta MP3, FLAC, WAV, OGG, M4A, AAC, APE, Opus, WavPack y más.
+/// Soporta MP3, FLAC, WAV, OGG, M4A, AAC, ALAC, AIFF, CAF y MKV.
 pub struct SymphoniaDecoder {
     format: Option<Box<dyn FormatReader>>,
     decoder: Option<Box<dyn SymphoniaAudioDecoder>>,
@@ -3526,8 +3526,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 #[cfg(test)]
 mod decoder_tests {
     use super::{
-        apply_promotion_metadata, crossfade_auto_due, mix_tail_into_frame,
-        predecode_cap_frames_for, tail_buffer_cap_for, tail_decode_batch,
+        AudioDecoder, SymphoniaDecoder, apply_promotion_metadata, crossfade_auto_due,
+        mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for, tail_decode_batch,
     };
     use crate::audio::engine::{AudioEngine, AudioState, ChannelMap};
     use std::collections::VecDeque;
@@ -3961,5 +3961,45 @@ mod decoder_tests {
             true,
         );
         assert!(eof_state.eof_reached);
+    }
+
+    #[test]
+    fn symphonia_open_succeeds_on_generated_wav() {
+        // Ruta de éxito del probe: un WAV PCM generado abre por el decodificador
+        // real y expone la tasa y los canales del stream.
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_open_ok_{}.wav", std::process::id()));
+        write_pcm_wav(path.to_str().unwrap(), 44100, 2, 0.25);
+
+        let mut decoder = SymphoniaDecoder::new();
+        let info = decoder
+            .open(path.to_str().unwrap())
+            .expect("un WAV PCM generado debe abrirse");
+
+        assert_eq!(info.sample_rate, 44100);
+        assert_eq!(info.channels, 2);
+        assert_eq!(info.channel_count, 2);
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn symphonia_open_rejects_unprobeable_input() {
+        // Ruta de fallo del probe: bytes que no son audio devuelven el error
+        // nombrado en vez de silencio o un pánico.
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_open_bad_{}.bin", std::process::id()));
+        std::fs::write(&path, b"bytes que no son un archivo de audio reconocible").unwrap();
+
+        let mut decoder = SymphoniaDecoder::new();
+        let err = decoder
+            .open(path.to_str().unwrap())
+            .expect_err("bytes no-audio deben rechazarse");
+        assert!(
+            matches!(err, crate::audio::AudioError::UnsupportedFormat(_)),
+            "se esperaba UnsupportedFormat, se obtuvo {err:?}"
+        );
+
+        let _ = std::fs::remove_file(&path);
     }
 }

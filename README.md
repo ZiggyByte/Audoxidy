@@ -23,7 +23,7 @@ Audoxidy is a desktop audio player powered by a custom audio engine and a modern
 
 ### Format Support
 
-Plays MP3, FLAC, WAV, OGG, Opus, AAC, APE, WavPack, and more — powered by the Symphonia decoding framework with metadata extraction via Lofty.
+Plays MP3, FLAC, WAV, OGG, AAC, M4A, and more — powered by the Symphonia decoding framework with metadata extraction via Lofty.
 
 ### Library & Organization
 

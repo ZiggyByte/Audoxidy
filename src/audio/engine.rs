@@ -410,7 +410,7 @@ impl AudioEngine {
     ) -> Result<(), AudioError> {
         // Configurar el manager
         self.device_manager
-            .set_output(host, device.clone(), stream_config.clone(), sample_format);
+            .set_output(host, device.clone(), stream_config, sample_format);
 
         let consumer_arc = self.buffer_consumer.clone();
         let buffer_size_arc = self.buffer_size_published.clone();
@@ -772,7 +772,7 @@ impl AudioEngine {
 
         // Capturar el ID del host antes de moverlo al stream (cpal::Host no es clonable).
         let host_id = host.id();
-        match self.recreate_stream(host, device.clone(), stream_config.clone(), sample_format) {
+        match self.recreate_stream(host, device.clone(), stream_config, sample_format) {
             Ok(()) => Ok(()),
             Err(e) => {
                 let err_msg = format!("{}", e);
@@ -842,7 +842,7 @@ impl AudioEngine {
         }
 
         self.device_manager
-            .set_output(host, device.clone(), stream_config.clone(), sample_format);
+            .set_output(host, device.clone(), stream_config, sample_format);
 
         // Si cambió la tasa de muestreo o el número de canales, el contenido del
         // ringbuf es inválido (los samples están a la tasa/canales anteriores y se

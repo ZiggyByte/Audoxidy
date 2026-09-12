@@ -296,7 +296,7 @@ impl AudioDeviceManager {
 
     /// Devuelve la configuración del stream activo, si existe.
     pub fn get_stream_config(&self) -> Option<cpal::StreamConfig> {
-        self.output.read().as_ref().map(|o| o.stream_config.clone())
+        self.output.read().as_ref().map(|o| o.stream_config)
     }
 
     /// Devuelve el dispositivo de salida activo, si existe.
@@ -647,7 +647,7 @@ impl AudioDeviceManager {
         };
 
         let config = best.with_sample_rate(target_rate);
-        let mut stream_config: cpal::StreamConfig = config.clone().into();
+        let mut stream_config: cpal::StreamConfig = config.into();
 
         if let Some(frames) = settings.buffer_size {
             stream_config.buffer_size = cpal::BufferSize::Fixed(frames);

@@ -595,12 +595,10 @@ impl AudioEngine {
             return Ok(());
         }
 
-        let (_device, config, fmt) = match self.device_manager.get_device() {
-            Some(d) => (
-                d,
-                self.device_manager.get_stream_config().unwrap(),
-                self.device_manager.get_sample_format().unwrap(),
-            ),
+        // Leer dispositivo, configuración y formato bajo un único guard: si se
+        // consultan por separado, un `take_output` concurrente haría panicar.
+        let (_device, config, fmt) = match self.device_manager.get_output_snapshot() {
+            Some(snapshot) => snapshot,
             None => return Ok(()),
         };
 

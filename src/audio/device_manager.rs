@@ -361,6 +361,17 @@ impl AudioDeviceManager {
         self.output.read().as_ref().map(|o| o.sample_format)
     }
 
+    /// Devuelve dispositivo, configuración y formato del stream activo bajo un
+    /// único guard, para que no puedan cambiar entre lecturas.
+    pub fn get_output_snapshot(
+        &self,
+    ) -> Option<(cpal::Device, cpal::StreamConfig, cpal::SampleFormat)> {
+        self.output
+            .read()
+            .as_ref()
+            .map(|o| (o.device.clone(), o.stream_config, o.sample_format))
+    }
+
     /// Verifica si hay un stream de audio activo.
     pub fn has_stream(&self) -> bool {
         self.output

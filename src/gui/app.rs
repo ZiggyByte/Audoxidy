@@ -670,6 +670,9 @@ impl AudoxidyApp {
             let device_name = db_lock
                 .get_setting("audio_device")
                 .filter(|s| !s.is_empty());
+            let device_id = db_lock
+                .get_setting("audio_device_id")
+                .filter(|s| !s.is_empty());
             let sample_rate = db_lock.get_setting("audio_sample_rate").and_then(|s| {
                 if s == "auto" {
                     None
@@ -700,13 +703,16 @@ impl AudoxidyApp {
             // Solo aplicar si hay al menos un ajuste guardado o es reinstalación.
             if host_id.is_some()
                 || device_name.is_some()
+                || device_id.is_some()
                 || sample_rate.is_some()
                 || bit_depth.is_some()
                 || buffer_size.is_some()
             {
+                let had_device_id = device_id.is_none();
                 let settings = crate::audio::engine::AudioSettings {
                     host_id,
                     device_name,
+                    device_id,
                     sample_rate, // None → auto → 48000 en resolve_settings
                     bit_depth,   // None → fallback del device
                     channels: crate::audio::engine::ChannelConfig::Manual(
@@ -714,7 +720,21 @@ impl AudoxidyApp {
                     ),
                     buffer_size,
                 };
-                let _ = audio_manager.apply_audio_settings(settings);
+                let apply_ok = audio_manager.apply_audio_settings(settings).is_ok();
+                // Backfill del id estable cuando solo había coincidencia por nombre
+                // heredado: así la próxima carga resuelve sin depender del nombre.
+                if apply_ok && had_device_id {
+                    if let Some(resolved) = audio_manager.get_state().device_id.clone() {
+                        match db_lock.set_setting("audio_device_id", &resolved) {
+                            Ok(()) => tracing::info!(
+                                "Persistido el id estable del dispositivo de salida."
+                            ),
+                            Err(e) => tracing::warn!(
+                                "No se pudo persistir el id estable del dispositivo: {e}"
+                            ),
+                        }
+                    }
+                }
             }
 
             // 0b. Aplicar ajustes de PipeWire/PulseAudio guardados ANTES de reproducir.

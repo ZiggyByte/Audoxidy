@@ -82,7 +82,12 @@ impl Default for ChannelConfig {
 #[derive(Clone, Debug, Default)]
 pub struct AudioSettings {
     pub host_id: Option<String>,
+    /// Nombre visible heredado del dispositivo; se conserva para la coincidencia
+    /// de compatibilidad cuando aún no hay un id estable guardado.
     pub device_name: Option<String>,
+    /// Identificador estable del dispositivo (`DeviceId` serializado), preferido
+    /// sobre el nombre porque sobrevive a renombrados y reconexiones.
+    pub device_id: Option<String>,
     pub sample_rate: Option<u32>,
     pub bit_depth: Option<BitDepth>,
     pub channels: ChannelConfig,
@@ -93,6 +98,9 @@ pub struct AudioSettings {
 #[derive(Clone, Debug)]
 pub struct AudioDeviceInfo {
     pub name: String,
+    /// Id estable del dispositivo (`DeviceId` serializado), usado para persistir
+    /// la selección de salida.
+    pub id: Option<String>,
     #[allow(dead_code)]
     pub supported_configs: Vec<cpal::SupportedStreamConfigRange>,
 }
@@ -120,6 +128,55 @@ fn device_display_name(device: &cpal::Device) -> String {
         .description()
         .map(|desc| desc.name().to_string())
         .unwrap_or_else(|_| "desconocido".into())
+}
+
+/// Resultado de resolver la salida guardada frente a los dispositivos presentes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceLookup {
+    /// El id estable guardado coincide con un dispositivo (índice).
+    StableId(usize),
+    /// El nombre heredado coincide; conviene volver a persistir el id estable.
+    LegacyName(usize),
+    /// No hay una salida guardada: se usa la predeterminada.
+    Default,
+    /// La salida guardada ya no existe: se usa la predeterminada y se avisa.
+    Missing,
+}
+
+/// Determina qué dispositivo usar a partir de la salida guardada y del conjunto
+/// de dispositivos presentes, sin realizar E/S.
+///
+/// Orden de resolución: id estable -> nombre heredado -> predeterminado. Si
+/// había una salida guardada y ninguna coincide, devuelve `Missing` para que el
+/// llamador use el predeterminado y muestre un aviso no modal.
+fn choose_device_lookup(
+    saved_id: Option<&str>,
+    saved_name: Option<&str>,
+    present: &[(String, String)],
+) -> DeviceLookup {
+    let has_saved_id = saved_id.is_some_and(|s| !s.is_empty());
+    let has_saved_name = saved_name.is_some_and(|s| !s.is_empty());
+
+    if let Some(id) = saved_id.filter(|s| !s.is_empty()) {
+        if let Some(index) = present.iter().position(|(present_id, _)| present_id == id) {
+            return DeviceLookup::StableId(index);
+        }
+    }
+
+    if let Some(name) = saved_name.filter(|s| !s.is_empty()) {
+        if let Some(index) = present
+            .iter()
+            .position(|(_, present_name)| present_name == name)
+        {
+            return DeviceLookup::LegacyName(index);
+        }
+    }
+
+    if has_saved_id || has_saved_name {
+        DeviceLookup::Missing
+    } else {
+        DeviceLookup::Default
+    }
 }
 
 /// Elige una salida cuyo formato de muestra sea convertible.
@@ -375,12 +432,14 @@ impl AudioDeviceManager {
                         .description()
                         .map(|desc| desc.name().to_string())
                         .unwrap_or_else(|_| "Unknown".into());
+                    let id = d.id().map(|id| id.to_string()).ok();
                     let supported_configs = d
                         .supported_output_configs()
                         .map(|c| c.collect())
                         .unwrap_or_default();
                     AudioDeviceInfo {
                         name,
+                        id,
                         supported_configs,
                     }
                 })
@@ -391,7 +450,9 @@ impl AudioDeviceManager {
     }
 
     /// Configuración avanzada del device según preferencias de AudioSettings.
-    /// Devuelve la mejor config range encontrada y el stream_config resultante.
+    ///
+    /// Devuelve el host, el dispositivo resuelto, la mejor config de stream y el
+    /// aviso no modal cuando la salida guardada ya no está disponible.
     pub fn resolve_settings(
         &self,
         settings: &AudioSettings,
@@ -402,6 +463,7 @@ impl AudioDeviceManager {
             cpal::Device,
             cpal::StreamConfig,
             cpal::SampleFormat,
+            Option<String>,
         ),
         AudioError,
     > {
@@ -417,18 +479,66 @@ impl AudioDeviceManager {
         let host = cpal::host_from_id(target_host_id)
             .map_err(|e| AudioError::DeviceError(e.to_string()))?;
 
-        let device = if let Some(ref dev_name) = settings.device_name {
-            host.output_devices()
-                .map_err(|e| AudioError::DeviceError(e.to_string()))?
-                .find(|d| {
-                    d.description()
-                        .map(|desc| desc.name().to_string())
-                        .unwrap_or_default()
-                        == *dev_name
-                })
-                .ok_or(AudioError::DeviceNotFound)?
-        } else {
-            host.default_output_device().ok_or(AudioError::NoDevice)?
+        // Resolver la salida guardada: id estable -> nombre heredado -> predeterminado.
+        // El id se parsea con `DeviceId::from_str` para normalizarlo antes de
+        // compararlo con los ids presentes.
+        let canonical_id: Option<String> = settings
+            .device_id
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .and_then(|raw| raw.parse::<cpal::DeviceId>().ok())
+            .map(|id| id.to_string());
+
+        let present_devices: Vec<cpal::Device> = host
+            .output_devices()
+            .map_err(|e| AudioError::DeviceError(e.to_string()))?
+            .collect();
+        let present: Vec<(String, String)> = present_devices
+            .iter()
+            .map(|d| {
+                (
+                    d.id().map(|id| id.to_string()).unwrap_or_default(),
+                    device_display_name(d),
+                )
+            })
+            .collect();
+
+        let (device, audio_notice) = match choose_device_lookup(
+            canonical_id.as_deref(),
+            settings.device_name.as_deref(),
+            &present,
+        ) {
+            DeviceLookup::StableId(index) => (present_devices[index].clone(), None),
+            DeviceLookup::LegacyName(index) => {
+                let resolved_id = present[index].0.clone();
+                if !resolved_id.is_empty() {
+                    tracing::info!(
+                        "Dispositivo de salida resuelto por nombre heredado; se volverá a \
+                         persistir su id estable ('{resolved_id}')."
+                    );
+                }
+                (present_devices[index].clone(), None)
+            }
+            DeviceLookup::Default => (
+                host.default_output_device().ok_or(AudioError::NoDevice)?,
+                None,
+            ),
+            DeviceLookup::Missing => {
+                let missing = settings
+                    .device_id
+                    .as_deref()
+                    .filter(|s| !s.is_empty())
+                    .or_else(|| settings.device_name.as_deref().filter(|s| !s.is_empty()))
+                    .unwrap_or("desconocido")
+                    .to_string();
+                let fallback = host.default_output_device().ok_or(AudioError::NoDevice)?;
+                let notice = format!(
+                    "El dispositivo de salida guardado ('{missing}') ya no está disponible; \
+                     se usa el predeterminado."
+                );
+                tracing::warn!("{notice}");
+                (fallback, Some(notice))
+            }
         };
 
         let mut supported_configs: Vec<_> = device
@@ -572,7 +682,13 @@ impl AudioDeviceManager {
             stream_config.buffer_size = cpal::BufferSize::Fixed(quantum);
         }
 
-        Ok((host, device, stream_config, best.sample_format()))
+        Ok((
+            host,
+            device,
+            stream_config,
+            best.sample_format(),
+            audio_notice,
+        ))
     }
 }
 
@@ -628,5 +744,41 @@ mod tests {
         assert!(accepted_sample_format(cpal::SampleFormat::F32));
         assert!(!accepted_sample_format(cpal::SampleFormat::I24));
         assert!(!accepted_sample_format(cpal::SampleFormat::U32));
+    }
+
+    /// La resolución prefiere el id estable sobre el nombre heredado y cae al
+    /// predeterminado cuando la salida guardada ya no está.
+    #[test]
+    fn test_resolve_device_id_prefers_stable() {
+        let present = vec![
+            ("alsa:one".to_string(), "DAC Uno".to_string()),
+            ("alsa:two".to_string(), "DAC Dos".to_string()),
+        ];
+
+        // Con id estable y nombre heredado presentes, gana el id.
+        assert_eq!(
+            choose_device_lookup(Some("alsa:two"), Some("DAC Uno"), &present),
+            DeviceLookup::StableId(1)
+        );
+        // Sin id, cae al nombre heredado.
+        assert_eq!(
+            choose_device_lookup(None, Some("DAC Uno"), &present),
+            DeviceLookup::LegacyName(0)
+        );
+        // Con un id no presente pero un nombre válido, usa el nombre.
+        assert_eq!(
+            choose_device_lookup(Some("alsa:missing"), Some("DAC Dos"), &present),
+            DeviceLookup::LegacyName(1)
+        );
+        // Con algo guardado sin coincidencia, avisa del fallback.
+        assert_eq!(
+            choose_device_lookup(Some("alsa:missing"), None, &present),
+            DeviceLookup::Missing
+        );
+        // Sin nada guardado, usa el predeterminado.
+        assert_eq!(
+            choose_device_lookup(None, None, &present),
+            DeviceLookup::Default
+        );
     }
 }

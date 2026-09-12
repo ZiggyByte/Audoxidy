@@ -1385,9 +1385,16 @@ impl AudioCenterManager {
 
                 // 1. Aplicar la configuración del reproductor (stream) — el grafo ya
                 //    está a la tasa forzada, así el stream se conecta directamente.
+                // Id estable del dispositivo seleccionado: se usa para aplicar y persistir.
+                let selected_device_id = self
+                    .cached_devices
+                    .iter()
+                    .find(|d| Some(&d.name) == self.selected_device.as_ref())
+                    .and_then(|d| d.id.clone());
                 let settings = AudioSettings {
                     host_id: self.selected_host.clone(),
                     device_name: self.selected_device.clone(),
+                    device_id: selected_device_id.clone(),
                     sample_rate: self.selected_sample_rate,
                     bit_depth: Some(self.selected_bit_depth.clone()),
                     channels: ChannelConfig::Manual(self.selected_channels_manual),
@@ -1420,6 +1427,15 @@ impl AudioCenterManager {
                             db.set_setting(
                                 "audio_device",
                                 self.selected_device.as_deref().unwrap_or(""),
+                            ),
+                        );
+                        // Id estable del dispositivo seleccionado: sobrevive a renombrados
+                        // y es la clave preferida en la próxima resolución.
+                        log_persist(
+                            "audio_device_id",
+                            db.set_setting(
+                                "audio_device_id",
+                                selected_device_id.as_deref().unwrap_or(""),
                             ),
                         );
                         log_persist(
@@ -2847,6 +2863,14 @@ fn view_audio_config<'a>(
 
     let bottom_actions = row![restart_btn, reset_btn, apply_btn].spacing(10);
 
+    // Aviso no modal: la salida guardada ya no está y se usa la predeterminada.
+    let notice: Element<'a, crate::gui::app::Message> =
+        if let Some(msg) = audio_manager.get_state().audio_notice.clone() {
+            text(msg).size(13).color(COLOR_ACCENT).into()
+        } else {
+            Space::new().height(Length::Fixed(0.0)).into()
+        };
+
     column![
         row![
             container(left_col)
@@ -2882,6 +2906,7 @@ fn view_audio_config<'a>(
         ]
         .height(Length::Fill)
         .align_y(Alignment::Start),
+        notice,
         bottom_actions
     ]
     .into()

@@ -198,6 +198,10 @@ pub struct AudioState {
     pub bit_depth_display: String,
     pub buffer_size: u32,
     pub config_channels: ChannelConfig, // Store intent
+    /// Id estable del dispositivo de salida resuelto (`DeviceId` serializado).
+    pub device_id: Option<String>,
+    /// Aviso no modal sobre la salida de audio (p. ej. dispositivo guardado ausente).
+    pub audio_notice: Option<String>,
 
     // Downmix Variables Config
     pub downmix_center: f32,
@@ -279,6 +283,8 @@ impl Default for AudioState {
             bit_depth_display: "32-bit Float".to_string(),
             buffer_size: 0,
             config_channels: ChannelConfig::Auto,
+            device_id: None,
+            audio_notice: None,
 
             downmix_center: 0.76,
             downmix_lfe: 0.66,
@@ -735,7 +741,7 @@ impl AudioEngine {
         std::thread::sleep(std::time::Duration::from_millis(30));
         let current_rate = self.state.read().device_sample_rate;
 
-        let (host, device, stream_config, sample_format) = self
+        let (host, device, stream_config, sample_format, audio_notice) = self
             .device_manager
             .resolve_settings(&settings, current_rate)?;
         tracing::info!(
@@ -753,6 +759,8 @@ impl AudioEngine {
             // Escribir la nueva tasa/canales antes de reconstruir el stream: el decoder
             // reacciona recreando su resampler al leer la tasa nueva (fix B5).
             s.device_sample_rate = stream_config.sample_rate;
+            // Aviso no modal si la salida guardada ya no existe; la reproducción continúa.
+            s.audio_notice = audio_notice;
         }
 
         // Update DSP configuration
@@ -810,6 +818,9 @@ impl AudioEngine {
         // No se lee del estado compartido: apply_settings ya escribió la tasa nueva
         // ahí antes de reconstruir (fix B5), y compararla impediría recrear el ringbuf.
         let prev = self.device_manager.get_stream_config();
+        // Id estable del dispositivo resuelto: se persiste en el estado para que la
+        // GUI pueda backfillarlo tras una coincidencia por nombre heredado.
+        let resolved_device_id = device.id().map(|id| id.to_string()).ok();
         {
             let mut s = self.state.write();
             s.device_sample_rate = stream_config.sample_rate;
@@ -818,6 +829,7 @@ impl AudioEngine {
                 cpal::BufferSize::Fixed(f) => f,
                 _ => 0,
             };
+            s.device_id = resolved_device_id;
             s.bit_depth_display = match sample_format {
                 cpal::SampleFormat::I16 => "16-bit Int",
                 cpal::SampleFormat::U16 => "16-bit Int (U)",

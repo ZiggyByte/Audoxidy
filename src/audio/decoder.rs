@@ -11,12 +11,13 @@ use rubato::{
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::atomic::Ordering;
-use symphonia::core::audio::{AudioBuffer, Signal};
-use symphonia::core::codecs::{Decoder, DecoderOptions};
-use symphonia::core::formats::{FormatOptions, FormatReader};
+use symphonia::core::audio::{Audio, AudioBuffer};
+use symphonia::core::codecs::audio::{AudioDecoder as SymphoniaAudioDecoder, AudioDecoderOptions};
+use symphonia::core::common::Limit;
+use symphonia::core::formats::probe::Hint;
+use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
 use symphonia::core::io::{MediaSource, MediaSourceStream};
-use symphonia::core::meta::{Limit, MetadataOptions};
-use symphonia::core::probe::Hint;
+use symphonia::core::meta::MetadataOptions;
 
 /// Umbral para usar memoria mapeada en lugar de File normal (> 10 MB)
 const MEMMAP_THRESHOLD: u64 = 10 * 1024 * 1024;
@@ -61,7 +62,7 @@ pub trait AudioDecoder: Send {
 /// Soporta MP3, FLAC, WAV, OGG, M4A, AAC, APE, Opus, WavPack y más.
 pub struct SymphoniaDecoder {
     format: Option<Box<dyn FormatReader>>,
-    decoder: Option<Box<dyn Decoder>>,
+    decoder: Option<Box<dyn SymphoniaAudioDecoder>>,
     track_id: u32,
 }
 
@@ -78,47 +79,41 @@ impl SymphoniaDecoder {
 
 impl AudioDecoder for SymphoniaDecoder {
     fn open(&mut self, path: &str) -> Result<DecodeStreamInfo, super::AudioError> {
-        use symphonia::core::io::MediaSourceStream;
-        use symphonia::core::meta::Limit;
-
         let source = open_audio_source(path).map_err(super::AudioError::IoError)?;
         let mss = MediaSourceStream::new(source, Default::default());
-        let hint = symphonia::core::probe::Hint::new();
-        let metadata_opts = symphonia::core::meta::MetadataOptions {
-            limit_metadata_bytes: Limit::Maximum(0),
-            limit_visual_bytes: Limit::Maximum(0),
-        };
+        let hint = Hint::new();
+        let metadata_opts = MetadataOptions::default()
+            .limit_tag_bytes(Limit::Maximum(0))
+            .limit_visual_bytes(Limit::Maximum(0));
 
-        let probed = symphonia::default::get_probe()
-            .format(
-                &hint,
-                mss,
-                &symphonia::core::formats::FormatOptions::default(),
-                &metadata_opts,
-            )
-            .map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
+        let format = symphonia::default::get_probe()
+            .probe(&hint, mss, FormatOptions::default(), metadata_opts)
+            .map_err(|e| super::AudioError::UnsupportedFormat(e.to_string()))?;
 
-        let track = probed
-            .format
-            .default_track()
-            .ok_or(super::AudioError::ConfigError("No default track".into()))?;
+        let track = format
+            .default_track(TrackType::Audio)
+            .ok_or_else(|| super::AudioError::UnsupportedFormat("sin pista de audio".into()))?;
         self.track_id = track.id;
-        let sr = track.codec_params.sample_rate.unwrap_or(44100);
-        let dur = track
+        let audio_params = track
             .codec_params
-            .n_frames
-            .map(|f| f as f64 / sr as f64)
-            .unwrap_or(0.0);
-        let ch_count = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+            .as_ref()
+            .and_then(|p| p.audio())
+            .ok_or_else(|| {
+                super::AudioError::UnsupportedFormat("parámetros de audio ausentes".into())
+            })?;
+        let sr = audio_params.sample_rate.unwrap_or(44100);
+        let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
+        let ch_count = audio_params
+            .channels
+            .as_ref()
+            .map(|c| c.count())
+            .unwrap_or(2);
 
         let dec = symphonia::default::get_codecs()
-            .make(
-                &track.codec_params,
-                &symphonia::core::codecs::DecoderOptions::default(),
-            )
-            .map_err(|e| super::AudioError::ConfigError(e.to_string()))?;
+            .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
+            .map_err(|e| super::AudioError::UnsupportedFormat(e.to_string()))?;
 
-        self.format = Some(probed.format);
+        self.format = Some(format);
         self.decoder = Some(dec);
 
         Ok(DecodeStreamInfo {
@@ -188,11 +183,13 @@ impl AudioDecoder for SymphoniaDecoder {
     }
 
     fn seek(&mut self, time_secs: f64) -> Result<(), super::AudioError> {
+        let time = symphonia::core::units::Time::try_from_secs_f64(time_secs)
+            .ok_or_else(|| super::AudioError::ConfigError("tiempo de búsqueda inválido".into()))?;
         if let Some(fmt) = self.format.as_mut() {
             fmt.seek(
                 symphonia::core::formats::SeekMode::Accurate,
                 symphonia::core::formats::SeekTo::Time {
-                    time: symphonia::core::units::Time::from(time_secs),
+                    time,
                     track_id: Some(self.track_id),
                 },
             )
@@ -216,6 +213,11 @@ struct MmapSource {
     pos: usize,
 }
 
+// SAFETY: `MmapSource` solo expone lecturas inmutables sobre el mapeo y el
+// `File` que lo respalda permanece dentro del propio `Mmap`, de modo que la
+// memoria mapeada sigue siendo válida mientras la instancia viva. Compartirla
+// entre hilos es seguro porque `pos` es el único estado mutable y cada
+// `MmapSource` se consume desde un único hilo decodificador.
 unsafe impl Send for MmapSource {}
 unsafe impl Sync for MmapSource {}
 
@@ -268,6 +270,34 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
     }
 }
 
+/// Deriva la duración total de una pista en segundos.
+///
+/// Prefiere la duración declarada por el contenedor (`Track::time_base` +
+/// `Track::duration`) y recurre a `num_frames / sample_rate` cuando el
+/// contenedor no la declara. Devuelve `None` si ninguna fuente es utilizable
+/// (por ejemplo, una tasa de muestreo de 0): el llamador lo traduce a una
+/// duración de `0.0`, que desactiva el disparo temporal de la pre-carga y deja
+/// que el decodificador dirija la transición por buffer/EOF.
+fn derive_duration_sec(track: &symphonia::core::formats::Track, fallback_rate: u32) -> Option<f64> {
+    if let Some(tb) = track.time_base {
+        if let Some(dur) = track.duration {
+            if let Some(t) = tb.calc_duration(dur) {
+                return Some(t.as_secs_f64());
+            }
+        }
+    }
+    let sr = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .and_then(|a| a.sample_rate)
+        .unwrap_or(fallback_rate);
+    if sr == 0 {
+        return None;
+    }
+    track.num_frames.map(|f| f as f64 / sr as f64)
+}
+
 use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap, LATENCY_PEAK_US};
 use std::time::Instant;
 
@@ -309,7 +339,7 @@ fn open_preload_track(
         Option<f64>,
     )>,
     preload_format: &mut Option<Box<dyn FormatReader>>,
-    preload_decoder: &mut Option<Box<dyn Decoder>>,
+    preload_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     preload_track_id: &mut u32,
     preload_sr: &mut u32,
     preload_total_duration_sec: &mut f64,
@@ -322,89 +352,75 @@ fn open_preload_track(
     preload_rg: &mut (Option<f32>, Option<f32>),
     predecode_cap_frames: &mut usize,
     state: &std::sync::Arc<parking_lot::RwLock<crate::audio::engine::AudioState>>,
-) {
+) -> Result<(), super::AudioError> {
     let Some((path, title, artist, album, cover_path, track_gain, album_gain)) = pending.take()
     else {
-        return;
+        return Ok(());
     };
 
-    match open_audio_source(&path) {
-        Ok(source) => {
-            let mss = MediaSourceStream::new(source, Default::default());
-            let hint = Hint::new();
-            let metadata_opts = MetadataOptions {
-                limit_metadata_bytes: Limit::Maximum(0),
-                limit_visual_bytes: Limit::Maximum(0),
-            };
-            if let Ok(probed) = symphonia::default::get_probe().format(
-                &hint,
-                mss,
-                &FormatOptions::default(),
-                &metadata_opts,
-            ) {
-                let track = probed.format.default_track().unwrap();
-                *preload_track_id = track.id;
-                *preload_sr = track.codec_params.sample_rate.unwrap_or(44100);
-                *preload_total_duration_sec = track
-                    .codec_params
-                    .n_frames
-                    .map(|f| f as f64 / *preload_sr as f64)
-                    .unwrap_or(0.0);
+    let source = open_audio_source(&path).map_err(|e| super::AudioError::IoError(e))?;
+    let mss = MediaSourceStream::new(source, Default::default());
+    let hint = Hint::new();
+    let metadata_opts = MetadataOptions::default()
+        .limit_tag_bytes(Limit::Maximum(0))
+        .limit_visual_bytes(Limit::Maximum(0));
+    let format = symphonia::default::get_probe()
+        .probe(&hint, mss, FormatOptions::default(), metadata_opts)
+        .map_err(|e| super::AudioError::UnsupportedFormat(format!("{path}: {e}")))?;
+    let track = format.default_track(TrackType::Audio).ok_or_else(|| {
+        super::AudioError::UnsupportedFormat(format!("{path}: sin pista de audio"))
+    })?;
+    *preload_track_id = track.id;
+    let audio_params = track
+        .codec_params
+        .as_ref()
+        .and_then(|p| p.audio())
+        .ok_or_else(|| {
+            super::AudioError::UnsupportedFormat(format!("{path}: parámetros de audio ausentes"))
+        })?;
+    *preload_sr = audio_params.sample_rate.unwrap_or(44100);
+    *preload_total_duration_sec = derive_duration_sec(track, *preload_sr).unwrap_or(0.0);
 
-                if let Ok(decoder) = symphonia::default::get_codecs()
-                    .make(&track.codec_params, &DecoderOptions::default())
-                {
-                    if let Some(channels) = track.codec_params.channels {
-                        *preload_channel_map = AudioEngine::get_channel_map(channels);
-                    } else {
-                        let count = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
-                        *preload_channel_map = ChannelMap::default();
-                        if count >= 1 {
-                            preload_channel_map.fl = Some(0);
-                        }
-                        if count >= 2 {
-                            preload_channel_map.fr = Some(1);
-                        }
-                    }
-                    *preload_decoder = Some(decoder);
-                    *preload_format = Some(probed.format);
-                    *preload_path = Some(path.clone());
-                    *preload_title = Some(title);
-                    *preload_artist = Some(artist);
-                    *preload_album = Some(album);
-                    *preload_cover = Some(cover_path);
-                    *preload_rg = (track_gain.map(|g| g as f32), album_gain.map(|g| g as f32));
+    let decoder = symphonia::default::get_codecs()
+        .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
+        .map_err(|e| super::AudioError::UnsupportedFormat(format!("{path}: {e}")))?;
 
-                    // Capacidad del buffer de pre-decode: cubre la mezcla más larga
-                    // posible + margen de seguridad (acotada a ~8s máx para no
-                    // acumular memoria ni provocar descartes al promover).
-                    let (out_rate, out_channels) = {
-                        let s = state.read();
-                        (s.device_sample_rate, s.channels as usize)
-                    };
-                    let xfade_max_ms = {
-                        let s = state.read();
-                        s.crossfade_manual_ms.max(s.crossfade_auto_ms).max(0.0)
-                    };
-                    *predecode_cap_frames = predecode_cap_frames_for(
-                        xfade_max_ms as f64,
-                        out_rate,
-                        out_channels.max(1),
-                    );
-                    tracing::info!(
-                        "Pre-carga iniciada para '{}' ({} Hz, {} canales).",
-                        path,
-                        *preload_sr,
-                        out_channels
-                    );
-                } else {
-                    *preload_format = None;
-                    tracing::error!("Pre-carga falló (codec): {}", path);
-                }
-            }
-        }
-        Err(e) => tracing::error!("Pre-carga falló (open): {} — {}", path, e),
+    if let Some(channels) = audio_params.channels.as_ref() {
+        *preload_channel_map = AudioEngine::get_channel_map(channels.clone());
+    } else {
+        *preload_channel_map = ChannelMap::default();
+        preload_channel_map.fl = Some(0);
+        preload_channel_map.fr = Some(1);
     }
+    *preload_decoder = Some(decoder);
+    *preload_format = Some(format);
+    *preload_path = Some(path.clone());
+    *preload_title = Some(title);
+    *preload_artist = Some(artist);
+    *preload_album = Some(album);
+    *preload_cover = Some(cover_path);
+    *preload_rg = (track_gain.map(|g| g as f32), album_gain.map(|g| g as f32));
+
+    // Capacidad del buffer de pre-decode: cubre la mezcla más larga
+    // posible + margen de seguridad (acotada a ~8s máx para no
+    // acumular memoria ni provocar descartes al promover).
+    let (out_rate, out_channels) = {
+        let s = state.read();
+        (s.device_sample_rate, s.channels as usize)
+    };
+    let xfade_max_ms = {
+        let s = state.read();
+        s.crossfade_manual_ms.max(s.crossfade_auto_ms).max(0.0)
+    };
+    *predecode_cap_frames =
+        predecode_cap_frames_for(xfade_max_ms as f64, out_rate, out_channels.max(1));
+    tracing::info!(
+        "Pre-carga iniciada para '{}' ({} Hz, {} canales).",
+        path,
+        *preload_sr,
+        out_channels
+    );
+    Ok(())
 }
 
 /// Decodifica un lote de la pista pre-cargada y lo añade (f64 interleaved,
@@ -415,7 +431,7 @@ fn open_preload_track(
 #[allow(clippy::too_many_arguments)]
 fn preload_decode_batch(
     preload_format: &mut Option<Box<dyn FormatReader>>,
-    preload_decoder: &mut Option<Box<dyn Decoder>>,
+    preload_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     preload_track_id: &mut u32,
     preload_audio_buf: &mut Option<AudioBuffer<f64>>,
     preload_resampler: &mut Option<Async<f64>>,
@@ -682,7 +698,7 @@ fn mix_tail_into_frame(frame: &mut [f64], tail: &mut std::collections::VecDeque<
 #[allow(clippy::too_many_arguments)]
 fn tail_decode_batch(
     tail_format: &mut Option<Box<dyn FormatReader>>,
-    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
     tail_audio_buf: &mut Option<AudioBuffer<f64>>,
     tail_resampler: &mut Option<Async<f64>>,
@@ -887,7 +903,7 @@ fn tail_decode_batch(
 #[allow(clippy::too_many_arguments)]
 fn clear_tail_decoder_chain(
     tail_format: &mut Option<Box<dyn FormatReader>>,
-    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
     tail_channel_map: &mut ChannelMap,
     tail_resampler: &mut Option<Async<f64>>,
@@ -926,7 +942,7 @@ fn clear_tail_buffer(
 #[allow(clippy::too_many_arguments)]
 fn clear_tail_state(
     tail_format: &mut Option<Box<dyn FormatReader>>,
-    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
     tail_channel_map: &mut ChannelMap,
     tail_resampler: &mut Option<Async<f64>>,
@@ -1007,7 +1023,7 @@ fn apply_promotion_metadata(
 #[allow(clippy::too_many_arguments)]
 fn begin_forward_crossfade(
     current_format: &mut Option<Box<dyn FormatReader>>,
-    current_decoder: &mut Option<Box<dyn Decoder>>,
+    current_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     track_id: &mut u32,
     channel_map: &mut ChannelMap,
     resampler: &mut Option<Async<f64>>,
@@ -1017,7 +1033,7 @@ fn begin_forward_crossfade(
     resample_output_pool: &mut Vec<Vec<f64>>,
     audio_buf: &mut Option<AudioBuffer<f64>>,
     tail_format: &mut Option<Box<dyn FormatReader>>,
-    tail_decoder: &mut Option<Box<dyn Decoder>>,
+    tail_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     tail_track_id: &mut u32,
     tail_channel_map: &mut ChannelMap,
     tail_resampler: &mut Option<Async<f64>>,
@@ -1029,7 +1045,7 @@ fn begin_forward_crossfade(
     tail_buffer: &mut std::collections::VecDeque<f64>,
     tail_buffer_cap: &mut usize,
     preload_format: &mut Option<Box<dyn FormatReader>>,
-    preload_decoder: &mut Option<Box<dyn Decoder>>,
+    preload_decoder: &mut Option<Box<dyn SymphoniaAudioDecoder>>,
     preload_track_id: &mut u32,
     preload_sr: &mut u32,
     preload_total_duration_sec: &mut f64,
@@ -1169,7 +1185,7 @@ fn begin_forward_crossfade(
 
 pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: AudioEngine) {
     let mut current_format: Option<Box<dyn FormatReader>> = None;
-    let mut current_decoder: Option<Box<dyn Decoder>> = None;
+    let mut current_decoder: Option<Box<dyn SymphoniaAudioDecoder>> = None;
     let mut track_id = 0;
 
     let mut resampler: Option<Async<f64>> = None;
@@ -1240,7 +1256,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // Decodifica la siguiente pista por adelantado a un buffer f64 ya resampleado
     // (out_rate × out_channels) para promoverla sin pausa cuando termina la actual.
     let mut preload_format: Option<Box<dyn FormatReader>> = None;
-    let mut preload_decoder: Option<Box<dyn Decoder>> = None;
+    let mut preload_decoder: Option<Box<dyn SymphoniaAudioDecoder>> = None;
     let mut preload_track_id: u32 = 0;
     let mut preload_sr: u32 = 0;
     let mut preload_total_duration_sec: f64 = 0.0;
@@ -1284,7 +1300,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // canción anterior solo aporta su cola como capa, decodificada en flujo (~200ms
     // de buffer) para no retener minutos de audio si el salto es a mitad de canción.
     let mut tail_format: Option<Box<dyn FormatReader>> = None;
-    let mut tail_decoder: Option<Box<dyn Decoder>> = None;
+    let mut tail_decoder: Option<Box<dyn SymphoniaAudioDecoder>> = None;
     let mut tail_track_id: u32 = 0;
     let mut tail_channel_map = ChannelMap::default();
     let mut tail_resampler: Option<Async<f64>> = None;
@@ -1447,25 +1463,33 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         Ok(source) => {
                             let mss = MediaSourceStream::new(source, Default::default());
                             let hint = Hint::new();
-                            let metadata_opts = MetadataOptions {
-                                limit_metadata_bytes: Limit::Maximum(0), // No cargar metadatos, ya los tenemos en la DB
-                                limit_visual_bytes: Limit::Maximum(0),
-                            };
+                            let metadata_opts = MetadataOptions::default()
+                                .limit_tag_bytes(Limit::Maximum(0)) // No cargar metadatos, ya los tenemos en la DB
+                                .limit_visual_bytes(Limit::Maximum(0));
 
-                            if let Ok(probed) = symphonia::default::get_probe().format(
+                            if let Ok(format) = symphonia::default::get_probe().probe(
                                 &hint,
                                 mss,
-                                &FormatOptions::default(),
-                                &metadata_opts,
+                                FormatOptions::default(),
+                                metadata_opts,
                             ) {
-                                let track = probed.format.default_track().unwrap();
+                                let Some(track) = format.default_track(TrackType::Audio) else {
+                                    tracing::error!(
+                                        "Formato de audio no soportado: sin pista de audio"
+                                    );
+                                    continue;
+                                };
                                 track_id = track.id;
-                                let sr = track.codec_params.sample_rate.unwrap_or(44100);
-                                let dur = track
-                                    .codec_params
-                                    .n_frames
-                                    .map(|f| f as f64 / sr as f64)
-                                    .unwrap_or(0.0);
+                                let Some(audio_params) =
+                                    track.codec_params.as_ref().and_then(|p| p.audio())
+                                else {
+                                    tracing::error!(
+                                        "Formato de audio no soportado: parámetros de audio ausentes"
+                                    );
+                                    continue;
+                                };
+                                let sr = audio_params.sample_rate.unwrap_or(44100);
+                                let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
                                 state.write().total_duration_sec = dur;
                                 state.write().sample_rate = sr;
 
@@ -1558,30 +1582,25 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 drop(s);
 
                                 if let Ok(decoder) = symphonia::default::get_codecs()
-                                    .make(&track.codec_params, &DecoderOptions::default())
+                                    .make_audio_decoder(
+                                        audio_params,
+                                        &AudioDecoderOptions::default(),
+                                    )
                                 {
                                     current_decoder = Some(decoder);
 
                                     // Update Channel Map
-                                    if let Some(channels) = track.codec_params.channels {
-                                        channel_map = AudioEngine::get_channel_map(channels);
+                                    if let Some(channels) = audio_params.channels.as_ref() {
+                                        channel_map =
+                                            AudioEngine::get_channel_map(channels.clone());
                                     } else {
                                         // Fallback for no layout
-                                        let count = track
-                                            .codec_params
-                                            .channels
-                                            .map(|c| c.count())
-                                            .unwrap_or(2);
                                         channel_map = ChannelMap::default();
-                                        if count >= 1 {
-                                            channel_map.fl = Some(0);
-                                        }
-                                        if count >= 2 {
-                                            channel_map.fr = Some(1);
-                                        }
+                                        channel_map.fl = Some(0);
+                                        channel_map.fr = Some(1);
                                     }
 
-                                    current_format = Some(probed.format);
+                                    current_format = Some(format);
                                     let mut s = state.write();
                                     s.eof_reached = false;
                                 }
@@ -1747,7 +1766,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             let s = state.read();
                             (s.device_sample_rate, s.channels as usize)
                         };
-                        open_preload_track(
+                        if let Err(e) = open_preload_track(
                             &mut preload_pending,
                             &mut preload_format,
                             &mut preload_decoder,
@@ -1763,7 +1782,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             &mut preload_rg,
                             &mut predecode_cap_frames,
                             &state,
-                        );
+                        ) {
+                            tracing::error!("Pre-carga falló: {}", e);
+                        }
                         if preload_format.is_some() {
                             let _ = preload_decode_batch(
                                 &mut preload_format,
@@ -1871,11 +1892,18 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
                 }
                 AudioCommand::Seek(time) => {
+                    let seek_time = match symphonia::core::units::Time::try_from_secs_f64(time) {
+                        Some(t) => t,
+                        None => {
+                            tracing::warn!("Búsqueda ignorada: tiempo inválido ({time})");
+                            continue;
+                        }
+                    };
                     if let Some(fmt) = current_format.as_mut() {
                         let _ = fmt.seek(
                             symphonia::core::formats::SeekMode::Accurate,
                             symphonia::core::formats::SeekTo::Time {
-                                time: symphonia::core::units::Time::from(time),
+                                time: seek_time,
                                 track_id: Some(track_id),
                             },
                         );
@@ -2026,7 +2054,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // para no bloquear la reproducción) y luego se decodifica un lote.
             if preload_pending.is_some() && preload_format.is_none() {
                 let t_open = std::time::Instant::now();
-                open_preload_track(
+                if let Err(e) = open_preload_track(
                     &mut preload_pending,
                     &mut preload_format,
                     &mut preload_decoder,
@@ -2042,7 +2070,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_rg,
                     &mut predecode_cap_frames,
                     &state,
-                );
+                ) {
+                    tracing::error!("Pre-carga falló: {}", e);
+                }
                 let open_ms = t_open.elapsed().as_millis();
                 if open_ms > 10 {
                     let rb_after = engine
@@ -2651,7 +2681,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // para decodificar la pista pre-cargada en segundo plano.
             // Abrir la pista pendiente (diferido) y luego decodificar un lote.
             if preload_pending.is_some() && preload_format.is_none() {
-                open_preload_track(
+                if let Err(e) = open_preload_track(
                     &mut preload_pending,
                     &mut preload_format,
                     &mut preload_decoder,
@@ -2667,7 +2697,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_rg,
                     &mut predecode_cap_frames,
                     &state,
-                );
+                ) {
+                    tracing::error!("Pre-carga falló: {}", e);
+                }
             }
             if preload_format.is_some() {
                 // Decodificamos un lote por iteración; el loop controla la frecuencia.
@@ -3494,11 +3526,14 @@ mod decoder_tests {
     };
     use crate::audio::engine::{AudioEngine, AudioState, ChannelMap};
     use std::collections::VecDeque;
-    use symphonia::core::codecs::{Decoder, DecoderOptions};
-    use symphonia::core::formats::{FormatOptions, FormatReader};
+    use symphonia::core::codecs::audio::{
+        AudioDecoder as SymphoniaAudioDecoder, AudioDecoderOptions,
+    };
+    use symphonia::core::common::Limit;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
     use symphonia::core::io::MediaSourceStream;
-    use symphonia::core::meta::{Limit, MetadataOptions};
-    use symphonia::core::probe::Hint;
+    use symphonia::core::meta::MetadataOptions;
 
     /// Escribe un WAV PCM 16-bit (sine de 440 Hz) para las pruebas de cola.
     fn write_pcm_wav(path: &str, rate: u32, channels: u16, seconds: f64) {
@@ -3535,31 +3570,31 @@ mod decoder_tests {
         path: &str,
     ) -> (
         Option<Box<dyn FormatReader>>,
-        Option<Box<dyn Decoder>>,
+        Option<Box<dyn SymphoniaAudioDecoder>>,
         u32,
         ChannelMap,
     ) {
         let source = super::open_audio_source(path).unwrap();
         let mss = MediaSourceStream::new(source, Default::default());
         let hint = Hint::new();
-        let metadata_opts = MetadataOptions {
-            limit_metadata_bytes: Limit::Maximum(0),
-            limit_visual_bytes: Limit::Maximum(0),
-        };
-        let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &FormatOptions::default(), &metadata_opts)
+        let metadata_opts = MetadataOptions::default()
+            .limit_tag_bytes(Limit::Maximum(0))
+            .limit_visual_bytes(Limit::Maximum(0));
+        let format = symphonia::default::get_probe()
+            .probe(&hint, mss, FormatOptions::default(), metadata_opts)
             .unwrap();
-        let track = probed.format.default_track().unwrap();
+        let track = format.default_track(TrackType::Audio).unwrap();
         let id = track.id;
+        let audio_params = track.codec_params.as_ref().and_then(|p| p.audio()).unwrap();
         let decoder = symphonia::default::get_codecs()
-            .make(&track.codec_params, &DecoderOptions::default())
+            .make_audio_decoder(audio_params, &AudioDecoderOptions::default())
             .unwrap();
-        let ch_map = if let Some(channels) = track.codec_params.channels {
-            AudioEngine::get_channel_map(channels)
+        let ch_map = if let Some(channels) = audio_params.channels.as_ref() {
+            AudioEngine::get_channel_map(channels.clone())
         } else {
             ChannelMap::default()
         };
-        (Some(probed.format), Some(decoder), id, ch_map)
+        (Some(format), Some(decoder), id, ch_map)
     }
 
     #[test]
@@ -3670,7 +3705,7 @@ mod decoder_tests {
         path: &str,
     ) -> (
         Option<Box<dyn FormatReader>>,
-        Option<Box<dyn Decoder>>,
+        Option<Box<dyn SymphoniaAudioDecoder>>,
         u32,
         Option<symphonia::core::audio::AudioBuffer<f64>>,
         Option<rubato::Async<f64>>,

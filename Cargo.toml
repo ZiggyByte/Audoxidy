@@ -49,7 +49,7 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 sha2 = "0.11.0"
 souvlaki = "0.8.3"
-symphonia = { version = "0.5.5", features = ["all", "opt-simd"] }
+symphonia = { version = "0.6.1", features = ["all", "opt-simd"] }
 sysinfo = "0.39.6"
 thiserror = "2.0.20"
 tokio = { version = "1.53.1", features = ["full"] }

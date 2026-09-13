@@ -355,6 +355,233 @@ pub fn clear_raw_cache() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use iced::widget::image::Handle;
+    use lru::LruCache;
+    use std::num::NonZeroUsize;
+
+    /// Handle determinista y comparable: `from_path` deriva el `Id` de la ruta,
+    /// a diferencia de `from_bytes`, que genera identidades únicas.
+    fn test_handle(i: usize) -> Handle {
+        Handle::from_path(format!("cache/covers/{i}.avif"))
+    }
+
+    /// Operaciones mínimas que el arnés de paridad necesita de cada implementación.
+    trait ParityCache {
+        fn get(&mut self, key: &str) -> Option<Handle>;
+        fn peek(&self, key: &str) -> Option<Handle>;
+        fn insert(&mut self, key: String, value: Handle);
+        fn len(&self) -> usize;
+        fn contains(&self, key: &str) -> bool;
+        /// Orden de más reciente a menos reciente.
+        fn order_mru_to_lru(&self) -> Vec<String>;
+    }
+
+    /// Caché manual construida directamente sobre la estructura de producción.
+    struct HandCache {
+        cache: CoverCache,
+    }
+
+    impl HandCache {
+        fn new(cap: usize) -> Self {
+            Self {
+                cache: CoverCache {
+                    map: HashMap::with_capacity(cap),
+                    order: VecDeque::with_capacity(cap),
+                    max_size: cap,
+                },
+            }
+        }
+    }
+
+    impl ParityCache for HandCache {
+        fn get(&mut self, key: &str) -> Option<Handle> {
+            let handle = self.cache.map.get(key).cloned()?;
+            // Promueve el acierto: saca la clave de su posición y la mueve al final.
+            if let Some(idx) = self.cache.order.iter().position(|x| x == key) {
+                self.cache.order.remove(idx);
+                self.cache.order.push_back(key.to_string());
+            }
+            Some(handle)
+        }
+
+        fn peek(&self, key: &str) -> Option<Handle> {
+            self.cache.map.get(key).cloned()
+        }
+
+        fn insert(&mut self, key: String, value: Handle) {
+            self.cache.map.insert(key.clone(), value);
+            self.cache.order.push_back(key);
+            while self.cache.order.len() > self.cache.max_size {
+                if let Some(oldest) = self.cache.order.pop_front() {
+                    self.cache.map.remove(&oldest);
+                }
+            }
+        }
+
+        fn len(&self) -> usize {
+            self.cache.order.len()
+        }
+
+        fn contains(&self, key: &str) -> bool {
+            self.cache.map.contains_key(key)
+        }
+
+        fn order_mru_to_lru(&self) -> Vec<String> {
+            self.cache.order.iter().rev().cloned().collect()
+        }
+    }
+
+    /// Adaptador de prueba sobre `lru::LruCache`, con las mismas operaciones.
+    struct LruCacheAdapter {
+        cache: LruCache<String, Handle>,
+    }
+
+    impl LruCacheAdapter {
+        fn new(cap: usize) -> Self {
+            Self {
+                cache: LruCache::new(
+                    NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"),
+                ),
+            }
+        }
+    }
+
+    impl ParityCache for LruCacheAdapter {
+        fn get(&mut self, key: &str) -> Option<Handle> {
+            // `get` (no `peek`) promueve el acierto a la posición más reciente.
+            self.cache.get(key).cloned()
+        }
+
+        fn peek(&self, key: &str) -> Option<Handle> {
+            self.cache.peek(key).cloned()
+        }
+
+        fn insert(&mut self, key: String, value: Handle) {
+            self.cache.put(key, value);
+        }
+
+        fn len(&self) -> usize {
+            self.cache.len()
+        }
+
+        fn contains(&self, key: &str) -> bool {
+            self.cache.contains(key)
+        }
+
+        fn order_mru_to_lru(&self) -> Vec<String> {
+            self.cache.iter().map(|(key, _)| key.clone()).collect()
+        }
+    }
+
+    /// Ejecuta la misma secuencia contra ambas implementaciones y exige que el
+    /// rastro observable y el orden final coincidan.
+    fn assert_parity(cap: usize, scenario: impl Fn(&mut dyn ParityCache) -> Vec<String>) {
+        let mut hand = HandCache::new(cap);
+        let mut lru = LruCacheAdapter::new(cap);
+
+        let hand_trace = scenario(&mut hand);
+        let lru_trace = scenario(&mut lru);
+
+        assert_eq!(hand_trace, lru_trace, "rastro divergente en cap={cap}");
+        assert_eq!(
+            hand.order_mru_to_lru(),
+            lru.order_mru_to_lru(),
+            "orden divergente en cap={cap}"
+        );
+    }
+
+    /// Inserta `cap` claves numeradas y devuelve sus nombres en orden de inserción.
+    fn fill(cache: &mut dyn ParityCache, cap: usize) -> Vec<String> {
+        let keys: Vec<String> = (0..cap).map(|i| format!("k{i}")).collect();
+        for (i, key) in keys.iter().enumerate() {
+            cache.insert(key.clone(), test_handle(i));
+        }
+        keys
+    }
+
+    #[test]
+    fn covercache_capacity_bound_parity() {
+        for cap in [4usize, 16, 64] {
+            assert_parity(cap, |cache| {
+                for i in 0..cap + 5 {
+                    cache.insert(format!("k{i}"), test_handle(i));
+                }
+                vec![format!("len={}", cache.len())]
+            });
+        }
+    }
+
+    #[test]
+    fn covercache_recency_eviction_order_parity() {
+        for cap in [3usize, 4, 16, 64] {
+            assert_parity(cap, |cache| {
+                let keys = fill(cache, cap);
+                let first = keys[0].clone();
+                let second = keys[1].clone();
+                // Leer la más antigua la promueve; insertar una nueva desaloja la
+                // siguiente más antigua, no la recién leída.
+                let _ = cache.get(&first);
+                cache.insert("nueva".into(), test_handle(999));
+                vec![
+                    format!("len={}", cache.len()),
+                    format!("first_present={}", cache.contains(&first)),
+                    format!("second_present={}", cache.contains(&second)),
+                    format!("order={:?}", cache.order_mru_to_lru()),
+                ]
+            });
+        }
+    }
+
+    #[test]
+    fn covercache_get_promotes_but_peek_does_not() {
+        for cap in [4usize, 16, 64] {
+            assert_parity(cap, |cache| {
+                let keys = fill(cache, cap.min(3));
+                let before = cache.order_mru_to_lru();
+
+                let _ = cache.peek(&keys[0]);
+                let after_peek = cache.order_mru_to_lru();
+
+                let _ = cache.get(&keys[0]);
+                let after_get = cache.order_mru_to_lru();
+
+                vec![
+                    format!("peek_preserves_order={}", before == after_peek),
+                    format!(
+                        "get_promotes_to_mru={}",
+                        after_get.first() == Some(&keys[0])
+                    ),
+                ]
+            });
+        }
+    }
+
+    /// Estrés de concurrencia bajo un único `Mutex`: ningún hilo puede dejar la
+    /// caché por encima de la capacidad ni provocar un pánico.
+    fn concurrency_stress<C: ParityCache + Send>(mutex: &Mutex<C>, cap: usize) {
+        std::thread::scope(|scope| {
+            for thread in 0..8usize {
+                scope.spawn(move || {
+                    for i in 0..200usize {
+                        let key = format!("/music/album/{thread}/{i}");
+                        let mut guard = mutex.lock();
+                        guard.insert(key.clone(), test_handle(i));
+                        let _ = guard.get(&key);
+                        let _ = guard.get("/music/album/ausente");
+                        assert!(guard.len() <= cap, "la caché excedió su capacidad");
+                    }
+                });
+            }
+        });
+        assert!(mutex.lock().len() <= cap);
+    }
+
+    #[test]
+    fn covercache_concurrency_parity() {
+        let cap = 8;
+        concurrency_stress(&Mutex::new(HandCache::new(cap)), cap);
+        concurrency_stress(&Mutex::new(LruCacheAdapter::new(cap)), cap);
+    }
 
     #[test]
     fn avx2_selection_matches_detection() {

@@ -673,7 +673,7 @@ impl AudoxidyApp {
         filters_manager.build_filter_index(&database_arc);
 
         let mut playlist_manager = PlaylistManager::default();
-        // db-lock: persistencia — el guardado se omite si el lock falla
+        // db-lock: solo lectura + backfill best-effort — se omite si el lock falla
         if let Ok(db_lock) = database_arc.lock() {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.

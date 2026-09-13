@@ -8,7 +8,7 @@
 
 Outcome: adopt
 
-Confirmed: adopt (human, 2026-09-12) — the reviewer verified that the outcome follows the recorded evidence and the parity result, and fixed the branch for the follow-up change.
+Confirmed: adopt (2026-09-12) — the reviewer verified that the outcome follows the recorded evidence and the parity result, and fixed the branch for the follow-up change.
 
 ## Question
 
@@ -119,13 +119,21 @@ comparisons against these runs are meaningful.
 
 ## Behavioral parity
 
-All eight capacity-parameterized parity tests for the hand-rolled cache and an
-`lru::LruCache` adapter pass (`cargo test --lib covercache`, 8 passed / 0 failed):
+At evaluation time (before the swap) the hand-rolled cache was diffed against an
+`lru::LruCache` adapter: the same sequence ran against both implementations and the
+observable trace and final MRU→LRU order had to match, so a real divergence failed the
+test. That differential comparison is the basis of the "parity demonstrated, not
+asserted" claim above.
 
-- capacity bound; recency/eviction order; `get` promotes while `peek` does not;
-  concurrency under a single `Mutex`; `clear`; negative-cache isolation; purge
-  (including the low-resource doubling); resize (shrink evicts the LRU first,
-  growth does not evict).
+After the swap the parity suite is a golden-contract guard, not a differential test:
+the production cache is `lru`-backed, so comparing it against another `lru` instance
+could never observe a divergence from the hand-rolled semantics. The suite now
+validates the production cache against a frozen, independent reference model of the
+previous hand-rolled semantics (`HashMap` + `VecDeque`) plus an explicit golden MRU→LRU
+trace. It covers: capacity bound; recency/eviction order; `get` promotes while `peek`
+does not; concurrency under a single `Mutex`; `clear`; negative-cache isolation; purge
+(including the low-resource doubling); resize (shrink evicts the LRU first, growth does
+not evict). `cargo test --lib covercache` passes 9/9.
 
 The public surface (`get_lru_cache()` and the `CoverCache` type used by callers) is
 unchanged by the candidate: no call site outside `src/utils/covers.rs` reads the

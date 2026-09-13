@@ -380,8 +380,7 @@ pub fn clear_raw_cache() {
 mod tests {
     use super::*;
     use iced::widget::image::Handle;
-    use lru::LruCache;
-    use std::num::NonZeroUsize;
+    use std::collections::{HashMap, VecDeque};
 
     /// Handle determinista y comparable: `from_path` deriva el `Id` de la ruta,
     /// a diferencia de `from_bytes`, que genera identidades únicas.
@@ -454,83 +453,136 @@ mod tests {
         }
     }
 
-    /// Adaptador de prueba sobre `lru::LruCache`, con las mismas operaciones.
-    struct LruCacheAdapter {
-        cache: LruCache<String, Handle>,
+    /// Congela la semántica de la caché manual previa a la adopción de `lru`
+    /// (mapa de claves a `Handle` + cola de orden de acceso). Es una referencia
+    /// independiente de la implementación de producción: una divergencia real
+    /// en capacidad, recencia, desalojo, purga o resize hace fallar el test.
+    struct ReferenceCache {
+        map: HashMap<String, Handle>,
+        order: VecDeque<String>,
+        cap: usize,
     }
 
-    impl LruCacheAdapter {
+    impl ReferenceCache {
         fn new(cap: usize) -> Self {
             Self {
-                cache: LruCache::new(
-                    NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"),
-                ),
+                map: HashMap::with_capacity(cap),
+                order: VecDeque::with_capacity(cap),
+                cap,
             }
         }
     }
 
-    impl ParityCache for LruCacheAdapter {
+    impl ParityCache for ReferenceCache {
         fn get(&mut self, key: &str) -> Option<Handle> {
-            // `get` (no `peek`) promueve el acierto a la posición más reciente.
-            self.cache.get(key).cloned()
+            let handle = self.map.get(key).cloned()?;
+            // El acierto promueve: la clave se mueve al final de la cola.
+            if let Some(idx) = self.order.iter().position(|x| x == key) {
+                self.order.remove(idx);
+                self.order.push_back(key.to_string());
+            }
+            Some(handle)
         }
 
         fn peek(&self, key: &str) -> Option<Handle> {
-            self.cache.peek(key).cloned()
+            self.map.get(key).cloned()
         }
 
         fn insert(&mut self, key: String, value: Handle) {
-            self.cache.put(key, value);
+            if self.map.insert(key.clone(), value).is_some() {
+                // Reinsertar una clave existente también la promueve.
+                if let Some(idx) = self.order.iter().position(|x| x == &key) {
+                    self.order.remove(idx);
+                }
+            }
+            self.order.push_back(key);
+            while self.order.len() > self.cap {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.map.remove(&oldest);
+                }
+            }
         }
 
         fn clear(&mut self) {
-            self.cache.clear();
+            self.map.clear();
+            self.order.clear();
         }
 
         fn purge_oldest(&mut self, count: usize, low_resource: bool) {
             let effective_count = if low_resource { count * 2 } else { count };
-            let to_remove = effective_count.min(self.cache.len());
+            let to_remove = effective_count.min(self.order.len());
             for _ in 0..to_remove {
-                self.cache.pop_lru();
+                if let Some(oldest) = self.order.pop_front() {
+                    self.map.remove(&oldest);
+                }
             }
         }
 
         fn resize(&mut self, cap: usize) {
-            self.cache
-                .resize(NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"));
+            self.cap = cap;
+            while self.order.len() > self.cap {
+                if let Some(oldest) = self.order.pop_front() {
+                    self.map.remove(&oldest);
+                }
+            }
         }
 
         fn len(&self) -> usize {
-            self.cache.len()
+            self.order.len()
         }
 
         fn contains(&self, key: &str) -> bool {
-            self.cache.contains(key)
+            self.map.contains_key(key)
         }
 
         fn order_mru_to_lru(&self) -> Vec<String> {
-            self.cache.iter().map(|(key, _)| key.clone()).collect()
+            self.order.iter().rev().cloned().collect()
         }
     }
 
-    /// Ejecuta la misma secuencia contra ambas implementaciones y exige que el
-    /// rastro observable y el orden final coincidan.
+    /// Ejecuta la misma secuencia contra la caché de producción y la referencia
+    /// manual independiente, y exige que el rastro observable y el orden final
+    /// coincidan. La referencia no usa `lru`, así que una divergencia de la
+    /// implementación real contra la semántica documentada hace fallar el test.
     fn assert_parity(cap: usize, scenario: impl Fn(&mut dyn ParityCache) -> Vec<String>) {
         let mut production = ProductionCache::new(cap);
-        let mut lru = LruCacheAdapter::new(cap);
+        let mut reference = ReferenceCache::new(cap);
 
         let production_trace = scenario(&mut production);
-        let lru_trace = scenario(&mut lru);
+        let reference_trace = scenario(&mut reference);
 
         assert_eq!(
-            production_trace, lru_trace,
+            production_trace, reference_trace,
             "rastro divergente en cap={cap}"
         );
         assert_eq!(
             production.order_mru_to_lru(),
-            lru.order_mru_to_lru(),
+            reference.order_mru_to_lru(),
             "orden divergente en cap={cap}"
         );
+    }
+
+    /// Contrato explícito de recencia, acierto y desalojo, sin comparar contra
+    /// ninguna otra implementación: fija el orden MRU→LRU esperado.
+    #[test]
+    fn covercache_golden_lru_order() {
+        let mut cache = CoverCache::new(3);
+        cache.put("a".into(), test_handle(0));
+        cache.put("b".into(), test_handle(1));
+        cache.put("c".into(), test_handle(2));
+        assert_eq!(cache.order_mru_to_lru().join(","), "c,b,a");
+
+        let _ = cache.get("a");
+        assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
+
+        // `peek` consulta sin alterar el orden de recencia.
+        assert!(cache.peek("b").is_some());
+        assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
+
+        // Insertar desaloja la menos reciente ("b"), no la recién leída.
+        cache.put("d".into(), test_handle(3));
+        assert_eq!(cache.order_mru_to_lru().join(","), "d,a,c");
+        assert!(!cache.contains("b"));
     }
 
     /// Inserta `cap` claves numeradas y devuelve sus nombres en orden de inserción.
@@ -623,7 +675,7 @@ mod tests {
     fn covercache_concurrency_parity() {
         let cap = 8;
         concurrency_stress(&Mutex::new(ProductionCache::new(cap)), cap);
-        concurrency_stress(&Mutex::new(LruCacheAdapter::new(cap)), cap);
+        concurrency_stress(&Mutex::new(ReferenceCache::new(cap)), cap);
     }
 
     #[test]
@@ -650,8 +702,8 @@ mod tests {
         // Ambas implementaciones parten con entradas que no deben verse afectadas.
         let mut production = ProductionCache::new(4);
         production.insert("keep".into(), test_handle(1));
-        let mut lru = LruCacheAdapter::new(4);
-        lru.insert("keep".into(), test_handle(1));
+        let mut reference = ReferenceCache::new(4);
+        reference.insert("keep".into(), test_handle(1));
 
         clear_negative_cache(&mut negative);
 
@@ -661,7 +713,7 @@ mod tests {
         );
         // Limpiar el conjunto negativo es independiente de la caché LRU en ambos casos.
         assert_eq!(production.len(), 1);
-        assert_eq!(lru.len(), 1);
+        assert_eq!(reference.len(), 1);
     }
 
     #[test]

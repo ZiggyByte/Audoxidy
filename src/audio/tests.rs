@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::audio::AudioError;
+    use crate::audio::dsp::DspChain;
     use crate::audio::engine::{
         AudioEngine, AudioSettings, AudioState, BitDepth, ChannelConfig, ChannelMap,
     };
@@ -1103,6 +1104,107 @@ mod tests {
                 diff
             );
         }
+    }
+
+    #[test]
+    fn test_mix_channels_planar_preserves_channel_order() {
+        // El orden de canales es un contrato público: valores distintos por
+        // plano para que una reordenación no pueda pasar por casualidad.
+        // 6-in / 6-out: FL, FR, C, LFE, SL, SR.
+        let input6 = vec![vec![1.0], vec![2.0], vec![3.0], vec![4.0], vec![5.0], vec![6.0]];
+        let map6 = ChannelMap {
+            fl: Some(0),
+            fr: Some(1),
+            c: Some(2),
+            lfe: Some(3),
+            sl: Some(4),
+            sr: Some(5),
+            ..Default::default()
+        };
+        let mut out6 = Vec::new();
+        AudioEngine::mix_channels_planar(
+            &input6,
+            1,
+            6,
+            6,
+            &map6,
+            (1.0, 1.0, 1.0, 1.0),
+            &mut out6,
+        );
+        assert_eq!(out6, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
+
+        // 8-in / 8-out: FL, FR, C, LFE, SBL, SBR, SL, SR.
+        let input8 = vec![
+            vec![1.0],
+            vec![2.0],
+            vec![3.0],
+            vec![4.0],
+            vec![5.0],
+            vec![6.0],
+            vec![7.0],
+            vec![8.0],
+        ];
+        let map8 = ChannelMap {
+            fl: Some(0),
+            fr: Some(1),
+            c: Some(2),
+            lfe: Some(3),
+            sbl: Some(4),
+            sbr: Some(5),
+            sl: Some(6),
+            sr: Some(7),
+        };
+        let mut out8 = Vec::new();
+        AudioEngine::mix_channels_planar(
+            &input8,
+            1,
+            8,
+            8,
+            &map8,
+            (1.0, 1.0, 1.0, 1.0),
+            &mut out8,
+        );
+        assert_eq!(out8, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
+    }
+
+    #[test]
+    fn test_pipeline_384khz_8ch_smoke() {
+        // Humo del camino caliente: 384 kHz x 8 canales por la cadena DSP
+        // completa y una mezcla planar 8-in/8-out. Acotado (200 frames) para no
+        // inflar el presupuesto de la suite; ninguna muestra debe quedar no
+        // finita ni superar el clamp del limitador.
+        let mut chain = DspChain::default();
+        chain.enabled = true;
+        chain.set_sample_rate(384_000.0);
+        chain.set_channel_count(8);
+        chain.equalizer.enabled = true;
+        chain.noise_gate.enabled = true;
+        chain.compressor.enabled = true;
+        chain.limiter.enabled = true;
+
+        let mut frame = vec![0.5_f64; 8];
+        for _ in 0..200 {
+            chain.process_frame(&mut frame);
+            assert!(
+                frame.iter().all(|s| s.is_finite() && s.abs() <= 1.0),
+                "la cadena DSP a 384kHz/8ch debe permanecer finita y acotada"
+            );
+        }
+
+        let frames = 64;
+        let input: Vec<Vec<f64>> = (1..=8).map(|n| vec![n as f64; frames]).collect();
+        let mut out = Vec::new();
+        AudioEngine::mix_channels_planar(
+            &input,
+            frames,
+            8,
+            8,
+            &ChannelMap::default(),
+            (1.0, 1.0, 1.0, 1.0),
+            &mut out,
+        );
+        assert_eq!(out.len(), frames * 8);
+        assert!(out.iter().all(|s| s.is_finite()));
     }
 
     // --- Matemática de buffers a altas tasas (diagnóstico del cambio de rate) ---

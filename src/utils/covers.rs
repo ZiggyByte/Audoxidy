@@ -8,10 +8,12 @@ use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
 use image::codecs::avif::AvifEncoder;
 use image::{ExtendedColorType, ImageEncoder};
+use lru::LruCache;
 use parking_lot::Mutex;
 use rayon::ThreadPoolBuilder;
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::HashSet;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 
@@ -24,14 +26,67 @@ static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = 
 /// Almacena rutas de archivos que fallaron o no existen (evita reintentos)
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Caché LRU manual para retener Handles de carátulas y prevenir OOM en Iced.
+/// Caché LRU para retener Handles de carátulas y prevenir OOM en Iced.
 pub struct CoverCache {
-    /// Mapa de ruta de carátula a Handle de Iced.
-    pub map: HashMap<String, iced::widget::image::Handle>,
-    /// Orden de acceso (frente = menos reciente, final = más reciente).
-    pub order: VecDeque<String>,
-    /// Número máximo de entradas en la caché.
-    pub max_size: usize,
+    /// Entradas ordenadas por recencia (la más reciente al frente).
+    entries: LruCache<String, iced::widget::image::Handle>,
+}
+
+impl CoverCache {
+    /// Crea la caché con la capacidad indicada. La capacidad debe ser > 0.
+    fn new(cap: usize) -> Self {
+        Self {
+            entries: LruCache::new(
+                NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"),
+            ),
+        }
+    }
+
+    /// Devuelve el Handle y promueve la entrada a la posición más reciente.
+    fn get(&mut self, key: &str) -> Option<iced::widget::image::Handle> {
+        self.entries.get(key).cloned()
+    }
+
+    /// Consulta la entrada sin alterar el orden de recencia.
+    #[cfg(test)]
+    fn peek(&self, key: &str) -> Option<iced::widget::image::Handle> {
+        self.entries.peek(key).cloned()
+    }
+
+    /// Inserta o actualiza la entrada, promoviéndola a la posición más reciente.
+    fn put(&mut self, key: String, value: iced::widget::image::Handle) {
+        self.entries.put(key, value);
+    }
+
+    /// Promueve una clave existente sin insertarla si no está presente.
+    fn promote(&mut self, key: &str) -> bool {
+        self.entries.promote(key)
+    }
+
+    /// Ajusta la capacidad; al reducir desaloja primero las menos recientes.
+    fn resize(&mut self, cap: usize) {
+        if self.entries.cap().get() != cap {
+            self.entries
+                .resize(NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"));
+        }
+    }
+
+    /// Número de entradas retenidas.
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    /// Indica si la clave está en la caché, sin alterar el orden de recencia.
+    fn contains(&self, key: &str) -> bool {
+        self.entries.contains(key)
+    }
+
+    /// Orden de más reciente a menos reciente.
+    #[cfg(test)]
+    fn order_mru_to_lru(&self) -> Vec<String> {
+        self.entries.iter().map(|(key, _)| key.clone()).collect()
+    }
 }
 
 /// Límite dinámico de carátulas en caché según modo:
@@ -49,14 +104,7 @@ pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
 
 /// Obtiene o inicializa la caché LRU global de carátulas.
 pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
-    LRU_COVER_CACHE.get_or_init(|| {
-        let initial_max = get_max_covers();
-        Mutex::new(CoverCache {
-            map: HashMap::with_capacity(initial_max),
-            order: VecDeque::with_capacity(initial_max),
-            max_size: initial_max,
-        })
-    })
+    LRU_COVER_CACHE.get_or_init(|| Mutex::new(CoverCache::new(get_max_covers())))
 }
 
 /// Obtiene o inicializa el ThreadPool global para procesamiento de carátulas.
@@ -248,39 +296,17 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
 
-    // Recalcular límite dinámico en cada carga (el modo pudo cambiar)
-    let current_max = get_max_covers();
-    if cache.max_size != current_max {
-        cache.max_size = current_max;
-        // Si el nuevo límite es menor, purgar inmediatamente los excedentes
-        while cache.order.len() > cache.max_size {
-            if let Some(oldest_path) = cache.order.pop_front() {
-                cache.map.remove(&oldest_path);
-            }
-        }
-    }
+    // Recalcular límite dinámico en cada carga (el modo pudo cambiar); al reducir,
+    // `resize` desaloja primero las entradas menos recientes.
+    cache.resize(get_max_covers());
 
-    let handle_opt = cache.map.get(path).cloned();
-    if let Some(handle) = handle_opt {
-        // Actualizar el orden del LRU (remover de la posición actual y poner al frente)
-        if let Some(idx) = cache.order.iter().position(|x| x == path) {
-            cache.order.remove(idx);
-            cache.order.push_back(path.to_string());
-        }
+    if let Some(handle) = cache.get(path) {
         return Some(handle);
     }
 
-    // 3. Crear nuevo Handle y guardar en caché
+    // 3. Crear nuevo Handle y guardar en caché; `put` desaloja si excede la capacidad.
     let handle = iced::widget::image::Handle::from_path(path);
-    cache.map.insert(path.to_string(), handle.clone());
-    cache.order.push_back(path.to_string());
-
-    // 4. Limitar el tamaño al límite dinámico actual
-    while cache.order.len() > cache.max_size {
-        if let Some(oldest_path) = cache.order.pop_front() {
-            cache.map.remove(&oldest_path);
-        }
-    }
+    cache.put(path.to_string(), handle.clone());
 
     Some(handle)
 }
@@ -289,12 +315,10 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
 /// duplica el número de entradas a purgar.
 fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool) {
     let effective_count = if low_resource { count * 2 } else { count };
-    let to_remove = effective_count.min(cache.order.len());
+    let to_remove = effective_count.min(cache.entries.len());
 
     for _ in 0..to_remove {
-        if let Some(oldest_path) = cache.order.pop_front() {
-            cache.map.remove(&oldest_path);
-        }
+        cache.entries.pop_lru();
     }
 }
 
@@ -318,23 +342,13 @@ pub fn preload_visible_covers(paths: &[String]) {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
     for path in paths {
-        if cache.map.contains_key(path) {
-            // Ya en caché: mover al final (MRU)
-            if let Some(idx) = cache.order.iter().position(|x| x == path) {
-                cache.order.remove(idx);
-                cache.order.push_back(path.clone());
-            }
+        if cache.contains(path) {
+            // Ya en caché: promover a MRU sin reinsertar.
+            cache.promote(path);
         } else {
-            // No está: cargar desde disco y guardar en LRU
+            // No está: cargar desde disco y guardar en LRU.
             let handle = iced::widget::image::Handle::from_path(path);
-            cache.map.insert(path.clone(), handle);
-            cache.order.push_back(path.clone());
-        }
-    }
-    // Mantener límite después de precarga
-    while cache.order.len() > cache.max_size {
-        if let Some(oldest) = cache.order.pop_front() {
-            cache.map.remove(&oldest);
+            cache.put(path.clone(), handle);
         }
     }
 }
@@ -350,8 +364,7 @@ pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handl
 
 /// Vacía por completo la caché LRU de carátulas (mapa y orden).
 fn clear_cover_cache(cache: &mut CoverCache) {
-    cache.map.clear();
-    cache.order.clear();
+    cache.entries.clear();
 }
 
 /// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
@@ -390,46 +403,30 @@ mod tests {
         fn order_mru_to_lru(&self) -> Vec<String>;
     }
 
-    /// Caché manual construida directamente sobre la estructura de producción.
-    struct HandCache {
+    /// Adaptador de paridad sobre la caché de producción (respaldada por `lru`).
+    struct ProductionCache {
         cache: CoverCache,
     }
 
-    impl HandCache {
+    impl ProductionCache {
         fn new(cap: usize) -> Self {
             Self {
-                cache: CoverCache {
-                    map: HashMap::with_capacity(cap),
-                    order: VecDeque::with_capacity(cap),
-                    max_size: cap,
-                },
+                cache: CoverCache::new(cap),
             }
         }
     }
 
-    impl ParityCache for HandCache {
+    impl ParityCache for ProductionCache {
         fn get(&mut self, key: &str) -> Option<Handle> {
-            let handle = self.cache.map.get(key).cloned()?;
-            // Promueve el acierto: saca la clave de su posición y la mueve al final.
-            if let Some(idx) = self.cache.order.iter().position(|x| x == key) {
-                self.cache.order.remove(idx);
-                self.cache.order.push_back(key.to_string());
-            }
-            Some(handle)
+            self.cache.get(key)
         }
 
         fn peek(&self, key: &str) -> Option<Handle> {
-            self.cache.map.get(key).cloned()
+            self.cache.peek(key)
         }
 
         fn insert(&mut self, key: String, value: Handle) {
-            self.cache.map.insert(key.clone(), value);
-            self.cache.order.push_back(key);
-            while self.cache.order.len() > self.cache.max_size {
-                if let Some(oldest) = self.cache.order.pop_front() {
-                    self.cache.map.remove(&oldest);
-                }
-            }
+            self.cache.put(key, value);
         }
 
         fn clear(&mut self) {
@@ -441,24 +438,19 @@ mod tests {
         }
 
         fn resize(&mut self, cap: usize) {
-            self.cache.max_size = cap;
-            while self.cache.order.len() > self.cache.max_size {
-                if let Some(oldest) = self.cache.order.pop_front() {
-                    self.cache.map.remove(&oldest);
-                }
-            }
+            self.cache.resize(cap);
         }
 
         fn len(&self) -> usize {
-            self.cache.order.len()
+            self.cache.len()
         }
 
         fn contains(&self, key: &str) -> bool {
-            self.cache.map.contains_key(key)
+            self.cache.contains(key)
         }
 
         fn order_mru_to_lru(&self) -> Vec<String> {
-            self.cache.order.iter().rev().cloned().collect()
+            self.cache.order_mru_to_lru()
         }
     }
 
@@ -524,15 +516,18 @@ mod tests {
     /// Ejecuta la misma secuencia contra ambas implementaciones y exige que el
     /// rastro observable y el orden final coincidan.
     fn assert_parity(cap: usize, scenario: impl Fn(&mut dyn ParityCache) -> Vec<String>) {
-        let mut hand = HandCache::new(cap);
+        let mut production = ProductionCache::new(cap);
         let mut lru = LruCacheAdapter::new(cap);
 
-        let hand_trace = scenario(&mut hand);
+        let production_trace = scenario(&mut production);
         let lru_trace = scenario(&mut lru);
 
-        assert_eq!(hand_trace, lru_trace, "rastro divergente en cap={cap}");
         assert_eq!(
-            hand.order_mru_to_lru(),
+            production_trace, lru_trace,
+            "rastro divergente en cap={cap}"
+        );
+        assert_eq!(
+            production.order_mru_to_lru(),
             lru.order_mru_to_lru(),
             "orden divergente en cap={cap}"
         );
@@ -627,7 +622,7 @@ mod tests {
     #[test]
     fn covercache_concurrency_parity() {
         let cap = 8;
-        concurrency_stress(&Mutex::new(HandCache::new(cap)), cap);
+        concurrency_stress(&Mutex::new(ProductionCache::new(cap)), cap);
         concurrency_stress(&Mutex::new(LruCacheAdapter::new(cap)), cap);
     }
 
@@ -653,8 +648,8 @@ mod tests {
         }
 
         // Ambas implementaciones parten con entradas que no deben verse afectadas.
-        let mut hand = HandCache::new(4);
-        hand.insert("keep".into(), test_handle(1));
+        let mut production = ProductionCache::new(4);
+        production.insert("keep".into(), test_handle(1));
         let mut lru = LruCacheAdapter::new(4);
         lru.insert("keep".into(), test_handle(1));
 
@@ -665,7 +660,7 @@ mod tests {
             "el conjunto negativo debe quedar vacío"
         );
         // Limpiar el conjunto negativo es independiente de la caché LRU en ambos casos.
-        assert_eq!(hand.len(), 1);
+        assert_eq!(production.len(), 1);
         assert_eq!(lru.len(), 1);
     }
 

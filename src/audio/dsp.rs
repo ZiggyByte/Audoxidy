@@ -36,7 +36,6 @@ impl Default for DspChain {
     }
 }
 
-#[allow(dead_code)]
 impl DspChain {
     /// Procesa un frame completo (todos los canales) a través de la cadena DSP.
     ///
@@ -102,7 +101,7 @@ impl DspChain {
     }
 
     /// Force limiter on. Returns the previous enabled state for restore.
-    /// Used by normalization auto-on (D-25).
+    /// Used by normalization auto-on.
     pub fn force_limiter_on(&mut self) -> bool {
         let was = self.limiter.enabled;
         self.limiter.enabled = true;
@@ -283,7 +282,7 @@ impl Equalizer {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn process(&mut self, sample: &mut f64, channel_idx: usize) {
         if !self.enabled {
             return;
@@ -333,7 +332,7 @@ impl Equalizer {
                 self.saved_bands_31[i].set_gain(gain);
             }
         }
-        // Update active bands according to current mode (D-10: don't change mode)
+        // Update active bands according to current mode.
         let active_gains = if self.bands.len() == 20 {
             bands_20
         } else {
@@ -386,8 +385,6 @@ pub struct EqBand {
     pub gain: f32, // dB
     pub q: f32,
     // Biquad coefficients (shared across channels)
-    #[allow(dead_code)]
-    a0: f64,
     a1: f64,
     a2: f64,
     b0: f64,
@@ -405,7 +402,6 @@ impl EqBand {
             frequency: freq,
             gain: 0.0,
             q: 1.41,
-            a0: 1.0,
             a1: 0.0,
             a2: 0.0,
             b0: 1.0,
@@ -488,7 +484,7 @@ impl EqBand {
         }
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     pub fn process(&mut self, sample: &mut f64, channel_idx: usize) {
         if self.gain == 0.0 {
             return;
@@ -680,31 +676,6 @@ const FDN_DELAY_LENGTHS_R: [usize; 16] = [
     4096, 2187, 1250, 343, 2662, 2197, 578, 361, 1058, 841, 1922, 1369, 1681, 3698, 2209, 2809,
 ];
 
-/// Construye la matriz de Hadamard 16×16 normalizada (entradas ±0.25).
-fn hadamard_16() -> [[f64; 16]; 16] {
-    let mut h = [[0.0_f64; 16]; 16];
-    h[0][0] = 1.0;
-    let mut size = 1;
-    while size < 16 {
-        for i in 0..size {
-            for j in 0..size {
-                let v = h[i][j];
-                h[i][j + size] = v;
-                h[i + size][j] = v;
-                h[i + size][j + size] = -v;
-            }
-        }
-        size *= 2;
-    }
-    // Normalize: divide by sqrt(16) = 4.0
-    for row in h.iter_mut() {
-        for v in row.iter_mut() {
-            *v *= 0.25;
-        }
-    }
-    h
-}
-
 /// Efecto de reverberación FDN (Feedback Delay Network) con 16 líneas de delay.
 ///
 /// La matriz de mezcla usa la Fast Walsh-Hadamard Transform (FWHT) — mismo mapa
@@ -716,8 +687,8 @@ pub struct Reverb {
     pub enabled: bool,
     pub wet: f32,
     pub room_size: f32,
-    #[allow(dead_code)]
-    pub width: f32,
+    /// Mezcla seca conservada por compatibilidad de API; todavía no se aplica en
+    /// `Reverb::process` (solo se usa `wet`), por lo que no altera la señal.
     #[allow(dead_code)]
     pub dry: f32,
     gain: f32,
@@ -769,7 +740,6 @@ fn build_reverb_channels(sr: f64) -> Vec<ReverbChannelState> {
         .collect()
 }
 
-#[allow(dead_code)]
 impl Reverb {
     pub fn new() -> Self {
         let sr: f64 = 44100.0;
@@ -777,7 +747,6 @@ impl Reverb {
             enabled: false,
             wet: 0.5,
             room_size: 0.5,
-            width: 1.0,
             dry: 0.5,
             gain: 0.12,
             channels: build_reverb_channels(sr),
@@ -966,7 +935,6 @@ pub struct Compressor {
     pub lookahead_samples: usize,
 }
 
-#[allow(dead_code)]
 impl Compressor {
     /// Crea un compresor con valores predeterminados.
     pub fn new() -> Self {
@@ -1248,6 +1216,10 @@ impl Compressor {
 // --- Biquad General Filter ---
 
 /// Tipo de filtro biquad disponible en el DSP.
+///
+/// Es la API general de biquads: las variantes shelf/pass se resuelven en
+/// `BiquadFilter::update_coefficients` y quedan reservadas para el trabajo de EQ
+/// próximo; hoy solo `Peak` y `LowShelf` se construyen.
 #[derive(Clone, Copy, PartialEq)]
 #[allow(dead_code)]
 pub enum BiquadFilterType {
@@ -2016,13 +1988,6 @@ impl NoiseGate {
         self.envelope = 0.0;
     }
 }
-/// FIR half-band 32-tap coefficients for oversampling (Kaiser window β=6).
-const FIR_HALFBAND_COEFFS: [f64; 32] = [
-    0.0, -0.0013, 0.0, 0.0034, 0.0, -0.0076, 0.0, 0.0147, 0.0, -0.0264, 0.0, 0.0457, 0.0, -0.0807,
-    0.0, 0.1589, 0.5, 0.1589, 0.0, -0.0807, 0.0, 0.0457, 0.0, -0.0264, 0.0, 0.0147, 0.0, -0.0076,
-    0.0, 0.0034, 0.0, -0.0013,
-];
-
 /// Taps impares del half-band (índices 1,3,...,31) para la interpolación 2x.
 const HALFBAND_ODD_TAPS: [f64; 16] = [
     -0.0013, 0.0034, -0.0076, 0.0147, -0.0264, 0.0457, -0.0807, 0.1589, 0.1589, -0.0807, 0.0457,
@@ -2056,7 +2021,6 @@ pub struct Limiter {
     pub lookahead_samples: usize,
     rms_state: f64,
     pub crest_factor_smooth: f64,
-    release_base: f32,
 }
 
 impl Default for Limiter {
@@ -2077,12 +2041,10 @@ impl Default for Limiter {
             lookahead_samples: ls,
             rms_state: 0.0,
             crest_factor_smooth: 1.0,
-            release_base: 0.05,
         }
     }
 }
 
-#[allow(dead_code)]
 impl Limiter {
     /// Establece la frecuencia de muestreo.
     pub fn set_sample_rate(&mut self, sample_rate: f32) {

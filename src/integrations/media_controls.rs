@@ -193,8 +193,6 @@ fn cover_file_url(relative: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn cover_file_url() {
         // Se usa `super::` porque la función de test comparte nombre con el

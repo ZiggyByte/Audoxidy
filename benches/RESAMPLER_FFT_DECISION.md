@@ -80,7 +80,7 @@ does not affect the measured workload.
 ## Methodology and its limits
 
 Both resamplers are driven with the same chunk size (1024), stereo channel count, 1 kHz
-sine input, 20-chunk warmup and 40-chunk measurement horizon in the frequency-response test,
+sine input, 20-chunk warmup and 20-chunk measurement horizon in the frequency-response test,
 and the same criterion warmup/measurement/sample counts in the bench. The sinc reference is
 the audiophile profile the decoder uses (`sinc_len: 256`, `f_cutoff: Some(0.99)`,
 `Cubic`, `oversampling_factor: 256`, `BlackmanHarris2`). The FFT candidate is the plain
@@ -151,9 +151,9 @@ is decisively faster on every pair, with fully separated confidence intervals.
   require migrating all three sites (the preload/tail fields are `Option<Async<f64>>`, which
   would become a trait object) and re-running the continuation tests; because quality already
   fails, the migration was not performed and this criterion is untested rather than passed.
-  The candidate also adds a half-FFT-block delay (half of `fft_size_out`, i.e. on the order of
-  147–294 output frames at these pairs), which the preload/promotion continuation would have
-  to absorb.
+  The candidate also adds a half-FFT-block delay (half of `fft_size_out`, i.e. roughly
+  64–160 output frames at these pairs, half of the 128–320-frame FFT output block), which
+  the preload/promotion continuation would have to absorb.
 
 One criterion fails and one is untested, so the pre-registered "all four must hold" condition
 is not met; the recorded outcome is keep sinc.

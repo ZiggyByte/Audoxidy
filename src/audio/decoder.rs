@@ -4120,14 +4120,27 @@ mod decoder_tests {
             .decode_next()
             .expect("decode_next no debe fallar")
             .expect("el WAV contiene al menos un paquete");
-        let expected = 1.0 / 8_388_608.0;
+        let lsb24 = 1.0 / 8_388_608.0;
+        let lsb16 = 1.0 / 32_768.0;
         assert!(!packet.data.is_empty(), "el paquete no debe estar vacío");
         for (i, sample) in packet.data.iter().enumerate() {
-            assert_eq!(*sample, expected, "muestra {i} no conserva los 24 bits");
+            assert_eq!(*sample, lsb24, "muestra {i} no conserva los 24 bits");
         }
+        // La evidencia se deriva de la señal decodificada: su magnitud debe ser
+        // estrictamente positiva y más fina que el LSB de 16 bits. Una conversión
+        // descendente a 16 bits aplanaría este código a 0, y ningún paso de 16
+        // bits puede representar un valor tan pequeño.
+        let decoded_min = packet
+            .data
+            .iter()
+            .fold(f64::INFINITY, |min, s| min.min(s.abs()));
         assert!(
-            expected < 1.0 / 32_768.0,
-            "la resolución de 24 bits debe quedar por debajo del LSB de 16 bits"
+            decoded_min > 0.0,
+            "el código 1 de 24 bits no debe aplanarse a cero"
+        );
+        assert!(
+            decoded_min < lsb16,
+            "la resolución de 24 bits ({decoded_min}) debe quedar por debajo del LSB de 16 bits ({lsb16})"
         );
 
         let _ = std::fs::remove_file(&path);

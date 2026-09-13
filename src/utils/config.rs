@@ -393,34 +393,65 @@ pub fn default_config_path() -> PathBuf {
     PathBuf::from(home).join(".config/audoxidy/config.ron")
 }
 
+/// Error al leer o escribir el archivo de configuración.
+///
+/// Envuelve los fallos de E/S y de serialización RON que antes se devolvían
+/// como `String`, conservando el texto visible y exponiendo la causa
+/// subyacente a través de `source()`.
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    /// La ruta no tiene un nombre de archivo utilizable.
+    #[error("ruta de configuración inválida")]
+    InvalidPath,
+    /// Falló una operación de E/S sobre la ruta indicada.
+    #[error("error de E/S en {}: {source}", path.display())]
+    Io {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    /// Falló la serialización de la configuración a RON.
+    #[error("error de serialización de la configuración: {source}")]
+    Serialize {
+        #[source]
+        source: ron::Error,
+    },
+}
+
 /// Número máximo de copias de seguridad de la configuración que se conservan.
 const CONFIG_BACKUP_KEEP: usize = 3;
 
 /// Copia `path` a `{nombre}.bak.{epoch}` en el mismo directorio y recorta las
 /// copias antiguas, conservando solo las más recientes.
-fn backup_config_file(path: &Path, keep: usize) -> Result<(), String> {
+fn backup_config_file(path: &Path, keep: usize) -> Result<(), ConfigError> {
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or_else(|| "ruta de configuración inválida".to_string())?;
+        .ok_or(ConfigError::InvalidPath)?;
     let stamp = SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let backup = path.with_file_name(format!("{name}.bak.{stamp}"));
-    std::fs::copy(path, &backup).map_err(|e| e.to_string())?;
+    std::fs::copy(path, &backup).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     rotate_config_backups(path, keep)
 }
 
 /// Elimina las copias `{nombre}.bak.{n}` más antiguas, conservando las `keep`
 /// más recientes.
-fn rotate_config_backups(path: &Path, keep: usize) -> Result<(), String> {
+fn rotate_config_backups(path: &Path, keep: usize) -> Result<(), ConfigError> {
     let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
         return Ok(());
     };
     let prefix = format!("{name}.bak.");
     let mut backups: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
-        .map_err(|e| e.to_string())?
+        .map_err(|source| ConfigError::Io {
+            path: dir.to_path_buf(),
+            source,
+        })?
         .filter_map(|e| e.ok())
         .filter_map(|e| {
             let fname = e.file_name();
@@ -529,18 +560,24 @@ pub fn load_config() -> AppConfig {
 }
 
 /// Guarda la configuración en la ruta indicada.
-pub fn save_config_to(path: &Path, config: &AppConfig) -> Result<(), String> {
+pub fn save_config_to(path: &Path, config: &AppConfig) -> Result<(), ConfigError> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(parent).map_err(|source| ConfigError::Io {
+            path: parent.to_path_buf(),
+            source,
+        })?;
     }
     let content = ron::ser::to_string_pretty(config, ron::ser::PrettyConfig::default())
-        .map_err(|e| e.to_string())?;
-    std::fs::write(path, content).map_err(|e| e.to_string())?;
+        .map_err(|source| ConfigError::Serialize { source })?;
+    std::fs::write(path, content).map_err(|source| ConfigError::Io {
+        path: path.to_path_buf(),
+        source,
+    })?;
     Ok(())
 }
 
 /// Guarda la configuración en la ruta por defecto.
-pub fn save_config(config: &AppConfig) -> Result<(), String> {
+pub fn save_config(config: &AppConfig) -> Result<(), ConfigError> {
     save_config_to(&default_config_path(), config)
 }
 
@@ -605,6 +642,41 @@ fn apply_profile(config: &AppConfig) {
 #[cfg(test)]
 mod config_tests {
     use super::*;
+
+    /// El texto visible de `ConfigError` no debe derivar: la ruta inválida se
+    /// conserva byte a byte y E/S/serialización exponen su causa subyacente.
+    #[test]
+    fn config_error_display_messages_are_stable() {
+        use std::error::Error as _;
+
+        assert_eq!(
+            ConfigError::InvalidPath.to_string(),
+            "ruta de configuración inválida"
+        );
+        assert!(ConfigError::InvalidPath.source().is_none());
+
+        let io = ConfigError::Io {
+            path: PathBuf::from("/tmp/audoxidy.ron"),
+            source: std::io::Error::new(std::io::ErrorKind::NotFound, "no encontrado"),
+        };
+        assert_eq!(
+            io.to_string(),
+            "error de E/S en /tmp/audoxidy.ron: no encontrado"
+        );
+        assert!(io.source().is_some());
+
+        let serialize = ConfigError::Serialize {
+            source: ron::from_str::<AppConfig>("config_version: [")
+                .expect_err("RON inválido")
+                .into(),
+        };
+        assert!(
+            serialize
+                .to_string()
+                .starts_with("error de serialización de la configuración: ")
+        );
+        assert!(serialize.source().is_some());
+    }
 
     #[test]
     fn test_missing_fields_use_defaults() {

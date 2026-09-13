@@ -105,6 +105,25 @@ Throughput is reported by criterion as elements per second (`Melem/s` = million 
   `format_size` / `compare_track_numbers` = 4, `intelligent_path` = 1).
 - `audio_state_read`: no throughput element (a state-read microbench).
 
+## CoverCache LRU evaluation (`covercache-lru-eval`)
+
+A separate, self-contained evaluation compares the hand-rolled `CoverCache`
+(`HashMap` + `VecDeque` in `src/utils/covers.rs`) against an `lru::LruCache` adapter at
+capacities 64 and 16, including the enclosing `parking_lot::Mutex`. It is captured under
+the named baselines `covercache-lru-eval-run1` and `covercache-lru-eval-run2`, not under
+`post-audio-core`.
+
+- **Harness:** `benches/covers_bench.rs`.
+- **Command:** `cargo bench --bench covers_bench -j 2 -- --save-baseline covercache-lru-eval-run1`
+  (repeated under `-run2`).
+- **Machine / toolchain:** the same host and toolchain as this file (`tix-slx`, rustc 1.98.1).
+- **Decision, per-size / per-operation numbers, parity result, and caveats:**
+  see [`COVERCACHE_LRU_DECISION.md`](COVERCACHE_LRU_DECISION.md).
+
+Representative (full working-set cycle) result: the `lru` adapter is ~61% faster at
+capacity 64 and ~35% faster at capacity 16, repeatable across both runs; the full decision
+record is the authority for the outcome.
+
 ## Caveats
 
 - Criterion 0.8 randomizes memory layout per run and these numbers are machine- and

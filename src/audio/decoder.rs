@@ -345,7 +345,7 @@ fn record_batch(
     }
 }
 
-// Volumen y Mezcla (Phase 03): Fade state machine (D-07-D-13)
+// Volumen y Mezcla: Fade state machine
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FadeState {
     Idle,
@@ -353,7 +353,7 @@ enum FadeState {
     FadingOut { coeff: f64, rate_per_sec: f64 }, // falling 1→0, equal-power
 }
 
-// Volumen smoothing (UAT round 7): waits for the user to finish adjusting the
+// Volumen smoothing: waits for the user to finish adjusting the
 // volume (debounce), then ramps from the current applied level to the target.
 // Debounce = 400ms of inactivity; ramp = 1500ms linear.
 const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
@@ -3149,7 +3149,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
             }
 
-            // Single loudness gain point (D-01): sum all sources in dB,
+            // Single loudness gain point: sum all sources in dB,
             // convert to linear once, apply before DspChain.
             let gain_linear: f64;
             let vol: f64;
@@ -3159,7 +3159,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 let s = state.read();
                 let mut gain_db: f64 = 0.0;
 
-                // 1. ReplayGain base from tags (D-27: album + track sum)
+                // 1. ReplayGain base from tags (album + track sum)
                 if s.rg_master_enabled {
                     if s.replay_gain_track_enabled {
                         if let Some(tg) = s.replay_gain_track {
@@ -3172,12 +3172,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                     }
 
-                    // 2. RG offsets per source (D-26, D-29):
+                    // 2. RG offsets per source:
                     //    Use EMA-smoothed values to avoid clicks.
                     gain_db += smoothed_rg_offset_album_db;
                     gain_db += smoothed_rg_offset_track_db;
 
-                    // 3. RT Analysis fallback (D-28):
+                    // 3. RT Analysis fallback:
                     //    Only when no tags AND analyze enabled
                     let has_tags = s.replay_gain_track.is_some() || s.replay_gain_album.is_some();
                     if !has_tags && s.rg_analyze_rt_enabled {
@@ -3191,14 +3191,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     gain_db += s.rg_fixed_db as f64;
                 }
 
-                // 5. Clamp to safety ceiling (+12 dB existing, D-26)
+                // 5. Clamp to safety ceiling (+12 dB existing)
                 gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
                 vol = s.volume as f64;
                 fades_enabled = s.fades_enabled;
                 smooth_volume_enabled = s.smooth_volume_enabled;
             } // Release AudioState lock before DSP processing
 
-            // D-29: ~100 ms EMA anti-click ramp for RG offsets.
+            // ~100 ms EMA anti-click ramp for RG offsets.
             // alpha = 1 - exp(-dt / tau) where tau = 0.100s
             let batch_dt = output_accumulator.len() as f64 / out_channels as f64 / out_rate as f64;
             if batch_dt > 0.0 {
@@ -3228,15 +3228,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             }
 
             // ============================================================
-            // Volumen y Mezcla: Silence detection + Edge trimming (D-14-D-20)
-            // Measure PRE-fade (D-19) on output_accumulator before DSP/fades.
+            // Volumen y Mezcla: Silence detection + Edge trimming
+            // Measure PRE-fade on output_accumulator before DSP/fades.
             // ============================================================
             let current_pos_sec: f64;
             {
                 let s = state.read();
                 current_pos_sec = s.current_pos_sec;
 
-                // Edge trimming — start (D-18): fixed -50dB threshold, no minimum duration.
+                // Edge trimming — start: fixed -50dB threshold, no minimum duration.
                 if !track_start_trimmed && s.silence_enabled && s.silence_edge_trim_enabled {
                     let edge_threshold = 10.0f64.powf(-50.0 / 20.0);
                     // f64::max ignora NaN (nunca paniquea ante frames contaminados).
@@ -3254,7 +3254,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     track_start_trimmed = true;
                 }
 
-                // Silence detection — main body (D-14-D-17)
+                // Silence detection — main body
                 if s.silence_enabled {
                     let silence_enter = 10.0f64.powf(s.silence_threshold_db as f64 / 20.0);
                     let silence_exit = 10.0f64.powf((s.silence_threshold_db as f64 + 3.0) / 20.0);
@@ -3270,7 +3270,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         .fold(0.0_f64, f64::max);
 
                     if peak < threshold {
-                        // Silent frame (D-14): accumulate and potentially drop.
+                        // Silent frame: accumulate and potentially drop.
                         let frame_samples = output_accumulator.len() / out_channels as usize;
                         silence_samples += frame_samples;
                         let silence_duration_ms =
@@ -3278,7 +3278,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         in_silence = true;
 
                         if silence_duration_ms >= s.silence_duration_ms as f64 {
-                            // Drop this batch entirely (D-14: no seeks needed).
+                            // Drop this batch entirely (no seeks needed).
                             output_accumulator.clear();
                             output_accumulator_f32.clear();
                             continue;
@@ -3293,7 +3293,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
                 }
 
-                // Fade-out trigger (D-10): at total_duration - fade_out_ms.
+                // Fade-out trigger: at total_duration - fade_out_ms.
                 // NOTE: must use total_duration_sec (NOT effective_end_sec, which
                 // tracks live position) — otherwise the fade-out fires on every
                 // batch and the volume oscillates during the whole song.
@@ -3318,13 +3318,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
             } // Release state lock
 
-            // Volume smoothing (D-08, UAT round 7): debounce + ramp.
+            // Volume smoothing: debounce + ramp.
             // While the user adjusts the volume, applied_vol stays frozen.
             // After 400ms of inactivity, a 1500ms linear ramp moves
             // applied_vol from its current level to the new target.
             // Gated by the group master (fades_enabled) AND the individual
             // smooth_volume_enabled flag — disabling the group disables
-            // smoothing too (UAT round 13).
+            // smoothing too.
             let user_target = vol;
             if fades_enabled && smooth_volume_enabled {
                 if (user_target - pending_vol).abs() > 1e-10 {
@@ -3368,11 +3368,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 smooth_ramp = None;
             }
 
-            // Fade envelope coefficient (D-12, D-13): equal-power for fades,
+            // Fade envelope coefficient: equal-power for fades,
             // linear for volume smoothing.
             // coeff advances by rate_per_sec * batch_dt — i.e. by REAL audio
             // time. This makes the configured ms exact regardless of sample
-            // rate or batch size (UAT round 4).
+            // rate or batch size.
             let batch_advance = batch_dt;
             let fade_coeff = match fade_state {
                 FadeState::Idle => 1.0,
@@ -3385,7 +3385,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         1.0
                     } else {
                         let current = coeff;
-                        // Equal-power fade-in (D-12): sin²(π/2 * t)
+                        // Equal-power fade-in: sin²(π/2 * t)
                         let ep_coeff = (std::f64::consts::PI / 2.0 * current).sin().powi(2);
                         coeff += rate_per_sec * batch_advance;
                         if coeff > 1.0 {

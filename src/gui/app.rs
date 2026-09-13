@@ -897,7 +897,7 @@ impl AudoxidyApp {
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db_lock) = database_arc.lock() {
-            // Cargar volumen del player desde APP_SETTINGS (Fix B3, D-43)
+            // Cargar volumen del player desde APP_SETTINGS
             if let Some(vol_str) = db_lock.get_setting("player_volume") {
                 if let Ok(vol) = vol_str.parse::<f32>() {
                     audio_manager.set_volume(vol.clamp(0.0, 1.0));
@@ -1183,7 +1183,7 @@ impl AudoxidyApp {
                 }
             });
 
-            // --- Phase 03: Volumen y Mezcla settings ---
+            // --- Volumen y Mezcla settings ---
             // Load into AudioCenterManager fields AND apply to AudioState
             if let Some(val) = db_lock.get_setting("vol_fades_enabled") {
                 let v = val == "1";
@@ -3025,7 +3025,7 @@ impl AudoxidyApp {
                 focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
             Message::ToggleLyrics => {
-                // Fase 6: abrir módulo de letras
+                // Abrir módulo de letras
                 Task::none()
             }
             Message::LibraryFocus => {
@@ -4966,7 +4966,7 @@ impl AudoxidyApp {
                     _ => {}
                 }
                 match &ac_msg {
-                    // Volumen y Mezcla (D-42): cualquier cambio se guarda de inmediato
+                    // Volumen y Mezcla: cualquier cambio se guarda de inmediato
                     crate::gui::audio_center::AudioCenterMessage::VolumenFadesToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenSmoothVolumeToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenFadeInToggle(_)
@@ -5016,7 +5016,7 @@ impl AudoxidyApp {
                 let vol_percent = current_vol * 100.0;
                 let new_vol_percent = (vol_percent + direction * 5.0).clamp(0.0, 100.0);
                 self.audio_manager.set_volume(new_vol_percent / 100.0);
-                // Persist volume immediately (Fix B3, D-43)
+                // Persist volume immediately
                 // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     log_persist(

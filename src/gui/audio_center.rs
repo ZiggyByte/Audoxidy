@@ -184,7 +184,7 @@ pub struct AudioCenterManager {
     pub equalizer_presets: Vec<crate::audio::preset::EqPreset>,
     pub selected_preset: Option<crate::audio::preset::EqPreset>,
 
-    // EQ Preset Management (Phase 02)
+    // EQ Preset Management
     pub custom_presets: Vec<crate::audio::preset::EqPreset>,
     pub hidden_builtins: Vec<String>,
     pub pending_preset_name: String,
@@ -199,7 +199,7 @@ pub struct AudioCenterManager {
     pub cached_system_status: (String, String),
     pub cached_system_status_ts: std::time::Instant,
 
-    // Volumen y Mezcla state (Phase 03) — mirrors AudioState for UI display
+    // Volumen y Mezcla state — mirrors AudioState for UI display
     pub volumen_fades_enabled: bool,
     pub volumen_smooth_volume_enabled: bool,
     pub volumen_fade_in_ms: f64,
@@ -938,7 +938,7 @@ impl AudioCenterManager {
                     }
                 }
             }
-            // Load custom EQ presets from SQLite (Decisión D-01: persistence)
+            // Load custom EQ presets from SQLite
             self.load_custom_presets(db_arc.as_ref());
         }
 
@@ -1576,7 +1576,7 @@ impl AudioCenterManager {
                 // Handled at app.rs level — opens ActiveDialog::EqPresetSave
             }
             AudioCenterMessage::EqPresetIconReset => {
-                // Per D-08: selected_preset = None, preamp = 0.0, all bands = 0.0, reset DSP
+                // Reset: selected_preset = None, preamp = 0.0, all bands = 0.0, reset DSP
                 audio_manager.reset_dsp_defaults();
                 self.selected_preset = None;
                 self.preamp_gain = 0.0;

@@ -36,14 +36,17 @@ pinning is configured (`.cargo/config.toml`), so results depend on the host CPU.
 The nominal command is `cargo bench -- --save-baseline post-audio-core`, but with this
 package's `[lib]` target enabled for benchmarks, plain `cargo bench` also runs the lib
 test harness, which rejects criterion's `--save-baseline` argument
-(`error: Unrecognized option: 'save-baseline'`). The three `[[bench]]` targets must be
-selected explicitly:
+(`error: Unrecognized option: 'save-baseline'`). The bench targets must be selected
+explicitly. `Cargo.toml` defines four `[[bench]]` targets; the `post-audio-core` capture
+covers the audio/utility three and intentionally excludes `covers_bench`, which is
+captured under its own named baselines (see §CoverCache LRU evaluation below):
 
 ```bash
 cargo bench --bench dsp_bench --bench engine_bench --bench utils_bench -- --save-baseline post-audio-core
 ```
 
-This runs all three benchmark targets with no per-benchmark filter and no skipped target.
+This runs the three selected targets with no per-benchmark filter and no skipped target
+among them.
 Criterion stores the named baseline under
 `target/criterion/<group>/<bench>/post-audio-core/` (ungrouped benches like
 `audio_state_read` store under `target/criterion/<bench>/post-audio-core/`).

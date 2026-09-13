@@ -123,8 +123,8 @@ the named baselines `covercache-lru-eval-run1` and `covercache-lru-eval-run2`, n
 - **Decision, per-size / per-operation numbers, parity result, and caveats:**
   see [`COVERCACHE_LRU_DECISION.md`](COVERCACHE_LRU_DECISION.md).
 
-Representative (full working-set cycle) result: the `lru` adapter is ~61% faster at
-capacity 64 and ~35% faster at capacity 16, repeatable across both runs; the full decision
+Representative (full working-set cycle) result: the `lru` adapter is ~80% faster at
+capacity 64 and ~54% faster at capacity 16, repeatable across both runs; the full decision
 record is the authority for the outcome.
 
 ## Caveats

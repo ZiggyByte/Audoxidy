@@ -5019,8 +5019,10 @@ impl AudoxidyApp {
                 // Persist volume immediately (Fix B3, D-43)
                 // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
-                    let _ =
-                        db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0));
+                    log_persist(
+                        "player_volume",
+                        db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0)),
+                    );
                 } else {
                     tracing::warn!("db-lock: lock no disponible");
                 }

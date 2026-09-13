@@ -86,8 +86,9 @@ pub fn external_control_stream(
     let (tx, out) = iced::futures::channel::mpsc::unbounded();
 
     // Si el hilo no puede crearse, `tx` se descarta con él y `out` termina:
-    // no se propaga un pánico desde el camino de la suscripción.
-    let _ = std::thread::Builder::new()
+    // no se propaga un pánico desde el camino de la suscripción. El fallo se
+    // registra a nivel error porque el puente de control externo quedaría muerto.
+    let spawn_result = std::thread::Builder::new()
         .name("ext-control-bridge".into())
         .spawn(move || {
             while let Ok(event) = rx.recv() {
@@ -97,6 +98,9 @@ pub fn external_control_stream(
                 }
             }
         });
+    if let Err(e) = spawn_result {
+        tracing::error!("No se pudo crear el hilo puente de control externo: {e}");
+    }
 
     out
 }

@@ -6,6 +6,21 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::Duration;
 
+/// Error al construir o registrar el puente con los controles multimedia del
+/// sistema.
+///
+/// Conserva el texto que la interfaz muestra al fallar la inicialización y
+/// expone el error de `souvlaki` como causa subyacente mediante `source()`.
+#[derive(Debug, thiserror::Error)]
+pub enum MediaControlsError {
+    /// Falló la construcción del backend de souvlaki.
+    #[error("no se pudieron crear los controles multimedia del sistema: {0}")]
+    Create(#[source] souvlaki::Error),
+    /// Falló el registro del manejador de eventos del panel del sistema.
+    #[error("no se pudo registrar el manejador de controles multimedia del sistema: {0}")]
+    Attach(#[source] souvlaki::Error),
+}
+
 pub struct SystemMediaControls {
     controls: Mutex<MediaControls>,
     /// Últimos metadatos publicados `(title, artist, album, cover_url)`.
@@ -15,7 +30,7 @@ pub struct SystemMediaControls {
 }
 
 impl SystemMediaControls {
-    pub fn new(sender: ExternalControlSender) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(sender: ExternalControlSender) -> Result<Self, MediaControlsError> {
         #[cfg(target_os = "linux")]
         let hwnd = None;
 
@@ -31,45 +46,47 @@ impl SystemMediaControls {
             hwnd,
         };
 
-        let mut controls = MediaControls::new(config)?;
+        let mut controls = MediaControls::new(config).map_err(MediaControlsError::Create)?;
 
         // Todos los eventos del panel del sistema se reenvían al canal externo;
         // la aplicación es la única que traduce cada evento a sus mensajes y
         // muta el motor de audio, de modo que cada acción se despacha una sola
         // vez y desde el hilo de la interfaz.
-        controls.attach(move |event| {
-            let mapped = match event {
-                MediaControlEvent::Play => Some(ExternalControlEvent::Play),
-                MediaControlEvent::Pause => Some(ExternalControlEvent::Pause),
-                MediaControlEvent::Toggle => Some(ExternalControlEvent::Toggle),
-                MediaControlEvent::Stop => Some(ExternalControlEvent::Stop),
-                MediaControlEvent::Next => Some(ExternalControlEvent::Next),
-                MediaControlEvent::Previous => Some(ExternalControlEvent::Previous),
-                MediaControlEvent::Seek(SeekDirection::Forward) => {
-                    Some(ExternalControlEvent::SeekForward)
+        controls
+            .attach(move |event| {
+                let mapped = match event {
+                    MediaControlEvent::Play => Some(ExternalControlEvent::Play),
+                    MediaControlEvent::Pause => Some(ExternalControlEvent::Pause),
+                    MediaControlEvent::Toggle => Some(ExternalControlEvent::Toggle),
+                    MediaControlEvent::Stop => Some(ExternalControlEvent::Stop),
+                    MediaControlEvent::Next => Some(ExternalControlEvent::Next),
+                    MediaControlEvent::Previous => Some(ExternalControlEvent::Previous),
+                    MediaControlEvent::Seek(SeekDirection::Forward) => {
+                        Some(ExternalControlEvent::SeekForward)
+                    }
+                    MediaControlEvent::Seek(SeekDirection::Backward) => {
+                        Some(ExternalControlEvent::SeekBackward)
+                    }
+                    MediaControlEvent::SeekBy(SeekDirection::Forward, delta) => {
+                        Some(ExternalControlEvent::SeekRelative(delta.as_secs_f64()))
+                    }
+                    MediaControlEvent::SeekBy(SeekDirection::Backward, delta) => {
+                        Some(ExternalControlEvent::SeekRelative(-delta.as_secs_f64()))
+                    }
+                    MediaControlEvent::SetPosition(MediaPosition(position)) => {
+                        Some(ExternalControlEvent::SeekTo(position.as_secs_f64()))
+                    }
+                    MediaControlEvent::SetVolume(volume) => {
+                        Some(ExternalControlEvent::SetVolume(volume))
+                    }
+                    // OpenUri / Raise / Quit se ignoran: no mutan estado local.
+                    _ => None,
+                };
+                if let Some(mapped) = mapped {
+                    sender.send(mapped);
                 }
-                MediaControlEvent::Seek(SeekDirection::Backward) => {
-                    Some(ExternalControlEvent::SeekBackward)
-                }
-                MediaControlEvent::SeekBy(SeekDirection::Forward, delta) => {
-                    Some(ExternalControlEvent::SeekRelative(delta.as_secs_f64()))
-                }
-                MediaControlEvent::SeekBy(SeekDirection::Backward, delta) => {
-                    Some(ExternalControlEvent::SeekRelative(-delta.as_secs_f64()))
-                }
-                MediaControlEvent::SetPosition(MediaPosition(position)) => {
-                    Some(ExternalControlEvent::SeekTo(position.as_secs_f64()))
-                }
-                MediaControlEvent::SetVolume(volume) => {
-                    Some(ExternalControlEvent::SetVolume(volume))
-                }
-                // OpenUri / Raise / Quit se ignoran: no mutan estado local.
-                _ => None,
-            };
-            if let Some(mapped) = mapped {
-                sender.send(mapped);
-            }
-        })?;
+            })
+            .map_err(MediaControlsError::Attach)?;
 
         Ok(Self {
             controls: Mutex::new(controls),
@@ -88,7 +105,9 @@ impl SystemMediaControls {
     ))]
     pub fn set_volume(&self, volume: f64) {
         if let Ok(mut controls) = self.controls.lock() {
-            let _ = controls.set_volume(volume.clamp(0.0, 1.0));
+            if let Err(e) = controls.set_volume(volume.clamp(0.0, 1.0)) {
+                tracing::debug!("No se pudo reflejar el volumen en los controles multimedia: {e}");
+            }
         }
     }
 
@@ -117,7 +136,11 @@ impl SystemMediaControls {
                 ))),
             }
         };
-        let _ = controls.set_playback(status);
+        if let Err(e) = controls.set_playback(status) {
+            tracing::debug!(
+                "No se pudo reflejar el estado de reproducción en los controles multimedia: {e}"
+            );
+        }
 
         // Actualizar metadatos solo cuando cambian (título, artista, álbum o
         // carátula). `cover_file_url` solo devuelve URL si el AVIF cacheado existe.
@@ -131,7 +154,7 @@ impl SystemMediaControls {
 
         let mut last = self.last_metadata.lock().unwrap();
         if last.as_ref() != Some(&current) {
-            let _ = controls.set_metadata(MediaMetadata {
+            let result = controls.set_metadata(MediaMetadata {
                 title: Some(&state.title),
                 artist: Some(&state.artist),
                 album: Some(&state.album),
@@ -139,6 +162,11 @@ impl SystemMediaControls {
                 cover_url: cover.as_deref(),
                 ..MediaMetadata::default()
             });
+            if let Err(e) = result {
+                tracing::debug!(
+                    "No se pudieron reflejar los metadatos en los controles multimedia: {e}"
+                );
+            }
             *last = Some(current);
         }
     }

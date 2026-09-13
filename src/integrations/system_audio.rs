@@ -29,12 +29,18 @@ pub fn apply_pipewire_clock(rate: Option<u32>, quantum: Option<u32>) {
         .map(|q| q.to_string())
         .unwrap_or_else(|| "0".to_string());
 
-    let _ = std::process::Command::new("pw-metadata")
+    let rate_result = std::process::Command::new("pw-metadata")
         .args(["-n", "settings", "0", "clock.force-rate", &rate_str])
         .status();
-    let _ = std::process::Command::new("pw-metadata")
+    if let Err(e) = rate_result {
+        tracing::debug!("No se pudo aplicar clock.force-rate vía pw-metadata: {e}");
+    }
+    let quantum_result = std::process::Command::new("pw-metadata")
         .args(["-n", "settings", "0", "clock.force-quantum", &quantum_str])
         .status();
+    if let Err(e) = quantum_result {
+        tracing::debug!("No se pudo aplicar clock.force-quantum vía pw-metadata: {e}");
+    }
 }
 
 /// Persiste la configuración del reloj en `~/.config/pipewire/pipewire.conf.d/audoxidy.conf`.
@@ -46,7 +52,13 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
         let file_path = format!("{}/audoxidy.conf", dir_path);
 
         if rate.is_none() && quantum.is_none() {
-            let _ = std::fs::remove_file(&file_path);
+            // Mejor esfuerzo: el archivo puede no existir si nunca se persistió
+            // una tasa/quantum, en cuyo caso no hay nada que restaurar.
+            if let Err(e) = std::fs::remove_file(&file_path) {
+                if e.kind() != std::io::ErrorKind::NotFound {
+                    tracing::debug!("No se pudo eliminar {}: {}", file_path, e);
+                }
+            }
             return;
         }
         if let Err(e) = std::fs::create_dir_all(&dir_path) {
@@ -123,7 +135,9 @@ pub fn persist_pulse_conf(rate: Option<u32>, quantum: Option<u32>) {
 
 /// Reinicia los servicios de audio del sistema (PipeWire + WirePlumber).
 pub fn restart_audio_services() {
-    let _ = std::process::Command::new("systemctl")
+    // Acción de recuperación invocada por el usuario: un fallo no debe pasar
+    // desapercibido o el reproductor quedaría mudo sin explicación.
+    let result = std::process::Command::new("systemctl")
         .args([
             "--user",
             "restart",
@@ -132,6 +146,9 @@ pub fn restart_audio_services() {
             "wireplumber.service",
         ])
         .status();
+    if let Err(e) = result {
+        tracing::warn!("No se pudieron reiniciar los servicios de audio: {e}");
+    }
 }
 
 /// Devuelve el estado actual del servidor de sonido del sistema.

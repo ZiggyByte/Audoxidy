@@ -9,15 +9,16 @@ use std::time::Duration;
 /// Error al construir o registrar el puente con los controles multimedia del
 /// sistema.
 ///
-/// Conserva el texto que la interfaz muestra al fallar la inicialización y
-/// expone el error de `souvlaki` como causa subyacente mediante `source()`.
+/// El `Display` reproduce el mensaje original del error de `souvlaki` y la
+/// causa queda expuesta mediante `source()`; el llamador actual usa
+/// `.expect(…)`, que imprime la representación `Debug` y no el `Display`.
 #[derive(Debug, thiserror::Error)]
 pub enum MediaControlsError {
     /// Falló la construcción del backend de souvlaki.
-    #[error("no se pudieron crear los controles multimedia del sistema: {0}")]
+    #[error("{0}")]
     Create(#[source] souvlaki::Error),
     /// Falló el registro del manejador de eventos del panel del sistema.
-    #[error("no se pudo registrar el manejador de controles multimedia del sistema: {0}")]
+    #[error("{0}")]
     Attach(#[source] souvlaki::Error),
 }
 

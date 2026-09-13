@@ -396,22 +396,23 @@ pub fn default_config_path() -> PathBuf {
 /// Error al leer o escribir el archivo de configuración.
 ///
 /// Envuelve los fallos de E/S y de serialización RON que antes se devolvían
-/// como `String`, conservando el texto visible y exponiendo la causa
-/// subyacente a través de `source()`.
+/// como `String`, reproduciendo exactamente el texto visible original y
+/// exponiendo la causa subyacente a través de `source()`. La ruta queda fuera
+/// del mensaje porque los sitios que registran el error ya la imprimen.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     /// La ruta no tiene un nombre de archivo utilizable.
     #[error("ruta de configuración inválida")]
     InvalidPath,
     /// Falló una operación de E/S sobre la ruta indicada.
-    #[error("error de E/S en {}: {source}", path.display())]
+    #[error("{source}")]
     Io {
         path: PathBuf,
         #[source]
         source: std::io::Error,
     },
     /// Falló la serialización de la configuración a RON.
-    #[error("error de serialización de la configuración: {source}")]
+    #[error("{source}")]
     Serialize {
         #[source]
         source: ron::Error,
@@ -644,7 +645,8 @@ mod config_tests {
     use super::*;
 
     /// El texto visible de `ConfigError` no debe derivar: la ruta inválida se
-    /// conserva byte a byte y E/S/serialización exponen su causa subyacente.
+    /// conserva byte a byte y E/S/serialización reproducen el mensaje original
+    /// de su causa subyacente, que además queda expuesta vía `source()`.
     #[test]
     fn config_error_display_messages_are_stable() {
         use std::error::Error as _;
@@ -659,10 +661,8 @@ mod config_tests {
             path: PathBuf::from("/tmp/audoxidy.ron"),
             source: std::io::Error::new(std::io::ErrorKind::NotFound, "no encontrado"),
         };
-        assert_eq!(
-            io.to_string(),
-            "error de E/S en /tmp/audoxidy.ron: no encontrado"
-        );
+        assert_eq!(io.to_string(), "no encontrado");
+        assert_eq!(io.to_string(), io.source().unwrap().to_string());
         assert!(io.source().is_some());
 
         let serialize = ConfigError::Serialize {
@@ -670,10 +670,9 @@ mod config_tests {
                 .expect_err("RON inválido")
                 .into(),
         };
-        assert!(
-            serialize
-                .to_string()
-                .starts_with("error de serialización de la configuración: ")
+        assert_eq!(
+            serialize.to_string(),
+            serialize.source().unwrap().to_string()
         );
         assert!(serialize.source().is_some());
     }

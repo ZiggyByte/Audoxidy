@@ -8,6 +8,8 @@
 
 Outcome: adopt
 
+Confirmed: adopt (human, 2026-09-12) — the reviewer verified that the outcome follows the recorded evidence and the parity result, and fixed the branch for the follow-up change.
+
 ## Question
 
 Is `lru::LruCache` measurably faster and demonstrably safer than the hand-rolled

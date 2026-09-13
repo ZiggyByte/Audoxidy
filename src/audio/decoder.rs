@@ -308,6 +308,43 @@ fn resample_ratio(in_rate: u32, out_rate: u32) -> Option<f64> {
 use crate::audio::engine::{AudioCommand, AudioEngine, ChannelMap, LATENCY_PEAK_US};
 use std::time::Instant;
 
+/// Construye un span de diagnóstico por lote solo cuando el nivel DEBUG está
+/// activo.
+///
+/// Los campos escalares se declaran vacíos y se rellenan al terminar el
+/// trabajo con [`record_batch`], de modo que con el nivel apagado no se
+/// construye el span ni se formatea nada por lote.
+macro_rules! debug_batch_span {
+    ($name:literal) => {
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            Some(tracing::debug_span!(
+                $name,
+                frames = tracing::field::Empty,
+                channels = tracing::field::Empty,
+                elapsed_us = tracing::field::Empty
+            ))
+        } else {
+            None
+        }
+    };
+}
+
+/// Registra los contadores del lote y su latencia en el span de diagnóstico.
+/// Es un no-op cuando el span no existe (nivel DEBUG apagado).
+#[inline]
+fn record_batch(
+    span: &Option<tracing::Span>,
+    start: Option<Instant>,
+    frames: usize,
+    channels: usize,
+) {
+    if let (Some(span), Some(start)) = (span.as_ref(), start) {
+        span.record("frames", frames);
+        span.record("channels", channels);
+        span.record("elapsed_us", start.elapsed().as_micros() as u64);
+    }
+}
+
 // Volumen y Mezcla (Phase 03): Fade state machine (D-07-D-13)
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FadeState {
@@ -455,6 +492,10 @@ fn preload_decode_batch(
     let (Some(fmt), Some(dec)) = (preload_format.as_mut(), preload_decoder.as_mut()) else {
         return false;
     };
+
+    let span = debug_batch_span!("preload_batch");
+    let start = span.as_ref().map(|_| Instant::now());
+    let _enter = span.as_ref().map(|s| s.enter());
 
     if predecode_buffer.len() >= predecode_cap_frames {
         return true; // Lleno por ahora: se retoma cuando haya espacio.
@@ -616,6 +657,7 @@ fn preload_decode_batch(
     let remaining = predecode_cap_frames.saturating_sub(predecode_buffer.len());
     let to_append = batch_out.len().min(remaining);
     predecode_buffer.extend(batch_out.drain(..to_append));
+    record_batch(&span, start, to_append / out_channels.max(1), out_channels);
     true
 }
 
@@ -716,6 +758,10 @@ fn tail_decode_batch(
         return false;
     };
 
+    let span = debug_batch_span!("tail_batch");
+    let start = span.as_ref().map(|_| Instant::now());
+    let _enter = span.as_ref().map(|s| s.enter());
+
     if tail_buffer.len() >= tail_buffer_cap {
         return true; // Cola llena por ahora: se retoma cuando haya espacio.
     }
@@ -724,6 +770,7 @@ fn tail_decode_batch(
     // necesarios para cubrir ~200ms de cola, de modo que la mezcla nunca
     // consume más rápido de lo que se recarga (fix del entrecortado).
     let mut batch_out: Vec<f64> = Vec::new();
+    let mut appended_frames = 0usize;
     while tail_buffer.len() < tail_buffer_cap {
         batch_out.clear();
         let packet = match fmt.next_packet() {
@@ -883,8 +930,15 @@ fn tail_decode_batch(
         // capacidad, causando pérdida PERMANENTE de audio → la cola sonaba
         // entrecortada porque cada paquete perdía samples al final. El mix
         // block consume la cola a tasa real, así que no crece indefinidamente.
+        appended_frames += batch_out.len();
         tail_buffer.extend(batch_out.drain(..));
     }
+    record_batch(
+        &span,
+        start,
+        appended_frames / out_channels.max(1),
+        out_channels,
+    );
     true
 }
 
@@ -2326,6 +2380,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             let fmt_opt = current_format.as_mut();
 
             if let (Some(dec), Some(fmt)) = (dec_opt, fmt_opt) {
+                let decode_span = debug_batch_span!("batch_decode");
+                let decode_start = decode_span.as_ref().map(|_| Instant::now());
+                let _decode_enter = decode_span.as_ref().map(|s| s.enter());
                 let mut eof = false;
                 let packet = match fmt.next_packet() {
                     Ok(Some(p)) => Some(p),
@@ -2491,6 +2548,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
                     decoded.copy_to_vecs_planar::<f64>(&mut decode_plane_pool);
+                    record_batch(
+                        &decode_span,
+                        decode_start,
+                        decoded.frames(),
+                        spec.channels().count(),
+                    );
 
                     let (out_rate, out_channels) = {
                         let s = state.read();
@@ -2639,6 +2702,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     };
 
                     if let Some(rs) = resampler.as_mut() {
+                        let resample_span = debug_batch_span!("batch_resample");
+                        let resample_start = resample_span.as_ref().map(|_| Instant::now());
+                        let _resample_enter = resample_span.as_ref().map(|s| s.enter());
+                        let mut resampled_frames = 0usize;
                         let src_channels = spec.channels().count();
 
                         for c in 0..src_channels {
@@ -2693,6 +2760,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             if let Ok(_) =
                                 rs.process_into_buffer(&input_adapter, &mut output_adapter, None)
                             {
+                                resampled_frames += out_frames;
                                 if tracing::enabled!(tracing::Level::TRACE) {
                                     tracing::trace!(
                                         "Resampled: {} -> {} frames",
@@ -2711,6 +2779,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 );
                             }
                         }
+                        record_batch(
+                            &resample_span,
+                            resample_start,
+                            resampled_frames,
+                            src_channels,
+                        );
                     } else {
                         AudioEngine::mix_channels_planar(
                             &decode_plane_pool,
@@ -3352,9 +3426,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
             };
 
-            // 1. Aplicar gain → DSP → fades×volume (D-03) al accumulator.
+            // 1. Aplicar gain → DSP → fades×volume al accumulator.
+            let dsp_span = debug_batch_span!("batch_dsp");
+            let dsp_start = dsp_span.as_ref().map(|_| Instant::now());
+            let _dsp_enter = dsp_span.as_ref().map(|s| s.enter());
+            let dsp_frames = output_accumulator.len() / out_channels.max(1) as usize;
             {
-                let _span = tracing::debug_span!("dsp_process", frames = %(output_accumulator.len() / out_channels.max(1) as usize)).entered();
                 let out_ch = out_channels as usize;
                 // combined = applied_vol (smoothed or immediate user volume)
                 // × fade_coeff (equal-power musical fade, 1.0 when Idle).
@@ -3367,7 +3444,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     applied_vol * fade_coeff
                 };
 
-                // Fix B1 (D-44): Spin-wait for DSP lock up to 5ms before falling back.
+                // Spin-wait for DSP lock up to 5ms before falling back.
                 // Prevents DSP dropout during brief GUI lock contention.
                 let dsp_lock = {
                     let deadline = Instant::now() + std::time::Duration::from_millis(5);
@@ -3388,7 +3465,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             *s *= gain_linear;
                         }
                         dsp_lock.process_frame(frame);
-                        // Meter: peak and RMS accumulation (post-DSP, pre-volume, per D-01).
+                        // Meter: peak and RMS accumulation (post-DSP, pre-volume).
                         if out_ch >= 2 {
                             let pl = frame[0].abs();
                             let pr = frame[1].abs();
@@ -3418,7 +3495,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         for s in frame.iter_mut() {
                             *s *= bypass_gain;
                         }
-                        // Meter: peak and RMS accumulation even when DSP is bypassed (per D-04).
+                        // Meter: peak and RMS accumulation even when DSP is bypassed.
                         if out_ch >= 2 {
                             let pl = frame[0].abs();
                             let pr = frame[1].abs();
@@ -3491,6 +3568,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
                 }
             }
+            record_batch(&dsp_span, dsp_start, dsp_frames, out_channels as usize);
 
             // Conversión limpia de f64 a f32 (Zero-Allocation pool)
             for &sample in output_accumulator.iter() {
@@ -3506,6 +3584,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 frames_since_metric = 0;
             }
             if !output_accumulator_f32.is_empty() {
+                let push_span = debug_batch_span!("batch_push");
+                let push_start = push_span.as_ref().map(|_| Instant::now());
+                let _push_enter = push_span.as_ref().map(|s| s.enter());
+                let push_frames = output_accumulator_f32.len() / out_channels.max(1) as usize;
                 // Push al RingBuffer (lock breve por iteración)
                 // --- PUSHING ATÓMICO (FRAME ALIGNMENT) ---
                 // Aseguramos que solo se envíen múltiplos exactos de `out_channels`.
@@ -3561,6 +3643,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         pos += pushed;
                     }
                 }
+                record_batch(&push_span, push_start, push_frames, out_channels as usize);
             }
         }
     }

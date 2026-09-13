@@ -1156,7 +1156,7 @@ fn begin_forward_crossfade(
     //    inmediatamente. Sin esto, la cola empieza vacía y el crossfade se
     //    retrasa una iteración (inaudible en manual, entrecortado en automático).
     if tail_decoder.is_some() {
-        let _ = tail_decode_batch(
+        let tail_has_more = tail_decode_batch(
             tail_format,
             tail_decoder,
             tail_track_id,
@@ -1172,6 +1172,11 @@ fn begin_forward_crossfade(
             out_rate,
             out_channels,
         );
+        if !tail_has_more {
+            tracing::debug!(
+                "Cola del crossfade sin más audio al pre-rellenar (EOF o error de decode)."
+            );
+        }
     }
 }
 
@@ -1441,8 +1446,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
 
                     if has_custom_decoder {
-                        if let Some(dec) = engine.custom_decoder.lock().as_mut() {
-                            let _ = dec.open(&path);
+                        let open_err = {
+                            let mut custom = engine.custom_decoder.lock();
+                            custom.as_mut().and_then(|dec| dec.open(&path).err())
+                        };
+                        if let Some(e) = open_err {
+                            let msg =
+                                format!("No se pudo abrir el archivo en el decodificador: {e}");
+                            tracing::error!("dec.open falló para '{}': {}", path, e);
+                            state.write().audio_notice = Some(msg);
                         }
                         state.write().eof_reached = false;
                         engine.drain_ring_buffer();
@@ -1788,7 +1800,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             tracing::error!("Pre-carga falló: {}", e);
                         }
                         if preload_format.is_some() {
-                            let _ = preload_decode_batch(
+                            let preload_has_more = preload_decode_batch(
                                 &mut preload_format,
                                 &mut preload_decoder,
                                 &mut preload_track_id,
@@ -1804,6 +1816,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 cmd_out_rate,
                                 cmd_out_channels,
                             );
+                            if !preload_has_more {
+                                tracing::debug!(
+                                    "Pre-carga sin más audio al iniciar la mezcla (EOF o error de decode)."
+                                );
+                            }
                         }
                         if preload_format.is_some() || !predecode_buffer.is_empty() {
                             begin_forward_crossfade(
@@ -1902,13 +1919,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                     };
                     if let Some(fmt) = current_format.as_mut() {
-                        let _ = fmt.seek(
+                        if let Err(e) = fmt.seek(
                             symphonia::core::formats::SeekMode::Accurate,
                             symphonia::core::formats::SeekTo::Time {
                                 time: seek_time,
                                 track_id: Some(track_id),
                             },
-                        );
+                        ) {
+                            tracing::warn!("Seek falló ({time} s): {e}");
+                        }
                         {
                             let mut s = state.write();
                             s.current_pos_sec = time;
@@ -2252,7 +2271,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // Push custom decoded data
             if !output_accumulator_f32.is_empty() {
                 if let Some(producer) = producer_mutex.lock().as_mut() {
-                    let _ = producer.push_slice(&output_accumulator_f32);
+                    let pushed = producer.push_slice(&output_accumulator_f32);
+                    if pushed < output_accumulator_f32.len() {
+                        tracing::warn!(
+                            "Push incompleto al ringbuf: {} de {} muestras",
+                            pushed,
+                            output_accumulator_f32.len()
+                        );
+                    }
                 }
                 frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;
                 if frames_since_metric >= out_rate as u64 {

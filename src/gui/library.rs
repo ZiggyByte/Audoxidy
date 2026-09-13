@@ -1091,18 +1091,14 @@ impl LibraryManager {
                     }
                     SortColumn::Channels => a.channels.unwrap_or(0).cmp(&b.channels.unwrap_or(0)),
                     SortColumn::Bitrate => {
-                        let bit_a = if a.duration_secs.unwrap_or(0.0) > 0.0 {
-                            (a.size.unwrap_or(0) as f64 * 8.0) / (a.duration_secs.unwrap() * 1000.0)
-                        } else {
-                            0.0
+                        let bitrate = |s: &crate::db::database::SongData| {
+                            s.duration_secs
+                                .filter(|d| *d > 0.0)
+                                .map(|d| s.size.unwrap_or(0) as f64 * 8.0 / (d * 1000.0))
+                                .unwrap_or(0.0)
                         };
-                        let bit_b = if b.duration_secs.unwrap_or(0.0) > 0.0 {
-                            (b.size.unwrap_or(0) as f64 * 8.0) / (b.duration_secs.unwrap() * 1000.0)
-                        } else {
-                            0.0
-                        };
-                        bit_a
-                            .partial_cmp(&bit_b)
+                        bitrate(&**a)
+                            .partial_cmp(&bitrate(&**b))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     }
                     SortColumn::Genre => {
@@ -3159,4 +3155,51 @@ pub fn view<'a>(
     .on_press(Message::LibraryFocus);
 
     final_view.into()
+}
+
+#[cfg(test)]
+mod library_tests {
+    use super::*;
+    use crate::db::database::SongData;
+    use crate::utils::SortColumn;
+    use std::sync::Arc;
+
+    fn song_with(duration: Option<f64>, size: Option<i64>) -> Arc<SongData> {
+        let mut song = SongData::default();
+        song.duration_secs = duration;
+        song.size = size;
+        Arc::new(song)
+    }
+
+    /// Guarda de regresión: el comparador de bitrate calcula la tasa con
+    /// `filter` en lugar de `unwrap`, de modo que una duración ausente (`None`)
+    /// o cero no lo rompe. El orden debe ser estable entre llamadas.
+    #[test]
+    fn test_bitrate_sort_handles_missing_duration() {
+        let mut songs = vec![
+            song_with(None, Some(10_000)),
+            song_with(Some(0.0), Some(10_000)),
+            song_with(Some(120.0), Some(4_000_000)),
+            song_with(Some(60.0), Some(500_000)),
+        ];
+
+        let sort_snapshot = |songs: &mut Vec<Arc<SongData>>| {
+            LibraryManager::sort_songs_static(songs, Some(SortColumn::Bitrate), Some(true));
+            songs
+                .iter()
+                .map(|s| (s.duration_secs, s.size))
+                .collect::<Vec<_>>()
+        };
+
+        let first = sort_snapshot(&mut songs.clone());
+        let second = sort_snapshot(&mut songs);
+        assert_eq!(
+            first, second,
+            "el orden por bitrate con duración ausente/cero debe ser estable"
+        );
+
+        // Las entradas sin duración válida quedan al principio (tasa 0.0).
+        assert_eq!(first[0].0, None);
+        assert_eq!(first[1].0, Some(0.0));
+    }
 }

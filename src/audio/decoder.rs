@@ -672,6 +672,7 @@ fn mix_tail_into_frame_faded(
 /// Mezcla la cola de la canción anterior sobre un frame de la primaria
 /// (f64, aditiva sin desvanecimiento). Se usa cuando no hay fade activo
 /// durante la mezcla cruzada (la cola suena a volumen completo).
+#[cfg(test)]
 fn mix_tail_into_frame(frame: &mut [f64], tail: &mut std::collections::VecDeque<f64>) {
     for s in frame.iter_mut() {
         let Some(t) = tail.pop_front() else {

@@ -15,7 +15,6 @@ pub struct AudioManager {
     database: Arc<parking_lot::Mutex<Option<Arc<std::sync::Mutex<crate::db::Database>>>>>,
 }
 
-#[allow(dead_code)]
 impl AudioManager {
     /// Crea un nuevo `AudioManager` con el motor de audio inicializado.
     pub fn new() -> Result<Self, AudioError> {
@@ -94,11 +93,6 @@ impl AudioManager {
     /// Busca a una posición específica en segundos.
     pub fn seek(&self, pos_sec: f64) {
         self.engine.seek(pos_sec);
-    }
-
-    #[allow(dead_code)]
-    pub fn get_duration(&self) -> f64 {
-        self.engine.state.read().total_duration_sec
     }
 
     /// Resetea el flag de fin de archivo (EOF).
@@ -229,7 +223,6 @@ impl AudioManager {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_eq_enabled(&self, enabled: bool) {
         self.engine.dsp.write().equalizer.enabled = enabled;
     }

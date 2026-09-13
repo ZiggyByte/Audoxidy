@@ -130,7 +130,6 @@ pub struct ChannelMap {
 
 /// Comandos enviados al hilo de decodificación de fondo.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum AudioCommand {
     Load {
         path: String,
@@ -398,7 +397,6 @@ impl Default for AudioState {
     }
 }
 
-#[allow(dead_code)]
 impl AudioEngine {
     /// Crea un nuevo AudioEngine.
     /// Si se proporciona `decoder`, se usará en lugar del SymphoniaDecoder por defecto

@@ -101,8 +101,6 @@ pub struct AudioDeviceInfo {
     /// Id estable del dispositivo (`DeviceId` serializado), usado para persistir
     /// la selección de salida.
     pub id: Option<String>,
-    #[allow(dead_code)]
-    pub supported_configs: Vec<cpal::SupportedStreamConfigRange>,
 }
 
 /// Indica si el callback de salida sabe convertir un formato de muestra.
@@ -496,15 +494,7 @@ impl AudioDeviceManager {
                         .map(|desc| desc.name().to_string())
                         .unwrap_or_else(|_| "Unknown".into());
                     let id = d.id().map(|id| id.to_string()).ok();
-                    let supported_configs = d
-                        .supported_output_configs()
-                        .map(|c| c.collect())
-                        .unwrap_or_default();
-                    AudioDeviceInfo {
-                        name,
-                        id,
-                        supported_configs,
-                    }
+                    AudioDeviceInfo { name, id }
                 })
                 .collect()
         } else {

@@ -12,6 +12,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use tracing_subscriber::filter::{EnvFilter, filter_fn};
 use tracing_subscriber::fmt;
+use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 
@@ -70,6 +71,7 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
             .with_ansi(false)
             .with_target(true)
             .with_thread_ids(true)
+            .with_span_events(FmtSpan::CLOSE)
             .with_filter(filter_fn(|meta| meta.target() != METRICS_TARGET))
     });
 
@@ -255,6 +257,7 @@ impl tracing::field::Visit for MetricsVisitor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicUsize;
     use std::sync::{Arc, Mutex};
 
     /// Layer de prueba que expone los campos capturados por `MetricsVisitor`.
@@ -336,6 +339,129 @@ mod tests {
         assert_eq!(metrics.underrun_count.load(Ordering::Relaxed), 3);
         assert_eq!(metrics.ram_usage_bytes.load(Ordering::Relaxed), 1024);
         assert_eq!(metrics.audio_latency_peak_us.load(Ordering::Relaxed), 500);
+    }
+
+    /// Layer de prueba que observa la apertura, los registros y el cierre de
+    /// spans para comprobar que la latencia registrada llega al subscriber.
+    struct SpanCaptureLayer {
+        opened: Arc<AtomicUsize>,
+        closed: Arc<AtomicUsize>,
+        elapsed_us: Arc<Mutex<Option<u64>>>,
+    }
+
+    impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for SpanCaptureLayer {
+        fn on_new_span(
+            &self,
+            _attrs: &tracing::span::Attributes<'_>,
+            _id: &tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.opened.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn on_record(
+            &self,
+            _id: &tracing::span::Id,
+            values: &tracing::span::Record<'_>,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            let mut visitor = SpanFieldsVisitor::default();
+            values.record(&mut visitor);
+            if let Some(v) = visitor.elapsed_us {
+                *self.elapsed_us.lock().unwrap() = Some(v);
+            }
+        }
+
+        fn on_close(
+            &self,
+            _id: tracing::span::Id,
+            _ctx: tracing_subscriber::layer::Context<'_, S>,
+        ) {
+            self.closed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// Visitante que extrae el campo `elapsed_us` de un registro de span.
+    #[derive(Default)]
+    struct SpanFieldsVisitor {
+        elapsed_us: Option<u64>,
+    }
+
+    impl tracing::field::Visit for SpanFieldsVisitor {
+        fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+            if field.name() == "elapsed_us" {
+                self.elapsed_us = Some(value);
+            }
+        }
+
+        fn record_debug(&mut self, _field: &tracing::field::Field, _value: &dyn std::fmt::Debug) {}
+    }
+
+    /// Un span de diagnóstico con latencia registrada debe entregar su evento
+    /// de cierre al subscriber.
+    #[test]
+    fn span_close_events_deliver_recorded_latency() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
+        let elapsed_us = Arc::new(Mutex::new(None));
+        let layer = SpanCaptureLayer {
+            opened: Arc::clone(&opened),
+            closed: Arc::clone(&closed),
+            elapsed_us: Arc::clone(&elapsed_us),
+        };
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            if tracing::enabled!(tracing::Level::DEBUG) {
+                let span = tracing::debug_span!(
+                    "batch_smoke",
+                    frames = tracing::field::Empty,
+                    channels = tracing::field::Empty,
+                    elapsed_us = tracing::field::Empty
+                );
+                let _enter = span.enter();
+                span.record("frames", 480usize);
+                span.record("channels", 2usize);
+                span.record("elapsed_us", 42u64);
+            }
+        });
+
+        assert_eq!(opened.load(Ordering::Relaxed), 1, "el span debe abrirse");
+        assert_eq!(
+            closed.load(Ordering::Relaxed),
+            1,
+            "el evento de cierre debe entregarse"
+        );
+        assert_eq!(
+            *elapsed_us.lock().unwrap(),
+            Some(42),
+            "la latencia registrada debe llegar al subscriber"
+        );
+    }
+
+    /// Con el nivel por defecto (`info`) los spans de DEBUG quedan apagados y
+    /// no generan eventos.
+    #[test]
+    fn debug_spans_stay_off_at_info_level() {
+        let opened = Arc::new(AtomicUsize::new(0));
+        let closed = Arc::new(AtomicUsize::new(0));
+        let layer = SpanCaptureLayer {
+            opened: Arc::clone(&opened),
+            closed: Arc::clone(&closed),
+            elapsed_us: Arc::new(Mutex::new(None)),
+        };
+        let subscriber = tracing_subscriber::registry()
+            .with(layer)
+            .with(tracing_subscriber::filter::LevelFilter::INFO);
+
+        tracing::subscriber::with_default(subscriber, || {
+            assert!(!tracing::enabled!(tracing::Level::DEBUG));
+            let span = tracing::debug_span!("batch_smoke_disabled");
+            let _enter = span.enter();
+        });
+
+        assert_eq!(opened.load(Ordering::Relaxed), 0);
+        assert_eq!(closed.load(Ordering::Relaxed), 0);
     }
 }
 

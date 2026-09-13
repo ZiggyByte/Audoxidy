@@ -82,6 +82,10 @@ harness = false
 name = "utils_bench"
 harness = false
 
+[[bench]]
+name = "covers_bench"
+harness = false
+
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
 

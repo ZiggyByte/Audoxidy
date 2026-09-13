@@ -44,8 +44,23 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
         .add_directive("want=warn".parse().unwrap())
         .add_directive("audoxidy::metrics=trace".parse().unwrap());
 
-    // Log a archivo con rotación por tamaño
+    // Log a archivo con rotación por tamaño. La rotación se resuelve ANTES de
+    // abrir el escritor: si se renombra el archivo con el descriptor ya abierto,
+    // las escrituras siguen yendo al archivo rotado y `audoxidy.log` no se
+    // recrea hasta reiniciar el proceso.
     let log_path = log_dir.join("audoxidy.log");
+    let max_bytes = config.max_file_size_mb * 1024 * 1024;
+    if let Ok(meta) = std::fs::metadata(&log_path) {
+        if meta.len() > max_bytes {
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            let rotated = log_dir.join(format!("audoxidy.{}.log", ts));
+            std::fs::rename(&log_path, &rotated).ok();
+            cleanup_old_logs(&log_dir, config.max_history_files);
+        }
+    }
     let log_file = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -53,19 +68,6 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
         .ok();
 
     let file_layer = log_file.map(|file| {
-        let max_bytes = config.max_file_size_mb * 1024 * 1024;
-        // Rotación simple: si el archivo excede el tamaño, lo renombra con timestamp
-        if let Ok(meta) = std::fs::metadata(&log_path) {
-            if meta.len() > max_bytes {
-                let ts = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let rotated = log_dir.join(format!("audoxidy.{}.log", ts));
-                std::fs::rename(&log_path, &rotated).ok();
-                cleanup_old_logs(&log_dir, config.max_history_files);
-            }
-        }
         fmt::layer()
             .with_writer(std::sync::Mutex::new(file))
             .with_ansi(false)

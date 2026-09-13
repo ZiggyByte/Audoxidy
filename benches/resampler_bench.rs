@@ -69,13 +69,12 @@ fn make_fft(in_rate: u32, out_rate: u32) -> Box<dyn Resampler<f64>> {
 /// Seno continuo de `CHUNK` frames a la tasa de entrada, precalculado una vez para
 /// que el llenado del buffer no entre en la región medida.
 fn sine_input(in_rate: u32) -> Vec<Vec<f64>> {
-    let mut input = vec![vec![0.0_f64; CHUNK]; STEREO];
-    for frame in 0..CHUNK {
-        let v = 0.5 * (2.0 * std::f64::consts::PI * TONE_HZ * frame as f64 / in_rate as f64).sin();
-        input[0][frame] = v;
-        input[1][frame] = v;
-    }
-    input
+    let channel: Vec<f64> = (0..CHUNK)
+        .map(|frame| {
+            0.5 * (2.0 * std::f64::consts::PI * TONE_HZ * frame as f64 / in_rate as f64).sin()
+        })
+        .collect();
+    vec![channel; STEREO]
 }
 
 /// Mide un mismo `make` a lo largo de todos los pares de tasas bajo un nombre de

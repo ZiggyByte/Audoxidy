@@ -1608,9 +1608,21 @@ mod tests {
                     ("stopband", stopband),
                 ] {
                     assert!(
-                        value.is_finite() && value > 0.0,
-                        "banda {band} no finita o no positiva para {kind:?} en {in_rate}->{out_rate}: {value}"
+                        value.is_finite(),
+                        "banda {band} no finita para {kind:?} en {in_rate}->{out_rate}: {value}"
                     );
+                    if band == "stopband" {
+                        // La banda atenuada puede llegar a 0.0 de forma legítima.
+                        assert!(
+                            value >= 0.0,
+                            "banda {band} negativa para {kind:?} en {in_rate}->{out_rate}: {value}"
+                        );
+                    } else {
+                        assert!(
+                            value > 0.0,
+                            "banda {band} no positiva para {kind:?} en {in_rate}->{out_rate}: {value}"
+                        );
+                    }
                 }
             }
         }

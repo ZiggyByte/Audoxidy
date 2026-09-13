@@ -311,7 +311,7 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     Some(handle)
 }
 
-/// Purga las entradas más antiguas (frente de la cola). En modo low-resource
+/// Desaloja las entradas menos recientes. En modo low-resource
 /// duplica el número de entradas a purgar.
 fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool) {
     let effective_count = if low_resource { count * 2 } else { count };
@@ -362,7 +362,7 @@ pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handl
     Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
 }
 
-/// Vacía por completo la caché LRU de carátulas (mapa y orden).
+/// Vacía por completo la caché LRU de carátulas.
 fn clear_cover_cache(cache: &mut CoverCache) {
     cache.entries.clear();
 }

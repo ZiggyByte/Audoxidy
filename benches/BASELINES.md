@@ -56,7 +56,7 @@ cargo bench --bench dsp_bench --bench engine_bench --bench utils_bench -- --base
 
 ## Per-Benchmark Results
 
-Mean is criterion's point estimate; the bracketed values are the confidence interval.
+Mean is criterion's point estimate for each benchmark.
 
 ### DSP chain (`benches/dsp_bench.rs`)
 

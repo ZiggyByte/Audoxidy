@@ -72,23 +72,30 @@ Each implementation is driven by the same bench-local adapter trait (`get_hit`,
 `String`s (`/music/album/{i}`) and values are cheap `Handle::from_path(..)` — no disk I/O.
 Every measured routine acquires the enclosing `parking_lot::Mutex`.
 
-`iter_batched` is used with `BatchSize::SmallInput` and an untimed `setup` that builds a
-fresh pre-populated cache per batch, so the workload per measured call is constant. One
-consequence matters for interpretation:
+`iter_batched_ref` is used with `BatchSize::SmallInput`: the untimed `setup` builds a
+fresh pre-populated cache per batch, the routine receives `&mut Mutex<Cache>`, and the
+cache is dropped after the measured region ends. Only the operation under test (plus the
+enclosing `Mutex` acquisition) is timed; per-sample allocation, cold-cache access and
+teardown are excluded. The `full_cycle` routine reuses one cache for `cap` hits + one
+insert + one evict inside a single measured call.
 
-- criterion times `routine(input)`; the input (the `Mutex<Cache>`) is **moved into** the
-  routine and dropped at the end of the closure, so each standalone per-operation
-  measurement includes the teardown of the freshly-built cache. The `full_cycle` routine
-  instead reuses one cache for `cap` hits + one insert + one evict, amortizing teardown by
-  roughly 64x.
-- The order of magnitude confirms this: at capacity 64, a standalone hand-rolled `get_hit`
-  measures ~2.85 µs, while the hand-rolled `full_cycle` performs 64 hits plus an insert and
-  an evict in ~11.7 µs (~0.18 µs/operation). The standalone number therefore measures
-  ~16x the warm per-operation cost of the same implementation; the excess is per-sample
-  allocation, cold-cache access, and cache teardown, not the operation under test.
+An earlier version of this harness used `iter_batched`, which moves the input into the
+timed routine and therefore measured cache teardown inside every standalone per-operation
+sample (roughly 16x the warm cost at capacity 64). Those per-operation numbers were
+invalid and are superseded by the tables below. In that superseded run, one row —
+capacity-16 `get_miss` run2 — was a fully separated +20.6% regression for `lru`
+(hand-rolled 746.1 ns vs `lru` 900.0 ns). With teardown excluded the same row favors `lru`
+(34.99 ns vs 15.97 ns, −54.4%), confirming the old regression was an artifact of the
+harness rather than of the operation.
 
-The `full_cycle` figures are treated as the representative steady-state comparison; the
-standalone per-operation figures are reported raw below with this caveat attached.
+The measured quantity is **cache-internal**: the adapter op plus the enclosing `Mutex`. It
+does not include the per-hit wrapper that the real `load_cover_handle` pays on every call
+before the cache op — the `NEGATIVE_CACHE` lock/`contains` check and
+`cache.resize(get_max_covers())` — nor the `Handle::from_path` a miss builds. The
+benchmark also uses synthetic always-hit/always-miss splits and a reverse sweep rather
+than a measured hit/miss mix. The full-cycle ratios below are therefore cache-internal,
+not an end-to-end cover-load speedup: the `lru` win is real for the cache internals, but
+it should not be read as a user-visible gain.
 
 ## Results
 
@@ -101,21 +108,26 @@ comparisons against these runs are meaningful.
 
 | Operation | Hand-rolled run1 | Hand-rolled run2 | `lru` run1 | `lru` run2 | `lru` vs hand-rolled |
 |-----------|------------------|------------------|------------|------------|----------------------|
-| `get_hit` | 2.898 µs [2.717, 3.038] | 2.852 µs [2.683, 2.986] | 3.608 µs [3.397, 3.777] | 3.376 µs [3.194, 3.535] | +24.5% / +18.4% |
-| `get_miss` | 2.574 µs [2.490, 2.648] | 2.555 µs [2.466, 2.634] | 3.455 µs [3.273, 3.613] | 3.039 µs [2.953, 3.114] | +34.3% / +19.0% |
-| `insert` | 3.458 µs [3.210, 3.645] | 3.423 µs [3.224, 3.574] | 3.705 µs [3.476, 3.886] | 3.567 µs [3.348, 3.748] | +7.1% / +4.2% |
-| `evict` | 2.984 µs [2.816, 3.118] | 2.597 µs [2.482, 2.713] | 3.338 µs [3.178, 3.471] | 3.079 µs [2.988, 3.160] | +11.8% / +18.5% |
-| `full_cycle` | 11.695 µs [11.632, 11.760] | 11.576 µs [11.503, 11.660] | 4.526 µs [4.460, 4.579] | 4.499 µs [4.411, 4.571] | −61.3% / −61.1% |
+| `get_hit` | 130.2 ns [117.3, 140.4] | 120.5 ns [108.7, 130.4] | 65.5 ns [58.0, 71.8] | 62.2 ns [55.4, 68.0] | −49.7% / −48.4% |
+| `get_miss` | 35.8 ns [34.1, 37.3] | 34.3 ns [32.8, 35.8] | 15.9 ns [14.8, 17.0] | 15.0 ns [14.2, 15.7] | −55.6% / −56.3% |
+| `insert` | 325.0 ns [297.1, 347.6] | 316.9 ns [285.8, 344.0] | 132.6 ns [118.4, 144.7] | 117.4 ns [103.0, 131.1] | −59.2% / −63.0% |
+| `evict` | 97.2 ns [90.8, 103.8] | 91.2 ns [86.8, 95.5] | 78.2 ns [75.3, 80.7] | 71.9 ns [70.3, 73.3] | −19.5% / −21.2% |
+| `full_cycle` | 9.278 µs [9.207, 9.350] | 9.214 µs [9.144, 9.280] | 1.870 µs [1.810, 1.918] | 1.855 µs [1.787, 1.913] | −79.9% / −79.9% |
 
 ### Capacity 16 (low-resource)
 
 | Operation | Hand-rolled run1 | Hand-rolled run2 | `lru` run1 | `lru` run2 | `lru` vs hand-rolled |
 |-----------|------------------|------------------|------------|------------|----------------------|
-| `get_hit` | 877.0 ns [824.7, 917.8] | 887.6 ns [837.0, 926.8] | 942.4 ns [895.1, 979.5] | 945.0 ns [900.5, 980.2] | +7.4% / +6.5% |
-| `get_miss` | 862.2 ns [811.2, 901.3] | 746.1 ns [711.4, 777.0] | 883.7 ns [840.2, 919.5] | 900.0 ns [853.2, 937.6] | +2.5% / +20.6% |
-| `insert` | 932.9 ns [886.9, 968.9] | 935.3 ns [892.7, 971.1] | 934.5 ns [893.2, 965.7] | 928.1 ns [892.3, 956.4] | +0.2% / −0.8% |
-| `evict` | 854.8 ns [807.9, 891.3] | 816.1 ns [768.3, 854.5] | 855.0 ns [817.6, 885.2] | 796.1 ns [769.5, 818.5] | +0.0% / −2.4% |
-| `full_cycle` | 1975.7 ns [1937.9, 2007.5] | 1938.9 ns [1902.6, 1969.7] | 1250.3 ns [1220.9, 1273.7] | 1268.5 ns [1241.1, 1291.6] | −36.7% / −34.6% |
+| `get_hit` | 118.0 ns [108.0, 126.9] | 112.5 ns [102.9, 120.9] | 63.5 ns [54.2, 72.3] | 67.8 ns [59.5, 74.9] | −46.2% / −39.8% |
+| `get_miss` | 34.5 ns [33.2, 35.7] | 35.0 ns [33.9, 36.1] | 19.2 ns [17.0, 21.0] | 16.0 ns [15.3, 16.6] | −44.4% / −54.4% |
+| `insert` | 175.9 ns [160.9, 189.0] | 178.7 ns [162.6, 192.4] | 110.6 ns [98.6, 121.3] | 107.9 ns [98.6, 115.8] | −37.1% / −39.6% |
+| `evict` | 85.3 ns [82.4, 87.9] | 85.5 ns [82.5, 88.0] | 90.8 ns [82.1, 98.9] | 75.1 ns [72.7, 77.1] | +6.5% / −12.2% |
+| `full_cycle` | 1.354 µs [1.334, 1.372] | 1.358 µs [1.336, 1.378] | 619.6 ns [596.4, 639.3] | 613.2 ns [591.8, 631.2] | −54.2% / −54.9% |
+
+The single row where `lru` is slower — capacity-16 `evict`, run1: +6.5% — has overlapping
+confidence intervals (hand-rolled [82.4, 87.9] vs `lru` [82.1, 98.9]), i.e. within noise; in
+run2 the same operation is −12.2% with separated intervals. Every other row favors `lru`
+with separated intervals in both runs, so no operation regresses beyond measurement noise.
 
 ## Behavioral parity
 
@@ -135,48 +147,66 @@ does not; concurrency under a single `Mutex`; `clear`; negative-cache isolation;
 (including the low-resource doubling); resize (shrink evicts the LRU first, growth does
 not evict). `cargo test --lib covercache` passes 9/9.
 
-The public surface (`get_lru_cache()` and the `CoverCache` type used by callers) is
-unchanged by the candidate: no call site outside `src/utils/covers.rs` reads the
-internal `map`/`order`/`max_size` fields.
+## Public surface
+
+The behavior-bearing public functions (`get_lru_cache()`, `load_cover_handle`,
+`clear_all_cover_cache`, `clear_raw_cache`, `purge_old_covers`, `preload_visible_covers`,
+`load_raw_image_for_iced`) are unchanged in signature and behavior. The pre-registered
+"existing public surface unchanged" clause is nonetheless **not** absolutely true: the
+three `pub` fields of `CoverCache` (`map`, `order`, `max_size`) were removed and replaced
+by a private `entries`, which is a semver-breaking change for external consumers.
+`CoverCache` is reachable through `pub mod utils` → `pub mod covers` (`src/lib.rs`,
+`src/utils/mod.rs`), so an external crate that read those fields would no longer compile.
+A grep of `src/` and `benches/` confirms no in-tree caller ever read them, so the clause
+holds for this crate's call sites. As a consequence of making the fields private,
+`get_lru_cache()` returns a `&'static Mutex<CoverCache>` whose type exposes no public
+methods to external callers.
+
+## Criterion disposition
+
+- **Faster — satisfied, no waiver needed.** The full working-set cycle improves by ~80% at
+  capacity 64 and ~54% at capacity 16, repeatable across both runs with separated intervals.
+  After the harness correction every standalone operation also favors `lru` beyond noise
+  (the sole slower row, capacity-16 `evict` run1, has overlapping intervals), so the
+  pre-registered "no operation regressing beyond measurement noise" clause holds on the
+  valid numbers. The earlier per-operation table came from a harness that timed teardown
+  and is superseded; the clause is not waived because the corrected run meets it.
+- **Safer — satisfied with one caveat.** Behavioral parity is demonstrated against a frozen
+  independent reference (see "Behavioral parity"). The three internal `pub` fields were
+  made private: a semver-breaking change for external consumers, of which there are none
+  in-tree (see "Public surface"). The public functions and their behavior are unchanged.
+- **Both** hold; the recorded outcome is adopt.
 
 ## Analysis
 
-- **Representative workload (full cycle): `lru` is decisively faster.** 2.57–2.58x at
-  capacity 64 and 1.53–1.58x at capacity 16, with fully separated confidence intervals in
-  both independent runs. This is the large, repeatable win the evaluation was looking for,
-  and it is the workload that matches the real cache (a long-lived, warm static touched by
-  many operations over the process lifetime). The hand-rolled full cycle is dominated by
-  the O(n²) hit-refresh path (`VecDeque::iter().position()` + `remove`), exactly the
-  asymptotic difference identified before measuring.
-- **Standalone per-operation micro-benches favor the hand-rolled cache at capacity 64**
-  (`get_hit` +18–25%, `get_miss` +19–34%, `evict` +12–19%, `insert` +4–7%), and are
-  roughly neutral at capacity 16. However, these measurements are confounded: as shown
-  above, the value they report is ~16x the warm per-operation cost because the fresh
-  cache is dropped inside the timed routine. The difference between implementations at
-  this scale is dominated by per-sample allocation/teardown and cold-cache access
-  (the `lru` adapter allocates one boxed node per entry, which is more expensive to
-  allocate and free than the contiguous hand-rolled structures), not by the operation
-  under test. The `get_hit` case additionally only exercises the front (least-recently
-  used) key, which is the best case for the hand-rolled `position` scan.
-- **"Safer" holds.** Parity is demonstrated, not asserted, and adoption would delete
-  ~60 lines of bespoke LRU bookkeeping (recency list maintenance, manual eviction,
-  manual resize) rather than add capability, while preserving the public functions.
-
-A strict reading of "no operation regressing beyond noise" applied literally to the
-confounded standalone numbers would keep the hand-rolled cache. Based on the valid
-steady-state evidence (the full cycle), which is the workload the application actually
-executes, the recommendation is to adopt. The per-operation raw numbers are kept here so
-the reader can reach the opposite conclusion from them if they weight the cold-cache
-micro-benchmarks more heavily.
+- **Representative workload (full cycle): `lru` is decisively faster.** 4.96x at capacity 64
+  and 2.19–2.22x at capacity 16, with fully separated confidence intervals in both
+  independent runs. This is the large, repeatable win the evaluation was looking for, and it
+  is the workload that matches the real cache (a long-lived, warm static touched by many
+  operations over the process lifetime). The hand-rolled full cycle is dominated by the
+  O(n²) hit-refresh path (`VecDeque::iter().position()` + `remove`), exactly the asymptotic
+  difference identified before measuring.
+- **Standalone per-operation micro-benches now also favor `lru`.** With the harness
+  corrected so teardown is outside the measured region, the per-operation ratios range from
+  −19.5% to −63.0% at capacity 64 and from −12.2% to −54.4% at capacity 16, except one
+  capacity-16 `evict` run where `lru` is +6.5% with overlapping intervals (within noise).
+  The earlier "hand-rolled wins the micro-benches" reading was an artifact of timing cache
+  teardown inside the sample and no longer applies.
+- **"Safer" holds.** Parity is demonstrated against a frozen independent reference, not
+  asserted, and adoption deletes ~60 lines of bespoke LRU bookkeeping (recency list
+  maintenance, manual eviction, manual resize) rather than adding capability, while the
+  behavior-bearing public functions are preserved. The one caveat is the removed `pub`
+  fields (see "Public surface"), a semver break with no in-tree consumer.
 
 ## Size dependence
 
 The result is size-dependent in magnitude but not in direction: the full-cycle advantage
-shrinks from ~61% at capacity 64 to ~35% at capacity 16, consistent with an O(n) hit
-refresh whose cost grows with the working set. Capacity 16 wins do not regress (the
-full-cycle interval is fully separated and the standalone operations are within noise to
-mildly favorable). A win at 64 with no regression at 16 therefore clears the speed bar on
-its own, and here both sizes win on the representative workload.
+shrinks from ~80% at capacity 64 to ~54% at capacity 16, consistent with an O(n) hit
+refresh whose cost grows with the working set. Capacity 16 wins do not regress: the
+full-cycle intervals are fully separated, and every standalone operation favors `lru`
+beyond noise except one capacity-16 `evict` run whose intervals overlap. A win at 64 with
+no regression at 16 therefore clears the speed bar on its own, and here both sizes win on
+the representative workload.
 
 ## Caveats
 

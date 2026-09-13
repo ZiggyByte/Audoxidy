@@ -1184,18 +1184,37 @@ mod tests {
 
         let frames = 64;
         let input: Vec<Vec<f64>> = (1..=8).map(|n| vec![n as f64; frames]).collect();
+        // Mapa poblado FL, FR, C, LFE, SBL, SBR, SL, SR: con un valor distinto
+        // por plano, la mezcla 8-in/8-out debe conservar exactamente ese orden.
+        let map8 = ChannelMap {
+            fl: Some(0),
+            fr: Some(1),
+            c: Some(2),
+            lfe: Some(3),
+            sbl: Some(4),
+            sbr: Some(5),
+            sl: Some(6),
+            sr: Some(7),
+        };
         let mut out = Vec::new();
         AudioEngine::mix_channels_planar(
             &input,
             frames,
             8,
             8,
-            &ChannelMap::default(),
+            &map8,
             (1.0, 1.0, 1.0, 1.0),
             &mut out,
         );
         assert_eq!(out.len(), frames * 8);
-        assert!(out.iter().all(|s| s.is_finite()));
+        let expected_frame = [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        for (i, frame) in out.chunks_exact(8).enumerate() {
+            assert_eq!(
+                frame,
+                expected_frame.as_slice(),
+                "frame {i} no conserva el orden planar FL,FR,C,LFE,SBL,SBR,SL,SR"
+            );
+        }
     }
 
     // --- Matemática de buffers a altas tasas (diagnóstico del cambio de rate) ---

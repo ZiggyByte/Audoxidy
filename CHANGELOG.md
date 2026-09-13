@@ -10,6 +10,14 @@ Crate Modernization — mega-release que moderniza cada crate activa a su últim
 
 ### Added
 
+- **ReplayGain** — per-track and per-album loudness normalization with per-source offsets and real-time fallback analysis for untagged files
+- **Crossfade / cross-mixing** — automatic (on track change) and manual forward crossfade with equal-power curves and advance pre-loading of the next track
+- **Volume fades** — fade-in at the start and fade-out at the end of each song, plus debounce + ramp volume smoothing
+- **Silence removal** — trims leading and trailing silence
+- StandardCheckbox and NumberStepper custom widgets; adaptive pre-loading cap with GC safety around crossfade
+- **Desktop media controls** — MPRIS/SMTC Next/Previous, seek and volume, with album and cover art on the system panel; foundation for future global shortcuts
+- **EQ preset management** — save/load/delete presets with JSON import/export
+- Volume & Mixing tab in Audio Center — volume smoothing, silence removal, ReplayGain with fixed gain, real-time loudness analysis
 - Observability module owning logging init plus a repaired metrics layer that mutates the four atomic counters from structured `target: "audoxidy::metrics"` events
 - Lock-free CPAL underrun/latency atomics (buffer size, underruns, ringbuf peak latency) surfaced through `AudioManager`
 - Bounded(64) GUI→decoder command channel with a never-drop control policy and a latest-wins atomic Seek slot
@@ -33,6 +41,9 @@ Crate Modernization — mega-release que moderniza cada crate activa a su últim
 - Audio core migrated atomically: `symphonia` 0.6.1, `rubato` 5.0.0, `audioadapter-buffers` 5.2, `cpal` 0.18.2, `ringbuf` 0.5.1 — `Ok(None)`-only EOF, `Track`/`TimeBase` duration with frames/rate fallback, `Channels` enum, explicit `Some(f_cutoff)`, stable-id device resolution
 - `CoverCache` now uses the `lru` crate behind its unchanged public API (evaluated and adopted on measured parity + performance)
 - Installable as a `src/lib.rs` library plus the binary; benches link the widened engine items
+- Migrated PipeWire/PulseAudio integration to dedicated `system_audio.rs`; PipeWire/PulseAudio clock synchronization
+- Upgraded Lofty from 0.23.3 to 0.25.1 (yanked version fix)
+- Fade defaults adjusted to 2000 ms fade-out / 1000 ms fade-in
 
 ### Fixed
 
@@ -42,6 +53,12 @@ Crate Modernization — mega-release que moderniza cada crate activa a su últim
 - Over-claimed formats corrected (APE/Opus/WavPack unsupported by symphonia 0.6.1 → named error)
 - Indeterminate duration now yields a non-interactive position rail and suppresses fine seek
 - Flaky `utils::memory_manager` tests (bounded `try_lock` retry)
+- Crossfade volume fade defaults and fade-out/fade-in timing
+- Multi-channel crash and buzz on 7.1 sources
+- Sample rate switching without pause/play interrupt
+- Pre-load buffer loss on drain transition
+- Fade oscillation root cause (double-multiply bug)
+- Ring buffer recreation on sample rate change
 
 ### Removed
 
@@ -58,32 +75,7 @@ Crate Modernization — mega-release que moderniza cada crate activa a su últim
 
 ## [Unreleased]
 
-### Added
-
-- Volume & Mixing tab in Audio Center — volume smoothing, silence removal, ReplayGain with fixed gain, real-time loudness analysis
-- Crossfade system — manual and automatic forward crossfade with equal-power curves
-- Pre-loading engine — next track decoded in advance for gapless transitions
-- EQ preset management — save/load/delete presets, import/export via JSON
-- StandardCheckbox and NumberStepper custom widgets
-- Adaptive pre-loading cap and GC safety for crossfade
-- PipeWire/PulseAudio clock synchronization
-- 228+ tests across audio engine, DSP, widgets, and crossfade
-
-### Changed
-
-- Migrated PipeWire/PulseAudio integration to dedicated `system_audio.rs`
-- Upgraded Lofty from 0.23.3 to 0.25.1 (fix yanked version)
-- Volume smoothing uses debounce + ramp instead of linear interpolation
-- Fade defaults adjusted to 2000ms fade-out / 1000ms fade-in
-
-### Fixed
-
-- Crossfade volume fade defaults and fade-out/fade-in timing
-- Multi-channel crash and buzz on 7.1 sources
-- Sample rate switching without pause/play interrupt
-- Pre-load buffer loss on drain transition
-- Fade oscillation root cause (double-multiply bug)
-- Ring buffer recreation on sample rate change
+_No unreleased changes._
 
 ## [0.7.0] - 2026-04-24
 

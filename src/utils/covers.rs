@@ -116,11 +116,15 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
     let _ = tx.send((data, hash));
 }
 
+/// Vacía el conjunto de rutas que fallaron al cargar.
+fn clear_negative_cache(set: &mut HashSet<String>) {
+    set.clear();
+}
+
 /// Limpia la caché negativa (archivos que fallaron). Útil tras re-escaneo.
-/// Limpia la caché negativa de archivos que fallaron al cargar.
 pub fn clear_all_cover_cache() {
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
-        neg_cache_mtx.lock().clear();
+        clear_negative_cache(&mut neg_cache_mtx.lock());
     }
 }
 
@@ -281,17 +285,10 @@ pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
     Some(handle)
 }
 
-/// Purga las carátulas más viejas de la caché.
-/// Usado por el Garbage Collector cuando la app está inactiva.
-/// En low-resource, purga el doble de elementos por ciclo.
-pub fn purge_old_covers(count: usize) {
-    let cache_mtx = get_lru_cache();
-    let mut cache = cache_mtx.lock();
-    let effective_count = if crate::utils::is_low_resource() {
-        count * 2
-    } else {
-        count
-    };
+/// Purga las entradas más antiguas (frente de la cola). En modo low-resource
+/// duplica el número de entradas a purgar.
+fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool) {
+    let effective_count = if low_resource { count * 2 } else { count };
     let to_remove = effective_count.min(cache.order.len());
 
     for _ in 0..to_remove {
@@ -299,6 +296,15 @@ pub fn purge_old_covers(count: usize) {
             cache.map.remove(&oldest_path);
         }
     }
+}
+
+/// Purga las carátulas más viejas de la caché.
+/// Usado por el Garbage Collector cuando la app está inactiva.
+/// En low-resource, purga el doble de elementos por ciclo.
+pub fn purge_old_covers(count: usize) {
+    let cache_mtx = get_lru_cache();
+    let mut cache = cache_mtx.lock();
+    purge_oldest_covers(&mut cache, count, crate::utils::is_low_resource());
 }
 
 /// Carga una imagen desde bytes crudos (fallback del reproductor).
@@ -342,14 +348,19 @@ pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handl
     Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
 }
 
+/// Vacía por completo la caché LRU de carátulas (mapa y orden).
+fn clear_cover_cache(cache: &mut CoverCache) {
+    cache.map.clear();
+    cache.order.clear();
+}
+
 /// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
 /// Limpia la caché LRU completa de carátulas (llamado al cambiar de canción).
 pub fn clear_raw_cache() {
     // Vaciar LRU completo al limpiar
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
-    cache.map.clear();
-    cache.order.clear();
+    clear_cover_cache(&mut cache);
 }
 
 #[cfg(test)]
@@ -370,6 +381,9 @@ mod tests {
         fn get(&mut self, key: &str) -> Option<Handle>;
         fn peek(&self, key: &str) -> Option<Handle>;
         fn insert(&mut self, key: String, value: Handle);
+        fn clear(&mut self);
+        fn purge_oldest(&mut self, count: usize, low_resource: bool);
+        fn resize(&mut self, cap: usize);
         fn len(&self) -> usize;
         fn contains(&self, key: &str) -> bool;
         /// Orden de más reciente a menos reciente.
@@ -418,6 +432,23 @@ mod tests {
             }
         }
 
+        fn clear(&mut self) {
+            clear_cover_cache(&mut self.cache);
+        }
+
+        fn purge_oldest(&mut self, count: usize, low_resource: bool) {
+            purge_oldest_covers(&mut self.cache, count, low_resource);
+        }
+
+        fn resize(&mut self, cap: usize) {
+            self.cache.max_size = cap;
+            while self.cache.order.len() > self.cache.max_size {
+                if let Some(oldest) = self.cache.order.pop_front() {
+                    self.cache.map.remove(&oldest);
+                }
+            }
+        }
+
         fn len(&self) -> usize {
             self.cache.order.len()
         }
@@ -458,6 +489,23 @@ mod tests {
 
         fn insert(&mut self, key: String, value: Handle) {
             self.cache.put(key, value);
+        }
+
+        fn clear(&mut self) {
+            self.cache.clear();
+        }
+
+        fn purge_oldest(&mut self, count: usize, low_resource: bool) {
+            let effective_count = if low_resource { count * 2 } else { count };
+            let to_remove = effective_count.min(self.cache.len());
+            for _ in 0..to_remove {
+                self.cache.pop_lru();
+            }
+        }
+
+        fn resize(&mut self, cap: usize) {
+            self.cache
+                .resize(NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"));
         }
 
         fn len(&self) -> usize {
@@ -581,6 +629,106 @@ mod tests {
         let cap = 8;
         concurrency_stress(&Mutex::new(HandCache::new(cap)), cap);
         concurrency_stress(&Mutex::new(LruCacheAdapter::new(cap)), cap);
+    }
+
+    #[test]
+    fn covercache_clear_parity() {
+        for cap in [4usize, 16, 64] {
+            assert_parity(cap, |cache| {
+                fill(cache, cap);
+                cache.clear();
+                vec![
+                    format!("len={}", cache.len()),
+                    format!("order={:?}", cache.order_mru_to_lru()),
+                ]
+            });
+        }
+    }
+
+    #[test]
+    fn covercache_negative_cache_clear_is_isolated() {
+        let mut negative: HashSet<String> = HashSet::new();
+        for i in 0..3 {
+            negative.insert(format!("missing-{i}"));
+        }
+
+        // Ambas implementaciones parten con entradas que no deben verse afectadas.
+        let mut hand = HandCache::new(4);
+        hand.insert("keep".into(), test_handle(1));
+        let mut lru = LruCacheAdapter::new(4);
+        lru.insert("keep".into(), test_handle(1));
+
+        clear_negative_cache(&mut negative);
+
+        assert!(
+            negative.is_empty(),
+            "el conjunto negativo debe quedar vacío"
+        );
+        // Limpiar el conjunto negativo es independiente de la caché LRU en ambos casos.
+        assert_eq!(hand.len(), 1);
+        assert_eq!(lru.len(), 1);
+    }
+
+    #[test]
+    fn covercache_purge_parity() {
+        for cap in [4usize, 16] {
+            for (count, low_resource) in [(1usize, false), (2usize, true)] {
+                assert_parity(cap, |cache| {
+                    fill(cache, cap);
+                    let newest = format!("k{}", cap - 1);
+                    cache.purge_oldest(count, low_resource);
+
+                    let removed = if low_resource { count * 2 } else { count }.min(cap);
+                    // La purga quita las menos recientes; la más nueva sobrevive
+                    // mientras no se haya purgado la caché entera.
+                    assert_eq!(cache.len(), cap - removed);
+                    if removed < cap {
+                        assert!(cache.contains(&newest));
+                        assert!(!cache.contains("k0"));
+                    } else {
+                        assert!(cache.order_mru_to_lru().is_empty());
+                    }
+
+                    vec![
+                        format!("len={}", cache.len()),
+                        format!("order={:?}", cache.order_mru_to_lru()),
+                    ]
+                });
+            }
+        }
+    }
+
+    #[test]
+    fn covercache_resize_parity() {
+        for start in [16usize, 64] {
+            for target in [4usize, 8] {
+                assert_parity(start, |cache| {
+                    fill(cache, start);
+                    let newest = format!("k{}", start - 1);
+
+                    // Reducir la capacidad desaloja primero las menos recientes.
+                    cache.resize(target);
+                    assert_eq!(
+                        cache.len(),
+                        target,
+                        "reducir debe respetar la nueva capacidad"
+                    );
+                    assert!(cache.contains(&newest), "la más reciente debe sobrevivir");
+                    assert!(!cache.contains("k0"), "la menos reciente debe desalojarse");
+                    let shrink_order = cache.order_mru_to_lru();
+
+                    // Ampliar la capacidad no desaloja ninguna entrada.
+                    cache.resize(start + 16);
+                    assert_eq!(cache.len(), target, "ampliar no debe desalojar");
+
+                    vec![
+                        format!("shrink_len={target}"),
+                        format!("order={shrink_order:?}"),
+                        format!("grow_len={}", cache.len()),
+                    ]
+                });
+            }
+        }
     }
 
     #[test]

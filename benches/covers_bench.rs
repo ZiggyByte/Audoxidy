@@ -181,8 +181,12 @@ fn bench_ops<C, F>(
         Mutex::new(cache)
     };
 
+    // Cada operación suelta cuenta un elemento; el ciclo completo, `cap + 2`
+    // (un acierto por clave, una inserción y un desalojo).
+    group.throughput(Throughput::Elements(1));
+
     group.bench_function(format!("{label}/get_hit"), |b| {
-        b.iter_batched(
+        b.iter_batched_ref(
             fresh,
             |mutex| {
                 let mut cache = mutex.lock();
@@ -193,7 +197,7 @@ fn bench_ops<C, F>(
     });
 
     group.bench_function(format!("{label}/get_miss"), |b| {
-        b.iter_batched(
+        b.iter_batched_ref(
             fresh,
             |mutex| {
                 let mut cache = mutex.lock();
@@ -206,7 +210,7 @@ fn bench_ops<C, F>(
     group.bench_function(format!("{label}/insert"), |b| {
         let key = insert_key.clone();
         let value = insert_handle.clone();
-        b.iter_batched(
+        b.iter_batched_ref(
             fresh,
             move |mutex| {
                 let mut cache = mutex.lock();
@@ -217,7 +221,7 @@ fn bench_ops<C, F>(
     });
 
     group.bench_function(format!("{label}/evict"), |b| {
-        b.iter_batched(
+        b.iter_batched_ref(
             fresh,
             |mutex| {
                 let mut cache = mutex.lock();
@@ -227,10 +231,11 @@ fn bench_ops<C, F>(
         );
     });
 
+    group.throughput(Throughput::Elements((cap + 2) as u64));
     group.bench_function(format!("{label}/full_cycle"), |b| {
         let new_key = insert_key.clone();
         let value = insert_handle.clone();
-        b.iter_batched(
+        b.iter_batched_ref(
             fresh,
             |mutex| {
                 let mut cache = mutex.lock();
@@ -245,7 +250,6 @@ fn bench_covercache(c: &mut Criterion) {
     for cap in [64usize, 16] {
         let keys = keys_for(cap);
         let mut group = c.benchmark_group(format!("covercache/{cap}"));
-        group.throughput(Throughput::Elements(1));
         bench_ops(&mut group, "hand_rolled", cap, &keys, || {
             HandRolled::new(cap)
         });

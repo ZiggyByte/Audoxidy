@@ -131,12 +131,23 @@ impl Default for Database {
 impl Database {
     /// Abre o crea la base de datos `library.db` e inicializa el esquema.
     pub fn new() -> Result<Self> {
-        let db_path = "library.db";
-        let conn = Connection::open(db_path)?;
+        Self::open_at(std::path::Path::new("library.db"))
+    }
+
+    /// Abre una base de datos en la ruta indicada e inicializa el esquema.
+    /// Todas las variantes comparten los mismos pragmas y caché de sentencias.
+    fn open_at(path: &std::path::Path) -> Result<Self> {
+        let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.set_prepared_statement_cache_capacity(32);
         Self::create_schema(&conn)?;
         Ok(Self { conn })
+    }
+
+    /// Crea una base de datos en disco en una ruta arbitraria, para pruebas.
+    #[cfg(test)]
+    pub fn new_at(path: &std::path::Path) -> Result<Self> {
+        Self::open_at(path)
     }
 
     /// Crea una base de datos en memoria para pruebas.
@@ -2790,5 +2801,47 @@ mod cache_tests {
 
         let second = db.get_all_songs().unwrap();
         assert!(second.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod db_round_trip_tests {
+    use super::*;
+
+    /// Elimina la base de datos temporal y sus hermanos WAL/SHM. Solo toca la
+    /// ruta única de este test; nunca la `library.db` de la aplicación.
+    fn remove_db_files(path: &std::path::Path) {
+        let _ = std::fs::remove_file(path);
+        let _ = std::fs::remove_file(format!("{}-wal", path.display()));
+        let _ = std::fs::remove_file(format!("{}-shm", path.display()));
+    }
+
+    #[test]
+    fn test_on_disk_round_trip_persists_song() {
+        // La persistencia en disco debe sobrevivir al cierre y reapertura de la
+        // conexión. Se usa una ruta temporal única por proceso para no ensuciar
+        // la raíz del crate ni chocar con la base de datos de la aplicación.
+        let path = std::env::temp_dir().join(format!("audoxidy_db_{}.db", std::process::id()));
+        remove_db_files(&path);
+
+        {
+            let mut db = Database::new_at(&path).expect("abrir la DB temporal");
+            let song = SongData {
+                full_file_path: Arc::from("/music/round_trip.flac".to_string().into_boxed_str()),
+                title: Some(Arc::from("Round Trip".to_string().into_boxed_str())),
+                artist: Some(Arc::from("Tester".to_string().into_boxed_str())),
+                ..Default::default()
+            };
+            db.insert_song_full(&song, &SongMetadataExtended::default(), None, vec![], false)
+                .expect("insertar la canción");
+        } // La conexión se cierra antes de reabrir.
+
+        let db = Database::new_at(&path).expect("reabrir la DB temporal");
+        let songs = db.get_all_songs().expect("leer las canciones");
+        assert_eq!(songs.len(), 1, "la canción debe sobrevivir la reapertura");
+        assert_eq!(songs[0].title.as_deref(), Some("Round Trip"));
+        drop(db);
+
+        remove_db_files(&path);
     }
 }

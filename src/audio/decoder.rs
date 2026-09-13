@@ -2289,7 +2289,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             );
                             break;
                         }
-                        let backoff_ms = if crate::utils::is_low_resource() { 10 } else { 2 };
+                        let backoff_ms = if crate::utils::is_low_resource() {
+                            10
+                        } else {
+                            2
+                        };
                         std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
                         if !state.read().is_playing {
                             break;

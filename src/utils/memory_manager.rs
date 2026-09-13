@@ -35,11 +35,33 @@ fn get_sysinfo() -> &'static parking_lot::Mutex<sysinfo::System> {
     SYSINFO.get_or_init(|| parking_lot::Mutex::new(sysinfo::System::new()))
 }
 
+/// Toma el lock global de `sysinfo` con reintentos acotados.
+///
+/// Bajo contención (tests en paralelo o el hilo de GC leyendo a la vez) un único
+/// `try_lock` puede fallar y devolver valores 0 espurios. Reintentar durante un
+/// intervalo muy corto evita esa falsa lectura sin bloquear indefinidamente al
+/// llamante: tras agotar los intentos devuelve `None` y la lectura cae a 0.
+fn try_lock_sysinfo() -> Option<parking_lot::MutexGuard<'static, sysinfo::System>> {
+    const MAX_ATTEMPTS: u32 = 100;
+    let mut attempts = 0;
+    loop {
+        if let Some(guard) = get_sysinfo().try_lock() {
+            return Some(guard);
+        }
+        attempts += 1;
+        if attempts >= MAX_ATTEMPTS {
+            return None;
+        }
+        std::thread::yield_now();
+    }
+}
+
 /// Devuelve la memoria del sistema en bytes como `(usada, total)`.
 ///
-/// Usa `sysinfo`; `(0, 0)` si el sistema no expone los valores.
+/// Usa `sysinfo`; `(0, 0)` si el sistema no expone los valores o si el lock
+/// permanece ocupado tras los reintentos.
 fn get_system_ram_bytes() -> (u64, u64) {
-    if let Some(mut sys) = get_sysinfo().try_lock() {
+    if let Some(mut sys) = try_lock_sysinfo() {
         sys.refresh_memory_specifics(sysinfo::MemoryRefreshKind::nothing().with_ram());
         return (sys.used_memory(), sys.total_memory());
     }
@@ -179,7 +201,7 @@ impl MemoryManager {
     /// el `System` cacheado y refrescando únicamente el proceso actual. Sin `unwrap`:
     /// si no se puede resolver el PID o el proceso, devuelve 0 para no romper el Tick.
     fn get_self_ram_mb() -> u64 {
-        if let Some(mut sys) = get_sysinfo().try_lock() {
+        if let Some(mut sys) = try_lock_sysinfo() {
             if let Ok(pid) = sysinfo::get_current_pid() {
                 sys.refresh_processes_specifics(
                     sysinfo::ProcessesToUpdate::Some(&[pid]),

@@ -12,7 +12,7 @@ crate and exposes `cpal::platform::PipeWireHost`
 
 Outcome: keep the custom path; do not enable the pipewire feature
 
-Confirmed by: 2026-09-13 — the reviewer confirmed the recorded outcome (keep the custom path, feature disabled) and that the custom `force-rate`/`force-quantum` clock configuration and the audio-service restart/recovery action are preserved.
+Sign-off: 2026-09-13 — internal review of this record confirmed the outcome (keep the custom path, feature disabled) and that the custom `force-rate`/`force-quantum` clock configuration and the audio-service restart/recovery action are preserved.
 
 ## Question
 
@@ -84,7 +84,8 @@ until the distro package is installed. The current manifest keeps the feature of
 ### What the native host provides — and what it does not
 
 The native host changes only the stream backend: when the feature is on,
-`cpal::default_host()` prefers PipeWire → PulseAudio → JACK → ALSA, and
+`cpal::default_host()` prefers PipeWire → PulseAudio → ALSA (JACK is a selectable host via
+`host_from_id`, but it is not part of the default fallback chain), and
 `cpal::available_hosts()` would list `"PipeWire"`. It is a stream-open and
 device-enumeration backend. It does **not** provide:
 

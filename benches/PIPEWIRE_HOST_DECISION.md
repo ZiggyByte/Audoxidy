@@ -12,6 +12,8 @@ crate and exposes `cpal::platform::PipeWireHost`
 
 Outcome: keep the custom path; do not enable the pipewire feature
 
+Confirmed by human: 2026-09-13 — the reviewer confirmed the recorded outcome (keep the custom path, feature disabled) and that the custom `force-rate`/`force-quantum` clock configuration and the audio-service restart/recovery action are preserved.
+
 ## Question
 
 Does the native `cpal` PipeWire host beat the current ALSA-compatibility path for stream

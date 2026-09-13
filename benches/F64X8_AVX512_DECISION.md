@@ -10,6 +10,8 @@ scalar tail; it is the unconditional default on all hardware
 
 Outcome: not implemented
 
+Confirmed by human: 2026-09-13 — the reviewer confirmed the recorded outcome (the `wide::f64x8`/AVX-512 path is intentionally not implemented, with no `avx512` feature and no AVX-512 code).
+
 ## Question
 
 Can a `wide::f64x8` AVX-512 DSP path be added so that it is selected at runtime only on

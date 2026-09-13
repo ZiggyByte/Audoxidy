@@ -673,6 +673,7 @@ impl AudoxidyApp {
         filters_manager.build_filter_index(&database_arc);
 
         let mut playlist_manager = PlaylistManager::default();
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = database_arc.lock() {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
@@ -887,11 +888,14 @@ impl AudoxidyApp {
                     }
                 }
             }
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
 
         let mut audio_center_manager = AudioCenterManager::default();
 
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db_lock) = database_arc.lock() {
             // Cargar volumen del player desde APP_SETTINGS (Fix B3, D-43)
             if let Some(vol_str) = db_lock.get_setting("player_volume") {
@@ -1266,6 +1270,7 @@ impl AudoxidyApp {
         }
 
         // VU Meter — cargar modo M/S para PlayerUiState
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         let meter_ms_mode = if let Ok(db) = database_arc.lock() {
             db.get_setting("meter_ms_mode")
                 .map(|v| v == "1")
@@ -1367,6 +1372,7 @@ impl AudoxidyApp {
         album: impl Into<String>,
         cover_path: Option<String>,
     ) -> Result<(), AudioError> {
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         let (track_gain, album_gain) = if let Ok(db) = self.database.lock() {
             match db.get_replay_gain_by_path(path) {
                 Ok(gains) => gains,
@@ -1533,6 +1539,7 @@ impl AudoxidyApp {
                     let db_arc = self.database.clone();
                     return Task::perform(
                         async move {
+                            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                             if let Ok(db) = db_arc.lock() {
                                 let songs = db.get_all_songs().unwrap_or_default();
                                 let albums = db.get_grid_items_by_artist().unwrap_or_default();
@@ -1606,6 +1613,7 @@ impl AudoxidyApp {
 
                     if self.playlist_manager.shuffle_active {
                         if let Some(session) = &self.playlist_manager.shuffle_session {
+                            // db-lock: persistencia — el guardado se omite si el lock falla
                             if let Ok(mut db) = self.database.lock() {
                                 log_persist(
                                     "shuffle_session",
@@ -1614,6 +1622,8 @@ impl AudoxidyApp {
                                         session,
                                     ),
                                 );
+                            } else {
+                                tracing::warn!("db-lock: lock no disponible");
                             }
                         }
                     }
@@ -1966,6 +1976,7 @@ impl AudoxidyApp {
 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(mut db) = self.database.lock() {
                             log_persist(
                                 "shuffle_session",
@@ -1974,6 +1985,8 @@ impl AudoxidyApp {
                                     session,
                                 ),
                             );
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                     }
                 }
@@ -1995,6 +2008,7 @@ impl AudoxidyApp {
 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(mut db) = self.database.lock() {
                             log_persist(
                                 "shuffle_session",
@@ -2003,6 +2017,8 @@ impl AudoxidyApp {
                                     session,
                                 ),
                             );
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                     }
                 }
@@ -2025,11 +2041,14 @@ impl AudoxidyApp {
             Message::VolumeChanged(vol) => {
                 self.audio_manager.set_volume(vol);
                 // Persistir el volumen entre reinicios
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     log_persist(
                         "player_volume",
                         db.set_setting("player_volume", &format!("{:.4}", vol)),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 Task::none()
             }
@@ -2080,6 +2099,7 @@ impl AudoxidyApp {
                 if !self.playlist_manager.shuffle_active {
                     self.playlist_manager.activate_shuffle();
                     if let Some(session) = &self.playlist_manager.shuffle_session {
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(mut db) = self.database.lock() {
                             log_persist(
                                 "shuffle_session",
@@ -2088,15 +2108,20 @@ impl AudoxidyApp {
                                     session,
                                 ),
                             );
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                     }
                 } else {
                     self.playlist_manager.deactivate_shuffle();
+                    // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db) = self.database.lock() {
                         log_persist(
                             "shuffle_session",
                             db.clear_shuffle_session(self.playlist_manager.active_playlist_id),
                         );
+                    } else {
+                        tracing::warn!("db-lock: lock no disponible");
                     }
                 }
                 self.persist_playlist_state();
@@ -2107,6 +2132,7 @@ impl AudoxidyApp {
                 let active_id = self.playlist_manager.active_playlist_id;
                 return Task::perform(
                     async move {
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(db) = db_arc.lock() {
                             if let Err(e) = db.add_song_to_playlist(active_id, song.id) {
                                 tracing::warn!(
@@ -2117,6 +2143,8 @@ impl AudoxidyApp {
                                     "No se pudo añadir la canción a la playlist"
                                 );
                             }
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                         active_id
                     },
@@ -2129,6 +2157,7 @@ impl AudoxidyApp {
                 let song_ids: Vec<i64> = songs.iter().map(|s| s.id).collect();
                 return Task::perform(
                     async move {
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(mut db) = db_arc.lock() {
                             if let Err(e) = db.add_songs_to_playlist(active_id, &song_ids) {
                                 tracing::warn!(
@@ -2139,6 +2168,8 @@ impl AudoxidyApp {
                                     "No se pudieron añadir las canciones a la playlist"
                                 );
                             }
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                         active_id
                     },
@@ -2170,6 +2201,7 @@ impl AudoxidyApp {
             }
             Message::ClearPlaylist => {
                 self.focus = AppFocus::Playlist;
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     if let Err(e) = db.clear_playlist(self.playlist_manager.active_playlist_id) {
                         tracing::warn!(
@@ -2185,6 +2217,8 @@ impl AudoxidyApp {
                     self.persist_playlist_state();
 
                     return Task::done(Message::GlobalMemoryPurge);
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 Task::none()
             }
@@ -2203,6 +2237,7 @@ impl AudoxidyApp {
                         .toggle_song_enabled_at_linear_index(linear_idx);
                 }
 
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     if let Some(song_id) = song_id_to_update {
                         if let Some(state) = force_state {
@@ -2234,6 +2269,8 @@ impl AudoxidyApp {
                             }
                         }
                     }
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
 
                 self.playlist_manager.invalidate_cache();
@@ -2261,6 +2298,7 @@ impl AudoxidyApp {
                 }
 
                 if let Some(path) = folder_to_update {
+                    // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db) = self.database.lock() {
                         if let Some(state) = force_state {
                             if let Err(e) = db.set_folder_enabled_in_playlist(
@@ -2290,6 +2328,8 @@ impl AudoxidyApp {
                                 );
                             }
                         }
+                    } else {
+                        tracing::warn!("db-lock: lock no disponible");
                     }
                 }
 
@@ -2401,6 +2441,7 @@ impl AudoxidyApp {
                         let target_songs = pending_add_songs;
                         return Task::perform(
                             async move {
+                                // db-lock: persistencia — el guardado se omite si el lock falla
                                 if let Ok(mut db_lock) = db.lock() {
                                     if let Ok(new_id) = db_lock.create_playlist(&final_name, false)
                                     {
@@ -2419,6 +2460,8 @@ impl AudoxidyApp {
                                         }
                                         return Some(new_id);
                                     }
+                                } else {
+                                    tracing::warn!("db-lock: lock no disponible");
                                 }
                                 None
                             },
@@ -2440,6 +2483,7 @@ impl AudoxidyApp {
                                 let source_id = id;
                                 return Task::perform(
                                     async move {
+                                        // db-lock: persistencia — el guardado se omite si el lock falla
                                         if let Ok(mut db_lock) = db.lock() {
                                             if let Ok(new_id) =
                                                 db_lock.create_playlist(&final_name, false)
@@ -2461,6 +2505,8 @@ impl AudoxidyApp {
                                                 }
                                                 return Some(new_id);
                                             }
+                                        } else {
+                                            tracing::warn!("db-lock: lock no disponible");
                                         }
                                         None
                                     },
@@ -2619,12 +2665,14 @@ impl AudoxidyApp {
                                 .collect::<String>()
                         };
 
+                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                         let songs = if let Ok(db_lock) = db.lock() {
                             db_lock.search_playlist_songs(id, "").unwrap_or_default()
                         } else {
                             vec![]
                         };
 
+                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                         let p_name = if let Ok(db_lock) = db.lock() {
                             db_lock
                                 .get_playlist_by_id(id)
@@ -2707,11 +2755,14 @@ impl AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 self.persist_playlist_state();
 
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     log_persist(
                         "last_active_playlist_id",
                         db.set_setting("last_active_playlist_id", &id.to_string()),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
 
                 self.playlist_manager.active_playlist_id = id;
@@ -3036,6 +3087,7 @@ impl AudoxidyApp {
 
                 if self.library_manager.sort_column.is_none() {
                     // Restaurar orden original desde DB
+                    // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                     if let Ok(db) = self.database.lock() {
                         if let Ok(albums) = db.get_grid_items_by_artist() {
                             self.library_manager.cached_albums = Some(
@@ -3163,6 +3215,7 @@ impl AudoxidyApp {
                             if let Some(pos) = album_id.find('|') {
                                 let artist = &album_id[..pos];
                                 let hash = &album_id[pos + 1..];
+                                // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                                 if let Ok(db) = self.database.lock() {
                                     if let Ok(songs) =
                                         db.get_songs_by_album_and_artist(hash, artist)
@@ -3170,6 +3223,7 @@ impl AudoxidyApp {
                                         alb_songs = songs;
                                     }
                                 }
+                            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                             } else if let Ok(db) = self.database.lock() {
                                 if let Ok(songs) = db.get_songs_by_album(album_id.as_str()) {
                                     alb_songs = songs;
@@ -3581,6 +3635,7 @@ impl AudoxidyApp {
                 if mode == crate::gui::library::LibraryViewMode::Grid {
                     // Al cambiar a Grid: asegurar que cached_albums esté cargado
                     if self.library_manager.cached_albums.is_none() {
+                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                         if let Ok(db) = self.database.lock() {
                             if let Ok(albums) = db.get_grid_items_by_artist() {
                                 self.library_manager.cached_albums = Some(
@@ -4037,6 +4092,7 @@ impl AudoxidyApp {
                         covers_to_check.sort();
                         covers_to_check.dedup();
 
+                        // db-lock: persistencia — el guardado se omite si el lock falla
                         if let Ok(db) = db_arc.lock() {
                             if let Err(e) = db.begin_transaction() {
                                 tracing::warn!(
@@ -4074,6 +4130,8 @@ impl AudoxidyApp {
                                     let _ = std::fs::remove_file(path);
                                 }
                             }
+                        } else {
+                            tracing::warn!("db-lock: lock no disponible");
                         }
                     },
                     |_| Message::LibraryRefresh,
@@ -4194,6 +4252,7 @@ impl AudoxidyApp {
                     return Task::batch(vec![
                         Task::perform(
                             async move {
+                                // db-lock: persistencia — el guardado se omite si el lock falla
                                 if let Ok(mut db) = db_arc.lock() {
                                     if let Err(e) = db.batch_remove_songs_from_playlist(
                                         active_playlist_id,
@@ -4207,6 +4266,8 @@ impl AudoxidyApp {
                                             "No se pudieron quitar las canciones de la playlist"
                                         );
                                     }
+                                } else {
+                                    tracing::warn!("db-lock: lock no disponible");
                                 }
                                 Some(active_playlist_id)
                             },
@@ -4378,6 +4439,7 @@ impl AudoxidyApp {
                 if !target_songs.is_empty() {
                     return Task::perform(
                         async move {
+                            // db-lock: persistencia — el guardado se omite si el lock falla
                             if let Ok(mut db) = db_arc.lock() {
                                 if let Err(e) =
                                     db.add_songs_to_playlist(target_playlist_id, &target_songs)
@@ -4390,6 +4452,8 @@ impl AudoxidyApp {
                                         "No se pudieron añadir las canciones a la playlist"
                                     );
                                 }
+                            } else {
+                                tracing::warn!("db-lock: lock no disponible");
                             }
                         },
                         |_| Message::NoOp,
@@ -4953,9 +5017,12 @@ impl AudoxidyApp {
                 let new_vol_percent = (vol_percent + direction * 5.0).clamp(0.0, 100.0);
                 self.audio_manager.set_volume(new_vol_percent / 100.0);
                 // Persist volume immediately (Fix B3, D-43)
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db) = self.database.lock() {
                     let _ =
                         db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0));
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.player_ui_state.showing_volume = Some(new_vol_percent);
                 self.player_ui_state.volume_tick_id =
@@ -5265,11 +5332,14 @@ impl AudoxidyApp {
                     let mut s = state_arc.write();
                     s.meter_hold_time_ms = clamped;
                 }
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = self.database.lock() {
                     log_persist(
                         "meter_hold_time_ms",
                         db_lock.set_setting("meter_hold_time_ms", &format!("{:.0}", clamped)),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -5281,22 +5351,28 @@ impl AudoxidyApp {
                     let mut s = state_arc.write();
                     s.meter_rms_window_ms = clamped;
                 }
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = self.database.lock() {
                     log_persist(
                         "meter_rms_window_ms",
                         db_lock.set_setting("meter_rms_window_ms", &format!("{:.0}", clamped)),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
             }
             Message::MeterMsModeToggle(v) => {
                 self.player_ui_state.meter.ms_mode = v;
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = self.database.lock() {
                     log_persist(
                         "meter_ms_mode",
                         db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" }),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -5307,11 +5383,14 @@ impl AudoxidyApp {
                     let mut s = state_arc.write();
                     s.meter_infinite_hold = v;
                 }
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = self.database.lock() {
                     log_persist(
                         "meter_infinite_hold",
                         db_lock.set_setting("meter_infinite_hold", if v { "1" } else { "0" }),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -5331,11 +5410,14 @@ impl AudoxidyApp {
                     let mut s = state_arc.write();
                     s.meter_enabled = v;
                 }
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = self.database.lock() {
                     log_persist(
                         "meter_enabled",
                         db_lock.set_setting("meter_enabled", if v { "1" } else { "0" }),
                     );
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 Task::none()
             }
@@ -5449,6 +5531,7 @@ impl AudoxidyApp {
             (0, None)
         };
 
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db) = self.database.lock() {
             if let Err(e) = db.update_playlist_persistence(
                 playlist_id,
@@ -5467,6 +5550,8 @@ impl AudoxidyApp {
                     "No se pudo guardar el estado de reproducción de la playlist"
                 );
             }
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
     }
 
@@ -6587,6 +6672,7 @@ impl AudoxidyApp {
                                         self.library_manager.expanded_album =
                                             Some(composite_id.clone());
                                         // Poblar expanded_album_songs inmediatamente para el cálculo de scroll
+                                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
                                         if let Ok(db) = self.database.lock() {
                                             if let Ok(mut songs) = db.get_songs_by_album_and_artist(
                                                 &hash_id,

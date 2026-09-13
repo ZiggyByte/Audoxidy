@@ -309,6 +309,7 @@ impl AudioCenterManager {
 
     /// Load custom presets from SQLite into custom_presets vec.
     pub fn load_custom_presets(&mut self, db: &std::sync::Mutex<crate::db::Database>) {
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             if let Ok(presets) = db_lock.load_eq_presets() {
                 self.custom_presets = presets;
@@ -365,6 +366,7 @@ impl AudioCenterManager {
 
     /// Guarda todos los ajustes del ecualizador en la base de datos.
     pub fn save_eq_settings_to_db(&self, db: &std::sync::Mutex<crate::db::Database>) {
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             log_persist(
                 "eq_enabled",
@@ -415,6 +417,8 @@ impl AudioCenterManager {
                     db_lock.set_setting("eq_band_gains_31", &bands_31_str),
                 );
             }
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
     }
 
@@ -424,6 +428,7 @@ impl AudioCenterManager {
         audio_manager: &AudioManager,
         db: &std::sync::Mutex<crate::db::Database>,
     ) {
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             audio_manager.with_dsp(|dsp| {
                 // Enabled states
@@ -632,6 +637,8 @@ impl AudioCenterManager {
                     &format!("{:.2}", state_read.downmix_surround),
                 ),
             );
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
     }
 
@@ -641,6 +648,7 @@ impl AudioCenterManager {
         audio_manager: &AudioManager,
         db: &std::sync::Mutex<crate::db::Database>,
     ) {
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             let state = audio_manager.state();
             let s = state.read();
@@ -774,6 +782,8 @@ impl AudioCenterManager {
                 "vol_rg_offset_rt_db",
                 db_lock.set_setting("vol_rg_offset_rt_db", &format!("{:.2}", s.rg_offset_rt_db)),
             );
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
     }
 
@@ -783,6 +793,7 @@ impl AudioCenterManager {
         audio_manager: &AudioManager,
         db: &std::sync::Mutex<crate::db::Database>,
     ) {
+        // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             let state = audio_manager.state();
             let s = state.read();
@@ -818,11 +829,14 @@ impl AudioCenterManager {
                 "crossfade_auto_ms",
                 db_lock.set_setting("crossfade_auto_ms", &format!("{:.0}", s.crossfade_auto_ms)),
             );
+        } else {
+            tracing::warn!("db-lock: lock no disponible");
         }
     }
 
     pub fn sync_from_engine(&mut self, audio_manager: &AudioManager) {
         if let Some(db_arc) = audio_manager.get_database() {
+            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 if self.selected_host.is_none() {
                     self.selected_host = db.get_setting("audio_host").filter(|s| !s.is_empty());
@@ -937,6 +951,7 @@ impl AudioCenterManager {
         let db_arc_apply = audio_manager.get_database();
         let (mut bands_20, mut bands_31) = (None::<Vec<f32>>, None::<Vec<f32>>);
         if let Some(ref db_arc) = db_arc_apply {
+            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 if let Some(val) = db.get_setting("eq_band_gains_20") {
                     let g: Vec<f32> = val
@@ -967,6 +982,7 @@ impl AudioCenterManager {
 
         // Load DSP and audio state settings from DB and apply
         if let Some(db_arc) = audio_manager.get_database() {
+            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 // DSP effects enabled states
                 if let Some(val) = db.get_setting("dsp_sub_bass_enabled") {
@@ -1415,6 +1431,7 @@ impl AudioCenterManager {
 
                 // Guardar los ajustes en la base de datos para la persistencia
                 if let Some(db_arc) = audio_manager.get_database() {
+                    // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db) = db_arc.lock() {
                         log_persist(
                             "audio_host",
@@ -1496,6 +1513,8 @@ impl AudioCenterManager {
                             "audio_system_quantum",
                             db.set_setting("audio_system_quantum", &sys_quantum_str),
                         );
+                    } else {
+                        tracing::warn!("db-lock: lock no disponible");
                     }
                 }
 
@@ -1605,6 +1624,7 @@ impl AudioCenterManager {
                             ))
                         },
                     );
+                    // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db_lock) = db.lock() {
                         if let Err(e) = db_lock.save_eq_preset(&preset) {
                             tracing::warn!(
@@ -1613,6 +1633,8 @@ impl AudioCenterManager {
                                 e
                             );
                         }
+                    } else {
+                        tracing::warn!("db-lock: lock no disponible");
                     }
                     self.custom_presets.push(preset);
                 }
@@ -1627,15 +1649,19 @@ impl AudioCenterManager {
                         self.hidden_builtins.push(name.clone());
                     }
                 } else {
+                    // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db_lock) = db.lock() {
                         if let Err(e) = db_lock.delete_eq_preset(&name) {
                             tracing::warn!("No se pudo borrar el preset EQ '{}': {}", name, e);
                         }
+                    } else {
+                        tracing::warn!("db-lock: lock no disponible");
                     }
                     self.custom_presets.retain(|p| p.name != name);
                 }
             }
             AudioCenterMessage::EqPresetRestoreDefaults => {
+                // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = db.lock() {
                     if let Err(e) = db_lock.clear_eq_presets() {
                         tracing::warn!(
@@ -1643,6 +1669,8 @@ impl AudioCenterManager {
                             e
                         );
                     }
+                } else {
+                    tracing::warn!("db-lock: lock no disponible");
                 }
                 self.custom_presets.clear();
                 self.hidden_builtins.clear();
@@ -1653,6 +1681,7 @@ impl AudioCenterManager {
                     match crate::audio::preset::preset_from_json(&content) {
                         Ok(preset) => {
                             // Save to DB
+                            // db-lock: persistencia — el guardado se omite si el lock falla
                             if let Ok(db_lock) = db.lock() {
                                 if let Err(e) = db_lock.save_eq_preset(&preset) {
                                     tracing::warn!(
@@ -1661,6 +1690,8 @@ impl AudioCenterManager {
                                         e
                                     );
                                 }
+                            } else {
+                                tracing::warn!("db-lock: lock no disponible");
                             }
                             // Add to custom presets (dedup by name)
                             if !self.custom_presets.iter().any(|p| p.name == preset.name) {
@@ -2476,6 +2507,7 @@ fn view_audio_config<'a>(
 
     if !current_path.is_empty() {
         if let Some(ref db_arc) = db_opt {
+            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 if let Ok(Some((sr, bd, ch))) = db.get_song_technical_meta_by_path(&current_path) {
                     if sr > 0 {

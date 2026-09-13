@@ -181,6 +181,7 @@ impl LibraryFiltersManager {
         let mut trees: HashMap<FilterType, Vec<TreeNode>> = HashMap::new();
         let mut subfilters: HashMap<FilterType, Vec<String>> = HashMap::new();
 
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db) = db_m.lock() {
             for ft in &all_types {
                 let ft_label = format!("{:?}", ft);

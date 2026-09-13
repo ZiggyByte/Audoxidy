@@ -3569,7 +3569,14 @@ mod decoder_tests {
     ///
     /// La muestra codificada se conoce de antemano, así que sirve de fixture
     /// golden: el decodificador debe devolver su imagen f64 exacta.
-    fn write_pcm_wav_code(path: &str, rate: u32, channels: u16, seconds: f64, code: i32, bits: u16) {
+    fn write_pcm_wav_code(
+        path: &str,
+        rate: u32,
+        channels: u16,
+        seconds: f64,
+        code: i32,
+        bits: u16,
+    ) {
         let bytes_per_sample = (bits / 8) as usize;
         let frames = (rate as f64 * seconds) as u32;
         let block_align = channels as u32 * bytes_per_sample as u32;

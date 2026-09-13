@@ -1111,7 +1111,14 @@ mod tests {
         // El orden de canales es un contrato público: valores distintos por
         // plano para que una reordenación no pueda pasar por casualidad.
         // 6-in / 6-out: FL, FR, C, LFE, SL, SR.
-        let input6 = vec![vec![1.0], vec![2.0], vec![3.0], vec![4.0], vec![5.0], vec![6.0]];
+        let input6 = vec![
+            vec![1.0],
+            vec![2.0],
+            vec![3.0],
+            vec![4.0],
+            vec![5.0],
+            vec![6.0],
+        ];
         let map6 = ChannelMap {
             fl: Some(0),
             fr: Some(1),
@@ -1122,15 +1129,7 @@ mod tests {
             ..Default::default()
         };
         let mut out6 = Vec::new();
-        AudioEngine::mix_channels_planar(
-            &input6,
-            1,
-            6,
-            6,
-            &map6,
-            (1.0, 1.0, 1.0, 1.0),
-            &mut out6,
-        );
+        AudioEngine::mix_channels_planar(&input6, 1, 6, 6, &map6, (1.0, 1.0, 1.0, 1.0), &mut out6);
         assert_eq!(out6, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0]);
 
         // 8-in / 8-out: FL, FR, C, LFE, SBL, SBR, SL, SR.
@@ -1155,15 +1154,7 @@ mod tests {
             sr: Some(7),
         };
         let mut out8 = Vec::new();
-        AudioEngine::mix_channels_planar(
-            &input8,
-            1,
-            8,
-            8,
-            &map8,
-            (1.0, 1.0, 1.0, 1.0),
-            &mut out8,
-        );
+        AudioEngine::mix_channels_planar(&input8, 1, 8, 8, &map8, (1.0, 1.0, 1.0, 1.0), &mut out8);
         assert_eq!(out8, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]);
     }
 

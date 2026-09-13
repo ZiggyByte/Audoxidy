@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [0.8.0] - 2026-09-13
 
-Crate Modernization — mega-release que moderniza cada crate activa a su última versión estable en lotes pequeños y testeados, preservando el pipeline de audio f64 (el único narrowing a f32 sigue en el push al ringbuf). 11 fases (09–18), 45 planes, 108 tareas; suite 311 tests verdes.
+Crate Modernization — mega-release que moderniza cada crate activa a su última versión estable en lotes pequeños y testeados, preservando el pipeline de audio f64 (el único narrowing a f32 sigue en el push al ringbuf). Suite: 311 tests verdes.
 
 ### Added
 

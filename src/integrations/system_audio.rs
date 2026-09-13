@@ -32,14 +32,18 @@ pub fn apply_pipewire_clock(rate: Option<u32>, quantum: Option<u32>) {
     let rate_result = std::process::Command::new("pw-metadata")
         .args(["-n", "settings", "0", "clock.force-rate", &rate_str])
         .status();
-    if let Err(e) = rate_result {
-        tracing::debug!("No se pudo aplicar clock.force-rate vía pw-metadata: {e}");
+    match rate_result {
+        Ok(s) if s.success() => {}
+        Ok(s) => tracing::warn!("pw-metadata rechazó clock.force-rate: {s}"),
+        Err(e) => tracing::debug!("No se pudo aplicar clock.force-rate vía pw-metadata: {e}"),
     }
     let quantum_result = std::process::Command::new("pw-metadata")
         .args(["-n", "settings", "0", "clock.force-quantum", &quantum_str])
         .status();
-    if let Err(e) = quantum_result {
-        tracing::debug!("No se pudo aplicar clock.force-quantum vía pw-metadata: {e}");
+    match quantum_result {
+        Ok(s) if s.success() => {}
+        Ok(s) => tracing::warn!("pw-metadata rechazó clock.force-quantum: {s}"),
+        Err(e) => tracing::debug!("No se pudo aplicar clock.force-quantum vía pw-metadata: {e}"),
     }
 }
 
@@ -146,8 +150,10 @@ pub fn restart_audio_services() {
             "wireplumber.service",
         ])
         .status();
-    if let Err(e) = result {
-        tracing::warn!("No se pudieron reiniciar los servicios de audio: {e}");
+    match result {
+        Ok(s) if s.success() => {}
+        Ok(s) => tracing::warn!("Reinicio de servicios de audio terminó con {s}"),
+        Err(e) => tracing::warn!("No se pudieron reiniciar los servicios de audio: {e}"),
     }
 }
 

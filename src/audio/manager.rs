@@ -367,7 +367,7 @@ impl AudioManager {
         f(&mut dsp);
     }
 
-    /// Force limiter on (for normalization auto-on per D-25).
+    /// Force limiter on (for normalization auto-on).
     /// Returns the previous limiter enabled state.
     pub fn force_limiter_on(&self) -> bool {
         let mut was_enabled = false;

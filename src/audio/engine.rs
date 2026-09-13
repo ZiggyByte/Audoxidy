@@ -1311,7 +1311,7 @@ impl AudioEngine {
         self.state.write().volume = volume.clamp(0.0, 1.0);
     }
 
-    /// Force limiter on for normalization auto-on (D-25).
+    /// Force limiter on for normalization auto-on.
     /// Returns the previous limiter enabled state for later restore.
     pub fn force_limiter_on(&self) -> bool {
         if let Some(mut dsp) = self.dsp.try_write() {
@@ -1323,7 +1323,7 @@ impl AudioEngine {
         }
     }
 
-    /// Restore limiter to its previous user state (D-25).
+    /// Restore limiter to its previous user state.
     pub fn restore_limiter(&self, was_enabled: bool) {
         if let Some(mut dsp) = self.dsp.try_write() {
             dsp.limiter.enabled = was_enabled;

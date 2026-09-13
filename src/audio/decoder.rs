@@ -1215,9 +1215,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // de emitir por cada batch decodificado.
     let mut frames_since_metric: u64 = 0;
 
-    // === Volumen y Mezcla state (Phase 03) ===
+    // === Volumen y Mezcla state ===
     let mut fade_state: FadeState = FadeState::Idle;
-    // Volume smoothing state (UAT round 7). `applied_vol` is the level actually
+    // Volume smoothing state. `applied_vol` is the level actually
     // applied to the audio; `pending_vol` is the user's target (s.volume).
     // The volume does NOT change while the user is adjusting; after 400ms of
     // inactivity a 1500ms ramp takes applied_vol from its current level to the
@@ -1227,12 +1227,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut debounce_remaining: f64 = 0.0;
     let mut smooth_ramp: Option<SmoothRamp> = None;
 
-    // Silence detection (D-14-D-20)
+    // Silence detection
     let mut silence_samples: usize = 0;
     let mut in_silence: bool = false;
     let mut track_start_trimmed: bool = false;
 
-    // RG offset smoothing (D-29): ~100 ms EMA ramp to eliminate clicks on UI offset changes.
+    // RG offset smoothing: ~100 ms EMA ramp to eliminate clicks on UI offset changes.
     // Time constant computes as: alpha = 1 - exp(-dt / 0.100) where dt is batch duration.
     let mut smoothed_rg_offset_album_db: f64 = 0.0;
     let mut smoothed_rg_offset_track_db: f64 = 0.0;

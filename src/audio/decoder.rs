@@ -3521,7 +3521,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 mod decoder_tests {
     use super::{
         AudioDecoder, SymphoniaDecoder, apply_promotion_metadata, crossfade_auto_due,
-        mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for, tail_decode_batch,
+        derive_duration_sec, mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for,
+        tail_decode_batch,
     };
     use crate::audio::engine::{AudioEngine, AudioState, ChannelMap};
     use std::collections::VecDeque;
@@ -3530,9 +3531,10 @@ mod decoder_tests {
     };
     use symphonia::core::common::Limit;
     use symphonia::core::formats::probe::Hint;
-    use symphonia::core::formats::{FormatOptions, FormatReader, TrackType};
+    use symphonia::core::formats::{FormatOptions, FormatReader, Track, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
+    use symphonia::core::units::{Duration, TimeBase};
 
     /// Escribe un WAV PCM 16-bit (sine de 440 Hz) para las pruebas de cola.
     fn write_pcm_wav(path: &str, rate: u32, channels: u16, seconds: f64) {
@@ -3559,6 +3561,36 @@ mod decoder_tests {
             for _ in 0..channels {
                 wav.extend_from_slice(&sample.to_le_bytes());
             }
+        }
+        std::fs::write(path, wav).unwrap();
+    }
+
+    /// Escribe un WAV PCM de DC constante con 16 o 24 bits por muestra.
+    ///
+    /// La muestra codificada se conoce de antemano, así que sirve de fixture
+    /// golden: el decodificador debe devolver su imagen f64 exacta.
+    fn write_pcm_wav_code(path: &str, rate: u32, channels: u16, seconds: f64, code: i32, bits: u16) {
+        let bytes_per_sample = (bits / 8) as usize;
+        let frames = (rate as f64 * seconds) as u32;
+        let block_align = channels as u32 * bytes_per_sample as u32;
+        let data_len = frames * block_align;
+        let mut wav: Vec<u8> = Vec::new();
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&(36 + data_len).to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes());
+        wav.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&rate.to_le_bytes());
+        wav.extend_from_slice(&(rate * block_align).to_le_bytes());
+        wav.extend_from_slice(&(block_align as u16).to_le_bytes());
+        wav.extend_from_slice(&bits.to_le_bytes());
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&data_len.to_le_bytes());
+        let b = code.to_le_bytes();
+        for _ in 0..(frames * channels as u32) {
+            wav.extend_from_slice(&b[..bytes_per_sample]);
         }
         std::fs::write(path, wav).unwrap();
     }
@@ -3995,5 +4027,103 @@ mod decoder_tests {
         );
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_golden_decode_wav_16bit_matches_samples() {
+        // Decodificación golden: un WAV 16-bit de DC constante 16384 se decodifica
+        // frame-for-frame a su imagen f64 exacta (16384 / 2^15) y expone la tasa,
+        // los canales y la duración declarados por el contenedor.
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_golden16_{}.wav", std::process::id()));
+        let path_str = path.to_str().unwrap();
+        write_pcm_wav_code(path_str, 44100, 2, 0.25, 16384, 16);
+
+        let mut decoder = SymphoniaDecoder::new();
+        let info = decoder
+            .open(path_str)
+            .expect("un WAV 16-bit de DC constante debe abrirse");
+        assert_eq!(info.sample_rate, 44100);
+        assert_eq!(info.channels, 2);
+        assert!(
+            (info.total_duration_sec - 0.25).abs() < 1.0 / 44100.0,
+            "duración declarada: {}",
+            info.total_duration_sec
+        );
+
+        let packet = decoder
+            .decode_next()
+            .expect("decode_next no debe fallar")
+            .expect("el WAV contiene al menos un paquete");
+        let expected = 16384.0 / 32_768.0;
+        assert!(!packet.data.is_empty(), "el paquete no debe estar vacío");
+        for (i, sample) in packet.data.iter().enumerate() {
+            assert_eq!(*sample, expected, "muestra {i} fuera de la imagen exacta");
+        }
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_golden_decode_wav_24bit_precision() {
+        // Decodificación golden 24-bit: el código 1 se conserva como 1 / 2^23.
+        // El divisor es una potencia de dos, así que la igualdad es exacta; que
+        // ese valor quede por debajo del LSB de 16 bits prueba que no hubo
+        // conversión descendente.
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_golden24_{}.wav", std::process::id()));
+        let path_str = path.to_str().unwrap();
+        write_pcm_wav_code(path_str, 44100, 2, 0.05, 1, 24);
+
+        let mut decoder = SymphoniaDecoder::new();
+        let info = decoder
+            .open(path_str)
+            .expect("un WAV 24-bit de DC constante debe abrirse");
+        assert_eq!(info.sample_rate, 44100);
+        assert_eq!(info.channels, 2);
+
+        let packet = decoder
+            .decode_next()
+            .expect("decode_next no debe fallar")
+            .expect("el WAV contiene al menos un paquete");
+        let expected = 1.0 / 8_388_608.0;
+        assert!(!packet.data.is_empty(), "el paquete no debe estar vacío");
+        for (i, sample) in packet.data.iter().enumerate() {
+            assert_eq!(*sample, expected, "muestra {i} no conserva los 24 bits");
+        }
+        assert!(
+            expected < 1.0 / 32_768.0,
+            "la resolución de 24 bits debe quedar por debajo del LSB de 16 bits"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_derive_duration_sec_prefers_time_base() {
+        // La duración declarada por el contenedor (time_base + duration) gana
+        // sobre el conteo de frames.
+        let mut track = Track::new(0);
+        track.time_base = TimeBase::try_from_recip(48_000);
+        track.duration = Some(Duration::new(96_000));
+
+        let dur = derive_duration_sec(&track, 48_000).expect("time_base utilizable");
+        assert!((dur - 2.0).abs() < 1e-9, "duración del contenedor: {dur}");
+    }
+
+    #[test]
+    fn test_derive_duration_sec_falls_back_to_num_frames() {
+        // Sin contenedor que declare duración, se usa num_frames / sample_rate.
+        let mut track = Track::new(0);
+        track.num_frames = Some(96_000);
+
+        assert_eq!(derive_duration_sec(&track, 48_000), Some(2.0));
+    }
+
+    #[test]
+    fn test_derive_duration_sec_returns_none_when_unusable() {
+        // Sin time_base, sin duración y sin frames no hay fuente utilizable.
+        let track = Track::new(0);
+        assert_eq!(derive_duration_sec(&track, 48_000), None);
     }
 }

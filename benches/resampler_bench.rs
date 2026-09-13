@@ -79,11 +79,7 @@ fn sine_input(in_rate: u32) -> Vec<Vec<f64>> {
 
 /// Mide un mismo `make` a lo largo de todos los pares de tasas bajo un nombre de
 /// grupo que distingue el tipo de resampler en la salida de criterion.
-fn bench_kind(
-    c: &mut Criterion,
-    group_name: &str,
-    make: fn(u32, u32) -> Box<dyn Resampler<f64>>,
-) {
+fn bench_kind(c: &mut Criterion, group_name: &str, make: fn(u32, u32) -> Box<dyn Resampler<f64>>) {
     let mut group = c.benchmark_group(group_name);
     group.throughput(Throughput::Elements(CHUNK as u64));
     for &(in_rate, out_rate, label) in &RATE_PAIRS {

@@ -2268,16 +2268,34 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 engine.set_playing(false);
                 state.write().eof_reached = true;
             }
-            // Push custom decoded data
+            // Push custom decoded data. Reintenta hasta encolar el paquete
+            // completo; si el ringbuf deja de drenar se abandona tras un límite
+            // acotado (mismo criterio que la ruta Symphonia) en lugar de
+            // descartar muestras en silencio.
             if !output_accumulator_f32.is_empty() {
-                if let Some(producer) = producer_mutex.lock().as_mut() {
-                    let pushed = producer.push_slice(&output_accumulator_f32);
-                    if pushed < output_accumulator_f32.len() {
-                        tracing::warn!(
-                            "Push incompleto al ringbuf: {} de {} muestras",
-                            pushed,
-                            output_accumulator_f32.len()
-                        );
+                let mut pos = 0;
+                let mut stalled = 0;
+                while pos < output_accumulator_f32.len() {
+                    let mut pushed = 0;
+                    if let Some(producer) = producer_mutex.lock().as_mut() {
+                        pushed = producer.push_slice(&output_accumulator_f32[pos..]);
+                    }
+                    if pushed == 0 {
+                        stalled += 1;
+                        if stalled >= 50 {
+                            tracing::warn!(
+                                "Push incompleto al ringbuf: se descartan {} muestras sobrantes",
+                                output_accumulator_f32.len() - pos
+                            );
+                            break;
+                        }
+                        let backoff_ms = if crate::utils::is_low_resource() { 10 } else { 2 };
+                        std::thread::sleep(std::time::Duration::from_millis(backoff_ms));
+                        if !state.read().is_playing {
+                            break;
+                        }
+                    } else {
+                        pos += pushed;
                     }
                 }
                 frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;

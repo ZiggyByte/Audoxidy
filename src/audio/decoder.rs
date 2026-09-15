@@ -200,12 +200,28 @@ impl AudioDecoder for SymphoniaDecoder {
     }
 }
 
+// ⚠️ ESTABLE — NO MODIFICAR sin re-medir RAM y CPU.
+// Este bloque corrige el crecimiento de RSS durante la reproducción (un mapeo
+// secuencial acumulaba en RSS todas las páginas tocadas hasta `munmap`) y agrupa
+// la liberación para no penalizar la CPU. Cambiar el umbral, el tamaño de bloque
+// o la lógica de liberación puede reintroducir el crecimiento de memoria o un
+// coste de CPU alto. Ver `docs/MEMORY-AND-CPU.md`.
+/// Bloque de lectura tras el cual se liberan de RSS las páginas ya consumidas.
+///
+/// Agrupar el `MADV_DONTNEED` evita pagar un syscall por cada lectura y mantiene
+/// el RSS acotado a ~este tamaño más el búfer de trabajo del decodificador.
+const MMAP_ADVISE_CHUNK: usize = 8 * 1024 * 1024;
+
 /// Wrapper que presenta un Mmap como un MediaSource para Symphonia.
-/// Los archivos grandes (>10MB) se mapean a memoria para evitar copias
-/// y reducir presión en el page cache del kernel.
+/// Los archivos grandes (>10MB) se mapean a memoria para evitar copias.
+///
+/// ⚠️ ESTABLE — NO MODIFICAR: la liberación de páginas en `read` mantiene el RSS
+/// acotado; quitarla o cambiarla reintroduce el crecimiento de memoria.
 struct MmapSource {
     mmap: memmap2::Mmap,
     pos: usize,
+    /// Posición hasta la que ya se aconsejó al kernel liberar páginas.
+    advised_until: usize,
 }
 
 // SAFETY: `MmapSource` solo expone lecturas inmutables sobre el mapeo y el
@@ -222,6 +238,32 @@ impl Read for MmapSource {
         let to_read = buf.len().min(remaining);
         buf[..to_read].copy_from_slice(&self.mmap[self.pos..self.pos + to_read]);
         self.pos += to_read;
+        // ⚠️ ESTABLE — NO MODIFICAR: liberar en bloques grandes las páginas ya
+        // consumidas es lo que mantiene el RSS plano durante toda la canción sin
+        // penalizar la CPU. Un mapeo secuencial acumula en RSS todas las páginas
+        // tocadas hasta `munmap`, así que la memoria del proceso crecería con el
+        // tamaño del archivo durante toda la reproducción. Se liberan con
+        // `MADV_DONTNEED` sobre el tramo ya consumido (una relectura lo repuebla
+        // desde el archivo); agrupar el aviso evita un syscall por lectura, que era
+        // el coste de CPU de liberar página a página. Ver `docs/MEMORY-AND-CPU.md`.
+        #[cfg(unix)]
+        {
+            let consumed = self.pos.saturating_sub(self.advised_until);
+            if consumed >= MMAP_ADVISE_CHUNK {
+                // SAFETY: el rango ya se copió a `buf` y no queda ningún préstamo
+                // activo sobre él; el mapeo es de solo lectura, así que descartar
+                // las páginas solo fuerza a repoblarlas desde el archivo en un
+                // acceso posterior.
+                unsafe {
+                    let _ = self.mmap.unchecked_advise_range(
+                        memmap2::UncheckedAdvice::DontNeed,
+                        self.advised_until,
+                        consumed,
+                    );
+                }
+                self.advised_until = self.pos;
+            }
+        }
         Ok(to_read)
     }
 }
@@ -234,6 +276,11 @@ impl Seek for MmapSource {
             SeekFrom::Current(p) => self.pos.saturating_add_signed(p as isize),
         };
         self.pos = self.pos.min(self.mmap.len());
+        // Un retroceso invalida el tramo ya liberado: se reabre el bloque para
+        // que las páginas repobladas puedan volver a liberarse al avanzar.
+        if self.pos < self.advised_until {
+            self.advised_until = self.pos;
+        }
         Ok(self.pos as u64)
     }
 }
@@ -259,7 +306,11 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
             metadata.len() / (1024 * 1024),
             path
         );
-        Ok(Box::new(MmapSource { mmap, pos: 0 }))
+        Ok(Box::new(MmapSource {
+            mmap,
+            pos: 0,
+            advised_until: 0,
+        }))
     } else {
         Ok(Box::new(file))
     }
@@ -4277,5 +4328,51 @@ mod decoder_tests {
         // Sin time_base, sin duración y sin frames no hay fuente utilizable.
         let track = Track::new(0);
         assert_eq!(derive_duration_sec(&track, 48_000), None);
+    }
+
+    /// La fuente mmap libera las páginas ya leídas (`MADV_DONTNEED`) sin perder
+    /// los datos: una lectura completa y una relectura tras `seek` deben devolver
+    /// exactamente el contenido del archivo aunque las páginas se hayan descartado.
+    #[cfg(unix)]
+    #[test]
+    fn mmap_source_releases_pages_and_stays_readable() {
+        use std::io::{Read, Seek, SeekFrom};
+
+        let path =
+            std::env::temp_dir().join(format!("audoxidy_mmap_release_{}.wav", std::process::id()));
+        // 60s estéreo 44.1k a 16 bits ≈ 10 MB: supera `MEMMAP_THRESHOLD`.
+        write_pcm_wav(path.to_str().unwrap(), 44100, 2, 60.0);
+        let original = std::fs::read(&path).unwrap();
+
+        let mut source = super::open_audio_source(path.to_str().unwrap()).unwrap();
+        assert!(
+            original.len() as u64 > super::MEMMAP_THRESHOLD,
+            "el fixture debe superar el umbral de mmap"
+        );
+
+        // Lectura completa en trozos pequeños (cada uno descarta sus páginas).
+        let mut read_back = Vec::with_capacity(original.len());
+        let mut buf = vec![0u8; 4096];
+        loop {
+            let n = source.read(&mut buf).unwrap();
+            if n == 0 {
+                break;
+            }
+            read_back.extend_from_slice(&buf[..n]);
+        }
+        assert_eq!(read_back, original, "la lectura completa debe ser exacta");
+
+        // Relectura tras un seek hacia atrás: las páginas descartadas se
+        // repueblan desde el archivo y el contenido debe seguir siendo correcto.
+        source.seek(SeekFrom::Start(0)).unwrap();
+        let mut head = vec![0u8; 8192];
+        source.read_exact(&mut head).unwrap();
+        assert_eq!(
+            head,
+            original[..8192],
+            "relectura tras seek debe ser exacta"
+        );
+
+        std::fs::remove_file(&path).ok();
     }
 }

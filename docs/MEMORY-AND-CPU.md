@@ -43,44 +43,12 @@ residency; the data read is unchanged (asserted by the regression test).
 
 ---
 
-## Q&A: expected RSS increase (post-fix, crossfade/preload enabled)
+## Operational Q&A (expected RSS, channels, format, chunk tuning)
 
-Drivers (see `src/audio/decoder.rs`):
+Moved to the planning knowledge base: `.planning/debug/resolved/ram-grows-during-playback.md`
+(section "Operational Q&A — expected RSS / channels / format / chunk"). Summary: the
+increase plateaus (the ±15% is buffer churn); it scales primarily with sample rate and
+channel count and, when crossfade/preload is enabled, with the preload buffer (up to the
+~64 MB cap at 384 kHz). File size only adds the ≤8 MB mmap window; the audio format does
+not affect RAM. Keep `MMAP_ADVISE_CHUNK` at 8 MiB (lower to trim RSS, never raise).
 
-- **Ring buffer:** 8 MiB fixed (2 MiB in low-resource) — constant, independent of channels.
-- **`MMAP_ADVISE_CHUNK` = 8 MiB:** only for files >10 MiB; up to ~8 MB extra, independent of
-  sample rate or channels.
-- **Crossfade preload buffer:** `min(8 s × rate × channels, 8,000,000)` f64 samples
-  (`PRELOAD_MAX_SAMPLES` = 8M, ~64 MB cap). The dominant, rate-dependent allocation.
-- **Tail buffer:** `0.2 s × rate × channels` f64 samples.
-- **Planar pools / resampler / DSP state:** scale with rate × channels (few MB).
-- The increase **plateaus**; it no longer grows with playback time. The ±15% fluctuation is
-  normal ring-buffer/pool churn.
-
-| Scenario | ~3 ch | ~4 ch | ~5 ch | ~6 ch | ~7 ch | ~8 ch |
-|---|---|---|---|---|---|---|
-| <10 MB @ 44.1 kHz | ~20 MB | ~23 | ~26 | ~29 | ~32 | ~35 |
-| <10 MB @ 384 kHz | ~85 MB | ~88 | ~90 | ~93 | ~96 | ~100 |
-| 22 MB @ 44.1 kHz | ~28 MB | ~31 | ~34 | ~37 | ~40 | ~43 |
-| 22 MB @ 384 kHz | ~93 MB | ~96 | ~98 | ~101 | ~104 | ~108 |
-
-Notes:
-- At 384 kHz and ≥3 channels the preload buffer hits the 8M-sample cap (~64 MB), so that
-  buffer stops growing with channels; the tail buffer and pools keep scaling.
-- File size only ever adds the ≤8 MB mmap window — nothing else.
-- With crossfade/preload disabled the preload buffer is 0 and these totals roughly halve.
-- Low-resource mode reduces the ring buffer (2 MiB) and preload.
-
-### Does the audio format affect RAM?
-
-Directly, **no**. FLAC/MP3/WAV/OGG all decode to the same PCM at the output rate, so the
-steady-state RSS is the same. It matters only indirectly: file size (the 10 MB mmap
-threshold), and channel count/bit depth. The codec affects **CPU**, not RAM.
-
-### `MMAP_ADVISE_CHUNK`: keep 8 MiB?
-
-**Keep 8 MiB; if trimming RSS, lower it (4 MiB), never raise it.** With batching the
-`madvise` cost is a handful of syscalls per song, so raising it buys no measurable CPU and
-only raises the resident file pages. Lowering it trades negligible CPU for slightly lower
-RSS. This knob is second-order — the real levers are the crossfade preload buffer, the ring
-buffer, sample rate, and channel count.

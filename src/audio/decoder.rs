@@ -205,7 +205,7 @@ impl AudioDecoder for SymphoniaDecoder {
 // secuencial acumulaba en RSS todas las páginas tocadas hasta `munmap`) y agrupa
 // la liberación para no penalizar la CPU. Cambiar el umbral, el tamaño de bloque
 // o la lógica de liberación puede reintroducir el crecimiento de memoria o un
-// coste de CPU alto. Ver `docs/MEMORY-AND-CPU.md`.
+// coste de CPU alto. Ver `.planning/codebase/MEMORY-AND-CPU.md`.
 /// Bloque de lectura tras el cual se liberan de RSS las páginas ya consumidas.
 ///
 /// Agrupar el `MADV_DONTNEED` evita pagar un syscall por cada lectura y mantiene
@@ -245,7 +245,7 @@ impl Read for MmapSource {
         // tamaño del archivo durante toda la reproducción. Se liberan con
         // `MADV_DONTNEED` sobre el tramo ya consumido (una relectura lo repuebla
         // desde el archivo); agrupar el aviso evita un syscall por lectura, que era
-        // el coste de CPU de liberar página a página. Ver `docs/MEMORY-AND-CPU.md`.
+        // el coste de CPU de liberar página a página. Ver `.planning/codebase/MEMORY-AND-CPU.md`.
         #[cfg(unix)]
         {
             let consumed = self.pos.saturating_sub(self.advised_until);

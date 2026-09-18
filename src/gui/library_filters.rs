@@ -308,7 +308,7 @@ impl LibraryFiltersManager {
         let scroll_y = self.scroll_offset.y;
 
         let start_index = (scroll_y / item_height).floor() as usize;
-        // D-05: Margen dinámico = max(5, total_visible_items / 2)
+        // Margen dinámico = max(5, total_visible_items / 2)
         let total_visible_items = (viewport_height / item_height).ceil() as usize;
         let margin = (total_visible_items / 2).max(5);
         let start_index = start_index.saturating_sub(margin);
@@ -421,14 +421,15 @@ pub fn view<'a>(
     let top_bar = container(
         text("AuDoxiDY")
             .font(FONT_STAGE_WANDER)
-            .size(19)
+            .size(18)
             .color(COLOR_TEXT_PRIMARY),
     )
     .width(Length::Fill)
     .height(Length::Fixed(40.0))
     .align_x(iced::alignment::Horizontal::Center)
+    .align_y(iced::alignment::Vertical::Center)
     .padding(iced::Padding {
-        top: 9.0,
+        top: 4.0,
         bottom: 0.0,
         left: 0.0,
         right: 0.0,
@@ -793,7 +794,7 @@ pub fn view<'a>(
         &manager.search_query,
         Message::FilterSearchChanged,
         Message::FilterSearchChanged(String::new()),
-        Length::Fixed(180.0),
+        Length::Fixed(157.0),
     );
 
     let bottom_bar = container(search_input)
@@ -801,6 +802,12 @@ pub fn view<'a>(
         .height(Length::Fixed(40.0))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
+        .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 15.0,
+                    right: 15.0,
+                })
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // Container base de contenido central inferior a The Top Bar
@@ -814,20 +821,20 @@ pub fn view<'a>(
     let main_col = column![top_bar, base_middle, bottom_bar,];
 
     let base_view = container(main_col)
-        .width(Length::Fixed(202.0))
+        .width(Length::Fixed(187.0))
         .height(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
 
     let overlay = if let Some(menu) = menu_options_container {
         Some(
             container(mouse_area(menu).on_press(Message::NoOp))
-                .width(Length::Fixed(202.0))
+                .width(Length::Fixed(187.0))
                 .height(Length::Fill)
                 .padding(iced::Padding {
                     top: 70.0,
                     bottom: 0.0,
-                    left: 0.0,
-                    right: 0.0,
+                    left: 15.0,
+                    right: 15.0,
                 })
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Top)

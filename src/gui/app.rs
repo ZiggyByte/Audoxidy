@@ -9,7 +9,6 @@ use crate::gui::playlist::PLAYLIST_TABS_SCROLL_ID;
 use crate::gui::playlist::PlaylistManager;
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
-    FONT_INTER_SANS_NORMAL,
 };
 use crate::integrations::control::{
     ExternalControlEvent, ExternalControlReceiver, external_control_channel,
@@ -5196,7 +5195,7 @@ impl AudoxidyApp {
             }
             Message::GlobalMouseRelease => {
                 // Safety net: clear any lingering stepper hold flag on any primary
-                // button release (UAT round 7 — prevents a stuck hold-to-repeat if a
+                // button release (prevents a stuck hold-to-repeat if a
                 // release event is missed by the widget).
                 crate::gui::widgets::GLOBAL_STEPPER_HOLD
                     .store(0, std::sync::atomic::Ordering::Relaxed);
@@ -6049,9 +6048,9 @@ impl AudoxidyApp {
 
                     let mut content = iced::widget::column![
                         iced::widget::text("Nombre del preset:")
-                            .size(14)
+                            .size(13)
                             .color(COLOR_TEXT_PRIMARY)
-                            .font(crate::gui::theme::FONT_INTER_SANS_NORMAL)
+                            .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
                             .align_x(iced::alignment::Horizontal::Center),
                         iced::widget::Space::new().height(iced::Length::Fixed(12.0)),
                         input,
@@ -6435,7 +6434,7 @@ impl AudoxidyApp {
 
         subs.push(mouse_evs);
 
-        // 6. Stepper hold-to-repeat (UAT round 7): while a NumberStepper arrow is held
+        // 6. Stepper hold-to-repeat: while a NumberStepper arrow is held
         //    (GLOBAL_STEPPER_HOLD != 0), emit a periodic Tick so iced keeps redrawing
         //    and the widget's RedrawRequested handler drives the auto-repeat with real
         //    timestamps. Without this the runtime stops redrawing (no animation) and

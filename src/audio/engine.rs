@@ -285,7 +285,7 @@ pub struct AudioState {
     pub fade_in_ms: f32,     // default: 1000.0 (range 0–10000, paso 50)
     pub fade_out_ms: f32,    // default: 2000.0 (range 0–10000, paso 50)
 
-    // Volumen y Mezcla — Silence removal (D-14 master, D-16)
+    // Volumen y Mezcla — Silence removal
     pub silence_enabled: bool,           // default: true
     pub silence_duration_ms: f32,        // default: 1000.0 (range 100–10000, paso 50)
     pub silence_threshold_db: f32,       // default: -47.0 (range -80..0, paso 0.25)
@@ -298,7 +298,7 @@ pub struct AudioState {
     pub fade_in_enabled: bool,  // default: false
     pub fade_out_enabled: bool, // default: false
 
-    // Volumen y Mezcla — ReplayGain offsets (D-26, D-29, D-30 master, D-28)
+    // Volumen y Mezcla — ReplayGain offsets
     pub rg_master_enabled: bool,     // default: true (master of RG group)
     pub rg_offset_album_db: f32,     // default: 0.0 (range ±12, paso 0.25)
     pub rg_offset_track_db: f32,     // default: 0.0 (range ±12, paso 0.25)

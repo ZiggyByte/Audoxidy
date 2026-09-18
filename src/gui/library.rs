@@ -588,7 +588,7 @@ impl LibraryManager {
         let view_min = view_min_raw.min(max_scroll);
         let view_max = view_min + viewport_h;
 
-        // D-04: Margen dinámico = 50% del viewport (25% en low-resource)
+        // Margen dinámico = 50% del viewport (25% en low-resource)
         let viewport_margin_ratio: f32 = if crate::utils::is_low_resource() {
             0.25
         } else {
@@ -846,7 +846,7 @@ impl LibraryManager {
             total_height += row_h;
         }
 
-        // D-04: Margen dinámico en grid = 50% del viewport (25% en low-resource)
+        // Margen dinámico en grid = 50% del viewport (25% en low-resource)
         let grid_margin_ratio: f32 = if crate::utils::is_low_resource() {
             0.25
         } else {
@@ -2941,7 +2941,7 @@ pub fn view<'a>(
         &manager.search_query,
         Message::LibrarySearchQueryChanged,
         Message::LibrarySearchQueryChanged(String::new()),
-        Length::Fixed(180.0),
+        Length::Fixed(157.0),
     );
 
     let (s_count, a_count, art_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats
@@ -3053,7 +3053,12 @@ pub fn view<'a>(
             Space::new().width(10.0),
             bottom_actions
         ]
-        .padding([0, 15])
+        .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 20.0,
+                    right: 15.0,
+                })
         .height(Length::Fill)
         .align_y(Alignment::Center)
     } else {
@@ -3067,7 +3072,12 @@ pub fn view<'a>(
             Space::new().width(Length::Fill),
             bottom_actions
         ]
-        .padding([0, 15])
+        .padding(iced::Padding {
+                    top: 0.0,
+                    bottom: 0.0,
+                    left: 20.0,
+                    right: 15.0,
+                })
         .height(Length::Fill)
         .align_y(Alignment::Center)
     };

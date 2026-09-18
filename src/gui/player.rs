@@ -27,7 +27,7 @@ pub enum WindowAction {
 ///
 /// Contiene los valores de visualización (después de la integración de
 /// ballistics), el estado de hold de pico, la integración de ataque/release
-/// y el fade de pausa. Fase 2 del medidor — la Fase 3 (VuMeterWidget) lee
+/// y el fade de pausa. El VuMeterWidget lee
 /// estos campos para renderizar las barras.
 #[derive(Debug, Clone)]
 pub struct MeterUiState {
@@ -128,7 +128,7 @@ pub struct PlayerUiState {
     pub display_title: String,
     pub display_artist: String,
 
-    // Meter animation state (Fase 2 — VU meter subscription & ballistics)
+    // Meter animation state (VU meter subscription & ballistics)
     pub meter: MeterUiState,
 
     // VU Meter — popup de configuración

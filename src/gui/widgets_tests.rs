@@ -4,7 +4,7 @@ mod tests {
     use crate::gui::widgets::{StepperUnit, format_stepper_value, strip_suffix};
 
     // ========================================================================
-    // Suffix stripping tests (Fix B2 / D-45)
+    // Suffix stripping tests
     // ========================================================================
 
     #[test]
@@ -77,7 +77,7 @@ mod tests {
     }
 
     // ========================================================================
-    // NumberStepper character filter tests (D-34)
+    // NumberStepper character filter tests
     // ========================================================================
 
     /// Replicates the character filter from NumberStepper's on_event handler
@@ -139,12 +139,12 @@ mod tests {
     }
 
     // ========================================================================
-    // NumberStepper no-rounding test (D-34)
+    // NumberStepper no-rounding test
     // ========================================================================
 
     #[test]
     fn test_stepper_no_rounding() {
-        // D-34: manual input value is NEVER rounded to the step.
+        // Manual input value is NEVER rounded to the step.
         // A value of 1.78 stays 1.78, NOT 1.75 (0.25 step) or 2.0.
         let input_str = "1.78";
         let parsed: f64 = input_str.parse().unwrap();
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_stepper_commit_editing_round_trip() {
-        // UAT round 9: typing "1.78" then clicking an arrow commits 1.78 first,
+        // Typing "1.78" then clicking an arrow commits 1.78 first,
         // then steps by the unit step. The committed value must parse exactly.
         let buffer = "1.78";
         let parsed: f64 = strip_suffix(buffer).parse().unwrap();

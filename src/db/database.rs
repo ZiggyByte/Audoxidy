@@ -415,7 +415,7 @@ impl Database {
         // Inicializar playlists del sistema si no existen
         Self::init_system_playlists(conn)?;
 
-        // Tabla de presets de ecualizador personalizados (Decisión D-01)
+        // Tabla de presets de ecualizador personalizados
         Self::init_eq_presets_table(conn)?;
 
         Ok(())
@@ -2490,7 +2490,7 @@ impl Database {
     }
 
     // ──────────────────────────────────────────────
-    // EQ Preset CRUD (Decisión D-01: SQLite persistence)
+    // EQ Preset CRUD (SQLite persistence)
     // ──────────────────────────────────────────────
 
     /// Crea la tabla `eq_presets` si no existe.

@@ -11,6 +11,7 @@ cache/covers
 *.log
 tmp/
 temp/
+docs/
 
 
 library.db
@@ -22,6 +23,7 @@ library.db*
 graphify-out/
 .criterion/
 logs/
+.changelogs-crates-update
 .planning/
 .opencode/
 .agents/

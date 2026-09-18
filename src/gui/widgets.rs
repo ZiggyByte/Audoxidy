@@ -28,11 +28,11 @@ pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
 
 /// Flag global: direccion de hold activa de un NumberStepper (-1 izq, 1 der, 0 none).
 /// El app lo lee en su subscription de tiempo para forzar redraws continuos mientras
-/// el usuario mantiene presionada una flecha (hold-to-repeat, UAT round 7).
+/// el usuario mantiene presionada una flecha (hold-to-repeat).
 pub static GLOBAL_STEPPER_HOLD: AtomicI8 = AtomicI8::new(0);
 
 // ==============================
-// Helper: strip unit suffixes from numeric strings before parsing (D-45)
+// Helper: strip unit suffixes from numeric strings before parsing
 // Used by CustomSlider and NumberStepper for keyboard input.
 // ==============================
 pub(crate) fn strip_suffix(s: &str) -> &str {
@@ -45,7 +45,7 @@ pub(crate) fn strip_suffix(s: &str) -> &str {
 }
 
 // ==============================
-// StandardCheckbox — 12×12 px custom checkbox (D-31)
+// StandardCheckbox — 12×12 px custom checkbox
 // ==============================
 
 #[derive(Debug, Clone, Default)]
@@ -53,7 +53,7 @@ struct StandardCheckboxState {
     is_hover: bool,
 }
 
-/// Custom checkbox widget: 12×12 px drawn via iced advanced renderer (D-31).
+/// Custom checkbox widget: 12×12 px drawn via iced advanced renderer.
 /// OFF: COLOR_BG background, 1px COLOR_TEXT_SECONDARY border.
 /// ON: COLOR_ACCENT background, 1px COLOR_ACCENT border, "✓" in COLOR_TEXT_PRIMARY centered.
 pub struct StandardCheckbox<'a, Message> {
@@ -72,7 +72,7 @@ impl<'a, Message> StandardCheckbox<'a, Message> {
         }
     }
 
-    /// Set callback for focus-gating state changes (D-35).
+    /// Set callback for focus-gating state changes.
     /// Called with `true` when the checkbox receives a click,
     /// `false` when the mouse button is released outside its bounds.
     pub fn on_selected_state_change(mut self, callback: impl Fn(bool) -> Message + 'a) -> Self {
@@ -216,7 +216,7 @@ impl<'a, Message: 'a> From<StandardCheckbox<'a, Message>> for Element<'a, Messag
 }
 
 // ==============================
-// NumberStepper — 96×13 px with "<" / ">" glyph arrows + manual input (D-32, D-33, D-34, D-35)
+// NumberStepper — 96×13 px with "<" / ">" glyph arrows + manual input
 // ==============================
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -256,10 +256,10 @@ pub(crate) fn format_stepper_value(value: f64, unit: &StepperUnit) -> String {
 }
 
 /// Custom stepper widget: 96×13 px (15px arrow zones + 66px input + 15px arrow zone)
-/// with "<" / ">" text glyph arrows (16px) and manual numeric input (D-32).
+/// with "<" / ">" text glyph arrows (16px) and manual numeric input.
 /// Left/right arrows step the value. Center zone shows formatted value + suffix;
 /// click to enter edit mode (raw number, no suffix). Enter/click-outside applies the
-/// raw parsed value (never rounded to step — D-34). Escape cancels.
+/// raw parsed value (never rounded to step). Escape cancels.
 pub struct NumberStepper<'a, Message> {
     value: f64,
     range: std::ops::RangeInclusive<f64>,
@@ -308,7 +308,7 @@ impl<'a, Message> NumberStepper<'a, Message> {
 
 // --- Center zone widget: displays value, handles click-to-edit and keyboard input ---
 
-// Hold-to-repeat timing (UAT round 7): a single click never auto-repeats; the
+// Hold-to-repeat timing: a single click never auto-repeats; the
 // hold must last ~400ms before stepping starts, then repeats every ~100ms.
 // Real time is measured via the Instant carried by RedrawRequested.
 const HOLD_ACTIVATE_SECS: f64 = 0.4;
@@ -439,7 +439,7 @@ impl<'a, Message: 'a + Clone> NumberStepperWidget<'a, Message> {
     /// If the center input is being edited, apply the typed buffer (parse + clamp),
     /// exit edit mode, and return Some(committed value). Returns None when not editing.
     /// Used so that clicking an arrow while editing commits the typed value first,
-    /// and the arrow step operates on the committed value (UAT round 9).
+    /// and the arrow step operates on the committed value.
     fn commit_editing(
         &self,
         state: &mut NumberStepperState,
@@ -599,7 +599,7 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                 shell.capture_event();
                 if in_left {
                     // If editing, commit the typed buffer first so the arrow step
-                    // operates on the committed value (UAT round 9).
+                    // operates on the committed value.
                     let base = self.commit_editing(state, shell).unwrap_or(self.value);
                     self.step_value_from(base, -1, shell);
                     state.held_dir = -1;
@@ -4909,7 +4909,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
             }
         }
 
-        // ── Draw peak hold markers (D-07): thin vertical lines ──
+        // ── Draw peak hold markers: thin vertical lines ──
         if self.hold_l > METER_MIN_DB {
             let hx = Self::db_to_x(self.hold_l, bar_left, bar_width);
             renderer.fill_quad(
@@ -4939,7 +4939,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
             );
         }
 
-        // ── Draw clipping LED (D-06): small square indicator ──
+        // ── Draw clipping LED: small square indicator ──
         let led_x = (bx + 2.0).round();
         let led_y = (by + 1.0).round();
         let led_color = if self.clipping {
@@ -4968,7 +4968,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
             led_color,
         );
 
-        // ── Draw "L"/"R" or "M"/"S" labels (D-03) ──
+        // ── Draw "L"/"R" or "M"/"S" labels ──
         let label_x = (bx + METER_LED_SIZE + 3.0).round();
         let label_font_size = 8.0;
         let (label_top, label_bot) = if self.ms_mode { ("M", "S") } else { ("L", "R") };
@@ -5012,7 +5012,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for
             ),
         );
 
-        // ── Numeric dBFS readout (D-05): right side of widget ──
+        // ── Numeric dBFS readout: right side of widget ──
         if self.show_numeric {
             let num_x = (bar_left + bar_width + 4.0).round();
             let num_font = 7.0;
@@ -5257,7 +5257,7 @@ impl<'a, Message: 'a> From<VuMeterWidget> for Element<'a, Message> {
 }
 
 // ==============================
-// MeterPopup — vista flotante de configuración del VU Meter (D-01, D-02)
+// MeterPopup — vista flotante de configuración del VU Meter
 // ==============================
 
 /// Construye el contenido del popup de configuración del medidor VU.

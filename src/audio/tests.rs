@@ -179,7 +179,7 @@ mod tests {
     fn test_audio_state_volumen_defaults() {
         let state = AudioState::default();
 
-        // Fades (D-07, D-09, D-10)
+        // Fades
         assert_eq!(state.fades_enabled, false);
         assert_eq!(state.smooth_volume_enabled, false);
         assert!((state.fade_in_ms - 1000.0).abs() < f32::EPSILON);
@@ -187,7 +187,7 @@ mod tests {
         assert_eq!(state.fade_in_enabled, false);
         assert_eq!(state.fade_out_enabled, false);
 
-        // Silence removal (D-14, D-16)
+        // Silence removal
         assert_eq!(state.silence_enabled, true);
         assert_eq!(state.silence_edge_trim_enabled, true);
         assert!((state.silence_duration_ms - 1000.0).abs() < f32::EPSILON);
@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(state.rg_fixed_enabled, false);
         assert!((state.rg_fixed_db - 0.0).abs() < f32::EPSILON);
 
-        // ReplayGain offsets (D-26, D-29, D-30, D-28)
+        // ReplayGain offsets
         assert_eq!(state.rg_master_enabled, true);
         assert!((state.rg_offset_album_db - 0.0).abs() < f32::EPSILON);
         assert!((state.rg_offset_track_db - 0.0).abs() < f32::EPSILON);
@@ -225,7 +225,7 @@ mod tests {
 
     // --- Loudness gain computation helper (mirrors decoder.rs:986-1025) ---
 
-    /// Compute loudness gain (linear) mirroring the decoder's single gain point (D-01).
+    /// Compute loudness gain (linear) mirroring the decoder's single gain point.
     /// All inputs are dB values; the function sums them, caps at +12 dB,
     /// and returns the linear factor 10^(gain_db/20).
     fn compute_gain_db(
@@ -243,7 +243,7 @@ mod tests {
         let mut gain_db: f64 = 0.0;
 
         if rg_master_enabled {
-            // 1. ReplayGain base from tags (D-27: album + track sum)
+            // 1. ReplayGain base from tags (album + track sum)
             if rg_track_enabled {
                 if let Some(tg) = rg_track {
                     gain_db += tg as f64;
@@ -255,25 +255,25 @@ mod tests {
                 }
             }
 
-            // 2. RG offsets per source (D-26, D-29)
+            // 2. RG offsets per source
             gain_db += offset_album_db as f64;
             gain_db += offset_track_db as f64;
 
-            // 3. RT Analysis fallback (D-28): only when no tags AND analyze enabled
+            // 3. RT Analysis fallback: only when no tags AND analyze enabled
             let has_tags = rg_track.is_some() || rg_album.is_some();
             if !has_tags && analyze_rt_enabled {
                 gain_db += offset_rt_db as f64;
             }
         }
 
-        // 4. RMS Normalization output (D-05 shared controller)
+        // 4. RMS Normalization output (shared controller)
         gain_db += normalize_gain_db as f64;
 
-        // 5. Clamp to safety ceiling +12 dB (D-26) and convert to linear
+        // 5. Clamp to safety ceiling +12 dB and convert to linear
         10.0_f64.powf(gain_db.min(12.0) / 20.0)
     }
 
-    // --- Loudness gain tests (D-01, D-26 through D-30) ---
+    // --- Loudness gain tests ---
 
     #[test]
     fn test_loudness_gain_no_tags() {
@@ -306,7 +306,7 @@ mod tests {
 
     #[test]
     fn test_loudness_gain_rg_album_track_sum() {
-        // RG track = -3 dB, album = -2 dB, both enabled → gain = 10^(-5/20) (D-27)
+        // RG track = -3 dB, album = -2 dB, both enabled → gain = 10^(-5/20)
         let gain = compute_gain_db(
             Some(-3.0),
             Some(-2.0),
@@ -372,7 +372,7 @@ mod tests {
     #[test]
     fn test_loudness_gain_rt_no_fallback_with_tags() {
         // RG track = -3 dB present, analyze_rt=true, offset_rt = +2 dB
-        // D-28: offset_rt NOT added when tags exist.
+        // offset_rt NOT added when tags exist.
         // gain_db = -3 + 0 = -3 dB
         let gain = compute_gain_db(
             Some(-3.0),
@@ -392,7 +392,7 @@ mod tests {
 
     #[test]
     fn test_loudness_gain_master_off() {
-        // RG master enabled=false → all RG contributions = 0, gain = 1.0 (D-30)
+        // RG master enabled=false → all RG contributions = 0, gain = 1.0
         let gain = compute_gain_db(
             Some(-3.0),
             Some(-2.0),
@@ -430,7 +430,7 @@ mod tests {
     #[test]
     fn test_loudness_gain_cap() {
         // RG track = -3 dB, offset_album = +20 dB → gain_db = +17 dB
-        // capped at +12 dB (D-26 safety ceiling)
+        // capped at +12 dB (safety ceiling)
         let gain = compute_gain_db(
             Some(-3.0),
             None,
@@ -468,11 +468,11 @@ mod tests {
         assert!((gain - expected).abs() < 1e-10);
     }
 
-    // --- Silence detection tests (D-14, D-15, D-17) ---
+    // --- Silence detection tests ---
 
     #[test]
     fn test_silence_detection_threshold_and_hysteresis() {
-        // D-17: hysteresis with +3 dB difference.
+        // Hysteresis with +3 dB difference.
         // Enter silence at -50 dB → linear threshold = 10^(-50/20) ≈ 0.00316
         // Exit silence at -47 dB  → linear threshold = 10^(-47/20) ≈ 0.00447
         let silence_enter: f64 = 10.0_f64.powf(-50.0 / 20.0);
@@ -491,7 +491,7 @@ mod tests {
         let peak_above: f64 = 0.005;
         assert!(peak_above > silence_exit);
 
-        // D-15: peak-per-frame detection — max absolute value across channels
+        // Peak-per-frame detection — max absolute value across channels
         // A frame with mixed values: use max(|sample|) as peak
         let frame: [f64; 2] = [0.001, 0.004];
         let peak = frame.iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
@@ -508,11 +508,11 @@ mod tests {
         assert!((edge_peak - silence_enter).abs() < 1e-6);
     }
 
-    // --- Fade envelope tests (D-12) ---
+    // --- Fade envelope tests ---
 
     #[test]
     fn test_fade_equal_power_curve() {
-        // D-12: musical fades use equal-power sin²(π·t/2) curve
+        // Musical fades use equal-power sin²(π·t/2) curve
         // At t=0.0: coeff = sin²(0) = 0.0
         // At t=0.5: coeff = sin²(π/4) = (√2/2)² = 0.5
         // At t=1.0: coeff = sin²(π/2) = 1.0
@@ -545,7 +545,7 @@ mod tests {
             prev = coeff;
         }
 
-        // D-13: max error < 0.001 for the entire curve (smooth musical fade)
+        // Max error < 0.001 for the entire curve (smooth musical fade)
         for i in 0..=1000 {
             let t = i as f64 / 1000.0;
             let coeff = equal_power_fade(t);
@@ -556,7 +556,7 @@ mod tests {
         }
     }
 
-    // --- Volume smoothing with debounce (D-08, UAT round 7) ---
+    // --- Volume smoothing with debounce ---
     // The smoothing holds applied_vol frozen while the user adjusts; after the
     // debounce window a 1500ms linear ramp moves applied_vol to the target.
     // This mirrors decoder.rs's smooth logic (SMOOTH_DEBOUNCE_SECS = 0.4,
@@ -656,7 +656,7 @@ mod tests {
         assert_eq!(debounce_remaining, 0.0);
     }
 
-    // --- Fade rate-per-second timing (D-12, D-13, UAT round 4) ---
+    // --- Fade rate-per-second timing ---
     // coeff advances by rate_per_sec * batch_dt; a 1000ms fade completes in 1s.
 
     #[test]

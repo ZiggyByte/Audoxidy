@@ -1851,7 +1851,7 @@ impl AudioCenterManager {
                 // smooth_volume_enabled flag is NOT touched here — its state is
                 // preserved so re-enabling the group restores it. The decoder gates
                 // smoothing on `fades_enabled && smooth_volume_enabled`, so disabling
-                // the master alone is enough to stop smoothing (UAT round 13).
+                // the master alone is enough to stop smoothing.
             }
             AudioCenterMessage::VolumenSmoothVolumeToggle(enabled) => {
                 audio_manager.state().write().smooth_volume_enabled = enabled;
@@ -3891,7 +3891,7 @@ fn view_volumen_mezcla<'a>(
             .into()
     };
 
-    // --- Typography helpers (UAT round 9) ---
+    // --- Typography helpers ---
     // Group titles: 14px, primary text color.
     // Sub-function labels: 13px, primary when the function is enabled, secondary when not.
     // Centralizes the repetitive font/size/color styling of every label in this tab.
@@ -3931,7 +3931,7 @@ fn view_volumen_mezcla<'a>(
         };
 
     // Wraps a label in a clickable area that toggles a function on click
-    // (clicking the group/sub-function name toggles its checkbox, UAT round 10).
+    // (clicking the group/sub-function name toggles its checkbox).
     let clickable_toggle = |label: iced::Element<'a, crate::gui::app::Message>,
                             msg: crate::gui::app::Message|
      -> iced::Element<'a, crate::gui::app::Message> {

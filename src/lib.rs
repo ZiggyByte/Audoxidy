@@ -1,4 +1,5 @@
 pub mod audio;
+pub mod core;
 pub mod db;
 pub mod gui;
 pub mod integrations;

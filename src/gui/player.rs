@@ -174,11 +174,11 @@ pub fn view<'a>(
     let state = audio_manager.get_state();
     let bounds = Length::Fixed(400.0);
 
-    let background_layer = crate::gui::widgets::album_art_widget(
+    let background_layer = crate::gui::library::lists::album_art_widget(
         None, // No pasamos el path aquí ya que el player gestiona su propio handle precargado
         None, // No pasamos los bytes aquí ya que el player gestiona su propio handle precargado
         ui_state.cached_art_handle.clone(),
-        crate::gui::widgets::PlaceholderStyle::Player,
+        crate::gui::library::lists::PlaceholderStyle::Player,
         bounds,
         0.0, // El reproductor principal es cuadrado (sin redondeo)
     );

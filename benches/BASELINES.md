@@ -139,3 +139,9 @@ record is the authority for the outcome.
   `pre-audio-core` record, whose engine-mix numbers no longer describe the shipped code.
 - Baseline data lives in `target/criterion/**/post-audio-core/` (gitignored, not committed);
   this document is the version-controlled record.
+- This file records the **criterion** (timing) baselines. The recorded **behavior**
+  baseline for milestone v0.8.5 — the green-suite floor, the idle RAM/CPU footprint, the
+  tick/metrics snapshot and the manual regression checklist — lives in
+  [`docs/BASELINE-v0.8.5.md`](../docs/BASELINE-v0.8.5.md). The two records cross-reference
+  each other and use the same advisory >10–15 % comparison policy; neither supersedes the
+  other's numbers.

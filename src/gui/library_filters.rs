@@ -803,11 +803,11 @@ pub fn view<'a>(
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
         .padding(iced::Padding {
-                    top: 0.0,
-                    bottom: 0.0,
-                    left: 15.0,
-                    right: 15.0,
-                })
+            top: 0.0,
+            bottom: 0.0,
+            left: 15.0,
+            right: 15.0,
+        })
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // Container base de contenido central inferior a The Top Bar

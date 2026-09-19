@@ -1,6 +1,6 @@
-//! Bootstrap de observabilidad: configuración del subscriber de `tracing`
-//! (sinks de archivo y stderr con rotación) y colector de métricas de
-//! rendimiento alimentado por eventos estructurados.
+//! Observability initialization: configuration of the `tracing` subscriber
+//! (file and stderr sinks with rotation) and a performance-metrics collector
+//! fed by structured events.
 //!
 //! Los eventos de métricas se emiten con `target: "audoxidy::metrics"` y un
 //! campo `metric = "<nombre>"` más un campo numérico `u64`; `MetricsLayer`

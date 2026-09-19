@@ -15,7 +15,7 @@ use super::{ActiveDialog, AppFocus, Message};
 
 /// Persisted audio-engine and PipeWire selection read under one database guard
 /// and applied once the guard is released.
-struct BootstrapAudioConfig {
+struct StartupAudioConfig {
     /// Whether the stable device id should be backfilled after applying.
     had_device_id: bool,
     /// The engine settings to apply, or `None` when nothing was persisted.
@@ -25,12 +25,12 @@ struct BootstrapAudioConfig {
     /// Resolved PipeWire/PulseAudio quantum, or `None` for the default.
     pipewire_quantum: Option<u32>,
     /// Last song to restore, if any.
-    restore: Option<BootstrapPlaylistRestore>,
+    restore: Option<StartupPlaylistRestore>,
 }
 
 /// Last-song state read under one database guard and handed to the audio
 /// manager after the guard is released.
-struct BootstrapPlaylistRestore {
+struct StartupPlaylistRestore {
     path: String,
     title: String,
     artist: String,
@@ -44,7 +44,7 @@ struct BootstrapPlaylistRestore {
 
 /// Persisted audio-state fields read under one database guard and written to
 /// the shared audio state after the guard is released.
-struct BootstrapAudioState {
+struct StartupAudioState {
     fades_enabled: bool,
     smooth_volume_enabled: bool,
     fade_in_ms: f32,
@@ -76,7 +76,7 @@ struct BootstrapAudioState {
 }
 
 /// Persisted EQ state, presets and selection read under one database guard.
-struct BootstrapEq {
+struct StartupEq {
     eq_enabled: bool,
     eq_bands_31: bool,
     preamp_gain: f32,
@@ -87,7 +87,7 @@ struct BootstrapEq {
 }
 
 /// Persisted DSP effect parameters read under one database guard.
-struct BootstrapDsp {
+struct StartupDsp {
     sub_bass_enabled: Option<bool>,
     mid_bass_enabled: Option<bool>,
     voice_boost_enabled: Option<bool>,
@@ -112,7 +112,7 @@ struct BootstrapDsp {
 }
 
 /// Persisted volume and crossfade settings read under one database guard.
-struct BootstrapVolume {
+struct StartupVolume {
     fades_enabled: Option<bool>,
     smooth_volume_enabled: Option<bool>,
     fade_in_ms: Option<f32>,
@@ -211,7 +211,7 @@ impl AudoxidyApp {
         let mut playlist_manager = PlaylistManager::default();
         // db-lock: snapshot de solo lectura; el guard se libera antes de tocar
         // el gestor de audio y de la E/S de PipeWire.
-        let bootstrap_audio = if let Ok(db_lock) = core.database().lock() {
+        let startup_audio = if let Ok(db_lock) = core.database().lock() {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
             let host_id = db_lock.get_setting("audio_host").filter(|s| !s.is_empty());
@@ -385,7 +385,7 @@ impl AudoxidyApp {
                             let (track_gain, album_gain) = db_lock
                                 .get_replay_gain_by_path(&path)
                                 .unwrap_or((None, None));
-                            restore = Some(BootstrapPlaylistRestore {
+                            restore = Some(StartupPlaylistRestore {
                                 path: path.to_string(),
                                 title: title.to_string(),
                                 artist,
@@ -401,7 +401,7 @@ impl AudoxidyApp {
                 }
             }
 
-            Some(BootstrapAudioConfig {
+            Some(StartupAudioConfig {
                 had_device_id,
                 settings,
                 pipewire_rate,
@@ -414,13 +414,13 @@ impl AudoxidyApp {
         };
 
         // Aplicar la configuración con la base de datos ya liberada.
-        if let Some(BootstrapAudioConfig {
+        if let Some(StartupAudioConfig {
             had_device_id,
             settings,
             pipewire_rate,
             pipewire_quantum,
             restore,
-        }) = bootstrap_audio
+        }) = startup_audio
         {
             if let Some(settings) = settings {
                 let apply_ok = core.audio_manager().apply_audio_settings(settings).is_ok();
@@ -498,11 +498,11 @@ impl AudoxidyApp {
         // Cargar Volumen y Mezcla al inicio (aplicar al motor inmediatamente)
         // db-lock: snapshot del estado de audio; el guard se libera antes de
         // tomar el lock de escritura del estado.
-        let bootstrap_state = core
+        let startup_state = core
             .database()
             .lock()
             .ok()
-            .map(|db_lock| BootstrapAudioState {
+            .map(|db_lock| StartupAudioState {
                 fades_enabled: db_lock
                     .get_setting("vol_fades_enabled")
                     .map(|v| v == "1")
@@ -618,7 +618,7 @@ impl AudoxidyApp {
                     .map(|v| v == "1")
                     .unwrap_or(false),
             });
-        if let Some(s) = bootstrap_state {
+        if let Some(s) = startup_state {
             let state_arc = core.audio_manager().state();
             let mut state = state_arc.write();
             state.fades_enabled = s.fades_enabled;
@@ -654,7 +654,7 @@ impl AudoxidyApp {
         // EQ enable / bands_31 / preamp_gain
         // db-lock: snapshot de EQ y presets; el guard se libera antes de aplicar
         // los ajustes al gestor de audio.
-        let bootstrap_eq = core.database().lock().ok().map(|db_lock| {
+        let startup_eq = core.database().lock().ok().map(|db_lock| {
             let eq_enabled = db_lock
                 .get_setting("eq_enabled")
                 .map(|v| v == "1")
@@ -710,7 +710,7 @@ impl AudoxidyApp {
                 .unwrap_or_default();
             let selected_preset_name = db_lock.get_setting("eq_selected_preset");
 
-            BootstrapEq {
+            StartupEq {
                 eq_enabled,
                 eq_bands_31,
                 preamp_gain,
@@ -720,7 +720,7 @@ impl AudoxidyApp {
                 selected_preset_name,
             }
         });
-        if let Some(eq) = bootstrap_eq {
+        if let Some(eq) = startup_eq {
             // Aplicar al motor de audio inmediatamente
             core.audio_manager()
                 .set_eq_mode(if eq.eq_bands_31 { 31 } else { 20 });
@@ -762,7 +762,7 @@ impl AudoxidyApp {
         // DSP effects persistence
         // db-lock: snapshot de los parámetros DSP; el guard se libera antes de
         // aplicar los efectos a la cadena.
-        let bootstrap_dsp = core.database().lock().ok().map(|db_lock| BootstrapDsp {
+        let startup_dsp = core.database().lock().ok().map(|db_lock| StartupDsp {
             sub_bass_enabled: db_lock
                 .get_setting("dsp_sub_bass_enabled")
                 .map(|v| v == "1"),
@@ -823,7 +823,7 @@ impl AudoxidyApp {
                 .get_setting("dsp_reverb_room_size")
                 .and_then(|v| v.parse::<f32>().ok()),
         });
-        if let Some(dsp) = bootstrap_dsp {
+        if let Some(dsp) = startup_dsp {
             core.audio_manager().with_dsp_mut(|chain| {
                 if let Some(v) = dsp.sub_bass_enabled {
                     chain.sub_bass.enabled = v;
@@ -902,7 +902,7 @@ impl AudoxidyApp {
         // Load into AudioCenterManager fields AND apply to AudioState
         // db-lock: snapshot de volumen y crossfade; el guard se libera antes de
         // escribir el estado de audio y el espejo del centro de audio.
-        let bootstrap_volume = core.database().lock().ok().map(|db_lock| BootstrapVolume {
+        let startup_volume = core.database().lock().ok().map(|db_lock| StartupVolume {
             fades_enabled: db_lock.get_setting("vol_fades_enabled").map(|v| v == "1"),
             smooth_volume_enabled: db_lock
                 .get_setting("vol_smooth_volume_enabled")
@@ -945,7 +945,7 @@ impl AudoxidyApp {
                 .get_setting("vol_rg_offset_rt_db")
                 .and_then(|v| v.parse::<f32>().ok()),
         });
-        if let Some(vol) = bootstrap_volume {
+        if let Some(vol) = startup_volume {
             if let Some(v) = vol.fades_enabled {
                 audio_center_manager.volumen_fades_enabled = v;
                 core.audio_manager().state().write().fades_enabled = v;

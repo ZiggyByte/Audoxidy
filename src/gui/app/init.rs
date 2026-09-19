@@ -1,6 +1,7 @@
 //! Constructor and initial load for `AudoxidyApp`.
 
 use crate::audio::AudioManager;
+use crate::core::core_event_channel;
 use crate::db::{Database, scanner::Scanner};
 use crate::gui::audio_center::AudioCenterManager;
 use crate::gui::library::LibraryManager;
@@ -77,6 +78,9 @@ impl AudoxidyApp {
         let (external_control_tx, external_control_rx) = external_control_channel();
         let media_controls = SystemMediaControls::new(external_control_tx)
             .expect("Error al inicializar controles multimedia del sistema");
+
+        // CoreEvent channel: sender goes to Core, receiver to GUI subscription.
+        let (_core_event_tx, core_event_rx) = core_event_channel();
 
         // Detección de Hardware para modo de bajos recursos (RAM < 8GB o Cores < 4)
         let mut sys = sysinfo::System::new_all();
@@ -739,6 +743,7 @@ impl AudoxidyApp {
                 scanner: scanner_arc,
                 media_controls,
                 external_control_rx,
+                core_event_rx,
                 playlist_manager,
                 filters_manager,
                 library_manager,

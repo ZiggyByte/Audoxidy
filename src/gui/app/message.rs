@@ -3,6 +3,7 @@
 //! `Message` is the single event type the iced runtime delivers to
 //! `AudoxidyApp::update`; its companion enums describe message payloads.
 
+use crate::core::CoreEvent;
 use crate::gui::audio_center::AudioCenterMessage;
 use crate::integrations::control::ExternalControlEvent;
 
@@ -23,6 +24,7 @@ pub enum Message {
     VolumeChanged(f32),
     SeekTo(f32),
     ExternalControl(ExternalControlEvent),
+    CoreEvent(CoreEvent),
     SetPlaying(bool),
     ToggleRepeat,
     ToggleShuffle,

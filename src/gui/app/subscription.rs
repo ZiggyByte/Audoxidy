@@ -1,5 +1,6 @@
 //! iced subscription and theme wiring for `AudoxidyApp`.
 
+use crate::core::CoreEvent;
 use crate::integrations::control::{
     ExternalControlEvent, ExternalControlReceiver, external_control_stream,
 };
@@ -43,6 +44,46 @@ pub(in crate::gui::app) fn external_control_to_message(
         }
         ExternalControlEvent::SetVolume(volume) => Message::VolumeChanged(clamp_volume(volume)),
     }
+}
+
+/// Wrapper around the crossbeam CoreEvent receiver for iced subscription identity.
+///
+/// The recipe hash must be stable across subscription evaluations to avoid
+/// canceling and recreating the bridge thread on every update. Hashing only
+/// by `TypeId` achieves this.
+#[derive(Clone)]
+pub struct CoreEventReceiver(pub crossbeam::channel::Receiver<CoreEvent>);
+
+impl std::hash::Hash for CoreEventReceiver {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::any::TypeId::of::<CoreEvent>().hash(state);
+    }
+}
+
+/// Adapts the synchronous CoreEvent receiver to an async stream for iced.
+///
+/// A dedicated bridge thread performs the blocking `recv()` and forwards
+/// each event to an unbounded async channel. If the subscription stream
+/// is replaced or dropped, `unbounded_send` fails and the bridge thread exits.
+fn core_event_stream(
+    rx: crossbeam::channel::Receiver<CoreEvent>,
+) -> impl iced::futures::Stream<Item = CoreEvent> + Send + 'static {
+    let (tx, out) = iced::futures::channel::mpsc::unbounded();
+
+    let spawn_result = std::thread::Builder::new()
+        .name("core-event-bridge".into())
+        .spawn(move || {
+            while let Ok(event) = rx.recv() {
+                if tx.unbounded_send(event).is_err() {
+                    break;
+                }
+            }
+        });
+    if let Err(e) = spawn_result {
+        tracing::error!("No se pudo crear el hilo puente de CoreEvent: {e}");
+    }
+
+    out
 }
 
 impl AudoxidyApp {
@@ -182,6 +223,15 @@ impl AudoxidyApp {
                 |rx| external_control_stream(rx.0.clone()),
             )
             .map(Message::ExternalControl),
+        );
+
+        // CoreEvent bridge: edge-transition events from the Core domain layer.
+        // Same hash-stable recipe pattern as the external control bridge.
+        subs.push(
+            iced::Subscription::run_with(CoreEventReceiver(self.core_event_rx.clone()), |rx| {
+                core_event_stream(rx.0.clone())
+            })
+            .map(Message::CoreEvent),
         );
 
         iced::Subscription::batch(subs)

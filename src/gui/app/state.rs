@@ -1,6 +1,7 @@
 //! Application state for the GUI shell.
 
 use crate::audio::AudioManager;
+use crate::core::CoreEvent;
 use crate::db::{Database, scanner::Scanner};
 use crate::gui::audio_center::AudioCenterManager;
 use crate::gui::library::LibraryManager;
@@ -18,6 +19,7 @@ pub struct AudoxidyApp {
     pub(in crate::gui::app) scanner: Arc<Scanner>,
     pub(in crate::gui::app) media_controls: SystemMediaControls,
     pub(in crate::gui::app) external_control_rx: crossbeam::channel::Receiver<ExternalControlEvent>,
+    pub(in crate::gui::app) core_event_rx: crossbeam::channel::Receiver<CoreEvent>,
     pub(in crate::gui::app) playlist_manager: PlaylistManager,
     pub(in crate::gui::app) filters_manager: LibraryFiltersManager,
     pub(in crate::gui::app) library_manager: LibraryManager,

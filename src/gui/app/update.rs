@@ -5,6 +5,7 @@
 
 mod audio_center;
 mod context_menu;
+mod core_event;
 mod dialogs;
 mod library;
 pub(in crate::gui::app) mod memory;
@@ -208,6 +209,7 @@ impl crate::gui::app::AudoxidyApp {
             | Message::MeterResetPeak
             | Message::MeterToggleEnabled(..) => self.handle_meter(message),
             Message::NoOp => Task::none(),
+            Message::CoreEvent(event) => self.on_core_event(event),
         }
     }
 }

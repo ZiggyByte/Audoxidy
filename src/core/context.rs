@@ -13,6 +13,7 @@ use crate::audio::AudioManager;
 use crate::db::Database;
 use crate::db::scanner::Scanner;
 
+use super::error::CoreError;
 use super::events::{CoreEvent, core_event_channel};
 use super::types::CorePaths;
 
@@ -26,6 +27,7 @@ pub struct Core {
     pub(crate) database: Arc<Mutex<Database>>,
     pub(crate) scanner: Arc<Scanner>,
     pub(crate) event_tx: crossbeam::channel::Sender<CoreEvent>,
+    pub(crate) event_rx: crossbeam::channel::Receiver<CoreEvent>,
     pub(crate) paths: CorePaths,
 }
 
@@ -40,14 +42,23 @@ impl Core {
         scanner: Arc<Scanner>,
         paths: CorePaths,
     ) -> Self {
-        let (event_tx, _event_rx) = core_event_channel();
+        let (event_tx, event_rx) = core_event_channel();
         Self {
             audio_manager,
             database,
             scanner,
             event_tx,
+            event_rx,
             paths,
         }
+    }
+
+    /// Returns a clone of the event-stream receiver for a front-end subscription.
+    ///
+    /// The channel is multi-consumer: every clone shares the same queue, so a
+    /// front-end can subscribe without taking ownership away from Core.
+    pub fn event_receiver(&self) -> crossbeam::channel::Receiver<CoreEvent> {
+        self.event_rx.clone()
     }
 
     /// Returns a reference to the injected filesystem paths.
@@ -63,6 +74,14 @@ impl Core {
     /// Returns a reference to the database.
     pub fn database(&self) -> &Arc<Mutex<Database>> {
         &self.database
+    }
+
+    /// Acquires the database lock, mapping a poisoned lock to a typed error.
+    ///
+    /// Service methods use this helper so a poisoned lock surfaces as
+    /// [`CoreError::LockUnavailable`] instead of panicking.
+    pub(crate) fn lock_db(&self) -> Result<std::sync::MutexGuard<'_, Database>, CoreError> {
+        self.database.lock().map_err(|_| CoreError::LockUnavailable)
     }
 
     /// Returns a reference to the scanner.

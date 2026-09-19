@@ -18,7 +18,7 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
-                self.scanner.scan_folder_async(folder);
+                self.core.scan_folder(folder);
                 // Marcar que la BD necesita refrescarse tras el escaneo
                 self.db_needs_refresh = true;
                 self.player_ui_state.tick_count = 0;
@@ -67,28 +67,23 @@ impl crate::gui::app::AudoxidyApp {
 
                 if self.library_manager.sort_column.is_none() {
                     // Restaurar orden original desde DB
-                    // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                    if let Ok(db) = self.database.lock() {
-                        if let Ok(albums) = db.get_grid_items_by_artist() {
-                            self.library_manager.cached_albums = Some(
-                                albums
-                                    .into_iter()
-                                    .map(|a| crate::gui::library::AlbumEntry {
-                                        id: a.0,
-                                        title: a.1,
-                                        artist: a.2,
-                                        genre: a.3,
-                                        year: a.4,
-                                        cover_path: a.5,
-                                    })
-                                    .collect(),
-                            );
-                        }
-                        if let Some(album_id) = &self.library_manager.expanded_album {
-                            if let Ok(songs) = db.get_songs_by_album(album_id) {
-                                self.library_manager.expanded_album_songs = Some(songs);
-                            }
-                        }
+                    let albums = self.core.get_albums();
+                    self.library_manager.cached_albums = Some(
+                        albums
+                            .into_iter()
+                            .map(|a| crate::gui::library::AlbumEntry {
+                                id: a.0,
+                                title: a.1,
+                                artist: a.2,
+                                genre: a.3,
+                                year: a.4,
+                                cover_path: a.5,
+                            })
+                            .collect(),
+                    );
+                    if let Some(album_id) = &self.library_manager.expanded_album {
+                        self.library_manager.expanded_album_songs =
+                            Some(self.core.get_songs_by_album(album_id));
                     }
                 } else {
                     // Aplicar el sort en memoria a albums
@@ -195,19 +190,9 @@ impl crate::gui::app::AudoxidyApp {
                             if let Some(pos) = album_id.find('|') {
                                 let artist = &album_id[..pos];
                                 let hash = &album_id[pos + 1..];
-                                // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                                if let Ok(db) = self.database.lock() {
-                                    if let Ok(songs) =
-                                        db.get_songs_by_album_and_artist(hash, artist)
-                                    {
-                                        alb_songs = songs;
-                                    }
-                                }
-                            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                            } else if let Ok(db) = self.database.lock() {
-                                if let Ok(songs) = db.get_songs_by_album(album_id.as_str()) {
-                                    alb_songs = songs;
-                                }
+                                alb_songs = self.core.get_songs_by_album_and_artist(hash, artist);
+                            } else {
+                                alb_songs = self.core.get_songs_by_album(album_id.as_str());
                             }
                         }
 
@@ -511,24 +496,20 @@ impl crate::gui::app::AudoxidyApp {
                 if mode == crate::gui::library::LibraryViewMode::Grid {
                     // Al cambiar a Grid: asegurar que cached_albums esté cargado
                     if self.library_manager.cached_albums.is_none() {
-                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                        if let Ok(db) = self.database.lock() {
-                            if let Ok(albums) = db.get_grid_items_by_artist() {
-                                self.library_manager.cached_albums = Some(
-                                    albums
-                                        .into_iter()
-                                        .map(|a| crate::gui::library::AlbumEntry {
-                                            id: a.0,
-                                            title: a.1,
-                                            artist: a.2,
-                                            genre: a.3,
-                                            year: a.4,
-                                            cover_path: a.5,
-                                        })
-                                        .collect(),
-                                );
-                            }
-                        }
+                        let albums = self.core.get_albums();
+                        self.library_manager.cached_albums = Some(
+                            albums
+                                .into_iter()
+                                .map(|a| crate::gui::library::AlbumEntry {
+                                    id: a.0,
+                                    title: a.1,
+                                    artist: a.2,
+                                    genre: a.3,
+                                    year: a.4,
+                                    cover_path: a.5,
+                                })
+                                .collect(),
+                        );
                     }
                 }
 
@@ -598,7 +579,7 @@ impl crate::gui::app::AudoxidyApp {
                         ) {
                             tracing::error!("Error reproduciendo archivo de playlist: {}", e);
                         } else {
-                            self.audio_manager.play();
+                            self.core.play();
                             self.playlist_manager.playing_song_idx = Some(idx);
                             self.playlist_manager.notify_manual_play(s_id);
                             self.persist_playlist_state();
@@ -689,7 +670,7 @@ impl crate::gui::app::AudoxidyApp {
 
                 let ids_to_delete: Vec<_> = ids_to_delete_set.into_iter().collect();
 
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let filtered_songs_clone = self
                     .library_manager
                     .filtered_songs
@@ -738,46 +719,14 @@ impl crate::gui::app::AudoxidyApp {
                         covers_to_check.sort();
                         covers_to_check.dedup();
 
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(db) = db_arc.lock() {
-                            if let Err(e) = db.begin_transaction() {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    error = %e,
-                                    "No se pudo iniciar la transacción de borrado de canciones"
-                                );
-                            }
-                            if let Err(e) = db.batch_delete_songs(&ids_to_delete) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    count = ids_to_delete.len(),
-                                    error = %e,
-                                    "No se pudieron borrar las canciones en lote"
-                                );
-                            }
-                            if let Err(e) = db.cleanup_empty_metadata() {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    error = %e,
-                                    "No se pudieron limpiar los metadatos vacíos"
-                                );
-                            }
-                            if let Err(e) = db.commit_transaction() {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    error = %e,
-                                    "No se pudo confirmar la transacción de borrado de canciones"
-                                );
-                            }
-
-                            for hash in covers_to_check {
-                                if let Ok(false) = db.is_cover_hash_in_use(&hash) {
-                                    let path = format!("cache/covers/{}.avif", hash);
-                                    let _ = std::fs::remove_file(path);
-                                }
-                            }
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
+                        if let Err(e) =
+                            core.delete_songs_with_transaction(&ids_to_delete, &covers_to_check)
+                        {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                error = %e,
+                                "No se pudo completar el borrado de canciones"
+                            );
                         }
                     },
                     |_| Message::LibraryRefresh,
@@ -788,17 +737,11 @@ impl crate::gui::app::AudoxidyApp {
                 crate::utils::memory_manager::MemoryManager::register_library_activity();
                 self.library_manager.data_unloaded = false;
 
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let params = self.library_manager.get_search_params();
 
                 return Task::batch(vec![Task::perform(
-                    async move {
-                        let db = db_arc.lock().unwrap();
-                        let songs = db.get_library_songs_filtered(&params).unwrap_or_default();
-                        let albums = db.get_grid_items_by_artist().unwrap_or_default();
-                        let stats = db.get_library_stats().unwrap_or((0, 0, 0.0, 0.0, 0));
-                        (songs, albums, stats)
-                    },
+                    async move { core.refresh_library_filtered(&params) },
                     |(songs, albums, stats)| {
                         Message::InternalLibraryRefreshed(songs, albums, stats)
                     },
@@ -840,7 +783,8 @@ impl crate::gui::app::AudoxidyApp {
 
                 self.library_manager.selected_items.clear();
                 self.library_manager.update_processed_data(songs);
-                self.filters_manager.build_filter_index(&self.database);
+                self.filters_manager
+                    .build_filter_index(self.core.database());
                 self.update_selection_stats();
 
                 // Si había una petición de revelado pendiente (esperando a que los filtros se limpiaran), continuar ahora.
@@ -1182,19 +1126,13 @@ impl crate::gui::app::AudoxidyApp {
                                         self.library_manager.expanded_album =
                                             Some(composite_id.clone());
                                         // Poblar expanded_album_songs inmediatamente para el cálculo de scroll
-                                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                                        if let Ok(db) = self.database.lock() {
-                                            if let Ok(mut songs) = db.get_songs_by_album_and_artist(
-                                                &hash_id,
-                                                artist_name,
-                                            ) {
-                                                if self.library_manager.sort_column.is_some() {
-                                                    self.library_manager.sort_songs(&mut songs);
-                                                }
-                                                self.library_manager.expanded_album_songs =
-                                                    Some(songs);
-                                            }
+                                        let mut songs = self
+                                            .core
+                                            .get_songs_by_album_and_artist(&hash_id, artist_name);
+                                        if self.library_manager.sort_column.is_some() {
+                                            self.library_manager.sort_songs(&mut songs);
                                         }
+                                        self.library_manager.expanded_album_songs = Some(songs);
                                     }
 
                                     let cols = self.library_manager.albums_per_row.get().max(2);
@@ -1369,14 +1307,11 @@ impl crate::gui::app::AudoxidyApp {
 
     /// Dispara una búsqueda asíncrona en la base de datos basada en los filtros actuales.
     pub(in crate::gui::app) fn trigger_library_search(&self) -> Task<Message> {
-        let db_arc = self.database.clone();
+        let core = self.core.clone();
         let params = self.library_manager.get_search_params();
 
         Task::perform(
-            async move {
-                let db = db_arc.lock().unwrap();
-                db.get_library_songs_filtered(&params).unwrap_or_default()
-            },
+            async move { core.get_library_songs_filtered(&params) },
             Message::LibraryFilteredLoaded,
         )
     }

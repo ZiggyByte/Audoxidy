@@ -8,6 +8,8 @@
 //! follows acquire→copy→release→call AudioManager. The DB lock is never held
 //! across an audio manager call.
 
+use std::sync::Arc;
+
 use super::Core;
 use super::error::CoreError;
 
@@ -66,6 +68,49 @@ impl Core {
     /// Clears the end-of-file flag.
     pub fn clear_eof(&self) {
         self.audio_manager.clear_eof();
+    }
+
+    /// Returns a snapshot of the current audio engine state.
+    ///
+    /// The state accessor clones the shared value, so the caller never holds
+    /// the audio-state read guard across a boundary.
+    pub fn audio_state(&self) -> crate::audio::engine::AudioState {
+        self.audio_manager.get_state()
+    }
+
+    /// Returns the shared meter data for the VU-meter hot path.
+    pub fn meter(&self) -> Arc<crate::audio::meter::MeterData> {
+        self.audio_manager.meter()
+    }
+
+    /// Sets the EQ preamp gain.
+    pub fn set_preamp_gain(&self, gain: f32) {
+        self.audio_manager.set_preamp_gain(gain);
+    }
+
+    /// Sets a single EQ band gain by index.
+    pub fn set_eq_band_gain(&self, index: usize, gain: f32) {
+        self.audio_manager.set_eq_band_gain(index, gain);
+    }
+
+    /// Sets the meter peak-hold duration in milliseconds.
+    pub fn set_meter_hold_time_ms(&self, value: f32) {
+        self.audio_manager.state().write().meter_hold_time_ms = value;
+    }
+
+    /// Sets the meter RMS averaging window in milliseconds.
+    pub fn set_meter_rms_window_ms(&self, value: f32) {
+        self.audio_manager.state().write().meter_rms_window_ms = value;
+    }
+
+    /// Enables or disables the infinite peak hold.
+    pub fn set_meter_infinite_hold(&self, enabled: bool) {
+        self.audio_manager.state().write().meter_infinite_hold = enabled;
+    }
+
+    /// Enables or disables the meter.
+    pub fn set_meter_enabled(&self, enabled: bool) {
+        self.audio_manager.state().write().meter_enabled = enabled;
     }
 
     /// Loads and plays an audio file with ReplayGain lookup.
@@ -128,45 +173,30 @@ impl Core {
 
     /// Persists the current shuffle session to the database.
     ///
-    /// Acquires the DB lock, saves the session, releases the lock.
-    /// Best-effort: a lock failure is logged and skipped.
+    /// Acquires the DB lock, saves the session, releases the lock, and returns
+    /// a typed error for the caller to log.
     pub fn persist_shuffle_session(
         &self,
         playlist_id: i64,
         session: &crate::db::database::ShuffleSession,
-    ) {
-        // db-lock: persistence — save is skipped if lock fails
-        if let Ok(mut db) = self.database.lock() {
-            let result = db.save_shuffle_session(playlist_id, session);
-            if let Err(e) = result {
-                tracing::warn!(
-                    target: "audoxidy::persistence",
-                    key = "shuffle_session",
-                    error = %e,
-                    "Failed to persist shuffle session"
-                );
-            }
-        } else {
-            tracing::warn!("db-lock: lock not available");
-        }
+    ) -> Result<(), CoreError> {
+        let mut db = self.lock_db()?;
+        db.save_shuffle_session(playlist_id, session)?;
+        Ok(())
+    }
+
+    /// Removes the persisted shuffle session for a playlist.
+    pub fn clear_shuffle_session(&self, playlist_id: i64) -> Result<(), CoreError> {
+        let db = self.lock_db()?;
+        db.clear_shuffle_session(playlist_id)?;
+        Ok(())
     }
 
     /// Persists a player volume setting to the database.
-    pub fn persist_volume(&self, volume: f64) {
-        // db-lock: persistence — save is skipped if lock fails
-        if let Ok(db) = self.database.lock() {
-            let result = db.set_setting("player_volume", &format!("{:.4}", volume));
-            if let Err(e) = result {
-                tracing::warn!(
-                    target: "audoxidy::persistence",
-                    key = "player_volume",
-                    error = %e,
-                    "Failed to persist volume"
-                );
-            }
-        } else {
-            tracing::warn!("db-lock: lock not available");
-        }
+    pub fn persist_volume(&self, volume: f64) -> Result<(), CoreError> {
+        let db = self.lock_db()?;
+        db.set_setting("player_volume", &format!("{:.4}", volume))?;
+        Ok(())
     }
 }
 

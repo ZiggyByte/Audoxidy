@@ -10,23 +10,18 @@ impl crate::gui::app::AudoxidyApp {
     pub(in crate::gui::app) fn handle_playlist(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::AddSongToPlaylist(song) => {
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
                 return Task::perform(
                     async move {
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(db) = db_arc.lock() {
-                            if let Err(e) = db.add_song_to_playlist(active_id, song.id) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = active_id,
-                                    song_id = song.id,
-                                    error = %e,
-                                    "No se pudo añadir la canción a la playlist"
-                                );
-                            }
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
+                        if let Err(e) = core.add_song_to_playlist(active_id, song.id) {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                playlist_id = active_id,
+                                song_id = song.id,
+                                error = %e,
+                                "No se pudo añadir la canción a la playlist"
+                            );
                         }
                         active_id
                     },
@@ -34,24 +29,19 @@ impl crate::gui::app::AudoxidyApp {
                 );
             }
             Message::PlayAlbum(songs) => {
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
                 let song_ids: Vec<i64> = songs.iter().map(|s| s.id).collect();
                 return Task::perform(
                     async move {
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(mut db) = db_arc.lock() {
-                            if let Err(e) = db.add_songs_to_playlist(active_id, &song_ids) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = active_id,
-                                    count = song_ids.len(),
-                                    error = %e,
-                                    "No se pudieron añadir las canciones a la playlist"
-                                );
-                            }
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
+                        if let Err(e) = core.add_songs_to_playlist(active_id, &song_ids) {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                playlist_id = active_id,
+                                count = song_ids.len(),
+                                error = %e,
+                                "No se pudieron añadir las canciones a la playlist"
+                            );
                         }
                         active_id
                     },
@@ -83,26 +73,24 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::ClearPlaylist => {
                 self.focus = AppFocus::Playlist;
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db) = self.database.lock() {
-                    if let Err(e) = db.clear_playlist(self.playlist_manager.active_playlist_id) {
-                        tracing::warn!(
-                            target: "audoxidy::persistence",
-                            playlist_id = self.playlist_manager.active_playlist_id,
-                            error = %e,
-                            "No se pudo vaciar la playlist"
-                        );
-                    }
-                    self.playlist_manager.clear_groups();
-                    self.playlist_manager.playing_song_idx = None;
-                    self.audio_manager.stop();
-                    self.persist_playlist_state();
-
-                    return Task::done(Message::GlobalMemoryPurge);
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
+                if let Err(e) = self
+                    .core
+                    .clear_playlist(self.playlist_manager.active_playlist_id)
+                {
+                    tracing::warn!(
+                        target: "audoxidy::persistence",
+                        playlist_id = self.playlist_manager.active_playlist_id,
+                        error = %e,
+                        "No se pudo vaciar la playlist"
+                    );
+                    return Task::none();
                 }
-                Task::none()
+                self.playlist_manager.clear_groups();
+                self.playlist_manager.playing_song_idx = None;
+                self.core.stop();
+                self.persist_playlist_state();
+
+                return Task::done(Message::GlobalMemoryPurge);
             }
             Message::ToggleSongEnabled(linear_idx, force_state) => {
                 self.focus = AppFocus::Playlist;
@@ -119,40 +107,33 @@ impl crate::gui::app::AudoxidyApp {
                         .toggle_song_enabled_at_linear_index(linear_idx);
                 }
 
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db) = self.database.lock() {
-                    if let Some(song_id) = song_id_to_update {
-                        if let Some(state) = force_state {
-                            if let Err(e) = db.set_song_enabled_in_playlist(
-                                self.playlist_manager.active_playlist_id,
+                if let Some(song_id) = song_id_to_update {
+                    let playlist_id = self.playlist_manager.active_playlist_id;
+                    if let Some(state) = force_state {
+                        if let Err(e) =
+                            self.core
+                                .set_song_enabled_in_playlist(playlist_id, song_id, state)
+                        {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                playlist_id,
                                 song_id,
-                                state,
-                            ) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = self.playlist_manager.active_playlist_id,
-                                    song_id,
-                                    error = %e,
-                                    "No se pudo actualizar el estado de la canción en la playlist"
-                                );
-                            }
-                        } else {
-                            if let Err(e) = db.toggle_song_enabled_in_playlist(
-                                self.playlist_manager.active_playlist_id,
-                                song_id,
-                            ) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = self.playlist_manager.active_playlist_id,
-                                    song_id,
-                                    error = %e,
-                                    "No se pudo alternar el estado de la canción en la playlist"
-                                );
-                            }
+                                error = %e,
+                                "No se pudo actualizar el estado de la canción en la playlist"
+                            );
                         }
+                    } else if let Err(e) = self
+                        .core
+                        .toggle_song_enabled_in_playlist(playlist_id, song_id)
+                    {
+                        tracing::warn!(
+                            target: "audoxidy::persistence",
+                            playlist_id,
+                            song_id,
+                            error = %e,
+                            "No se pudo alternar el estado de la canción en la playlist"
+                        );
                     }
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
                 }
 
                 self.playlist_manager.invalidate_cache();
@@ -180,38 +161,31 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 if let Some(path) = folder_to_update {
-                    // db-lock: persistencia — el guardado se omite si el lock falla
-                    if let Ok(db) = self.database.lock() {
-                        if let Some(state) = force_state {
-                            if let Err(e) = db.set_folder_enabled_in_playlist(
-                                self.playlist_manager.active_playlist_id,
-                                &path,
-                                state,
-                            ) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = self.playlist_manager.active_playlist_id,
-                                    path = %path,
-                                    error = %e,
-                                    "No se pudo actualizar el estado del folder en la playlist"
-                                );
-                            }
-                        } else {
-                            if let Err(e) = db.toggle_folder_enabled_in_playlist(
-                                self.playlist_manager.active_playlist_id,
-                                &path,
-                            ) {
-                                tracing::warn!(
-                                    target: "audoxidy::persistence",
-                                    playlist_id = self.playlist_manager.active_playlist_id,
-                                    path = %path,
-                                    error = %e,
-                                    "No se pudo alternar el estado del folder en la playlist"
-                                );
-                            }
+                    let playlist_id = self.playlist_manager.active_playlist_id;
+                    if let Some(state) = force_state {
+                        if let Err(e) =
+                            self.core
+                                .set_folder_enabled_in_playlist(playlist_id, &path, state)
+                        {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                playlist_id,
+                                path = %path,
+                                error = %e,
+                                "No se pudo actualizar el estado del folder en la playlist"
+                            );
                         }
-                    } else {
-                        tracing::warn!("db-lock: lock no disponible");
+                    } else if let Err(e) = self
+                        .core
+                        .toggle_folder_enabled_in_playlist(playlist_id, &path)
+                    {
+                        tracing::warn!(
+                            target: "audoxidy::persistence",
+                            playlist_id,
+                            path = %path,
+                            error = %e,
+                            "No se pudo alternar el estado del folder en la playlist"
+                        );
                     }
                 }
 
@@ -244,21 +218,18 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::CreatePlaylist => {
                 let name = format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1);
-                if let Ok(new_id) = self.database.lock().unwrap().create_playlist(&name, false) {
-                    if let Ok(playlists) = self.database.lock().unwrap().get_all_playlists() {
-                        self.playlist_manager.playlists = playlists;
-                        return Task::done(Message::SwitchPlaylist(new_id, false));
-                    }
+                if let Ok(new_id) = self.core.create_playlist(&name, false)
+                    && let Ok(playlists) = self.core.get_all_playlists()
+                {
+                    self.playlist_manager.playlists = playlists;
+                    return Task::done(Message::SwitchPlaylist(new_id, false));
                 }
                 Task::none()
             }
             Message::RefreshPlaylists(id_opt) => {
-                let db = self.database.clone();
+                let core = self.core.clone();
                 return Task::perform(
-                    async move {
-                        let db_lock = db.lock().unwrap();
-                        db_lock.get_all_playlists().ok()
-                    },
+                    async move { core.get_all_playlists().ok() },
                     move |playlists_opt| {
                         if let Some(playlists) = playlists_opt {
                             Message::InternalPlaylistsRefreshed(playlists, id_opt)
@@ -293,7 +264,7 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::ExportPlaylist(id, target_path, format, mode) => {
-                let db = self.database.clone();
+                let core = self.core.clone();
 
                 return Task::perform(
                     async move {
@@ -303,24 +274,14 @@ impl crate::gui::app::AudoxidyApp {
                                 .collect::<String>()
                         };
 
-                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                        let songs = if let Ok(db_lock) = db.lock() {
-                            db_lock.search_playlist_songs(id, "").unwrap_or_default()
-                        } else {
-                            vec![]
-                        };
+                        let songs = core.search_playlist_songs(id, "").unwrap_or_default();
 
-                        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                        let p_name = if let Ok(db_lock) = db.lock() {
-                            db_lock
-                                .get_playlist_by_id(id)
-                                .ok()
-                                .flatten()
-                                .map(|p| p.name)
-                                .unwrap_or_else(|| "Playlist_Exportada".to_string().into())
-                        } else {
-                            "Playlist_Exportada".into()
-                        };
+                        let p_name = core
+                            .get_playlist_by_id(id)
+                            .ok()
+                            .flatten()
+                            .map(|p| p.name)
+                            .unwrap_or_else(|| "Playlist_Exportada".to_string().into());
 
                         let is_portable = mode == ExportMode::PortableFolder;
                         let mut m3u_content = String::from("#EXTM3U\n");
@@ -392,29 +353,24 @@ impl crate::gui::app::AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 self.persist_playlist_state();
 
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db) = self.database.lock() {
-                    log_persist(
-                        "last_active_playlist_id",
-                        db.set_setting("last_active_playlist_id", &id.to_string()),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                log_persist(
+                    "last_active_playlist_id",
+                    self.core
+                        .persist_audio_setting("last_active_playlist_id", &id.to_string()),
+                );
 
                 self.playlist_manager.active_playlist_id = id;
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
 
                 return Task::perform(
                     async move {
-                        let db = db_arc.lock().unwrap();
-                        let groups = db.get_playlist_songs_grouped_by_folder(id).ok();
-                        let p_data = db.get_playlist_by_id(id).ok().flatten();
+                        let groups = core.get_playlist_songs_grouped_by_folder(id).ok();
+                        let p_data = core.get_playlist_by_id(id).ok().flatten();
                         let mut session_opt = None;
 
                         if let Some(p) = &p_data {
                             if p.shuffle_active {
-                                if let Ok(Some(mut session)) = db.load_shuffle_session(id) {
+                                if let Ok(Some(mut session)) = core.load_shuffle_session(id) {
                                     if let Some(song_id) = p.last_song_id {
                                         if let Some(pos) = session
                                             .shuffle_order
@@ -493,8 +449,8 @@ impl crate::gui::app::AudoxidyApp {
                                     album,
                                     cover_path,
                                 );
-                                self.audio_manager.seek(last_pos);
-                                self.audio_manager.set_playing(is_playing_needed);
+                                self.core.seek(last_pos);
+                                self.core.set_playing(is_playing_needed);
                                 self.sync_player_art();
                                 was_restored = true;
                             }
@@ -709,7 +665,7 @@ impl crate::gui::app::AudoxidyApp {
                             ) {
                                 tracing::error!("Error reproduciendo archivo: {}", e);
                             } else {
-                                self.audio_manager.play();
+                                self.core.play();
                                 self.playlist_manager.playing_song_idx = Some(idx);
                                 self.playlist_manager.selected_idxs.clear();
                                 self.playlist_manager.selected_idxs.insert(idx);
@@ -760,13 +716,11 @@ impl crate::gui::app::AudoxidyApp {
                 )
             }
             Message::PlaylistProcessExternalFiles(paths) => {
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
                 Task::perform(
                     async move {
-                        crate::db::scanner::Scanner::process_external_batch(
-                            &db_arc, paths, active_id,
-                        );
+                        let _ = core.import_external_batch(paths, active_id);
                     },
                     move |_| Message::RefreshPlaylists(Some(active_id)),
                 )
@@ -850,7 +804,7 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::PlaylistDeleteSelection(linear_idx) => {
                 self.focus = AppFocus::Playlist;
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let active_playlist_id = self.playlist_manager.active_playlist_id;
 
                 // Si el índice está en la selección actual, eliminamos todo lo seleccionado
@@ -892,22 +846,17 @@ impl crate::gui::app::AudoxidyApp {
                     return Task::batch(vec![
                         Task::perform(
                             async move {
-                                // db-lock: persistencia — el guardado se omite si el lock falla
-                                if let Ok(mut db) = db_arc.lock() {
-                                    if let Err(e) = db.batch_remove_songs_from_playlist(
-                                        active_playlist_id,
-                                        &target_songs,
-                                    ) {
-                                        tracing::warn!(
-                                            target: "audoxidy::persistence",
-                                            playlist_id = active_playlist_id,
-                                            count = target_songs.len(),
-                                            error = %e,
-                                            "No se pudieron quitar las canciones de la playlist"
-                                        );
-                                    }
-                                } else {
-                                    tracing::warn!("db-lock: lock no disponible");
+                                if let Err(e) = core.batch_remove_songs_from_playlist(
+                                    active_playlist_id,
+                                    &target_songs,
+                                ) {
+                                    tracing::warn!(
+                                        target: "audoxidy::persistence",
+                                        playlist_id = active_playlist_id,
+                                        count = target_songs.len(),
+                                        error = %e,
+                                        "No se pudieron quitar las canciones de la playlist"
+                                    );
                                 }
                                 Some(active_playlist_id)
                             },
@@ -1031,7 +980,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::PlaylistSendToList(linear_idx, target_playlist_id) => {
                 self.focus = AppFocus::Playlist;
                 self.context_menu = None;
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
 
                 let target_songs = if self.playlist_manager.selected_idxs.contains(&linear_idx) {
                     self.playlist_manager.get_selected_song_ids()
@@ -1076,21 +1025,16 @@ impl crate::gui::app::AudoxidyApp {
                 if !target_songs.is_empty() {
                     return Task::perform(
                         async move {
-                            // db-lock: persistencia — el guardado se omite si el lock falla
-                            if let Ok(mut db) = db_arc.lock() {
-                                if let Err(e) =
-                                    db.add_songs_to_playlist(target_playlist_id, &target_songs)
-                                {
-                                    tracing::warn!(
-                                        target: "audoxidy::persistence",
-                                        playlist_id = target_playlist_id,
-                                        count = target_songs.len(),
-                                        error = %e,
-                                        "No se pudieron añadir las canciones a la playlist"
-                                    );
-                                }
-                            } else {
-                                tracing::warn!("db-lock: lock no disponible");
+                            if let Err(e) =
+                                core.add_songs_to_playlist(target_playlist_id, &target_songs)
+                            {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id = target_playlist_id,
+                                    count = target_songs.len(),
+                                    error = %e,
+                                    "No se pudieron añadir las canciones a la playlist"
+                                );
                             }
                         },
                         |_| Message::NoOp,
@@ -1239,7 +1183,7 @@ impl crate::gui::app::AudoxidyApp {
     }
 
     pub(in crate::gui::app) fn persist_playlist_state(&self) {
-        let state = self.audio_manager.get_state();
+        let state = self.core.audio_state();
         let playlist_id = self.playlist_manager.active_playlist_id;
         let last_song_id = self
             .playlist_manager
@@ -1256,27 +1200,22 @@ impl crate::gui::app::AudoxidyApp {
             (0, None)
         };
 
-        // db-lock: persistencia — el guardado se omite si el lock falla
-        if let Ok(db) = self.database.lock() {
-            if let Err(e) = db.update_playlist_persistence(
+        if let Err(e) = self.core.update_playlist_persistence(
+            playlist_id,
+            last_song_id,
+            pos,
+            is_p,
+            shuffle,
+            repeat,
+            s_pos,
+            s_id,
+        ) {
+            tracing::warn!(
+                target: "audoxidy::persistence",
                 playlist_id,
-                last_song_id,
-                pos,
-                is_p,
-                shuffle,
-                repeat,
-                s_pos,
-                s_id,
-            ) {
-                tracing::warn!(
-                    target: "audoxidy::persistence",
-                    playlist_id,
-                    error = %e,
-                    "No se pudo guardar el estado de reproducción de la playlist"
-                );
-            }
-        } else {
-            tracing::warn!("db-lock: lock no disponible");
+                error = %e,
+                "No se pudo guardar el estado de reproducción de la playlist"
+            );
         }
     }
 }

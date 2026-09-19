@@ -20,7 +20,7 @@ use iced::Task;
 
 impl crate::gui::app::AudoxidyApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        let state = self.audio_manager.get_state();
+        let state = self.core.audio_state();
         self.media_controls.update(&state);
 
         // Registro de actividad global y por sección

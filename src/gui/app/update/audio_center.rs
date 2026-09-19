@@ -16,9 +16,11 @@ impl crate::gui::app::AudoxidyApp {
                     {
                         // Si ya está abierto en la misma pestaña, lo cerramos
                         self.audio_center_manager
-                            .save_eq_settings_to_db(&*self.database);
-                        self.audio_center_manager
-                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                            .save_eq_settings_to_db(self.core.database());
+                        self.audio_center_manager.save_dsp_settings_to_db(
+                            self.core.audio_manager(),
+                            self.core.database(),
+                        );
                         self.audio_center_manager.open = false;
                         self.audio_center_manager.window_pos = None;
                     } else {
@@ -30,7 +32,7 @@ impl crate::gui::app::AudoxidyApp {
                         self.audio_center_manager.selected_tab = tab_idx;
                         if self.audio_center_manager.first_open {
                             self.audio_center_manager
-                                .sync_from_engine(&self.audio_manager);
+                                .sync_from_engine(self.core.audio_manager());
                             self.audio_center_manager.first_open = false;
                         }
                     }
@@ -38,16 +40,18 @@ impl crate::gui::app::AudoxidyApp {
                     // Alternancia genérica (comportamiento anterior)
                     if self.audio_center_manager.open {
                         self.audio_center_manager
-                            .save_eq_settings_to_db(&*self.database);
-                        self.audio_center_manager
-                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                            .save_eq_settings_to_db(self.core.database());
+                        self.audio_center_manager.save_dsp_settings_to_db(
+                            self.core.audio_manager(),
+                            self.core.database(),
+                        );
                     }
                     self.audio_center_manager.open = !self.audio_center_manager.open;
                     if self.audio_center_manager.open {
                         self.audio_center_manager.window_pos = None;
                         if self.audio_center_manager.first_open {
                             self.audio_center_manager
-                                .sync_from_engine(&self.audio_manager);
+                                .sync_from_engine(self.core.audio_manager());
                             self.audio_center_manager.first_open = false;
                         }
                     }
@@ -148,8 +152,8 @@ impl crate::gui::app::AudoxidyApp {
                 // Forward to audio_center_manager.update()
                 self.audio_center_manager.update(
                     ac_msg.clone(),
-                    &self.audio_manager,
-                    &self.database,
+                    self.core.audio_manager(),
+                    self.core.database(),
                 );
 
                 // Persistir inmediatamente cada cambio a la base de datos
@@ -165,7 +169,7 @@ impl crate::gui::app::AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetDelete(_)
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetFileImported(_) => {
                         self.audio_center_manager
-                            .save_eq_settings_to_db(&*self.database);
+                            .save_eq_settings_to_db(self.core.database());
                     }
                     _ => {}
                 }
@@ -177,8 +181,10 @@ impl crate::gui::app::AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::AudioStateValueChanged(_, _)
                     | crate::gui::audio_center::AudioCenterMessage::StereoExpanderModeToggled(_)
                     | crate::gui::audio_center::AudioCenterMessage::EqPresetFileExported(_) => {
-                        self.audio_center_manager
-                            .save_dsp_settings_to_db(&*self.audio_manager, &*self.database);
+                        self.audio_center_manager.save_dsp_settings_to_db(
+                            self.core.audio_manager(),
+                            self.core.database(),
+                        );
                     }
                     _ => {}
                 }
@@ -204,7 +210,10 @@ impl crate::gui::app::AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgFixedToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::VolumenRgFixedChanged(_) => {
                         self.audio_center_manager
-                            .save_volumen_settings_to_db(&*self.audio_manager, &*self.database);
+                            .save_volumen_settings_to_db(
+                                self.core.audio_manager(),
+                                self.core.database(),
+                            );
                     }
                     _ => {}
                 }
@@ -215,8 +224,10 @@ impl crate::gui::app::AudoxidyApp {
                     | crate::gui::audio_center::AudioCenterMessage::CrossfadeManualChanged(_)
                     | crate::gui::audio_center::AudioCenterMessage::CrossfadeAutoToggle(_)
                     | crate::gui::audio_center::AudioCenterMessage::CrossfadeAutoChanged(_) => {
-                        self.audio_center_manager
-                            .save_crossfade_settings_to_db(&*self.audio_manager, &*self.database);
+                        self.audio_center_manager.save_crossfade_settings_to_db(
+                            self.core.audio_manager(),
+                            self.core.database(),
+                        );
                     }
                     _ => {}
                 }

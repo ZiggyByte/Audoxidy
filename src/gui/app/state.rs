@@ -1,22 +1,18 @@
 //! Application state for the GUI shell.
 
-use crate::audio::AudioManager;
-use crate::core::CoreEvent;
-use crate::db::{Database, scanner::Scanner};
+use crate::core::{Core, CoreEvent};
 use crate::gui::audio_center::AudioCenterManager;
 use crate::gui::library::LibraryManager;
 use crate::gui::library_filters::LibraryFiltersManager;
 use crate::gui::playlist::PlaylistManager;
 use crate::integrations::control::ExternalControlEvent;
 use crate::integrations::media_controls::SystemMediaControls;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::{ActiveDialog, AppFocus, Message};
 
 pub struct AudoxidyApp {
-    pub(in crate::gui::app) audio_manager: Arc<AudioManager>,
-    pub(in crate::gui::app) database: Arc<Mutex<Database>>,
-    pub(in crate::gui::app) scanner: Arc<Scanner>,
+    pub(in crate::gui::app) core: Arc<Core>,
     pub(in crate::gui::app) media_controls: SystemMediaControls,
     pub(in crate::gui::app) external_control_rx: crossbeam::channel::Receiver<ExternalControlEvent>,
     pub(in crate::gui::app) core_event_rx: crossbeam::channel::Receiver<CoreEvent>,

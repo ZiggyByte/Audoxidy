@@ -1,5 +1,6 @@
-use audoxidy::audio::AudioManager;
+use audoxidy::core::{Core, CorePaths};
 use audoxidy::gui::app::AudoxidyApp;
+use std::sync::{Arc, Mutex};
 
 // ── Entry point ──────────────────────────────────────────────
 
@@ -24,8 +25,28 @@ fn main() -> iced::Result {
     audoxidy::utils::observability::spawn_deadlock_watchdog();
 
     // 4. Inicializar motor de audio
-    let audio_manager =
-        std::sync::Arc::new(AudioManager::new().expect("No se pudo inicializar el motor de audio"));
+    let audio_manager = Arc::new(
+        audoxidy::audio::AudioManager::new().expect("No se pudo inicializar el motor de audio"),
+    );
+
+    // 5. Inicializar base de datos principal y base de datos del escáner.
+    //    El escáner usa su propia conexión para no compartir el lock con la GUI.
+    let database = Arc::new(Mutex::new(
+        audoxidy::db::Database::new().expect("Error crítico al crear/iniciar la base de datos."),
+    ));
+    audio_manager.set_database(database.clone());
+    let scanner_database = Arc::new(Mutex::new(
+        audoxidy::db::Database::new().expect("Error al inicializar la base de datos del escáner."),
+    ));
+    let scanner = Arc::new(audoxidy::db::scanner::Scanner::new(scanner_database));
+
+    // 6. Construir el dominio Core con sus rutas inyectadas.
+    let core = Arc::new(Core::new(
+        audio_manager,
+        database,
+        scanner,
+        CorePaths::desktop_default(),
+    ));
 
     let window_size = app_config.ui.window_size();
 
@@ -36,9 +57,9 @@ fn main() -> iced::Result {
         app_config.profile
     );
 
-    // 5. Lanzar aplicación Iced
+    // 7. Lanzar aplicación Iced
     iced::application(
-        move || AudoxidyApp::new(audio_manager.clone()),
+        move || AudoxidyApp::new(core.clone()),
         AudoxidyApp::update,
         AudoxidyApp::view,
     )

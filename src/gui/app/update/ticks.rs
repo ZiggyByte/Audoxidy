@@ -21,30 +21,16 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 // 1. Consultar al scanner si hay datos nuevos en la BD
-                if self
-                    .scanner
-                    .db_dirty
-                    .swap(false, std::sync::atomic::Ordering::Relaxed)
-                {
+                if self.core.check_db_dirty() {
                     self.db_needs_refresh = true;
                 }
 
                 // 2. Actualizar BD SOLO cuando el escáner marca cambios
                 if self.db_needs_refresh {
                     self.db_needs_refresh = false;
-                    let db_arc = self.database.clone();
+                    let core = self.core.clone();
                     return Task::perform(
-                        async move {
-                            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-                            if let Ok(db) = db_arc.lock() {
-                                let songs = db.get_all_songs().unwrap_or_default();
-                                let albums = db.get_grid_items_by_artist().unwrap_or_default();
-                                let stats = db.get_library_stats().unwrap_or((0, 0, 0.0, 0.0, 0));
-                                (songs, albums, stats)
-                            } else {
-                                (Vec::new(), Vec::new(), (0, 0, 0.0, 0.0, 0))
-                            }
-                        },
+                        async move { core.refresh_library_snapshot() },
                         |(songs, albums, stats)| {
                             Message::InternalLibraryRefreshed(songs, albums, stats)
                         },
@@ -78,14 +64,12 @@ impl crate::gui::app::AudoxidyApp {
                                 if self.player_ui_state.preloaded_next_path.as_deref()
                                     != Some(next_song.file_path.as_ref())
                                 {
-                                    let _ = self.audio_manager.preload_next(
+                                    let _ = self.core.preload_next(
                                         &next_song.file_path,
-                                        next_song.title.to_string(),
-                                        next_song.artist_name.to_string(),
-                                        next_song.album_title.to_string(),
+                                        &next_song.title.to_string(),
+                                        &next_song.artist_name.to_string(),
+                                        &next_song.album_title.to_string(),
                                         next_song.cover_path.as_deref().map(str::to_string),
-                                        None,
-                                        None,
                                     );
                                     self.player_ui_state.preloaded_next_path =
                                         Some(next_song.file_path.to_string());
@@ -98,8 +82,8 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 if state.eof_reached {
-                    self.audio_manager.clear_eof();
-                    self.playlist_manager.play_next(&self.audio_manager);
+                    self.core.clear_eof();
+                    self.playlist_manager.play_next(self.core.audio_manager());
                     // Nueva pista activa: restablecer la pre-carga para la siguiente y
                     // marcar el fin de la pre-carga (el GC se reactiva 20s después).
                     self.player_ui_state.preloaded_next_path = None;
@@ -110,18 +94,13 @@ impl crate::gui::app::AudoxidyApp {
 
                     if self.playlist_manager.shuffle_active {
                         if let Some(session) = &self.playlist_manager.shuffle_session {
-                            // db-lock: persistencia — el guardado se omite si el lock falla
-                            if let Ok(mut db) = self.database.lock() {
-                                log_persist(
-                                    "shuffle_session",
-                                    db.save_shuffle_session(
-                                        self.playlist_manager.active_playlist_id,
-                                        session,
-                                    ),
-                                );
-                            } else {
-                                tracing::warn!("db-lock: lock no disponible");
-                            }
+                            log_persist(
+                                "shuffle_session",
+                                self.core.persist_shuffle_session(
+                                    self.playlist_manager.active_playlist_id,
+                                    session,
+                                ),
+                            );
                         }
                     }
 
@@ -195,10 +174,7 @@ impl crate::gui::app::AudoxidyApp {
                 // Nunca durante un escaneo (extracción de metadatos y carátulas).
                 // La purga por RAM tiene cooldown (10s) para evitar el bucle
                 // GC → re-creación de pre-carga → GC cuando la RAM sigue alta.
-                let is_scanning_now = self
-                    .scanner
-                    .is_scanning
-                    .load(std::sync::atomic::Ordering::Relaxed);
+                let is_scanning_now = self.core.is_scanning();
 
                 // Seguro de pre-carga: el GC no corre mientras la pre-carga está activa
                 // ni en los 20s posteriores a su fin (evita interrumpir la transición
@@ -248,7 +224,7 @@ impl crate::gui::app::AudoxidyApp {
                     if now.saturating_sub(finished_at) >= 40 {
                         self.scan_finished_at = None;
                         tracing::debug!("Audoxidy GC: Scan complete, clearing memory");
-                        crate::utils::covers::purge_old_covers(32); // Vaciar caché de covers generado por escáner
+                        self.core.purge_old_covers(32); // Vaciar caché de covers generado por escáner
 
                         // Reiniciar el temporizador global para que no haga otra purga en 2 mins
                         crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();
@@ -295,7 +271,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::UITick => {
                 self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
 
-                let state = self.audio_manager.get_state();
+                let state = self.core.audio_state();
 
                 // Cálculo de marquesina cada 500ms
                 let limit_t = 39;
@@ -369,7 +345,7 @@ impl crate::gui::app::AudoxidyApp {
     /// `player_ui_state.meter`. Incluye cómputo M/S, correlación de fase,
     /// crest factor y hold infinito.
     fn update_meter(&mut self) {
-        let state = self.audio_manager.get_state();
+        let state = self.core.audio_state();
         let is_playing = state.is_playing;
         let current_path = state.path.clone();
         let infinite_hold = state.meter_infinite_hold;
@@ -388,7 +364,7 @@ impl crate::gui::app::AudoxidyApp {
         }
 
         // Read atomics from data layer
-        let meter_data = self.audio_manager.meter();
+        let meter_data = self.core.meter();
         let raw_peak_l = meter_data.read_peak_l();
         let raw_peak_r = meter_data.read_peak_r();
         let raw_rms_l = meter_data.read_rms_l();

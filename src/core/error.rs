@@ -22,6 +22,8 @@ pub enum CoreError {
     AlreadyExists(String),
     /// An input was invalid.
     InvalidInput(String),
+    /// A shared lock could not be acquired because it was poisoned.
+    LockUnavailable,
 }
 
 impl fmt::Display for CoreError {
@@ -33,6 +35,7 @@ impl fmt::Display for CoreError {
             Self::NotFound(msg) => write!(f, "not found: {msg}"),
             Self::AlreadyExists(msg) => write!(f, "already exists: {msg}"),
             Self::InvalidInput(msg) => write!(f, "invalid input: {msg}"),
+            Self::LockUnavailable => write!(f, "database lock unavailable"),
         }
     }
 }

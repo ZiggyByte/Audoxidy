@@ -29,9 +29,9 @@ impl crate::gui::app::AudoxidyApp {
                     self.audio_center_manager.preamp_gain = backup.preamp_gain;
                     self.audio_center_manager.eq_band_gains = backup.eq_band_gains.clone();
                     self.audio_center_manager.selected_preset = backup.selected_preset.clone();
-                    self.audio_manager.set_preamp_gain(backup.preamp_gain);
+                    self.core.set_preamp_gain(backup.preamp_gain);
                     for (i, &val) in backup.eq_band_gains.iter().enumerate() {
-                        self.audio_manager.set_eq_band_gain(i, val);
+                        self.core.set_eq_band_gain(i, val);
                     }
                 }
                 self.active_dialog = ActiveDialog::None;
@@ -47,8 +47,8 @@ impl crate::gui::app::AudoxidyApp {
                         // Also forward to AudioCenterManager for the pending_preset_name
                         self.audio_center_manager.update(
                             crate::gui::audio_center::AudioCenterMessage::EqPresetSaveInput(s),
-                            &self.audio_manager,
-                            &self.database,
+                            self.core.audio_manager(),
+                            self.core.database(),
                         );
                     }
                     _ => {}
@@ -59,7 +59,7 @@ impl crate::gui::app::AudoxidyApp {
                 let dialog = std::mem::replace(&mut self.active_dialog, ActiveDialog::None);
                 self.active_dialog = ActiveDialog::None;
                 self.dialog_pos = None;
-                let db = self.database.clone();
+                let core = self.core.clone();
 
                 match dialog {
                     ActiveDialog::CreatePlaylist {
@@ -75,29 +75,8 @@ impl crate::gui::app::AudoxidyApp {
                         let target_songs = pending_add_songs;
                         return Task::perform(
                             async move {
-                                // db-lock: persistencia — el guardado se omite si el lock falla
-                                if let Ok(mut db_lock) = db.lock() {
-                                    if let Ok(new_id) = db_lock.create_playlist(&final_name, false)
-                                    {
-                                        if !target_songs.is_empty() {
-                                            if let Err(e) =
-                                                db_lock.add_songs_to_playlist(new_id, &target_songs)
-                                            {
-                                                tracing::warn!(
-                                                    target: "audoxidy::persistence",
-                                                    playlist_id = new_id,
-                                                    count = target_songs.len(),
-                                                    error = %e,
-                                                    "No se pudieron añadir las canciones a la nueva playlist"
-                                                );
-                                            }
-                                        }
-                                        return Some(new_id);
-                                    }
-                                } else {
-                                    tracing::warn!("db-lock: lock no disponible");
-                                }
-                                None
+                                core.create_playlist_with_songs(&final_name, &target_songs)
+                                    .ok()
                             },
                             Message::RefreshPlaylists,
                         );
@@ -117,45 +96,13 @@ impl crate::gui::app::AudoxidyApp {
                                 let source_id = id;
                                 return Task::perform(
                                     async move {
-                                        // db-lock: persistencia — el guardado se omite si el lock falla
-                                        if let Ok(mut db_lock) = db.lock() {
-                                            if let Ok(new_id) =
-                                                db_lock.create_playlist(&final_name, false)
-                                            {
-                                                if let Ok(all_songs) =
-                                                    db_lock.get_playlist_all_song_ids(source_id)
-                                                {
-                                                    if let Err(e) = db_lock
-                                                        .add_songs_to_playlist(new_id, &all_songs)
-                                                    {
-                                                        tracing::warn!(
-                                                            target: "audoxidy::persistence",
-                                                            playlist_id = new_id,
-                                                            count = all_songs.len(),
-                                                            error = %e,
-                                                            "No se pudieron copiar las canciones a la nueva playlist"
-                                                        );
-                                                    }
-                                                }
-                                                return Some(new_id);
-                                            }
-                                        } else {
-                                            tracing::warn!("db-lock: lock no disponible");
-                                        }
-                                        None
+                                        core.rename_system_playlist(source_id, &final_name).ok()
                                     },
                                     Message::RefreshPlaylists,
                                 );
                             } else {
                                 return Task::perform(
-                                    async move {
-                                        let db_lock = db.lock().unwrap();
-                                        if db_lock.rename_playlist(id, &new_name).is_ok() {
-                                            Some(id)
-                                        } else {
-                                            None
-                                        }
-                                    },
+                                    async move { core.rename_playlist(id, &new_name).ok().map(|_| id) },
                                     Message::RefreshPlaylists,
                                 );
                             }
@@ -163,14 +110,7 @@ impl crate::gui::app::AudoxidyApp {
                     }
                     ActiveDialog::DeleteConfirm { id, .. } => {
                         return Task::perform(
-                            async move {
-                                let db_lock = db.lock().unwrap();
-                                if db_lock.delete_playlist(id).is_ok() {
-                                    Some(0)
-                                } else {
-                                    None
-                                }
-                            },
+                            async move { core.delete_playlist(id).ok().map(|_| 0) },
                             Message::RefreshPlaylists,
                         );
                     }
@@ -246,13 +186,13 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::OpenFolderPicker => {
-                let scanner_arc = self.scanner.clone();
+                let core = self.core.clone();
                 Task::perform(
                     async move { rfd::FileDialog::new().pick_folder() },
                     move |folder| {
                         if let Some(f) = folder {
                             let path_str = f.to_string_lossy().to_string();
-                            scanner_arc.scan_folder_async(path_str);
+                            core.scan_folder(path_str);
                         }
                         Message::NoOp
                     },
@@ -273,20 +213,17 @@ impl crate::gui::app::AudoxidyApp {
                 },
             ),
             Message::ImportPlaylistFile(path) => {
-                let db_arc = self.database.clone();
+                let core = self.core.clone();
                 let path_clone = path.clone();
 
                 // Usamos perform para no bloquear la UI si el M3U es muy grande
-                Task::perform(
-                    async move { crate::db::scanner::Scanner::import_m3u(&db_arc, &path_clone) },
-                    |playlist_id| {
-                        if let Some(id) = playlist_id {
-                            Message::SwitchPlaylist(id, true)
-                        } else {
-                            Message::NoOp
-                        }
-                    },
-                )
+                Task::perform(async move { core.import_m3u(&path_clone) }, |playlist_id| {
+                    if let Some(id) = playlist_id {
+                        Message::SwitchPlaylist(id, true)
+                    } else {
+                        Message::NoOp
+                    }
+                })
             }
             Message::SelectExportFormat(fmt) => {
                 if let ActiveDialog::ExportConfirm { format, .. } = &mut self.active_dialog {

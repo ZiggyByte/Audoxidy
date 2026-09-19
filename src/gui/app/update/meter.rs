@@ -80,71 +80,43 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::MeterHoldTimeChanged(v) => {
                 let clamped = v.clamp(500.0, 5000.0);
-                {
-                    let state_arc = self.audio_manager.state();
-                    let mut s = state_arc.write();
-                    s.meter_hold_time_ms = clamped;
-                }
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db_lock) = self.database.lock() {
-                    log_persist(
-                        "meter_hold_time_ms",
-                        db_lock.set_setting("meter_hold_time_ms", &format!("{:.0}", clamped)),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                self.core.set_meter_hold_time_ms(clamped);
+                log_persist(
+                    "meter_hold_time_ms",
+                    self.core
+                        .persist_audio_setting("meter_hold_time_ms", &format!("{:.0}", clamped)),
+                );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
             }
             Message::MeterRmsWindowChanged(v) => {
                 let clamped = v.clamp(50.0, 1000.0);
-                {
-                    let state_arc = self.audio_manager.state();
-                    let mut s = state_arc.write();
-                    s.meter_rms_window_ms = clamped;
-                }
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db_lock) = self.database.lock() {
-                    log_persist(
-                        "meter_rms_window_ms",
-                        db_lock.set_setting("meter_rms_window_ms", &format!("{:.0}", clamped)),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                self.core.set_meter_rms_window_ms(clamped);
+                log_persist(
+                    "meter_rms_window_ms",
+                    self.core
+                        .persist_audio_setting("meter_rms_window_ms", &format!("{:.0}", clamped)),
+                );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
             }
             Message::MeterMsModeToggle(v) => {
                 self.player_ui_state.meter.ms_mode = v;
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db_lock) = self.database.lock() {
-                    log_persist(
-                        "meter_ms_mode",
-                        db_lock.set_setting("meter_ms_mode", if v { "1" } else { "0" }),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                log_persist(
+                    "meter_ms_mode",
+                    self.core
+                        .persist_audio_setting("meter_ms_mode", if v { "1" } else { "0" }),
+                );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
             }
             Message::MeterInfiniteHoldToggle(v) => {
-                {
-                    let state_arc = self.audio_manager.state();
-                    let mut s = state_arc.write();
-                    s.meter_infinite_hold = v;
-                }
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db_lock) = self.database.lock() {
-                    log_persist(
-                        "meter_infinite_hold",
-                        db_lock.set_setting("meter_infinite_hold", if v { "1" } else { "0" }),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                self.core.set_meter_infinite_hold(v);
+                log_persist(
+                    "meter_infinite_hold",
+                    self.core
+                        .persist_audio_setting("meter_infinite_hold", if v { "1" } else { "0" }),
+                );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
             }
@@ -158,20 +130,12 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::MeterToggleEnabled(v) => {
-                {
-                    let state_arc = self.audio_manager.state();
-                    let mut s = state_arc.write();
-                    s.meter_enabled = v;
-                }
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db_lock) = self.database.lock() {
-                    log_persist(
-                        "meter_enabled",
-                        db_lock.set_setting("meter_enabled", if v { "1" } else { "0" }),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                self.core.set_meter_enabled(v);
+                log_persist(
+                    "meter_enabled",
+                    self.core
+                        .persist_audio_setting("meter_enabled", if v { "1" } else { "0" }),
+                );
                 Task::none()
             }
             _ => Task::none(),

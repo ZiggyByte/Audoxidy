@@ -30,7 +30,7 @@ impl crate::gui::app::AudoxidyApp {
                 // 1. Unload de recursos pesados con márgenes de seguridad
                 let is_library_focused = self.focus == AppFocus::Library;
                 let is_playlist_focused = self.focus == AppFocus::Playlist;
-                let is_playing = self.audio_manager.is_playing();
+                let is_playing = self.core.is_playing();
                 let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
 
                 // Descargar listas inactivas (la pestaña activa siempre se conserva)
@@ -57,22 +57,22 @@ impl crate::gui::app::AudoxidyApp {
                 crate::utils::interner::clear_interner();
 
                 // 4. Purgar carátulas LRU (Purga suave de 16 elementos)
-                crate::utils::covers::purge_old_covers(16);
+                self.core.purge_old_covers(16);
 
                 // 5. Liberar la memoria de la pre-carga de audio (seguro durante la
                 //    reproducción: no reinicia el stream). NO se resetea
                 //    preloaded_next_path: si se reseteara, la pre-carga se re-crearía
                 //    en el siguiente tick (a ~15s del final) y, con la RAM aún por
                 //    encima del umbral, el GC → pre-carga → GC entraría en bucle.
-                let _ = self.audio_manager.purge_preload();
+                let _ = self.core.purge_preload();
 
                 // 6. Purga de buffers de audio solo si no hay música sonando
                 if !is_playing {
-                    let _ = self.audio_manager.purge_buffers();
+                    let _ = self.core.purge_buffers();
                 }
 
                 // 7. FINAL: Reclamar memoria física al SO (Linux)
-                crate::utils::memory_manager::MemoryManager::force_free_to_os();
+                crate::core::Core::execute_global_purge();
 
                 Task::none()
             }

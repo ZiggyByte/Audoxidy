@@ -1,6 +1,5 @@
 //! Transport and playback message handlers extracted from the update dispatcher.
 
-use crate::audio::AudioError;
 use crate::gui::app::{
     Message, fine_seek_enabled, persistence::log_persist, subscription::external_control_to_message,
 };
@@ -48,12 +47,12 @@ impl crate::gui::app::AudoxidyApp {
     ) -> Task<Message> {
         match message {
             Message::PlayPause => {
-                let _ = self.audio_manager.toggle_play_pause();
+                self.core.toggle_play_pause();
 
                 // Si acabamos de pausar (no está reproduciendo), purgamos buffers para liberar RAM
-                if !self.audio_manager.is_playing() {
+                if !self.core.is_playing() {
                     tracing::debug!("Audoxidy Audio: Cleaning Buffers on Pause (Memory Recovery).");
-                    let _ = self.audio_manager.purge_buffers();
+                    let _ = self.core.purge_buffers();
                 }
 
                 self.persist_playlist_state();
@@ -65,7 +64,7 @@ impl crate::gui::app::AudoxidyApp {
                 // Crossfade manual: si el grupo Crossfade está activo y su sub-función
                 // manual está habilitada, se dispara la mezcla con la duración configurada
                 // (el decoder mezcla la pista actual con la siguiente pre-cargada).
-                let st = self.audio_manager.get_state();
+                let st = self.core.audio_state();
                 if st.crossfade_enabled
                     && st.crossfade_manual_enabled
                     && st.crossfade_manual_ms > 0.0
@@ -78,25 +77,21 @@ impl crate::gui::app::AudoxidyApp {
                         if self.player_ui_state.preloaded_next_path.as_deref()
                             != Some(next_song.file_path.as_ref())
                         {
-                            let _ = self.audio_manager.preload_next(
+                            let _ = self.core.preload_next(
                                 &next_song.file_path,
-                                next_song.title.to_string(),
-                                next_song.artist_name.to_string(),
-                                next_song.album_title.to_string(),
+                                &next_song.title.to_string(),
+                                &next_song.artist_name.to_string(),
+                                &next_song.album_title.to_string(),
                                 next_song.cover_path.as_deref().map(str::to_string),
-                                None,
-                                None,
                             );
                             self.player_ui_state.preloaded_next_path =
                                 Some(next_song.file_path.to_string());
                         }
-                        let _ = self
-                            .audio_manager
-                            .crossfade_next(st.crossfade_manual_ms as f64);
+                        let _ = self.core.crossfade_next(st.crossfade_manual_ms as f64);
                     }
                 }
 
-                self.playlist_manager.play_next(&self.audio_manager);
+                self.playlist_manager.play_next(self.core.audio_manager());
                 // Nueva pista activa: restablecer la pre-carga para la siguiente y
                 // marcar el fin de la pre-carga (el GC se reactiva 20s después).
                 self.player_ui_state.preloaded_next_path = None;
@@ -108,18 +103,13 @@ impl crate::gui::app::AudoxidyApp {
 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(mut db) = self.database.lock() {
-                            log_persist(
-                                "shuffle_session",
-                                db.save_shuffle_session(
-                                    self.playlist_manager.active_playlist_id,
-                                    session,
-                                ),
-                            );
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
-                        }
+                        log_persist(
+                            "shuffle_session",
+                            self.core.persist_shuffle_session(
+                                self.playlist_manager.active_playlist_id,
+                                session,
+                            ),
+                        );
                     }
                 }
 
@@ -135,23 +125,18 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::PreviousTrack => {
                 crate::utils::covers::clear_raw_cache();
-                self.playlist_manager.play_prev(&self.audio_manager);
+                self.playlist_manager.play_prev(self.core.audio_manager());
                 self.persist_playlist_state();
 
                 if self.playlist_manager.shuffle_active {
                     if let Some(session) = &self.playlist_manager.shuffle_session {
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(mut db) = self.database.lock() {
-                            log_persist(
-                                "shuffle_session",
-                                db.save_shuffle_session(
-                                    self.playlist_manager.active_playlist_id,
-                                    session,
-                                ),
-                            );
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
-                        }
+                        log_persist(
+                            "shuffle_session",
+                            self.core.persist_shuffle_session(
+                                self.playlist_manager.active_playlist_id,
+                                session,
+                            ),
+                        );
                     }
                 }
 
@@ -166,22 +151,14 @@ impl crate::gui::app::AudoxidyApp {
                 wake_task
             }
             Message::Stop => {
-                self.audio_manager.stop();
-                let _ = self.audio_manager.purge_buffers(); // Purga profunda al detener
+                self.core.stop();
+                let _ = self.core.purge_buffers(); // Purga profunda al detener
                 Task::none()
             }
             Message::VolumeChanged(vol) => {
-                self.audio_manager.set_volume(vol);
+                self.core.set_volume(vol);
                 // Persistir el volumen entre reinicios
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db) = self.database.lock() {
-                    log_persist(
-                        "player_volume",
-                        db.set_setting("player_volume", &format!("{:.4}", vol)),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                log_persist("player_volume", self.core.persist_volume(vol as f64));
                 Task::none()
             }
             Message::SeekTo(pos) => {
@@ -191,17 +168,17 @@ impl crate::gui::app::AudoxidyApp {
                 if !fine_seek_enabled(state.total_duration_sec) {
                     return Task::none();
                 }
-                self.audio_manager.seek(pos as f64);
+                self.core.seek(pos as f64);
                 self.persist_playlist_state();
                 self.wake_up_controls(false)
             }
             Message::SetPlaying(playing) => {
-                self.audio_manager.set_playing(playing);
+                self.core.set_playing(playing);
 
                 // Al pausar, purgar buffers para liberar RAM (mismo criterio que PlayPause).
                 if !playing {
                     tracing::debug!("Audoxidy Audio: Cleaning Buffers on Pause (Memory Recovery).");
-                    let _ = self.audio_manager.purge_buffers();
+                    let _ = self.core.purge_buffers();
                 }
 
                 self.persist_playlist_state();
@@ -231,30 +208,21 @@ impl crate::gui::app::AudoxidyApp {
                 if !self.playlist_manager.shuffle_active {
                     self.playlist_manager.activate_shuffle();
                     if let Some(session) = &self.playlist_manager.shuffle_session {
-                        // db-lock: persistencia — el guardado se omite si el lock falla
-                        if let Ok(mut db) = self.database.lock() {
-                            log_persist(
-                                "shuffle_session",
-                                db.save_shuffle_session(
-                                    self.playlist_manager.active_playlist_id,
-                                    session,
-                                ),
-                            );
-                        } else {
-                            tracing::warn!("db-lock: lock no disponible");
-                        }
+                        log_persist(
+                            "shuffle_session",
+                            self.core.persist_shuffle_session(
+                                self.playlist_manager.active_playlist_id,
+                                session,
+                            ),
+                        );
                     }
                 } else {
                     self.playlist_manager.deactivate_shuffle();
-                    // db-lock: persistencia — el guardado se omite si el lock falla
-                    if let Ok(db) = self.database.lock() {
-                        log_persist(
-                            "shuffle_session",
-                            db.clear_shuffle_session(self.playlist_manager.active_playlist_id),
-                        );
-                    } else {
-                        tracing::warn!("db-lock: lock no disponible");
-                    }
+                    log_persist(
+                        "shuffle_session",
+                        self.core
+                            .clear_shuffle_session(self.playlist_manager.active_playlist_id),
+                    );
                 }
                 self.persist_playlist_state();
                 Task::none()
@@ -272,26 +240,13 @@ impl crate::gui::app::AudoxidyApp {
         artist: impl Into<String>,
         album: impl Into<String>,
         cover_path: Option<String>,
-    ) -> Result<(), AudioError> {
-        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-        let (track_gain, album_gain) = if let Ok(db) = self.database.lock() {
-            match db.get_replay_gain_by_path(path) {
-                Ok(gains) => gains,
-                Err(e) => {
-                    tracing::error!("Error consultando ReplayGain en BD: {}", e);
-                    (None, None)
-                }
-            }
-        } else {
-            (None, None)
-        };
-
-        if track_gain.is_none() && album_gain.is_none() {
-            tracing::debug!("DB: No se encontró ReplayGain para la ruta: {}", path);
-        }
-
-        self.audio_manager.load_file(
-            path, title, artist, album, cover_path, track_gain, album_gain,
+    ) -> Result<(), crate::core::CoreError> {
+        self.core.load_and_play(
+            path,
+            &title.into(),
+            &artist.into(),
+            &album.into(),
+            cover_path,
         )
     }
 
@@ -309,14 +264,14 @@ impl crate::gui::app::AudoxidyApp {
         let cover_path = song.cover_path.as_deref().map(str::to_string);
         let s_id = song.song_id;
 
-        let current = self.audio_manager.get_state();
+        let current = self.core.audio_state();
         let is_same_song = current.path.as_str() == path.as_ref() && current.is_playing;
 
         self.sync_player_art();
         if is_same_song {
             // Reiniciar la canción actual desde el principio.
-            self.audio_manager.seek(0.0);
-            self.audio_manager.play();
+            self.core.seek(0.0);
+            self.core.play();
         } else if let Err(e) = self.load_file_with_gains(
             &path,
             title.to_string(),
@@ -327,7 +282,7 @@ impl crate::gui::app::AudoxidyApp {
             tracing::error!("Error reproduciendo archivo: {}", e);
             return;
         } else {
-            self.audio_manager.play();
+            self.core.play();
             self.playlist_manager.playing_song_idx = Some(idx);
             self.playlist_manager.notify_manual_play(s_id);
         }
@@ -335,7 +290,7 @@ impl crate::gui::app::AudoxidyApp {
     }
 
     pub(in crate::gui::app) fn sync_player_art(&mut self) {
-        let audio_state = self.audio_manager.get_state();
+        let audio_state = self.core.audio_state();
 
         // 0. No hacer nada si el audio está en transición (path vacío temporalmente)
         if audio_state.path.is_empty() {

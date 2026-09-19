@@ -8,7 +8,7 @@ impl AudoxidyApp {
     pub(super) fn meter_popup_overlay(&self) -> Option<Element<'_, Message>> {
         if self.player_ui_state.meter_popup_open {
             if let Some(pos) = self.player_ui_state.meter_popup_pos {
-                let state_arc = self.audio_manager.state();
+                let state_arc = self.core.audio_manager().state();
                 let s = state_arc.read();
                 let popup_content = crate::gui::widgets::meter_popup_view(
                     s.meter_hold_time_ms,

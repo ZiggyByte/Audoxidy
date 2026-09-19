@@ -94,11 +94,8 @@ impl AudoxidyApp {
     pub fn subscription(&self) -> iced::Subscription<Message> {
         // 1. Tick Standard (Progreso): 500ms
         // 2. Tick Idle (Scanner/Pausa): 5000ms
-        let is_scanning = self
-            .scanner
-            .is_scanning
-            .load(std::sync::atomic::Ordering::Relaxed);
-        let tick_interval = if self.audio_manager.get_state().is_playing || is_scanning {
+        let is_scanning = self.core.is_scanning();
+        let tick_interval = if self.core.audio_state().is_playing || is_scanning {
             std::time::Duration::from_millis(500)
         } else {
             std::time::Duration::from_millis(5000)
@@ -110,9 +107,7 @@ impl AudoxidyApp {
         let needs_marquee = self.player_ui_state.title_chars.len() > 39
             || self.player_ui_state.artist_chars.len() > 40;
 
-        if self.player_ui_state.is_active
-            || (self.audio_manager.get_state().is_playing && needs_marquee)
-        {
+        if self.player_ui_state.is_active || (self.core.audio_state().is_playing && needs_marquee) {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::UITick),
             );
@@ -127,7 +122,7 @@ impl AudoxidyApp {
 
         // 5. VU Meter Tick: 30ms (~33Hz) — smooth meter animation
         //    Active when playing OR fading out (pause fade needs ticks to animate)
-        if self.audio_manager.get_state().is_playing || self.player_ui_state.meter.is_fading_out {
+        if self.core.audio_state().is_playing || self.player_ui_state.meter.is_fading_out {
             subs.push(
                 iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::MeterTick),
             );

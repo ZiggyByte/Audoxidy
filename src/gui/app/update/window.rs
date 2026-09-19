@@ -131,21 +131,16 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::PlayerScroll(delta) => {
-                let current_vol = self.audio_manager.get_state().volume;
+                let current_vol = self.core.audio_state().volume;
                 let direction = if delta > 0.0 { 1.0 } else { -1.0 };
                 let vol_percent = current_vol * 100.0;
                 let new_vol_percent = (vol_percent + direction * 5.0).clamp(0.0, 100.0);
-                self.audio_manager.set_volume(new_vol_percent / 100.0);
+                self.core.set_volume(new_vol_percent / 100.0);
                 // Persist volume immediately
-                // db-lock: persistencia — el guardado se omite si el lock falla
-                if let Ok(db) = self.database.lock() {
-                    log_persist(
-                        "player_volume",
-                        db.set_setting("player_volume", &format!("{:.4}", new_vol_percent / 100.0)),
-                    );
-                } else {
-                    tracing::warn!("db-lock: lock no disponible");
-                }
+                log_persist(
+                    "player_volume",
+                    self.core.persist_volume((new_vol_percent / 100.0) as f64),
+                );
                 self.player_ui_state.showing_volume = Some(new_vol_percent);
                 self.player_ui_state.volume_tick_id =
                     self.player_ui_state.volume_tick_id.wrapping_add(1);

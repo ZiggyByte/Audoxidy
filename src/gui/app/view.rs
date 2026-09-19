@@ -15,20 +15,19 @@ use super::{AudoxidyApp, Message};
 
 impl AudoxidyApp {
     pub fn view(&self) -> Element<'_, Message> {
-        let _ = &self.database; // Hack temporal para el warning
-        let _ = &self.scanner; // Hack temporal para el warning
-
-        let player_view = crate::gui::player::view(&self.audio_manager, &self.player_ui_state);
-        let playlist_view = crate::gui::playlist::view(&self.playlist_manager, &self.audio_manager);
+        let player_view =
+            crate::gui::player::view(self.core.audio_manager(), &self.player_ui_state);
+        let playlist_view =
+            crate::gui::playlist::view(&self.playlist_manager, self.core.audio_manager());
         let (filters_view, filters_menu_overlay) =
             crate::gui::library_filters::view(&self.filters_manager);
         let library_view = crate::gui::library::view(
             &self.library_manager,
-            &self.database,
+            self.core.database(),
             &self.player_ui_state.current_art_id,
             &self.player_ui_state.meter,
             false, // clipping — TODO: wire from meter data
-            self.audio_manager.state().read().meter_enabled,
+            self.core.audio_manager().state().read().meter_enabled,
         );
 
         // Apilamos el reproductor (carátula y controles) arriba de la playlist en una sola columna izquierda
@@ -46,8 +45,10 @@ impl AudoxidyApp {
             let mut stack = iced::widget::Stack::new().push(main_row);
 
             if self.audio_center_manager.open {
-                let ac_view =
-                    crate::gui::audio_center::view(&self.audio_center_manager, &self.audio_manager);
+                let ac_view = crate::gui::audio_center::view(
+                    &self.audio_center_manager,
+                    self.core.audio_manager(),
+                );
 
                 // Contenedor posicionado o centrado para el Control Center
                 let positioned_modal = if let Some(pos) = self.audio_center_manager.window_pos {

@@ -1,8 +1,6 @@
 //! Constructor and initial load for `AudoxidyApp`.
 
-use crate::audio::AudioManager;
-use crate::core::core_event_channel;
-use crate::db::{Database, scanner::Scanner};
+use crate::core::Core;
 use crate::gui::audio_center::AudioCenterManager;
 use crate::gui::library::LibraryManager;
 use crate::gui::library_filters::LibraryFiltersManager;
@@ -10,30 +8,27 @@ use crate::gui::playlist::PlaylistManager;
 use crate::integrations::control::external_control_channel;
 use crate::integrations::media_controls::SystemMediaControls;
 use iced::Task;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use super::state::AudoxidyApp;
 use super::{ActiveDialog, AppFocus, Message};
 
 impl AudoxidyApp {
-    pub fn new(audio_manager: Arc<AudioManager>) -> (Self, Task<Message>) {
+    pub fn new(core: Arc<Core>) -> (Self, Task<Message>) {
         // Inicializar temporizadores de memoria (Ciclo de 2 minutos)
         crate::utils::memory_manager::MemoryManager::init();
 
-        let db = Database::new().expect("Error crítico al crear/iniciar la base de datos.");
         let mut library_manager = LibraryManager::default();
 
-        if let Ok((total_songs, total_albums, total_duration, total_size, total_artists)) =
-            db.get_library_stats()
-        {
-            library_manager.total_songs = total_songs;
-            library_manager.total_albums = total_albums;
-            library_manager.total_artists = total_artists;
-            library_manager.total_duration_secs = total_duration;
-            library_manager.total_size_bytes = total_size;
-        }
+        let (total_songs, total_albums, total_duration, total_size, total_artists) =
+            core.get_library_stats_raw();
+        library_manager.total_songs = total_songs;
+        library_manager.total_albums = total_albums;
+        library_manager.total_artists = total_artists;
+        library_manager.total_duration_secs = total_duration;
+        library_manager.total_size_bytes = total_size;
 
-        if let Ok(folders) = db.get_all_folders() {
+        if let Ok(folders) = core.get_all_folders() {
             library_manager.cached_folders = Some(folders);
         }
 
@@ -53,8 +48,8 @@ impl AudoxidyApp {
         library_manager.mount_points = mount_points;
 
         // Cargar datos iniciales de forma unificada (Orden y Filtros)
-        let initial_songs = db.get_all_songs().unwrap_or_default();
-        let initial_albums_raw = db.get_grid_items_by_artist().unwrap_or_default();
+        let initial_songs = core.get_all_songs_shared();
+        let initial_albums_raw = core.get_albums();
         let initial_albums = initial_albums_raw
             .into_iter()
             .map(|a| crate::gui::library::AlbumEntry {
@@ -69,18 +64,12 @@ impl AudoxidyApp {
 
         library_manager.update_data(initial_songs, initial_albums);
 
-        let database_arc = Arc::new(Mutex::new(db));
-        audio_manager.set_database(database_arc.clone());
-        let db_scanner =
-            Database::new().expect("Error al inicializar la base de datos del escáner.");
-        let scanner_arc = Arc::new(Scanner::new(Arc::new(Mutex::new(db_scanner))));
-
         let (external_control_tx, external_control_rx) = external_control_channel();
         let media_controls = SystemMediaControls::new(external_control_tx)
             .expect("Error al inicializar controles multimedia del sistema");
 
-        // CoreEvent channel: sender goes to Core, receiver to GUI subscription.
-        let (_core_event_tx, core_event_rx) = core_event_channel();
+        // CoreEvent channel: Core owns the sender; the GUI consumes the receiver.
+        let core_event_rx = core.event_receiver();
 
         // Detección de Hardware para modo de bajos recursos (RAM < 8GB o Cores < 4)
         let mut sys = sysinfo::System::new_all();
@@ -100,11 +89,11 @@ impl AudoxidyApp {
 
         // Construir el índice de filtros con las canciones ya cargadas
         let mut filters_manager = LibraryFiltersManager::default();
-        filters_manager.build_filter_index(&database_arc);
+        filters_manager.build_filter_index(core.database());
 
         let mut playlist_manager = PlaylistManager::default();
         // db-lock: solo lectura + backfill best-effort — se omite si el lock falla
-        if let Ok(db_lock) = database_arc.lock() {
+        if let Ok(db_lock) = core.database().lock() {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
             let host_id = db_lock.get_setting("audio_host").filter(|s| !s.is_empty());
@@ -161,11 +150,11 @@ impl AudoxidyApp {
                     ),
                     buffer_size,
                 };
-                let apply_ok = audio_manager.apply_audio_settings(settings).is_ok();
+                let apply_ok = core.audio_manager().apply_audio_settings(settings).is_ok();
                 // Backfill del id estable cuando solo había coincidencia por nombre
                 // heredado: así la próxima carga resuelve sin depender del nombre.
                 if apply_ok && had_device_id {
-                    if let Some(resolved) = audio_manager.get_state().device_id.clone() {
+                    if let Some(resolved) = core.audio_manager().get_state().device_id.clone() {
                         match db_lock.set_setting("audio_device_id", &resolved) {
                             Ok(()) => tracing::info!(
                                 "Persistido el id estable del dispositivo de salida."
@@ -303,7 +292,7 @@ impl AudoxidyApp {
                             let (tg, ag) = db_lock
                                 .get_replay_gain_by_path(&path)
                                 .unwrap_or((None, None));
-                            let _ = audio_manager.load_file(
+                            let _ = core.audio_manager().load_file(
                                 &path,
                                 title.to_string(),
                                 artist.to_string(),
@@ -312,8 +301,8 @@ impl AudoxidyApp {
                                 tg,
                                 ag,
                             );
-                            audio_manager.seek(p_data.last_pos_sec);
-                            audio_manager.set_playing(p_data.is_playing);
+                            core.audio_manager().seek(p_data.last_pos_sec);
+                            core.audio_manager().set_playing(p_data.is_playing);
                         }
                     }
                 }
@@ -326,17 +315,17 @@ impl AudoxidyApp {
 
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-        if let Ok(db_lock) = database_arc.lock() {
+        if let Ok(db_lock) = core.database().lock() {
             // Cargar volumen del player desde APP_SETTINGS
             if let Some(vol_str) = db_lock.get_setting("player_volume") {
                 if let Ok(vol) = vol_str.parse::<f32>() {
-                    audio_manager.set_volume(vol.clamp(0.0, 1.0));
+                    core.audio_manager().set_volume(vol.clamp(0.0, 1.0));
                 }
             }
 
             // Cargar Volumen y Mezcla al inicio (aplicar al motor inmediatamente)
             {
-                let state_arc = audio_manager.state();
+                let state_arc = core.audio_manager().state();
                 let mut s = state_arc.write();
                 s.fades_enabled = db_lock
                     .get_setting("vol_fades_enabled")
@@ -481,10 +470,12 @@ impl AudoxidyApp {
                 .unwrap_or_else(|| vec![0.0; 31]);
 
             // Aplicar al motor de audio inmediatamente
-            audio_manager.set_eq_mode(if eq_bands_31 { 31 } else { 20 });
-            audio_manager.set_eq_enabled(eq_enabled);
-            audio_manager.set_preamp_gain(preamp_gain);
-            audio_manager.apply_eq_preset_gains(&bands_20, &bands_31);
+            core.audio_manager()
+                .set_eq_mode(if eq_bands_31 { 31 } else { 20 });
+            core.audio_manager().set_eq_enabled(eq_enabled);
+            core.audio_manager().set_preamp_gain(preamp_gain);
+            core.audio_manager()
+                .apply_eq_preset_gains(&bands_20, &bands_31);
 
             // Cargar presets personalizados y el preset seleccionado
             {
@@ -563,7 +554,7 @@ impl AudoxidyApp {
                     }
                 }
             };
-            audio_manager.with_dsp_mut(|dsp| {
+            core.audio_manager().with_dsp_mut(|dsp| {
                 set_bool(dsp, "sub_bass", "dsp_sub_bass_enabled");
                 set_bool(dsp, "mid_bass", "dsp_mid_bass_enabled");
                 set_bool(dsp, "voice_boost", "dsp_voice_boost_enabled");
@@ -574,7 +565,7 @@ impl AudoxidyApp {
                 set_bool(dsp, "limiter", "dsp_limiter_enabled");
                 set_bool(dsp, "reverb", "dsp_reverb_enabled");
             });
-            audio_manager.with_dsp_mut(|dsp| {
+            core.audio_manager().with_dsp_mut(|dsp| {
                 // Slider values
                 if let Some(v) = db_lock.get_setting("dsp_sub_bass_gain") {
                     if let Ok(t) = v.parse::<f32>() {
@@ -645,90 +636,99 @@ impl AudoxidyApp {
             if let Some(val) = db_lock.get_setting("vol_fades_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_fades_enabled = v;
-                audio_manager.state().write().fades_enabled = v;
+                core.audio_manager().state().write().fades_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_smooth_volume_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_smooth_volume_enabled = v;
-                audio_manager.state().write().smooth_volume_enabled = v;
+                core.audio_manager().state().write().smooth_volume_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_fade_in_ms") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_fade_in_ms = v as f64;
-                    audio_manager.state().write().fade_in_ms = v;
+                    core.audio_manager().state().write().fade_in_ms = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_fade_out_ms") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_fade_out_ms = v as f64;
-                    audio_manager.state().write().fade_out_ms = v;
+                    core.audio_manager().state().write().fade_out_ms = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_silence_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_silence_enabled = v;
-                audio_manager.state().write().silence_enabled = v;
+                core.audio_manager().state().write().silence_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_silence_duration_ms") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_silence_duration_ms = v as f64;
-                    audio_manager.state().write().silence_duration_ms = v;
+                    core.audio_manager().state().write().silence_duration_ms = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_silence_threshold_db") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_silence_threshold_db = v as f64;
-                    audio_manager.state().write().silence_threshold_db = v;
+                    core.audio_manager().state().write().silence_threshold_db = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_silence_edge_trim_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_silence_edge_trim_enabled = v;
-                audio_manager.state().write().silence_edge_trim_enabled = v;
+                core.audio_manager()
+                    .state()
+                    .write()
+                    .silence_edge_trim_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_rg_master_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_master_enabled = v;
-                audio_manager.state().write().rg_master_enabled = v;
+                core.audio_manager().state().write().rg_master_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_rg_track_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_track_enabled = v;
-                audio_manager.state().write().replay_gain_track_enabled = v;
+                core.audio_manager()
+                    .state()
+                    .write()
+                    .replay_gain_track_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_rg_album_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_album_enabled = v;
-                audio_manager.state().write().replay_gain_album_enabled = v;
+                core.audio_manager()
+                    .state()
+                    .write()
+                    .replay_gain_album_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_rg_analyze_rt_enabled") {
                 let v = val == "1";
                 audio_center_manager.volumen_rg_analyze_rt_enabled = v;
-                audio_manager.state().write().rg_analyze_rt_enabled = v;
+                core.audio_manager().state().write().rg_analyze_rt_enabled = v;
             }
             if let Some(val) = db_lock.get_setting("vol_rg_offset_album_db") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_rg_offset_album_db = v as f64;
-                    audio_manager.state().write().rg_offset_album_db = v;
+                    core.audio_manager().state().write().rg_offset_album_db = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_rg_offset_track_db") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_rg_offset_track_db = v as f64;
-                    audio_manager.state().write().rg_offset_track_db = v;
+                    core.audio_manager().state().write().rg_offset_track_db = v;
                 }
             }
             if let Some(val) = db_lock.get_setting("vol_rg_offset_rt_db") {
                 if let Ok(v) = val.parse::<f32>() {
                     audio_center_manager.volumen_rg_offset_rt_db = v as f64;
-                    audio_manager.state().write().rg_offset_rt_db = v;
+                    core.audio_manager().state().write().rg_offset_rt_db = v;
                 }
             }
         }
 
         // VU Meter — cargar modo M/S para PlayerUiState
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-        let meter_ms_mode = if let Ok(db) = database_arc.lock() {
+        let meter_ms_mode = if let Ok(db) = core.database().lock() {
             db.get_setting("meter_ms_mode")
                 .map(|v| v == "1")
                 .unwrap_or(false)
@@ -738,9 +738,7 @@ impl AudoxidyApp {
 
         (
             Self {
-                audio_manager,
-                database: database_arc,
-                scanner: scanner_arc,
+                core,
                 media_controls,
                 external_control_rx,
                 core_event_rx,

@@ -55,10 +55,8 @@ impl Core {
 
         // If a preload is imminent (≤20 s away), suppress the GC to avoid
         // evicting preloaded data.
-        if let Some(remaining) = preload_secs_remaining {
-            if remaining <= 20.0 && remaining > 0.0 {
-                return None;
-            }
+        if preload_secs_remaining.is_some_and(|r| r > 0.0 && r <= 20.0) {
+            return None;
         }
 
         // Check the periodic 60-second timer.
@@ -95,9 +93,7 @@ mod tests {
 
     fn make_core_for_test() -> Core {
         let paths = CorePaths::desktop_default();
-        let db = Arc::new(Mutex::new(
-            Database::new_memory().expect("in-memory db"),
-        ));
+        let db = Arc::new(Mutex::new(Database::new_memory().expect("in-memory db")));
         let scanner = Arc::new(Scanner::new(db.clone()));
         let audio_manager =
             Arc::new(crate::audio::AudioManager::new().expect("audio manager init"));

@@ -15,9 +15,7 @@ impl Core {
     }
 
     /// Returns the list of available output devices.
-    pub fn get_available_devices(
-        &self,
-    ) -> Vec<crate::audio::device_manager::AudioDeviceInfo> {
+    pub fn get_available_devices(&self) -> Vec<crate::audio::device_manager::AudioDeviceInfo> {
         self.audio_manager.get_devices()
     }
 
@@ -25,10 +23,7 @@ impl Core {
     ///
     /// Converts the snapshot into the engine's [`AudioSettings`] and delegates.
     /// The DB lock is never held across the audio manager call.
-    pub fn apply_audio_settings(
-        &self,
-        snapshot: &AudioSettingsSnapshot,
-    ) -> Result<(), CoreError> {
+    pub fn apply_audio_settings(&self, snapshot: &AudioSettingsSnapshot) -> Result<(), CoreError> {
         // Map snapshot fields to the engine's AudioSettings.
         // The snapshot carries user-level volume and DSP parameters;
         // the AudioSettings struct carries device/routing configuration.
@@ -38,7 +33,8 @@ impl Core {
         //
         // Volume and DSP parameters are applied directly to the audio manager.
         self.audio_manager.set_volume(snapshot.volume as f32);
-        self.audio_manager.set_preamp_gain(snapshot.preamp_gain as f32);
+        self.audio_manager
+            .set_preamp_gain(snapshot.preamp_gain as f32);
         self.audio_manager.set_compressor_params(
             snapshot.compressor_threshold as f32,
             snapshot.compressor_ratio as f32,
@@ -148,8 +144,10 @@ fn deserialize_f32_blob(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
         }
         Some(
             bytes
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
                 .collect(),
         )
     })
@@ -166,9 +164,7 @@ mod tests {
 
     fn make_core_for_test() -> Core {
         let paths = CorePaths::desktop_default();
-        let db = Arc::new(Mutex::new(
-            Database::new_memory().expect("in-memory db"),
-        ));
+        let db = Arc::new(Mutex::new(Database::new_memory().expect("in-memory db")));
         let scanner = Arc::new(Scanner::new(db.clone()));
         let audio_manager =
             Arc::new(crate::audio::AudioManager::new().expect("audio manager init"));

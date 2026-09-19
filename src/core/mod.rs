@@ -27,6 +27,7 @@
 
 pub mod audio_routing;
 pub mod context;
+pub mod covers;
 pub mod error;
 pub mod events;
 pub mod library;

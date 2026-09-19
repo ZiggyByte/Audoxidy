@@ -29,12 +29,14 @@ pub mod context;
 pub mod error;
 pub mod events;
 pub mod library;
+pub mod playback;
 pub mod settings;
 pub mod types;
 
 pub use context::Core;
 pub use error::CoreError;
 pub use events::{CoreEvent, core_event_channel};
+pub use playback::NextSongInfo;
 pub use types::{CorePaths, EqPresetSnapshot};
 
 #[cfg(test)]

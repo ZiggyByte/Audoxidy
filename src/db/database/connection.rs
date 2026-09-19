@@ -18,9 +18,9 @@ impl Default for Database {
 }
 
 impl Database {
-    /// Abre o crea la base de datos `library.db` e inicializa el esquema.
+    /// Opens or creates the library database and initializes the schema.
     pub fn new() -> Result<Self> {
-        Self::open_at(std::path::Path::new("library.db"))
+        Self::open_at(&crate::utils::paths::get().db_path)
     }
 
     /// Abre una base de datos en la ruta indicada e inicializa el esquema.
@@ -33,8 +33,10 @@ impl Database {
         Ok(Self { conn })
     }
 
-    /// Crea una base de datos en disco en una ruta arbitraria, para pruebas.
-    #[cfg(test)]
+    /// Creates an on-disk database at an arbitrary path.
+    ///
+    /// Used by the entry point to inject the resolved library path, and by
+    /// tests that need a temporary file-backed database.
     pub fn new_at(path: &std::path::Path) -> Result<Self> {
         Self::open_at(path)
     }

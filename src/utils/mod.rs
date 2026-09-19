@@ -6,6 +6,7 @@ pub mod covers;
 pub mod interner;
 pub mod memory_manager;
 pub mod observability;
+pub mod paths;
 use crate::db::database::SongData;
 
 /// Busca una canción verificando si el término de búsqueda aparece en

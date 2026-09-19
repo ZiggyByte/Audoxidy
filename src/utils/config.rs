@@ -387,10 +387,7 @@ pub fn validate_config(config: &AppConfig) -> ConfigValidation {
 
 /// Ruta por defecto del archivo de configuración.
 pub fn default_config_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join(".config/audoxidy/config.ron")
+    crate::utils::paths::get().config_path.clone()
 }
 
 /// Error al leer o escribir el archivo de configuración.

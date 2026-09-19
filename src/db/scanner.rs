@@ -296,8 +296,10 @@ impl Scanner {
                 if needs_processing && !enqueued_covers.contains(&target_hash) {
                     if let Some(data) = pic_bytes {
                         // Solo encolamos si es un archivo AVIF que no existe
-                        let expected_path = format!("cache/covers/{}.avif", target_hash);
-                        if !std::path::Path::new(&expected_path).exists() {
+                        let expected_path = crate::utils::paths::get()
+                            .cover_cache_dir
+                            .join(format!("{}.avif", target_hash));
+                        if !expected_path.exists() {
                             crate::utils::covers::enqueue_cover_job(data, target_hash.clone());
                             enqueued_covers.insert(target_hash);
                         }

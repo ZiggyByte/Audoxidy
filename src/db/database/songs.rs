@@ -150,7 +150,11 @@ impl Database {
 
             if !album_has_cover {
                 // Es la primera carátula del álbum, la asignamos como principal
-                let path = format!("cache/covers/{}.avif", album_hash_id);
+                let path = crate::utils::paths::get()
+                    .cover_cache_dir
+                    .join(format!("{}.avif", album_hash_id))
+                    .to_string_lossy()
+                    .into_owned();
 
                 self.conn
                     .prepare_cached(

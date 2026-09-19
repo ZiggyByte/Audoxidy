@@ -253,7 +253,7 @@ fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
 
 /// Extracts from a raw image buffer, crops/scales to 400x400, and saves as .avif at 90% quality.
 pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
-    let cache_dir = PathBuf::from("cache/covers");
+    let cache_dir = crate::utils::paths::get().cover_cache_dir.clone();
     if !cache_dir.exists() {
         std::fs::create_dir_all(&cache_dir)?;
     }

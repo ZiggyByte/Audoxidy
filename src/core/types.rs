@@ -23,19 +23,15 @@ pub struct CorePaths {
 impl CorePaths {
     /// Returns the desktop default paths that match the current behavior.
     ///
-    /// The database lives at `library.db` in the working directory, covers
-    /// are cached under `cache/covers/`, and the config file is stored in
-    /// the user's config directory.
+    /// The defaults are single-sourced from `utils::paths` so the registry and
+    /// the injected Core paths can never disagree.
     pub fn desktop_default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let config_dir = std::path::PathBuf::from(home)
-            .join(".config")
-            .join("audoxidy");
+        let paths = crate::utils::paths::AppPaths::desktop_default();
 
         Self {
-            db_path: PathBuf::from("library.db"),
-            cover_cache_dir: PathBuf::from("cache/covers"),
-            config_path: config_dir.join("config.toml"),
+            db_path: paths.db_path,
+            cover_cache_dir: paths.cover_cache_dir,
+            config_path: paths.config_path,
         }
     }
 }
@@ -115,7 +111,7 @@ mod tests {
         assert_eq!(paths.db_path, PathBuf::from("library.db"));
         assert_eq!(paths.cover_cache_dir, PathBuf::from("cache/covers"));
         assert!(paths.config_path.to_string_lossy().contains("audoxidy"));
-        assert!(paths.config_path.to_string_lossy().ends_with("config.toml"));
+        assert!(paths.config_path.to_string_lossy().ends_with("config.ron"));
     }
 
     #[test]

@@ -1,14 +1,23 @@
 use audoxidy::core::{Core, CorePaths};
 use audoxidy::gui::app::AudoxidyApp;
+use audoxidy::utils::paths::AppPaths;
 use std::sync::{Arc, Mutex};
 
 // ── Entry point ──────────────────────────────────────────────
 
 fn main() -> iced::Result {
-    // 1. Cargar configuración (crea archivo por defecto si no existe)
-    let app_config = audoxidy::utils::config::load_config();
+    // 1. Resolve the Core filesystem paths and publish them crate-wide.
+    let core_paths = CorePaths::desktop_default();
+    audoxidy::utils::paths::init(AppPaths {
+        db_path: core_paths.db_path.clone(),
+        cover_cache_dir: core_paths.cover_cache_dir.clone(),
+        config_path: core_paths.config_path.clone(),
+    });
 
-    // 2. Inicializar logging con configuración
+    // 2. Cargar configuración (crea archivo por defecto si no existe)
+    let app_config = audoxidy::utils::config::load_config_from(&core_paths.config_path);
+
+    // 3. Inicializar logging con configuración
     audoxidy::utils::observability::init_logging(&app_config.logging);
 
     tracing::info!(
@@ -17,36 +26,33 @@ fn main() -> iced::Result {
         app_config.profile
     );
 
-    // 3. Inicializar gestor de memoria
+    // 4. Inicializar gestor de memoria
     audoxidy::utils::memory_manager::MemoryManager::init();
 
     // Vigilante de deadlocks: solo en builds de desarrollo con la feature activa.
     #[cfg(feature = "deadlock-detection")]
     audoxidy::utils::observability::spawn_deadlock_watchdog();
 
-    // 4. Inicializar motor de audio
+    // 5. Inicializar motor de audio
     let audio_manager = Arc::new(
         audoxidy::audio::AudioManager::new().expect("No se pudo inicializar el motor de audio"),
     );
 
-    // 5. Inicializar base de datos principal y base de datos del escáner.
+    // 6. Inicializar base de datos principal y base de datos del escáner.
     //    El escáner usa su propia conexión para no compartir el lock con la GUI.
     let database = Arc::new(Mutex::new(
-        audoxidy::db::Database::new().expect("Error crítico al crear/iniciar la base de datos."),
+        audoxidy::db::Database::new_at(&core_paths.db_path)
+            .expect("Error crítico al crear/iniciar la base de datos."),
     ));
     audio_manager.set_database(database.clone());
     let scanner_database = Arc::new(Mutex::new(
-        audoxidy::db::Database::new().expect("Error al inicializar la base de datos del escáner."),
+        audoxidy::db::Database::new_at(&core_paths.db_path)
+            .expect("Error al inicializar la base de datos del escáner."),
     ));
     let scanner = Arc::new(audoxidy::db::scanner::Scanner::new(scanner_database));
 
-    // 6. Construir el dominio Core con sus rutas inyectadas.
-    let core = Arc::new(Core::new(
-        audio_manager,
-        database,
-        scanner,
-        CorePaths::desktop_default(),
-    ));
+    // 7. Construir el dominio Core con sus rutas inyectadas.
+    let core = Arc::new(Core::new(audio_manager, database, scanner, core_paths));
 
     let window_size = app_config.ui.window_size();
 
@@ -57,7 +63,7 @@ fn main() -> iced::Result {
         app_config.profile
     );
 
-    // 7. Lanzar aplicación Iced
+    // 8. Lanzar aplicación Iced
     iced::application(
         move || AudoxidyApp::new(core.clone()),
         AudoxidyApp::update,

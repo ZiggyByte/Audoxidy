@@ -25,5 +25,16 @@
 //! suite if a file under this directory imports the GUI toolkit or the GUI
 //! module, or if a code comment carries a planning identifier.
 
+pub mod context;
+pub mod error;
+pub mod events;
+pub mod settings;
+pub mod types;
+
+pub use context::Core;
+pub use error::CoreError;
+pub use events::{CoreEvent, core_event_channel};
+pub use types::{CorePaths, EqPresetSnapshot};
+
 #[cfg(test)]
 mod guard_tests;

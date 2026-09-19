@@ -382,7 +382,9 @@ impl AudioCenterManager {
                     );
                     // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db_lock) = db.lock() {
-                        if let Err(e) = db_lock.save_eq_preset(&preset) {
+                        let b20 = preset.bands_20.as_ref().map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect());
+                        let b31 = preset.bands_31.as_ref().map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect());
+                        if let Err(e) = db_lock.save_eq_preset_raw(&preset.name, preset.preamp_gain, b20, b31) {
                             tracing::warn!(
                                 "No se pudo guardar el preset EQ '{}': {}",
                                 preset.name,
@@ -407,7 +409,7 @@ impl AudioCenterManager {
                 } else {
                     // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db_lock) = db.lock() {
-                        if let Err(e) = db_lock.delete_eq_preset(&name) {
+                        if let Err(e) = db_lock.delete_eq_preset_by_name(&name) {
                             tracing::warn!("No se pudo borrar el preset EQ '{}': {}", name, e);
                         }
                     } else {
@@ -419,7 +421,7 @@ impl AudioCenterManager {
             AudioCenterMessage::EqPresetRestoreDefaults => {
                 // db-lock: persistencia — el guardado se omite si el lock falla
                 if let Ok(db_lock) = db.lock() {
-                    if let Err(e) = db_lock.clear_eq_presets() {
+                    if let Err(e) = db_lock.clear_all_eq_presets() {
                         tracing::warn!(
                             "No se pudieron limpiar los presets EQ personalizados: {}",
                             e
@@ -439,7 +441,9 @@ impl AudioCenterManager {
                             // Save to DB
                             // db-lock: persistencia — el guardado se omite si el lock falla
                             if let Ok(db_lock) = db.lock() {
-                                if let Err(e) = db_lock.save_eq_preset(&preset) {
+                                let b20 = preset.bands_20.as_ref().map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect());
+                                let b31 = preset.bands_31.as_ref().map(|v| v.iter().flat_map(|f| f.to_le_bytes()).collect());
+                                if let Err(e) = db_lock.save_eq_preset_raw(&preset.name, preset.preamp_gain, b20, b31) {
                                     tracing::warn!(
                                         "No se pudo guardar el preset EQ '{}': {}",
                                         preset.name,

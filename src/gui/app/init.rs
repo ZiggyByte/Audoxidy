@@ -483,7 +483,34 @@ impl AudoxidyApp {
             audio_manager.apply_eq_preset_gains(&bands_20, &bands_31);
 
             // Cargar presets personalizados y el preset seleccionado
-            audio_center_manager.custom_presets = db_lock.load_eq_presets().unwrap_or_default();
+            {
+                fn deserialize(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
+                    blob.and_then(|bytes| {
+                        if bytes.is_empty() || bytes.len() % 4 != 0 {
+                            return None;
+                        }
+                        Some(
+                            bytes
+                                .chunks_exact(4)
+                                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                                .collect(),
+                        )
+                    })
+                }
+                if let Ok(raw) = db_lock.load_eq_presets_raw() {
+                    audio_center_manager.custom_presets = raw
+                        .into_iter()
+                        .map(|(name, preamp_gain, b20, b31)| {
+                            crate::audio::preset::EqPreset::new(
+                                &name,
+                                preamp_gain,
+                                deserialize(b20),
+                                deserialize(b31),
+                            )
+                        })
+                        .collect();
+                }
+            }
 
             // Update AudioCenterManager state
             audio_center_manager.equalizer_enabled = eq_enabled;

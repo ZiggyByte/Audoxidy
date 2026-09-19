@@ -174,10 +174,31 @@ impl AudioCenterManager {
 
     /// Load custom presets from SQLite into custom_presets vec.
     pub fn load_custom_presets(&mut self, db: &std::sync::Mutex<crate::db::Database>) {
+        use crate::audio::preset::EqPreset;
+
+        fn deserialize(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
+            blob.and_then(|bytes| {
+                if bytes.is_empty() || bytes.len() % 4 != 0 {
+                    return None;
+                }
+                Some(
+                    bytes
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                        .collect(),
+                )
+            })
+        }
+
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
-            if let Ok(presets) = db_lock.load_eq_presets() {
-                self.custom_presets = presets;
+            if let Ok(raw) = db_lock.load_eq_presets_raw() {
+                self.custom_presets = raw
+                    .into_iter()
+                    .map(|(name, preamp_gain, b20, b31)| {
+                        EqPreset::new(&name, preamp_gain, deserialize(b20), deserialize(b31))
+                    })
+                    .collect();
             }
         }
     }

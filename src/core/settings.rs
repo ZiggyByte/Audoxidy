@@ -46,66 +46,79 @@ impl Core {
         let db = self.database.lock().expect("database lock poisoned");
         AudioSettingsSnapshot {
             eq_preset_name: db.get_setting("eq_preset_name"),
-            preamp_gain: db.get_setting("preamp_gain")
+            preamp_gain: db
+                .get_setting("preamp_gain")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
-            compressor_threshold: db.get_setting("compressor_threshold")
+            compressor_threshold: db
+                .get_setting("compressor_threshold")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(-20.0),
-            compressor_ratio: db.get_setting("compressor_ratio")
+            compressor_ratio: db
+                .get_setting("compressor_ratio")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(4.0),
-            compressor_attack_ms: db.get_setting("compressor_attack_ms")
+            compressor_attack_ms: db
+                .get_setting("compressor_attack_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10.0),
-            compressor_release_ms: db.get_setting("compressor_release_ms")
+            compressor_release_ms: db
+                .get_setting("compressor_release_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100.0),
-            reverb_room_size: db.get_setting("reverb_room_size")
+            reverb_room_size: db
+                .get_setting("reverb_room_size")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
-            reverb_damping: db.get_setting("reverb_damping")
+            reverb_damping: db
+                .get_setting("reverb_damping")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
-            reverb_width: db.get_setting("reverb_width")
+            reverb_width: db
+                .get_setting("reverb_width")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1.0),
-            reverb_mix: db.get_setting("reverb_mix")
+            reverb_mix: db
+                .get_setting("reverb_mix")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.3),
-            volume: db.get_setting("volume")
+            volume: db
+                .get_setting("volume")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.8),
-            fade_in_ms: db.get_setting("fade_in_ms")
+            fade_in_ms: db
+                .get_setting("fade_in_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1000),
-            fade_out_ms: db.get_setting("fade_out_ms")
+            fade_out_ms: db
+                .get_setting("fade_out_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000),
-            crossfade_enabled: db.get_setting("crossfade_enabled")
+            crossfade_enabled: db
+                .get_setting("crossfade_enabled")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
-            crossfade_manual_enabled: db.get_setting("crossfade_manual_enabled")
+            crossfade_manual_enabled: db
+                .get_setting("crossfade_manual_enabled")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
-            crossfade_manual_ms: db.get_setting("crossfade_manual_ms")
+            crossfade_manual_ms: db
+                .get_setting("crossfade_manual_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000),
-            crossfade_auto_enabled: db.get_setting("crossfade_auto_enabled")
+            crossfade_auto_enabled: db
+                .get_setting("crossfade_auto_enabled")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
-            crossfade_auto_ms: db.get_setting("crossfade_auto_ms")
+            crossfade_auto_ms: db
+                .get_setting("crossfade_auto_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000),
         }
     }
 
     /// Persists a single audio setting.
-    pub fn persist_audio_setting(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), CoreError> {
+    pub fn persist_audio_setting(&self, key: &str, value: &str) -> Result<(), CoreError> {
         let db = self.database.lock().expect("database lock poisoned");
         db.set_setting(key, value)?;
         Ok(())
@@ -117,57 +130,67 @@ impl Core {
 
         let db = self.database.lock().expect("database lock poisoned");
         DspEffectsSnapshot {
-            compressor_threshold: db.get_setting("compressor_threshold")
+            compressor_threshold: db
+                .get_setting("compressor_threshold")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(-20.0),
-            compressor_ratio: db.get_setting("compressor_ratio")
+            compressor_ratio: db
+                .get_setting("compressor_ratio")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(4.0),
-            compressor_attack_ms: db.get_setting("compressor_attack_ms")
+            compressor_attack_ms: db
+                .get_setting("compressor_attack_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10.0),
-            compressor_release_ms: db.get_setting("compressor_release_ms")
+            compressor_release_ms: db
+                .get_setting("compressor_release_ms")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100.0),
-            reverb_room_size: db.get_setting("reverb_room_size")
+            reverb_room_size: db
+                .get_setting("reverb_room_size")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
-            reverb_damping: db.get_setting("reverb_damping")
+            reverb_damping: db
+                .get_setting("reverb_damping")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
-            reverb_width: db.get_setting("reverb_width")
+            reverb_width: db
+                .get_setting("reverb_width")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1.0),
-            reverb_mix: db.get_setting("reverb_mix")
+            reverb_mix: db
+                .get_setting("reverb_mix")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.3),
-            sub_bass_cutoff: db.get_setting("sub_bass_cutoff")
+            sub_bass_cutoff: db
+                .get_setting("sub_bass_cutoff")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(80.0),
-            sub_bass_gain: db.get_setting("sub_bass_gain")
+            sub_bass_gain: db
+                .get_setting("sub_bass_gain")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
-            mid_bass_cutoff: db.get_setting("mid_bass_cutoff")
+            mid_bass_cutoff: db
+                .get_setting("mid_bass_cutoff")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200.0),
-            mid_bass_gain: db.get_setting("mid_bass_gain")
+            mid_bass_gain: db
+                .get_setting("mid_bass_gain")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
-            voice_boost_cutoff: db.get_setting("voice_boost_cutoff")
+            voice_boost_cutoff: db
+                .get_setting("voice_boost_cutoff")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000.0),
-            voice_boost_gain: db.get_setting("voice_boost_gain")
+            voice_boost_gain: db
+                .get_setting("voice_boost_gain")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
         }
     }
 
     /// Persists a single DSP effect parameter.
-    pub fn persist_dsp_effect(
-        &self,
-        key: &str,
-        value: &str,
-    ) -> Result<(), CoreError> {
+    pub fn persist_dsp_effect(&self, key: &str, value: &str) -> Result<(), CoreError> {
         let db = self.database.lock().expect("database lock poisoned");
         db.set_setting(key, value)?;
         Ok(())
@@ -182,14 +205,14 @@ impl Core {
         let raw = db.load_eq_presets_raw().expect("failed to load eq presets");
 
         raw.into_iter()
-            .map(|(name, preamp_gain, bands_20_blob, bands_31_blob)| {
-                EqPresetSnapshot {
+            .map(
+                |(name, preamp_gain, bands_20_blob, bands_31_blob)| EqPresetSnapshot {
                     name,
                     preamp_gain,
                     bands_20: deserialize_f32_blob(bands_20_blob),
                     bands_31: deserialize_f32_blob(bands_31_blob),
-                }
-            })
+                },
+            )
             .collect()
     }
 
@@ -233,12 +256,11 @@ mod tests {
     fn make_core() -> Core {
         let db = Database::new_memory().unwrap();
         let database = Arc::new(Mutex::new(db));
-        let scanner = Arc::new(crate::db::scanner::Scanner::new(
-            Arc::new(std::sync::Mutex::new(Database::default())),
-        ));
-        let audio_manager = Arc::new(
-            crate::audio::AudioManager::new().expect("audio manager init"),
-        );
+        let scanner = Arc::new(crate::db::scanner::Scanner::new(Arc::new(
+            std::sync::Mutex::new(Database::default()),
+        )));
+        let audio_manager =
+            Arc::new(crate::audio::AudioManager::new().expect("audio manager init"));
         let paths = super::super::types::CorePaths::desktop_default();
         Core::new(audio_manager, database, scanner, paths)
     }
@@ -248,7 +270,8 @@ mod tests {
         let core = make_core();
 
         // Persist a setting
-        core.persist_audio_setting("test_key", "test_value").unwrap();
+        core.persist_audio_setting("test_key", "test_value")
+            .unwrap();
 
         // Load it back via the raw DB
         let value = {

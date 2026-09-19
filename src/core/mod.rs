@@ -28,6 +28,7 @@
 pub mod context;
 pub mod error;
 pub mod events;
+pub mod library;
 pub mod settings;
 pub mod types;
 

@@ -8,6 +8,7 @@
 //! acquire→copy→release→return. No lock is held across audio manager calls.
 
 use super::Core;
+use super::events::CoreEvent;
 
 /// Intent returned by maintenance checks for the GUI to act on.
 ///
@@ -36,37 +37,30 @@ impl Core {
         }
     }
 
-    /// Evaluates the GC timer and returns an intent if a purge is due.
+    /// Evaluates the GC policy against the caller's scan and preload guards.
     ///
-    /// `preload_secs_remaining` is the seconds before the next preload
-    /// fires; when non-`None` and positive, the GC is suppressed to avoid
-    /// evicting data the preload will need. Returns `Some(PurgeMemory)` when
-    /// the 60-second cycle elapses and no preload guard is active, or
-    /// `Some(PurgeMemory)` when system RAM exceeds the 75% hard cap.
-    pub fn evaluate_gc(
-        &self,
-        is_scanning: bool,
-        preload_secs_remaining: Option<f64>,
-    ) -> Option<CoreIntent> {
-        // During scans the GC is suppressed entirely.
-        if is_scanning {
+    /// `is_scanning` suppresses the whole check while a scan runs.
+    /// `preload_blocked` is the caller's preload guard — true while a preload is
+    /// active or within its post-finish safety window — and suppresses the check
+    /// as well. When neither guard is active, the fixed 60-second timer and the
+    /// RAM thresholds are evaluated in the same order the GUI tick used inline:
+    /// the timer returns [`CoreIntent::PurgeMemory`] for a synchronous purge,
+    /// while RAM pressure emits [`CoreEvent::MemoryPressure`] so the front-end's
+    /// existing memory handler owns that purge and it is not dispatched twice.
+    pub fn evaluate_gc(&self, is_scanning: bool, preload_blocked: bool) -> Option<CoreIntent> {
+        if is_scanning || preload_blocked {
             return None;
         }
 
-        // If a preload is imminent (≤20 s away), suppress the GC to avoid
-        // evicting preloaded data.
-        if preload_secs_remaining.is_some_and(|r| r > 0.0 && r <= 20.0) {
-            return None;
-        }
+        let purge_timer =
+            crate::utils::memory_manager::MemoryManager::should_run_global_purge(2, is_scanning);
+        let ram_over = crate::utils::memory_manager::MemoryManager::should_purge_for_ram();
 
-        // Check the periodic 60-second timer.
-        if crate::utils::memory_manager::MemoryManager::should_run_global_purge(0, is_scanning) {
+        if purge_timer {
             return Some(CoreIntent::PurgeMemory);
         }
-
-        // Check RAM pressure (system > 75% or app > 500 MB).
-        if crate::utils::memory_manager::MemoryManager::should_purge_for_ram() {
-            return Some(CoreIntent::PurgeMemory);
+        if ram_over {
+            self.emit(CoreEvent::MemoryPressure);
         }
 
         None
@@ -113,14 +107,21 @@ mod tests {
     fn test_evaluate_gc_suppressed_during_scan() {
         let core = make_core_for_test();
         // During a scan, the GC should never fire.
-        assert!(core.evaluate_gc(true, None).is_none());
+        assert!(core.evaluate_gc(true, false).is_none());
     }
 
     #[test]
     fn test_evaluate_gc_suppressed_with_preload_guard() {
         let core = make_core_for_test();
-        // With a preload 10 seconds away, the GC is suppressed.
-        assert!(core.evaluate_gc(false, Some(10.0)).is_none());
+        // With an active or recently finished preload, the GC is suppressed.
+        assert!(core.evaluate_gc(false, true).is_none());
+    }
+
+    #[test]
+    fn test_evaluate_gc_scan_guard_wins_over_preload() {
+        let core = make_core_for_test();
+        // Either guard suppresses the check, with no MemoryManager side effects.
+        assert!(core.evaluate_gc(true, true).is_none());
     }
 
     #[test]

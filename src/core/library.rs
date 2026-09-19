@@ -26,10 +26,22 @@ impl Core {
     ///
     /// Delegates to the scanner's async scan method. The scanner owns its
     /// own database connection and manages its own lock lifecycle.
-    /// Emits [`CoreEvent::ScanStarted`] before returning.
+    /// Emits [`CoreEvent::ScanStarted`] before returning and
+    /// [`CoreEvent::ScanCompleted`] from the scanner thread when the walk
+    /// finishes. The completion event reports the number of audio files the
+    /// scan processed, which is the count the scanner exposes; a separate
+    /// inserted-row delta would require changing the insert path.
     pub fn scan_folder(&self, path: String) {
         self.emit(super::events::CoreEvent::ScanStarted);
-        self.scanner.scan_folder_async(path);
+        let event_tx = self.event_tx.clone();
+        self.scanner
+            .scan_folder_async_with(path, move |files_processed| {
+                if let Err(e) = event_tx.send(super::events::CoreEvent::ScanCompleted {
+                    songs_added: files_processed,
+                }) {
+                    tracing::warn!("core event channel disconnected; event discarded: {e}");
+                }
+            });
     }
 
     /// Returns whether a library scan is currently in progress.
@@ -317,5 +329,28 @@ mod tests {
     fn test_is_scanning_returns_false_initially() {
         let core = make_core_for_test();
         assert!(!core.is_scanning());
+    }
+
+    #[test]
+    fn test_scan_folder_emits_started_and_completed() {
+        let core = make_core_for_test();
+        let events = core.event_receiver();
+        core.scan_folder("/nonexistent/audoxidy-scan-path".to_string());
+
+        assert!(matches!(
+            events
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .expect("ScanStarted must be emitted"),
+            super::super::events::CoreEvent::ScanStarted
+        ));
+        match events
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .expect("ScanCompleted must be emitted")
+        {
+            super::super::events::CoreEvent::ScanCompleted { songs_added } => {
+                assert_eq!(songs_added, 0);
+            }
+            other => panic!("expected ScanCompleted, got {other:?}"),
+        }
     }
 }

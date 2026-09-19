@@ -64,30 +64,27 @@ impl crate::gui::app::AudoxidyApp {
                 // Crossfade manual: si el grupo Crossfade está activo y su sub-función
                 // manual está habilitada, se dispara la mezcla con la duración configurada
                 // (el decoder mezcla la pista actual con la siguiente pre-cargada).
+                // The condition, the preload dedup and the preload→crossfade order
+                // live in the Core domain.
                 let st = self.core.audio_state();
-                if st.crossfade_enabled
-                    && st.crossfade_manual_enabled
-                    && st.crossfade_manual_ms > 0.0
-                {
-                    // Garantizar que la siguiente canción esté pre-cargada ANTES de
-                    // disparar la mezcla (el usuario puede saltar en cualquier momento,
-                    // no solo ~15s antes del final). Si ya está pre-cargada, el dedup
-                    // del decoder ignora la orden.
-                    if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
-                        if self.player_ui_state.preloaded_next_path.as_deref()
-                            != Some(next_song.file_path.as_ref())
-                        {
-                            let _ = self.core.preload_next(
-                                &next_song.file_path,
-                                &next_song.title.to_string(),
-                                &next_song.artist_name.to_string(),
-                                &next_song.album_title.to_string(),
-                                next_song.cover_path.as_deref().map(str::to_string),
-                            );
-                            self.player_ui_state.preloaded_next_path =
-                                Some(next_song.file_path.to_string());
-                        }
-                        let _ = self.core.crossfade_next(st.crossfade_manual_ms as f64);
+                if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
+                    let next_info = crate::core::NextSongInfo {
+                        file_path: Some(next_song.file_path.to_string()),
+                        title: Some(next_song.title.to_string()),
+                        artist: Some(next_song.artist_name.to_string()),
+                        album: Some(next_song.album_title.to_string()),
+                        cover_path: next_song.cover_path.as_deref().map(str::to_string),
+                    };
+                    let triggered = crate::core::playback::manual_next_crossfade(
+                        self.core.audio_manager(),
+                        st.crossfade_enabled,
+                        st.crossfade_manual_enabled,
+                        st.crossfade_manual_ms,
+                        &next_info,
+                        self.player_ui_state.preloaded_next_path.as_deref(),
+                    );
+                    if triggered {
+                        self.player_ui_state.preloaded_next_path = next_info.file_path;
                     }
                 }
 

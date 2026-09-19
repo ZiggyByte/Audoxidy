@@ -147,7 +147,12 @@ impl Core {
             .load_file(
                 path, title, artist, album, cover_path, track_gain, album_gain,
             )
-            .map_err(|e| CoreError::Audio(e.to_string()))
+            .map_err(|e| CoreError::Audio(e.to_string()))?;
+
+        self.emit(super::events::CoreEvent::TrackChanged {
+            path: path.to_string(),
+        });
+        Ok(())
     }
 
     /// Preloads the next song on the decoder thread for gapless transitions.

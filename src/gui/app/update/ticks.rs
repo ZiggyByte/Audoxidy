@@ -60,21 +60,30 @@ impl crate::gui::app::AudoxidyApp {
                                                 .map(crate::gui::library::lists::cover_to_iced);
                                     }
                                 }
-                                // Pre-cargar la siguiente canción una sola vez por pista.
-                                if self.player_ui_state.preloaded_next_path.as_deref()
-                                    != Some(next_song.file_path.as_ref())
-                                {
-                                    let _ = self.core.preload_next(
-                                        &next_song.file_path,
-                                        &next_song.title.to_string(),
-                                        &next_song.artist_name.to_string(),
-                                        &next_song.album_title.to_string(),
-                                        next_song.cover_path.as_deref().map(str::to_string),
-                                    );
+                                // The preload decision (15s window and per-track
+                                // dedup) lives in the Core domain; the cover is
+                                // prefetched separately, not gated on the dedup.
+                                let decision = crate::core::playback::check_preload_trigger(
+                                    remaining,
+                                    Some(next_song.file_path.as_ref()),
+                                    self.player_ui_state.preloaded_next_path.as_deref(),
+                                );
+                                if decision.should_preload {
+                                    if let Some(next_path) = decision.next_path.as_deref() {
+                                        let _ = self.core.preload_next(
+                                            next_path,
+                                            &next_song.title.to_string(),
+                                            &next_song.artist_name.to_string(),
+                                            &next_song.album_title.to_string(),
+                                            next_song.cover_path.as_deref().map(str::to_string),
+                                        );
+                                    }
                                     self.player_ui_state.preloaded_next_path =
-                                        Some(next_song.file_path.to_string());
-                                    // La pre-carga está activa: el GC no debe correr.
-                                    self.player_ui_state.preload_finished_at = None;
+                                        decision.new_preloaded_path;
+                                    if decision.clear_preload_finished {
+                                        // La pre-carga está activa: el GC no debe correr.
+                                        self.player_ui_state.preload_finished_at = None;
+                                    }
                                 }
                             }
                         }
@@ -191,17 +200,16 @@ impl crate::gui::app::AudoxidyApp {
                     self.player_ui_state.preload_finished_at,
                 );
 
-                if !is_scanning_now && !preload_finished_recently {
-                    let purge_timer =
-                        crate::utils::memory_manager::MemoryManager::should_run_global_purge(
-                            2,
-                            is_scanning_now,
-                        );
-                    let ram_over =
-                        crate::utils::memory_manager::MemoryManager::should_purge_for_ram();
-                    if purge_timer || ram_over {
-                        return Task::done(Message::GlobalMemoryPurge);
-                    }
+                // The GC policy (60s timer, RAM thresholds and both guards) lives
+                // in the Core domain: the timer returns a synchronous intent and
+                // RAM pressure emits MemoryPressure so the existing memory handler
+                // owns that purge without dispatching it twice.
+                if matches!(
+                    self.core
+                        .evaluate_gc(is_scanning_now, preload_finished_recently),
+                    Some(crate::core::CoreIntent::PurgeMemory)
+                ) {
+                    return Task::done(Message::GlobalMemoryPurge);
                 }
 
                 // Detección de fin de escáner para liberar memoria 30s después

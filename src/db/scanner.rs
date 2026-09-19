@@ -36,17 +36,31 @@ impl Scanner {
 
     /// Escanea un directorio en un hilo separado de forma asíncrona.
     pub fn scan_folder_async(&self, folder_path: String) {
+        self.scan_folder_async_with(folder_path, |_| {});
+    }
+
+    /// Scans a directory on a separate thread and invokes `on_complete` with
+    /// the number of audio files processed when the walk finishes.
+    ///
+    /// The callback runs on the scanner thread, after the scanning flag is
+    /// cleared, so an external observer receives the scan-finished edge without
+    /// polling the flag from the UI thread.
+    pub fn scan_folder_async_with<C>(&self, folder_path: String, on_complete: C)
+    where
+        C: FnOnce(usize) + Send + 'static,
+    {
         let db_arc = Arc::clone(&self._db);
         let dirty_flag = Arc::clone(&self.db_dirty);
         let is_scanning_flag = Arc::clone(&self.is_scanning);
         std::thread::spawn(move || {
             is_scanning_flag.store(true, Ordering::SeqCst);
-            Self::scan_folder(&db_arc, &folder_path, &dirty_flag);
+            let processed = Self::scan_folder(&db_arc, &folder_path, &dirty_flag);
             is_scanning_flag.store(false, Ordering::SeqCst);
+            on_complete(processed);
         });
     }
 
-    fn scan_folder(db_m: &Arc<Mutex<Database>>, root: &str, dirty_flag: &Arc<AtomicBool>) {
+    fn scan_folder(db_m: &Arc<Mutex<Database>>, root: &str, dirty_flag: &Arc<AtomicBool>) -> usize {
         let supported_extensions = [
             "mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv",
         ];
@@ -119,6 +133,7 @@ impl Scanner {
 
         crate::utils::covers::clear_all_cover_cache();
         dirty_flag.store(true, Ordering::Relaxed);
+        (current_order - start_order).max(0) as usize
     }
 
     /// Procesa un archivo de audio individual: extrae metadatos y lo inserta en la BD.

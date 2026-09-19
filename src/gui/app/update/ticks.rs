@@ -201,9 +201,9 @@ impl crate::gui::app::AudoxidyApp {
                 );
 
                 // The GC policy (60s timer, RAM thresholds and both guards) lives
-                // in the Core domain: the timer returns a synchronous intent and
-                // RAM pressure emits MemoryPressure so the existing memory handler
-                // owns that purge without dispatching it twice.
+                // in the Core domain: a due timer or RAM pressure returns the
+                // purge intent, which is dispatched here synchronously. The
+                // matching MemoryPressure event is informational only.
                 if matches!(
                     self.core
                         .evaluate_gc(is_scanning_now, preload_finished_recently),

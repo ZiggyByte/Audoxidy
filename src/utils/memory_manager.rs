@@ -125,6 +125,16 @@ impl MemoryManager {
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
 
+    /// Back-dates the periodic purge timer so the next check is due.
+    ///
+    /// Used only by tests: lets the periodic branch be exercised without
+    /// sleeping for a full interval. Compiled only into test builds.
+    #[cfg(test)]
+    pub(crate) fn backdate_global_purge_timer_for_tests(secs_ago: u64) {
+        let now = Self::get_now_secs();
+        LAST_GLOBAL_PURGE.store(now.saturating_sub(secs_ago), Ordering::Relaxed);
+    }
+
     /// Verifica si han pasado 120 segundos desde la última purga global.
     /// Usa un intervalo fijo de 2 minutos, sin lógica adaptativa.
     /// No se activa durante escaneos.

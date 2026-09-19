@@ -43,10 +43,12 @@ impl Core {
     /// `preload_blocked` is the caller's preload guard — true while a preload is
     /// active or within its post-finish safety window — and suppresses the check
     /// as well. When neither guard is active, the fixed 60-second timer and the
-    /// RAM thresholds are evaluated in the same order the GUI tick used inline:
-    /// the timer returns [`CoreIntent::PurgeMemory`] for a synchronous purge,
-    /// while RAM pressure emits [`CoreEvent::MemoryPressure`] so the front-end's
-    /// existing memory handler owns that purge and it is not dispatched twice.
+    /// RAM thresholds are evaluated in the same order the GUI tick used inline.
+    /// Either one being due returns [`CoreIntent::PurgeMemory`], so the tick
+    /// dispatches a single synchronous purge and the dispatch route matches the
+    /// inline behavior for both branches. RAM pressure additionally emits
+    /// [`CoreEvent::MemoryPressure`] as an informational edge-transition
+    /// notification; it carries no dispatch of its own.
     pub fn evaluate_gc(&self, is_scanning: bool, preload_blocked: bool) -> Option<CoreIntent> {
         if is_scanning || preload_blocked {
             return None;
@@ -56,11 +58,12 @@ impl Core {
             crate::utils::memory_manager::MemoryManager::should_run_global_purge(2, is_scanning);
         let ram_over = crate::utils::memory_manager::MemoryManager::should_purge_for_ram();
 
-        if purge_timer {
-            return Some(CoreIntent::PurgeMemory);
-        }
         if ram_over {
             self.emit(CoreEvent::MemoryPressure);
+        }
+
+        if purge_timer || ram_over {
+            return Some(CoreIntent::PurgeMemory);
         }
 
         None
@@ -101,6 +104,19 @@ mod tests {
         assert_ne!(purge, free);
         assert_eq!(purge, CoreIntent::PurgeMemory);
         assert_eq!(free, CoreIntent::ForceFreeToOs);
+    }
+
+    #[test]
+    fn test_evaluate_gc_returns_purge_when_timer_due() {
+        let core = make_core_for_test();
+        // Back-date the periodic timer past its interval so the check is due:
+        // the due branch must return the purge intent so the caller dispatches
+        // it synchronously.
+        crate::utils::memory_manager::MemoryManager::backdate_global_purge_timer_for_tests(120);
+        assert_eq!(
+            core.evaluate_gc(false, false),
+            Some(CoreIntent::PurgeMemory)
+        );
     }
 
     #[test]

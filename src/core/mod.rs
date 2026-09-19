@@ -25,10 +25,12 @@
 //! suite if a file under this directory imports the GUI toolkit or the GUI
 //! module, or if a code comment carries a planning identifier.
 
+pub mod audio_routing;
 pub mod context;
 pub mod error;
 pub mod events;
 pub mod library;
+pub mod maintenance;
 pub mod playback;
 pub mod settings;
 pub mod types;
@@ -36,6 +38,7 @@ pub mod types;
 pub use context::Core;
 pub use error::CoreError;
 pub use events::{CoreEvent, core_event_channel};
+pub use maintenance::CoreIntent;
 pub use playback::NextSongInfo;
 pub use types::{CorePaths, EqPresetSnapshot};
 

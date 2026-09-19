@@ -70,7 +70,8 @@ impl crate::gui::app::AudoxidyApp {
                                             != cover_path.as_ref()
                                     {
                                         self.player_ui_state.prefetched_next_handle =
-                                            crate::utils::covers::load_cover_handle(cover_path);
+                                            crate::utils::covers::load_cover_handle(cover_path)
+                                                .map(crate::gui::library::lists::cover_to_iced);
                                     }
                                 }
                                 // Pre-cargar la siguiente canción una sola vez por pista.

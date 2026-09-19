@@ -14,6 +14,21 @@ use crate::gui::widgets::{
 use crate::utils::{SortColumn, format_metadata, truncate_text};
 use std::collections::HashMap;
 
+/// Converts a front-end-agnostic `CoverHandle` into an iced image handle.
+///
+/// File-backed covers become `Handle::from_path`; byte-backed covers
+/// become `Handle::from_bytes`. The conversion happens at the GUI
+/// boundary so that `utils/` has no iced dependency.
+pub(crate) fn cover_to_iced(
+    handle: crate::utils::covers::CoverHandle,
+) -> iced::widget::image::Handle {
+    use crate::utils::covers::CoverHandle;
+    match handle {
+        CoverHandle::File { path, .. } => iced::widget::image::Handle::from_path(path),
+        CoverHandle::Bytes { data, .. } => iced::widget::image::Handle::from_bytes(data),
+    }
+}
+
 /// Estilos de Placeholder para el widget de carátulas
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlaceholderStyle {
@@ -25,8 +40,8 @@ pub enum PlaceholderStyle {
     Player,
 }
 
-/// Widget global para mostrar carátulas de álbumes de forma eficiente y consistente.
-/// Soporta: Caché AVIF (Prioridad 1) -> Datos binarios crudos (Prioridad 2) -> Placeholder Automático.
+/// Global widget for displaying album cover art efficiently and consistently.
+/// Supports: AVIF cache (Priority 1) -> raw binary data (Priority 2) -> auto placeholder.
 pub fn album_art_widget<'a, Message: 'a>(
     avif_path: Option<&str>,
     raw_data: Option<&Vec<u8>>,
@@ -35,19 +50,21 @@ pub fn album_art_widget<'a, Message: 'a>(
     bounds: Length,
     radius: f32,
 ) -> Element<'a, Message> {
-    // 1. Usar handle precargado si existe (Prioridad 0 - Máximo rendimiento)
+    // 1. Use preloaded handle if available (Priority 0 - Maximum performance)
     let mut handle_opt = preloaded_handle;
 
-    // 2. Intentar cargar desde archivo AVIF en disco (Prioridad 1) — sin caché RAM
+    // 2. Try loading from AVIF file on disk (Priority 1) — no RAM cache
     if handle_opt.is_none() {
-        handle_opt = avif_path.and_then(|p| crate::utils::covers::load_cover_handle(p));
+        handle_opt = avif_path
+            .and_then(crate::utils::covers::load_cover_handle)
+            .map(cover_to_iced);
     }
 
-    // 3. Fallback: Cargar desde bytes crudos (Prioridad 2)
-    if handle_opt.is_none() {
-        if let Some(data) = raw_data {
-            handle_opt = crate::utils::covers::load_raw_image_for_iced(data);
-        }
+    // 3. Fallback: load from raw bytes (Priority 2)
+    if handle_opt.is_none()
+        && let Some(data) = raw_data
+    {
+        handle_opt = crate::utils::covers::load_cover_from_bytes(data).map(cover_to_iced);
     }
 
     if let Some(handle) = handle_opt {

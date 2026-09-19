@@ -1,8 +1,13 @@
-//! Sistema de caché y procesamiento de carátulas de álbumes.
+//! Cover art cache and image processing.
 //!
-//! Escala imágenes a 400×400 (o 200×200 en modo low-resource),
-//! las comprime en formato AVIF al 90% de calidad y las almacena
-//! en `cache/covers/` con un LRU cache en RAM para Iced.
+//! Scales images to 400x400, compresses them as AVIF at 90% quality,
+//! and caches them on disk under `cache/covers/`. An in-memory LRU
+//! cache retains cover handles  for the GUI without importing any
+// !front-end types.
+//!
+//! The [`CoverHandle`] type replaces iced handles in this module so
+//! that `utils/` has zero front-end imports. The GUI adapter wraps a
+//! `CoverHandle` into an iced handle at render time.
 
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
@@ -14,22 +19,71 @@ use rayon::ThreadPoolBuilder;
 use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use std::num::NonZeroUsize;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-/// Instancia estática del Thread Pool limitado para tareas de fondo de carátulas.
+/// Front-end-agnostic handle to a cover art image.
+///
+/// Stores either a file path (AVIF on disk) or raw image bytes
+/// (embedded fallback). The `stable_id` is a SHA-256 digest used
+/// as the LRU cache key for identity comparison.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum CoverHandle {
+    /// File-backed cover: path to the AVIF on disk.
+    File { path: PathBuf, stable_id: [u8; 32] },
+    /// Byte-backed cover: raw image data held in memory.
+    Bytes { data: Vec<u8>, stable_id: [u8; 32] },
+}
+
+impl CoverHandle {
+    /// Computes the SHA-256 stable ID from a byte slice.
+    pub fn stable_id_from_bytes(data: &[u8]) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let result = hasher.finalize();
+        let mut id = [0u8; 32];
+        id.copy_from_slice(&result);
+        id
+    }
+
+    /// Returns the stable ID for cache keying.
+    pub fn stable_id(&self) -> [u8; 32] {
+        match self {
+            CoverHandle::File { stable_id, .. } => *stable_id,
+            CoverHandle::Bytes { stable_id, .. } => *stable_id,
+        }
+    }
+
+    /// Returns the file path if this is a file-backed handle.
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            CoverHandle::File { path, .. } => Some(path),
+            CoverHandle::Bytes { .. } => None,
+        }
+    }
+
+    /// Returns the raw bytes if this is a byte-backed handle.
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match self {
+            CoverHandle::File { .. } => None,
+            CoverHandle::Bytes { data, .. } => Some(data),
+        }
+    }
+}
+
+/// Static instance of the thread pool for background cover processing.
 pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 
-/// Canal limitado para controlar la presión de memoria durante el escaneado
+/// Bounded channel to control memory pressure during scanning.
 static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = OnceLock::new();
 
-/// Almacena rutas de archivos que fallaron o no existen (evita reintentos)
+/// Stores file paths that previously failed to load (avoids retries).
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
-/// Caché LRU para retener Handles de carátulas y prevenir OOM en Iced.
+/// LRU cache for cover handles, preventing excessive memory use.
 pub struct CoverCache {
-    /// Entradas ordenadas por recencia (la más reciente al frente).
-    entries: LruCache<String, iced::widget::image::Handle>,
+    /// Entries ordered by recency (most recent at the front).
+    entries: LruCache<String, CoverHandle>,
 }
 
 impl CoverCache {
@@ -42,19 +96,19 @@ impl CoverCache {
         }
     }
 
-    /// Devuelve el Handle y promueve la entrada a la posición más reciente.
-    fn get(&mut self, key: &str) -> Option<iced::widget::image::Handle> {
+    /// Returns the handle and promotes the entry to most-recent position.
+    fn get(&mut self, key: &str) -> Option<CoverHandle> {
         self.entries.get(key).cloned()
     }
 
-    /// Consulta la entrada sin alterar el orden de recencia.
+    /// Peeks at an entry without altering recency order.
     #[cfg(test)]
-    fn peek(&self, key: &str) -> Option<iced::widget::image::Handle> {
+    fn peek(&self, key: &str) -> Option<CoverHandle> {
         self.entries.peek(key).cloned()
     }
 
-    /// Inserta o actualiza la entrada, promoviéndola a la posición más reciente.
-    fn put(&mut self, key: String, value: iced::widget::image::Handle) {
+    /// Inserts or updates an entry, promoting it to most-recent position.
+    fn put(&mut self, key: String, value: CoverHandle) {
         self.entries.put(key, value);
     }
 
@@ -71,27 +125,27 @@ impl CoverCache {
         }
     }
 
-    /// Número de entradas retenidas.
+    /// Number of entries retained.
     #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len()
     }
 
-    /// Indica si la clave está en la caché, sin alterar el orden de recencia.
+    /// Checks whether the key is in the cache without altering recency.
     fn contains(&self, key: &str) -> bool {
         self.entries.contains(key)
     }
 
-    /// Orden de más reciente a menos reciente.
+    /// Most-recent to least-recent order.
     #[cfg(test)]
     fn order_mru_to_lru(&self) -> Vec<String> {
         self.entries.iter().map(|(key, _)| key.clone()).collect()
     }
 }
 
-/// Límite dinámico de carátulas en caché según modo:
-/// - Normal: 64 (estándar, suficiente para pantallas grandes)
-/// - Low-resource: 16 (evicción agresiva para ahorrar RAM)
+/// Dynamic cover cache limit based on mode:
+/// - Normal: 64 (standard, sufficient for large displays)
+/// - Low-resource: 16 (aggressive eviction to save RAM)
 fn get_max_covers() -> usize {
     if crate::utils::is_low_resource() {
         16
@@ -102,20 +156,20 @@ fn get_max_covers() -> usize {
 
 pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
 
-/// Obtiene o inicializa la caché LRU global de carátulas.
+/// Returns or initializes the global LRU cover cache.
 pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
     LRU_COVER_CACHE.get_or_init(|| Mutex::new(CoverCache::new(get_max_covers())))
 }
 
-/// Obtiene o inicializa el ThreadPool global para procesamiento de carátulas.
+/// Returns or initializes the global thread pool for cover processing.
 ///
-/// En modo low-resource usa 1 hilo; en modo normal usa 1/3 de los núcleos.
+/// Uses 1 thread in low-resource mode; 1/3 of cores in normal mode.
 pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     COVER_POOL.get_or_init(|| {
         let cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(4);
-        // Low-resource: máx 1 hilo. Normal: 1/3 de los procesadores (para evitar sobrecalentamiento)
+        // Low-resource: max 1 thread. Normal: 1/3 of processors (to prevent overheating).
         let pool_size = if crate::utils::is_low_resource() {
             1
         } else {
@@ -124,23 +178,23 @@ pub fn get_cover_pool() -> &'static rayon::ThreadPool {
 
         ThreadPoolBuilder::new()
             .num_threads(pool_size)
-            .stack_size(8 * 1024 * 1024) // 8MB por hilo — estabilidad con AVIF/ravif
+            .stack_size(8 * 1024 * 1024) // 8MB per thread — stability with AVIF/ravif
             .thread_name(|idx| format!("cover-cache-worker-{}", idx))
             .build()
             .unwrap()
     })
 }
 
-/// Encola una tarea de procesamiento de carátula de forma segura.
-/// Si hay demasiadas tareas pendientes (16), el hilo del escáner esperará,
-/// evitando clonar miles de búferes de imagen en la RAM simultáneamente.
+/// Enqueues a cover processing job safely.
+/// When too many jobs are pending (16), the scanner thread waits,
+/// preventing thousands of image buffers from being cloned into RAM simultaneously.
 pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
     let tx = COVER_GATEWAY.get_or_init(|| {
         let (tx, rx) = crossbeam::channel::bounded::<(Vec<u8>, String)>(16);
 
         let pool = get_cover_pool();
 
-        // Iniciamos hilos persistentes en el pool que consumen del canal
+        // Spawn persistent worker threads in the pool that consume from the channel.
         for _ in 0..pool.current_num_threads() {
             let rx_worker = rx.clone();
             pool.spawn(move || {
@@ -164,29 +218,29 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
     let _ = tx.send((data, hash));
 }
 
-/// Vacía el conjunto de rutas que fallaron al cargar.
+/// Clears the set of file paths that previously failed to load.
 fn clear_negative_cache(set: &mut HashSet<String>) {
     set.clear();
 }
 
-/// Limpia la caché negativa (archivos que fallaron). Útil tras re-escaneo.
+/// Clears the negative cache (failed file paths). Useful after a re-scan.
 pub fn clear_all_cover_cache() {
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
         clear_negative_cache(&mut neg_cache_mtx.lock());
     }
 }
 
-/// Genera un ID único para una imagen específica de canción (u8 data)
+/// Generates a unique hash for an image from raw bytes.
 pub fn generate_pic_hash(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     hex::encode(hasher.finalize())
 }
 
-/// Devuelve la extensión de CPU a forzar, o `None` para conservar el default
-/// de la librería (que ya selecciona la mejor extensión disponible en runtime).
+/// Returns the CPU extension to force, or `None` to keep the library default
+/// (which already selects the best available extension at runtime).
 ///
-/// Solo se fuerza AVX2 cuando el procesador la soporta; si no, no se toca nada.
+/// Only forces AVX2 when the processor supports it; otherwise nothing is touched.
 fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
     #[cfg(target_arch = "x86_64")]
     {
@@ -197,7 +251,7 @@ fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
     None
 }
 
-/// Extrae de un buffer raw de imagen, recorta/escala a 400x400 y guarda como .avif 90% de calidad.
+/// Extracts from a raw image buffer, crops/scales to 400x400, and saves as .avif at 90% quality.
 pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
     let cache_dir = PathBuf::from("cache/covers");
     if !cache_dir.exists() {
@@ -209,7 +263,7 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
         return Ok(dst_path);
     }
 
-    // 1. Cargar imagen en memoria y convertirla genéricamente a RGBA 8 bit
+    // 1. Load image into memory and convert generically to RGBA 8-bit.
     let img = match image::load_from_memory(data) {
         Ok(i) => i.to_rgba8(),
         Err(_) => {
@@ -226,7 +280,7 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     if width == 0 || height == 0 {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
-            "Dimensiones inválidas: 0",
+            "Invalid dimensions: 0",
         ));
     }
 
@@ -251,9 +305,9 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
     let mut resizer = Resizer::new();
 
     if let Some(ext) = forced_cpu_extension() {
-        // SAFETY: `forced_cpu_extension` solo devuelve `Avx2` tras comprobar en
-        // runtime con `is_x86_feature_detected!("avx2")` que el procesador la
-        // soporta, de modo que la extensión está garantizada en este punto.
+        // SAFETY: `forced_cpu_extension` only returns `Avx2` after checking at
+        // runtime with `is_x86_feature_detected!("avx2")` that the processor
+        // supports it, so the extension is guaranteed at this point.
         unsafe {
             resizer.set_cpu_extensions(ext);
         }
@@ -265,7 +319,7 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
         .resize(&src_image, &mut dst_image, &options)
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
 
-    // Guardar como AVIF con calidad 90 y velocidad rápida (8) para ahorrar RAM/CPU
+    // Save as AVIF with quality 90 and fast speed (8) to save RAM/CPU.
     let file = std::fs::File::create(&dst_path)?;
     let encoder = AvifEncoder::new_with_speed_quality(file, 8, 90);
 
@@ -274,45 +328,52 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
             dst_image.buffer(),
             dst_width,
             dst_height,
-            ExtendedColorType::Rgba8.into(),
+            ExtendedColorType::Rgba8,
         )
-        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        .map_err(|e| std::io::Error::other(e.to_string()))?;
 
     Ok(dst_path)
 }
 
-/// Carga una carátula desde disco usando Handle::from_path() de Iced.
-/// Iced gestiona internamente la decodificación y la memoria.
-/// Arquitectura: Disco AVIF → Iced (sin caché RAM intermedia).
-pub fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
+/// Loads a cover art handle from a file path on disk.
+///
+/// Checks the negative cache first, then the LRU cache, and finally
+/// constructs a new file-backed handle. The AVIF decoding is deferred
+/// to the GUI adapter that wraps the handle into an iced type.
+pub fn load_cover_handle(path: &str) -> Option<CoverHandle> {
     let neg_cache_mtx = NEGATIVE_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
 
-    // 1. Verificar si el archivo ya falló anteriormente
+    // 1. Check if this path previously failed to load.
     if neg_cache_mtx.lock().contains(path) {
         return None;
     }
 
-    // 2. Revisar la Caché LRU en memoria
+    // 2. Check the in-memory LRU cache.
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
 
-    // Recalcular límite dinámico en cada carga (el modo pudo cambiar); al reducir,
-    // `resize` desaloja primero las entradas menos recientes.
+    // Recalculate dynamic limit on each load (mode may have changed);
+    // reducing evicts least-recent entries first.
     cache.resize(get_max_covers());
 
     if let Some(handle) = cache.get(path) {
         return Some(handle);
     }
 
-    // 3. Crear nuevo Handle y guardar en caché; `put` desaloja si excede la capacidad.
-    let handle = iced::widget::image::Handle::from_path(path);
+    // 3. Create a new file-backed handle and store in the cache;
+    // `put` evicts if capacity is exceeded.
+    let stable_id = CoverHandle::stable_id_from_bytes(path.as_bytes());
+    let handle = CoverHandle::File {
+        path: PathBuf::from(path),
+        stable_id,
+    };
     cache.put(path.to_string(), handle.clone());
 
     Some(handle)
 }
 
-/// Desaloja las entradas menos recientes. En modo low-resource
-/// duplica el número de entradas a purgar.
+/// Evicts the least-recent entries from the cache.
+/// In low-resource mode the effective eviction count is doubled.
 fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool) {
     let effective_count = if low_resource { count * 2 } else { count };
     let to_remove = effective_count.min(cache.entries.len());
@@ -322,19 +383,19 @@ fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool)
     }
 }
 
-/// Purga las carátulas más viejas de la caché.
-/// Usado por el Garbage Collector cuando la app está inactiva.
-/// En low-resource, purga el doble de elementos por ciclo.
+/// Purges the oldest entries from the cover cache.
+/// Called by the Garbage Collector when the app is inactive.
+/// In low-resource mode, purges double the entries per cycle.
 pub fn purge_old_covers(count: usize) {
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
     purge_oldest_covers(&mut cache, count, crate::utils::is_low_resource());
 }
 
-/// Carga una imagen desde bytes crudos (fallback del reproductor).
-/// Precarga carátulas para una lista de rutas de álbumes visibles.
-/// Útil para evitar frames en blanco al hacer scroll por la biblioteca:
-/// las carátulas se cargan en la LRU cache antes de que el usuario las vea.
+/// Preloads cover art for a list of visible album paths.
+///
+/// Useful to avoid blank frames when scrolling through the library:
+/// covers are loaded into the LRU cache before the user sees them.
 pub fn preload_visible_covers(paths: &[String]) {
     if paths.is_empty() {
         return;
@@ -343,23 +404,33 @@ pub fn preload_visible_covers(paths: &[String]) {
     let mut cache = cache_mtx.lock();
     for path in paths {
         if cache.contains(path) {
-            // Ya en caché: promover a MRU sin reinsertar.
+            // Already cached: promote to MRU without reinserting.
             cache.promote(path);
         } else {
-            // No está: cargar desde disco y guardar en LRU.
-            let handle = iced::widget::image::Handle::from_path(path);
+            // Not cached: load from disk and store in LRU.
+            let stable_id = CoverHandle::stable_id_from_bytes(path.as_bytes());
+            let handle = CoverHandle::File {
+                path: PathBuf::from(path),
+                stable_id,
+            };
             cache.put(path.clone(), handle);
         }
     }
 }
 
-/// Solo se usa cuando no hay carátula en caché de disco (datos embebidos del archivo de audio).
-/// Carga una imagen desde bytes crudos para usar en Iced (fallback para datos embebidos).
-pub fn load_raw_image_for_iced(data: &[u8]) -> Option<iced::widget::image::Handle> {
+/// Loads a cover from raw image bytes (fallback for embedded album art).
+///
+/// Returns a byte-backed [`CoverHandle`]. The GUI adapter wraps the
+/// bytes into an iced handle at render time.
+pub fn load_cover_from_bytes(data: &[u8]) -> Option<CoverHandle> {
     if data.is_empty() {
         return None;
     }
-    Some(iced::widget::image::Handle::from_bytes(data.to_vec()))
+    let stable_id = CoverHandle::stable_id_from_bytes(data);
+    Some(CoverHandle::Bytes {
+        data: data.to_vec(),
+        stable_id,
+    })
 }
 
 /// Vacía por completo la caché LRU de carátulas.
@@ -367,10 +438,9 @@ fn clear_cover_cache(cache: &mut CoverCache) {
     cache.entries.clear();
 }
 
-/// Limpia la caché de imágenes crudas del reproductor (llamado al cambiar de canción)
-/// Limpia la caché LRU completa de carátulas (llamado al cambiar de canción).
+/// Clears the entire in-memory LRU cover cache (called on song change).
 pub fn clear_raw_cache() {
-    // Vaciar LRU completo al limpiar
+    // Clear the full LRU on cleanup.
     let cache_mtx = get_lru_cache();
     let mut cache = cache_mtx.lock();
     clear_cover_cache(&mut cache);
@@ -379,20 +449,20 @@ pub fn clear_raw_cache() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use iced::widget::image::Handle;
     use std::collections::{HashMap, VecDeque};
 
-    /// Handle determinista y comparable: `from_path` deriva el `Id` de la ruta,
-    /// a diferencia de `from_bytes`, que genera identidades únicas.
-    fn test_handle(i: usize) -> Handle {
-        Handle::from_path(format!("cache/covers/{i}.avif"))
+    /// Deterministic file-backed cover handle for testing.
+    fn test_handle(i: usize) -> CoverHandle {
+        let path = PathBuf::from(format!("cache/covers/{i}.avif"));
+        let stable_id = CoverHandle::stable_id_from_bytes(path.to_str().unwrap().as_bytes());
+        CoverHandle::File { path, stable_id }
     }
 
-    /// Operaciones mínimas que el arnés de paridad necesita de cada implementación.
+    /// Minimal operations the parity harness needs from each implementation.
     trait ParityCache {
-        fn get(&mut self, key: &str) -> Option<Handle>;
-        fn peek(&self, key: &str) -> Option<Handle>;
-        fn insert(&mut self, key: String, value: Handle);
+        fn get(&mut self, key: &str) -> Option<CoverHandle>;
+        fn peek(&self, key: &str) -> Option<CoverHandle>;
+        fn insert(&mut self, key: String, value: CoverHandle);
         fn clear(&mut self);
         fn purge_oldest(&mut self, count: usize, low_resource: bool);
         fn resize(&mut self, cap: usize);
@@ -416,15 +486,15 @@ mod tests {
     }
 
     impl ParityCache for ProductionCache {
-        fn get(&mut self, key: &str) -> Option<Handle> {
+        fn get(&mut self, key: &str) -> Option<CoverHandle> {
             self.cache.get(key)
         }
 
-        fn peek(&self, key: &str) -> Option<Handle> {
+        fn peek(&self, key: &str) -> Option<CoverHandle> {
             self.cache.peek(key)
         }
 
-        fn insert(&mut self, key: String, value: Handle) {
+        fn insert(&mut self, key: String, value: CoverHandle) {
             self.cache.put(key, value);
         }
 
@@ -453,12 +523,11 @@ mod tests {
         }
     }
 
-    /// Congela la semántica de la caché manual previa a la adopción de `lru`
-    /// (mapa de claves a `Handle` + cola de orden de acceso). Es una referencia
-    /// independiente de la implementación de producción: una divergencia real
-    /// en capacidad, recencia, desalojo, purga o resize hace fallar el test.
+    /// Freezes the semantics of the manual cache that preceded the
+    /// adoption of `lru`. Independent reference: a real divergence in
+    /// capacity, recency, eviction, purge, or resize will fail the test.
     struct ReferenceCache {
-        map: HashMap<String, Handle>,
+        map: HashMap<String, CoverHandle>,
         order: VecDeque<String>,
         cap: usize,
     }
@@ -474,9 +543,9 @@ mod tests {
     }
 
     impl ParityCache for ReferenceCache {
-        fn get(&mut self, key: &str) -> Option<Handle> {
+        fn get(&mut self, key: &str) -> Option<CoverHandle> {
             let handle = self.map.get(key).cloned()?;
-            // El acierto promueve: la clave se mueve al final de la cola.
+            // A hit promotes: the key moves to the tail of the queue.
             if let Some(idx) = self.order.iter().position(|x| x == key) {
                 self.order.remove(idx);
                 self.order.push_back(key.to_string());
@@ -484,11 +553,11 @@ mod tests {
             Some(handle)
         }
 
-        fn peek(&self, key: &str) -> Option<Handle> {
+        fn peek(&self, key: &str) -> Option<CoverHandle> {
             self.map.get(key).cloned()
         }
 
-        fn insert(&mut self, key: String, value: Handle) {
+        fn insert(&mut self, key: String, value: CoverHandle) {
             if self.map.insert(key.clone(), value).is_some() {
                 // Reinsertar una clave existente también la promueve.
                 if let Some(idx) = self.order.iter().position(|x| x == &key) {
@@ -540,10 +609,10 @@ mod tests {
         }
     }
 
-    /// Ejecuta la misma secuencia contra la caché de producción y la referencia
-    /// manual independiente, y exige que el rastro observable y el orden final
-    /// coincidan. La referencia no usa `lru`, así que una divergencia de la
-    /// implementación real contra la semántica documentada hace fallar el test.
+    /// Runs the same scenario against the production cache and the
+    /// independent reference, and asserts that the observable trace and
+    /// final order match. The reference does not use `lru`, so a real
+    /// divergence in the production implementation will fail the test.
     fn assert_parity(cap: usize, scenario: impl Fn(&mut dyn ParityCache) -> Vec<String>) {
         let mut production = ProductionCache::new(cap);
         let mut reference = ReferenceCache::new(cap);
@@ -562,8 +631,9 @@ mod tests {
         );
     }
 
-    /// Contrato explícito de recencia, acierto y desalojo, sin comparar contra
-    /// ninguna otra implementación: fija el orden MRU→LRU esperado.
+    /// Explicit contract for recency, hit promotion, and eviction without
+    /// comparing against another implementation: fixes the expected
+    /// MRU-to-LRU order.
     #[test]
     fn covercache_golden_lru_order() {
         let mut cache = CoverCache::new(3);
@@ -575,17 +645,17 @@ mod tests {
         let _ = cache.get("a");
         assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
 
-        // `peek` consulta sin alterar el orden de recencia.
+        // `peek` does not alter recency order.
         assert!(cache.peek("b").is_some());
         assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
 
-        // Insertar desaloja la menos reciente ("b"), no la recién leída.
+        // Inserting evicts the least-recent ("b"), not the just-read entry.
         cache.put("d".into(), test_handle(3));
         assert_eq!(cache.order_mru_to_lru().join(","), "d,a,c");
         assert!(!cache.contains("b"));
     }
 
-    /// Inserta `cap` claves numeradas y devuelve sus nombres en orden de inserción.
+    /// Inserts `cap` numbered keys and returns their names in insertion order.
     fn fill(cache: &mut dyn ParityCache, cap: usize) -> Vec<String> {
         let keys: Vec<String> = (0..cap).map(|i| format!("k{i}")).collect();
         for (i, key) in keys.iter().enumerate() {
@@ -613,8 +683,8 @@ mod tests {
                 let keys = fill(cache, cap);
                 let first = keys[0].clone();
                 let second = keys[1].clone();
-                // Leer la más antigua la promueve; insertar una nueva desaloja la
-                // siguiente más antigua, no la recién leída.
+                // Reading the oldest entry promotes it; inserting a new entry
+                // evicts the next-oldest, not the just-read one.
                 let _ = cache.get(&first);
                 cache.insert("nueva".into(), test_handle(999));
                 vec![
@@ -651,8 +721,8 @@ mod tests {
         }
     }
 
-    /// Estrés de concurrencia bajo un único `Mutex`: ningún hilo puede dejar la
-    /// caché por encima de la capacidad ni provocar un pánico.
+    /// Concurrency stress test under a single `Mutex`: no thread may leave
+    /// the cache above capacity or trigger a panic.
     fn concurrency_stress<C: ParityCache + Send>(mutex: &Mutex<C>, cap: usize) {
         std::thread::scope(|scope| {
             for thread in 0..8usize {
@@ -699,7 +769,7 @@ mod tests {
             negative.insert(format!("missing-{i}"));
         }
 
-        // Ambas implementaciones parten con entradas que no deben verse afectadas.
+        // Both implementations start with entries that must not be affected.
         let mut production = ProductionCache::new(4);
         production.insert("keep".into(), test_handle(1));
         let mut reference = ReferenceCache::new(4);

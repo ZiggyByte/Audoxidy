@@ -201,18 +201,18 @@ impl MemoryManager {
     /// el `System` cacheado y refrescando únicamente el proceso actual. Sin `unwrap`:
     /// si no se puede resolver el PID o el proceso, devuelve 0 para no romper el Tick.
     fn get_self_ram_mb() -> u64 {
-        if let Some(mut sys) = try_lock_sysinfo() {
-            if let Ok(pid) = sysinfo::get_current_pid() {
-                sys.refresh_processes_specifics(
-                    sysinfo::ProcessesToUpdate::Some(&[pid]),
-                    false,
-                    sysinfo::ProcessRefreshKind::nothing().with_memory(),
-                );
-                if let Some(process) = sys.process(pid) {
-                    // Process::memory() devuelve el RSS en bytes; se conserva la
-                    // semántica entera en MB que usan el tope de 500 MB y la métrica.
-                    return process.memory() / (1024 * 1024);
-                }
+        if let Some(mut sys) = try_lock_sysinfo()
+            && let Ok(pid) = sysinfo::get_current_pid()
+        {
+            sys.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                false,
+                sysinfo::ProcessRefreshKind::nothing().with_memory(),
+            );
+            if let Some(process) = sys.process(pid) {
+                // Process::memory() returns RSS in bytes; keep the
+                // integer-MB semantics used by the 500 MB cap and metric.
+                return process.memory() / (1024 * 1024);
             }
         }
         0
@@ -228,7 +228,6 @@ impl MemoryManager {
     pub fn is_app_ram_over_limit() -> bool {
         process_ram_over_limit(Self::get_self_ram_mb())
     }
-
 }
 
 #[cfg(test)]

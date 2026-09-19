@@ -385,10 +385,11 @@ impl crate::gui::app::AudoxidyApp {
             return;
         }
 
-        // 5. Cargar desde disco (Handle::from_path — sin caché RAM)
+        // 5. Load from disk (Handle::from_path — no RAM cache)
         if !new_cover_path.is_empty() {
-            if let Some(handle) = crate::utils::covers::load_cover_handle(&new_cover_path) {
-                self.player_ui_state.cached_art_handle = Some(handle);
+            if let Some(ch) = crate::utils::covers::load_cover_handle(&new_cover_path) {
+                self.player_ui_state.cached_art_handle =
+                    Some(crate::gui::library::lists::cover_to_iced(ch));
                 self.player_ui_state.current_art_id = audio_state.path.clone();
                 self.player_ui_state.current_cover_path = new_cover_path;
                 return;

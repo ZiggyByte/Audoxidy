@@ -229,10 +229,6 @@ impl MemoryManager {
         process_ram_over_limit(Self::get_self_ram_mb())
     }
 
-    /// Ejecuta la secuencia de purga global notificando a la App
-    pub fn execute_global_purge() -> iced::Task<crate::gui::app::Message> {
-        iced::Task::done(crate::gui::app::Message::GlobalMemoryPurge)
-    }
 }
 
 #[cfg(test)]

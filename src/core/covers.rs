@@ -22,11 +22,7 @@ impl Core {
             .paths
             .cover_cache_dir
             .join(format!("{}.avif", album_hash));
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        if path.exists() { Some(path) } else { None }
     }
 
     /// Purges the oldest entries from the in-memory LRU cover cache.
@@ -73,9 +69,7 @@ mod tests {
 
     fn make_core_for_test() -> Core {
         let paths = CorePaths::desktop_default();
-        let db = Arc::new(Mutex::new(
-            Database::new_memory().expect("in-memory db"),
-        ));
+        let db = Arc::new(Mutex::new(Database::new_memory().expect("in-memory db")));
         let scanner = Arc::new(Scanner::new(db.clone()));
         let audio_manager =
             Arc::new(crate::audio::AudioManager::new().expect("audio manager init"));

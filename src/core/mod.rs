@@ -12,14 +12,30 @@
 //! state — selection, focus, scroll offset, marquee, hover and dialogs — so the
 //! hot read paths stay synchronous and free of cross-boundary lock contention.
 //!
-//! No behavior lives here yet; the submodule seams are introduced as the engine,
-//! database and scan concerns move behind this boundary. The planned seams,
-//! documented here only, are:
+//! # Integration surface
 //!
-//! - an injected filesystem path bundle, replacing hardcoded locations;
-//! - the synchronous command surface over the audio manager and the database;
-//! - the edge-transition event stream consumed by a front-end; and
-//! - the shared domain state, mutated only under the documented lock order.
+//! [`Core`] is constructed once with injected filesystem paths and shared Arc
+//! handles, then handed to a front-end. Any front-end — the desktop GUI, a
+//! future terminal UI, or a mobile shell — integrates through the same surface:
+//!
+//! - **Construction** — [`Core::new`] takes the audio manager, database and
+//!   scanner handles plus [`CorePaths`]; [`Core::paths`] returns the injected
+//!   locations. Paths default to [`CorePaths::desktop_default`].
+//! - **Commands** — synchronous methods grouped by concern: [`playback`] for
+//!   transport, load and crossfade; [`library`] for scan, query, delete and
+//!   stats; [`playlist`] for playlist state; [`settings`] for persisted audio,
+//!   DSP and EQ-preset data; [`audio_routing`] for applying audio settings and
+//!   EQ presets to the engine; [`covers`] for cover-path policy; and
+//!   [`maintenance`] for GC policy. Commands return plain data or [`CoreError`]
+//!   and never block the caller.
+//! - **Events** — [`Core::event_receiver`] exposes the [`CoreEvent`] receiver
+//!   and [`Core::emit`] publishes to it. The stream carries edge transitions
+//!   (scan lifecycle, library dirty, track change, memory pressure) over a
+//!   bounded channel; a front-end bridges it into its own runtime. The desktop
+//!   shell uses a hash-stable subscription, the same shape as its external
+//!   media-control bridge.
+//! - **State ownership** — presentation state belongs to the front-end; Core
+//!   holds only domain state and mutates it under the documented lock order.
 //!
 //! The boundary is enforced by the test-only guard module below, which fails the
 //! suite if a file under this directory imports the GUI toolkit or the GUI

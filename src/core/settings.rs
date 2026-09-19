@@ -4,10 +4,6 @@
 //! they acquire the database lock, read/write data, release the lock,
 //! and return plain data. No lock is held across audio manager calls.
 
-use std::sync::Mutex;
-
-use crate::db::Database;
-
 use super::Core;
 use super::error::CoreError;
 use super::types::EqPresetSnapshot;
@@ -251,7 +247,7 @@ impl Core {
 mod tests {
     use super::*;
     use crate::db::Database;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
 
     fn make_core() -> Core {
         let db = Database::new_memory().unwrap();

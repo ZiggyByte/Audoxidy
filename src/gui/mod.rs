@@ -1,5 +1,6 @@
 pub mod app;
 pub mod audio_center;
+pub mod dimensions;
 pub mod library;
 pub mod library_filters;
 pub mod player;

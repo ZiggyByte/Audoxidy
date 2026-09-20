@@ -1,6 +1,7 @@
 //! Equalizer tab.
 
 use crate::audio::AudioManager;
+use crate::gui::dimensions::{SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::gui::theme::*;
 use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Element, Length};
@@ -31,7 +32,7 @@ pub(super) fn view_equalizer<'a>(
             COLOR_TEXT_SECONDARY,
         )
     ]
-    .spacing(10)
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center);
 
     let bands_mode = row![
@@ -46,7 +47,7 @@ pub(super) fn view_equalizer<'a>(
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::EqBandsSelected(b))
         }),
     ]
-    .spacing(10)
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center);
 
     // Preset name label — visible only when a non-Default preset is selected
@@ -61,7 +62,7 @@ pub(super) fn view_equalizer<'a>(
                 .color(COLOR_TEXT_PRIMARY)
                 .font(FONT_INTER_SANS_MEDIUM),
         )
-        .padding([0, 5])
+        .padding([0.0, SPACE_XS])
         .into()
     } else {
         iced::widget::Space::new().width(Length::Fixed(0.0)).into()
@@ -91,7 +92,7 @@ pub(super) fn view_equalizer<'a>(
             )),
         ),
     ]
-    .spacing(7)
+    .spacing(SPACE_SM)
     .align_y(Alignment::Center);
 
     let top_row = row![

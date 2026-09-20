@@ -1,6 +1,10 @@
 //! Audio center panel view composition and tab dispatch.
 
 use crate::audio::AudioManager;
+use crate::gui::dimensions::{
+    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, BAR_TAB, DIVIDER_THIN, MARGIN_MD, MARGIN_SM, RADIUS_M,
+    RADIUS_S, SPACE_LG, SPACE_MD, SPACE_XS,
+};
 use crate::gui::theme::*;
 use iced::{
     Alignment, Color, Element, Length, Theme,
@@ -71,7 +75,7 @@ pub fn view<'a>(
     });
 
     let close_btn = button(close_icon)
-        .padding(4)
+        .padding(SPACE_XS)
         .style(|_t: &Theme, _status| button::Style {
             background: Some(Color::TRANSPARENT.into()),
             border: iced::Border::default(),
@@ -86,9 +90,9 @@ pub fn view<'a>(
         .align_y(Alignment::Center)
         .padding(iced::Padding {
             top: 0.0,
-            right: 6.0,
+            right: MARGIN_SM,
             bottom: 0.0,
-            left: 15.0,
+            left: MARGIN_MD,
         });
 
     let centered_title = container(
@@ -108,15 +112,15 @@ pub fn view<'a>(
             .push(centered_title)
             .push(header_content),
     )
-    .height(Length::Fixed(40.0))
+    .height(Length::Fixed(BAR_TAB))
     .width(Length::Fill)
     .style(|_t: &Theme| {
         container::Style::default()
             .background(COLOR_BG)
             .border(iced::Border {
                 radius: iced::border::Radius {
-                    top_left: 8.0,
-                    top_right: 8.0,
+                    top_left: RADIUS_M,
+                    top_right: RADIUS_M,
                     bottom_left: 0.0,
                     bottom_right: 0.0,
                 },
@@ -137,13 +141,13 @@ pub fn view<'a>(
         "Efectos de Audio",
         "Volumen y Mezcla",
     ];
-    let mut tab_row = row![].spacing(10);
+    let mut tab_row = row![].spacing(SPACE_MD);
 
     for (i, name) in tab_names.iter().enumerate() {
         let is_selected = manager.selected_tab == i;
 
         let tab_btn = button(text(*name).size(14).font(FONT_INTER_SANS_MEDIUM))
-            .padding([5, 15])
+            .padding([SPACE_XS, SPACE_LG])
             .style(move |_t: &Theme, status| {
                 let is_hovered = matches!(status, button::Status::Hovered);
                 button::Style {
@@ -161,8 +165,8 @@ pub fn view<'a>(
                     },
                     border: iced::Border {
                         radius: iced::border::Radius {
-                            top_left: 2.0,
-                            top_right: 2.0,
+                            top_left: RADIUS_S,
+                            top_right: RADIUS_S,
                             bottom_left: 0.0,
                             bottom_right: 0.0,
                         },
@@ -180,8 +184,12 @@ pub fn view<'a>(
     }
 
     // Divisor
-    let divider = container(Space::new().width(Length::Fill).height(Length::Fixed(2.0)))
-        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+    let divider = container(
+        Space::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(DIVIDER_THIN)),
+    )
+    .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // 5. Contenido de pestaña activa
     let content: Element<'a, crate::gui::app::Message> = match manager.selected_tab {
@@ -196,9 +204,9 @@ pub fn view<'a>(
     let inner_content = column![tab_row, divider, content,]
         .padding(iced::Padding {
             top: 0.0,
-            right: 15.0,
-            bottom: 15.0,
-            left: 15.0,
+            right: MARGIN_MD,
+            bottom: MARGIN_MD,
+            left: MARGIN_MD,
         })
         .width(Length::Fill)
         .height(Length::Fill);
@@ -211,16 +219,16 @@ pub fn view<'a>(
     // Evitamos el traspaso de clics capturando todo en un mouse_area con NoOp
     let non_pass_through_window = mouse_area(
         container(window_layout)
-            .width(Length::Fixed(940.0))
-            .height(Length::Fixed(480.0))
-            .padding(2.0) // Inset de 2px para que el borde del contenedor principal no sea tapado por los hijos
+            .width(Length::Fixed(AUDIO_CENTER_WIDTH))
+            .height(Length::Fixed(AUDIO_CENTER_HEIGHT))
+            .padding(SPACE_XS) // Inset para que el borde del contenedor principal no sea tapado por los hijos
             .style(|_t: &Theme| {
                 container::Style::default()
                     .background(COLOR_BG)
                     .border(iced::Border {
                         color: COLOR_ACCENT,
-                        width: 2.0,
-                        radius: 8.0.into(),
+                        width: DIVIDER_THIN,
+                        radius: RADIUS_M.into(),
                     })
             }),
     )

@@ -1,5 +1,9 @@
 //! Modal dialog overlay rendering.
 
+use crate::gui::dimensions::{
+    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, CONTROL_MD, CONTROL_SM, DIVIDER_THIN, MARGIN_MD,
+    PRESET_LIST_WIDTH, RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+};
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
 };
@@ -22,7 +26,7 @@ impl AudoxidyApp {
                     .size(14)
                     .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM),
             )
-            .padding([5, 10])
+            .padding([SPACE_XS, SPACE_MD])
             .on_press(msg)
             .style(move |_t, status| {
                 let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
@@ -42,7 +46,7 @@ impl AudoxidyApp {
                         COLOR_TEXT_SECONDARY
                     },
                     border: iced::Border {
-                        radius: 6.0.into(),
+                        radius: RADIUS_S.into(),
                         width: 0.0,
                         color: if active {
                             iced::Color::TRANSPARENT
@@ -67,19 +71,19 @@ impl AudoxidyApp {
                                 .id(DIALOG_TEXT_INPUT_ID.clone())
                                 .on_input(Message::UpdateDialogInput)
                                 .on_submit(Message::ConfirmDialogAction)
-                                .padding([4, 5])
+                                .padding([SPACE_XS, SPACE_XS])
                                 .size(14)
                                 .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
                                     iced::widget::text_input::Style {
                                         background: COLOR_CONTRAST.into(),
-                                        border: iced::Border { radius: 4.0.into(), width: 1.0, color: COLOR_ACCENT },
+                                        border: iced::Border { radius: RADIUS_S.into(), width: STROKE_HAIRLINE, color: COLOR_ACCENT },
                                         icon: Color::TRANSPARENT,
                                         placeholder: COLOR_TEXT_SECONDARY,
                                         value: COLOR_TEXT_PRIMARY,
                                         selection: COLOR_ACCENT,
                                     }
                                 })
-                        ].spacing(12).into(),
+                        ].spacing(SPACE_MD).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Crear".to_string(),
@@ -94,19 +98,19 @@ impl AudoxidyApp {
                                 .id(DIALOG_TEXT_INPUT_ID.clone())
                                 .on_input(Message::UpdateDialogInput)
                                 .on_submit(Message::ConfirmDialogAction)
-                                .padding([4, 5])
+                                .padding([SPACE_XS, SPACE_XS])
                                 .size(14)
                                 .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
                                     iced::widget::text_input::Style {
                                         background: COLOR_CONTRAST.into(),
-                                        border: iced::Border { radius: 4.0.into(), width: 1.0, color: COLOR_ACCENT },
+                                        border: iced::Border { radius: RADIUS_S.into(), width: STROKE_HAIRLINE, color: COLOR_ACCENT },
                                         icon: Color::TRANSPARENT,
                                         placeholder: COLOR_TEXT_SECONDARY,
                                         value: COLOR_TEXT_PRIMARY,
                                         selection: COLOR_ACCENT,
                                     }
                                 })
-                        ].spacing(12).into(),
+                        ].spacing(SPACE_MD).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Renombrar".to_string(),
@@ -125,12 +129,12 @@ impl AudoxidyApp {
                     let format_choices = iced::widget::row![
                         export_choice_button("M3U", *format == ExportFormat::M3U, Message::SelectExportFormat(ExportFormat::M3U)),
                         export_choice_button("M3U8", *format == ExportFormat::M3U8, Message::SelectExportFormat(ExportFormat::M3U8)),
-                    ].spacing(10).align_y(iced::Alignment::Center);
+                    ].spacing(SPACE_MD).align_y(iced::Alignment::Center);
 
                     let mode_choices = iced::widget::row![
                         export_choice_button("Solo Lista", *mode == ExportMode::SingleFile, Message::SelectExportMode(ExportMode::SingleFile)),
                         export_choice_button("Carpeta Portable", *mode == ExportMode::PortableFolder, Message::SelectExportMode(ExportMode::PortableFolder)),
-                    ].spacing(10).align_y(iced::Alignment::Center);
+                    ].spacing(SPACE_MD).align_y(iced::Alignment::Center);
 
                     crate::gui::widgets::standard_modal(
                         "Guardar | Exportar lista".to_string(),
@@ -142,7 +146,7 @@ impl AudoxidyApp {
                             iced::widget::Space::new().height(iced::Length::Fixed(0.0)),
                             crate::gui::widgets::modal_text("Modo:".to_string()),
                             mode_choices,
-                        ].spacing(10).align_x(iced::Alignment::Center).into(),
+                        ].spacing(SPACE_MD).align_x(iced::Alignment::Center).into(),
                         Some(Message::CloseDialog),
                         Some(Message::ConfirmDialogAction),
                         "Continuar".to_string(),
@@ -167,7 +171,7 @@ impl AudoxidyApp {
                                 iced::widget::container(
                                     iced::widget::Space::new()
                                         .width(iced::Length::Fill)
-                                        .height(iced::Length::Fixed(1.0)),
+                                        .height(iced::Length::Fixed(STROKE_HAIRLINE)),
                                 )
                                 .width(iced::Length::Fill)
                                 .style(|_t: &iced::Theme| iced::widget::container::Style::default()
@@ -189,8 +193,8 @@ impl AudoxidyApp {
                             .center_y(iced::Length::Fill),
                         )
                         .width(iced::Length::Fill)
-                        .height(iced::Length::Fixed(26.0))
-                        .padding([0, 8])
+                        .height(iced::Length::Fixed(CONTROL_SM))
+                        .padding([0.0, SPACE_SM])
                         .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
                             let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
                             iced::widget::button::Style {
@@ -226,15 +230,15 @@ impl AudoxidyApp {
                         )
                         .height(iced::Length::Fixed(287.0)),
                     )
-                    .width(iced::Length::Fixed(140.0))
+                    .width(iced::Length::Fixed(PRESET_LIST_WIDTH))
                     .height(iced::Length::Fixed(289.0))
                     .padding(1)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(COLOR_CONTRAST)
                         .border(iced::Border {
-                            width: 1.0,
+                            width: STROKE_HAIRLINE,
                             color: COLOR_TEXT_SECONDARY,
-                            radius: 2.0.into(),
+                            radius: RADIUS_S.into(),
                         }));
 
                     // --- RIGHT COLUMN: Vertical Buttons ---
@@ -254,7 +258,7 @@ impl AudoxidyApp {
                             .center_y(iced::Length::Fill),
                         )
                         .width(iced::Length::Fixed(150.0))
-                        .height(iced::Length::Fixed(30.0))
+                        .height(iced::Length::Fixed(CONTROL_MD))
                         .padding(0)
                         .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
                             let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
@@ -314,13 +318,13 @@ impl AudoxidyApp {
                             .color(COLOR_TEXT_SECONDARY)
                             .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM),
                     ]
-                    .spacing(8)
+                    .spacing(SPACE_SM)
                     .align_x(iced::Alignment::Center)
                     .width(iced::Length::Fixed(150.0));
 
                     let content = iced::widget::row![
                         preset_list,
-                        iced::widget::Space::new().width(iced::Length::Fixed(10.0)),
+                        iced::widget::Space::new().width(iced::Length::Fixed(SPACE_MD)),
                         right_col,
                     ]
                     .spacing(0)
@@ -342,7 +346,7 @@ impl AudoxidyApp {
                                 left: 0.0,
                                 right: 0.0,
                             }),
-                            iced::widget::Space::new().height(iced::Length::Fixed(8.0)),
+                            iced::widget::Space::new().height(iced::Length::Fixed(SPACE_SM)),
                             content,
                         ]
                         .align_x(iced::Alignment::Center),
@@ -354,8 +358,8 @@ impl AudoxidyApp {
                         .background(iced::Background::Color(COLOR_BG))
                         .border(iced::Border {
                             color: COLOR_ACCENT,
-                            width: 2.0,
-                            radius: 8.0.into(),
+                            width: DIVIDER_THIN,
+                            radius: RADIUS_M.into(),
                         })
                         .shadow(iced::Shadow {
                             offset: iced::Vector::new(0.0, 10.0),
@@ -382,8 +386,8 @@ impl AudoxidyApp {
                             iced::widget::text_input::Style {
                                 background: COLOR_CONTRAST.into(),
                                 border: iced::Border {
-                                    radius: 4.0.into(),
-                                    width: 1.0,
+                                    radius: RADIUS_S.into(),
+                                    width: STROKE_HAIRLINE,
                                     color: COLOR_ACCENT,
                                 },
                                 icon: iced::Color::TRANSPARENT,
@@ -409,7 +413,7 @@ impl AudoxidyApp {
                             .center_y(iced::Length::Fill),
                         )
                         .width(iced::Length::Fixed(74.0))
-                        .height(iced::Length::Fixed(30.0))
+                        .height(iced::Length::Fixed(CONTROL_MD))
                         .padding(0)
                         .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
                             let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
@@ -446,12 +450,12 @@ impl AudoxidyApp {
                             .color(COLOR_TEXT_PRIMARY)
                             .font(crate::gui::theme::FONT_INTER_SANS_MEDIUM)
                             .align_x(iced::alignment::Horizontal::Center),
-                        iced::widget::Space::new().height(iced::Length::Fixed(12.0)),
+                        iced::widget::Space::new().height(iced::Length::Fixed(SPACE_MD)),
                         input,
-                        iced::widget::Space::new().height(iced::Length::Fixed(15.0)),
+                        iced::widget::Space::new().height(iced::Length::Fixed(SPACE_LG)),
                         iced::widget::row![
                             save_dialog_btn("Cancelar", true, Some(Message::CloseDialog)),
-                            iced::widget::Space::new().width(iced::Length::Fixed(8.0)),
+                            iced::widget::Space::new().width(iced::Length::Fixed(SPACE_SM)),
                             save_dialog_btn(
                                 "Guardar",
                                 save_enabled,
@@ -479,20 +483,20 @@ impl AudoxidyApp {
                                 left: 0.0,
                                 right: 0.0,
                             }),
-                            iced::widget::Space::new().height(iced::Length::Fixed(8.0)),
+                            iced::widget::Space::new().height(iced::Length::Fixed(SPACE_SM)),
                             content,
                         ]
                         .align_x(iced::Alignment::Center),
                     )
                     .width(iced::Length::Fixed(190.0))
                     .height(iced::Length::Fixed(162.0))
-                    .padding(15)
+                    .padding(MARGIN_MD)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(iced::Background::Color(COLOR_BG))
                         .border(iced::Border {
                             color: COLOR_ACCENT,
-                            width: 2.0,
-                            radius: 8.0.into(),
+                            width: DIVIDER_THIN,
+                            radius: RADIUS_M.into(),
                         })
                         .shadow(iced::Shadow {
                             offset: iced::Vector::new(0.0, 10.0),
@@ -509,8 +513,8 @@ impl AudoxidyApp {
             };
 
             // Cálculo de posición dinámica según el tipo de diálogo
-            let ac_width = 940.0;
-            let ac_height = 480.0;
+            let ac_width = AUDIO_CENTER_WIDTH;
+            let ac_height = AUDIO_CENTER_HEIGHT;
             let ac_pos = self.audio_center_manager.window_pos.unwrap_or_else(|| {
                 let win_w = self.window_size.0 as f32;
                 let win_h = self.window_size.1 as f32;

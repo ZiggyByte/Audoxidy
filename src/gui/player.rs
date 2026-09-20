@@ -1,5 +1,6 @@
 use crate::audio::AudioManager;
 use crate::gui::app::{Message, fine_seek_enabled};
+use crate::gui::dimensions::{BAR_BOTTOM, BAR_TOP, PLAYER_PANEL_SIZE, RADIUS_PILL};
 use crate::gui::theme::*;
 use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
 use crate::utils::format_duration;
@@ -197,7 +198,7 @@ pub fn view<'a>(
     ui_state: &'a PlayerUiState,
 ) -> Element<'a, Message> {
     let state = audio_manager.get_state();
-    let bounds = Length::Fixed(400.0);
+    let bounds = Length::Fixed(PLAYER_PANEL_SIZE);
 
     let background_layer = crate::gui::library::lists::album_art_widget(
         None, // No pasamos el path aquí ya que el player gestiona su propio handle precargado
@@ -225,7 +226,7 @@ pub fn view<'a>(
         Space::new().width(Length::Fill),
         // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
     ]
-    .height(Length::Fixed(40.0))
+    .height(Length::Fixed(BAR_TOP))
     .align_y(Alignment::Center)
     .padding([0, 8]); // padding horizontal
 
@@ -303,7 +304,7 @@ pub fn view<'a>(
         column![
             Space::new().height(Length::Fixed(262.0)),
             container(title_widget)
-                .height(Length::Fixed(40.0))
+                .height(Length::Fixed(BAR_TOP))
                 .center_y(Length::Fill)
                 .padding([0, 10]),
             container(
@@ -378,7 +379,7 @@ pub fn view<'a>(
     .interaction(iced::mouse::Interaction::Idle);
 
     let progress_container = container(progress_bar)
-        .height(Length::Fixed(40.0))
+        .height(Length::Fixed(BAR_BOTTOM))
         .center_y(Length::Fill)
         .style(|_t: &Theme| {
             container::Style::default().background(Color::from_rgba(0.0, 0.0, 0.0, 0.25))
@@ -416,7 +417,7 @@ pub fn view<'a>(
                         COLOR_CONTRAST.b,
                         0.5,
                     ))
-                    .border(iced::Border::default().rounded(30.0))
+                    .border(iced::Border::default().rounded(RADIUS_PILL))
             })
         } else {
             container(Space::new().width(size).height(size))
@@ -522,7 +523,7 @@ pub fn view<'a>(
                             COLOR_CONTRAST.b,
                             0.5,
                         ))
-                        .border(iced::Border::default().rounded(50.0))
+                        .border(iced::Border::default().rounded(RADIUS_PILL))
                 }),
             )
             .width(Length::Fill)
@@ -544,9 +545,9 @@ pub fn view<'a>(
     .into();
 
     let capa5_positioned: Element<'a, Message> = column![
-        Space::new().height(Length::Fixed(40.0)),
+        Space::new().height(Length::Fixed(BAR_TOP)),
         capa5,
-        Space::new().height(Length::Fixed(40.0))
+        Space::new().height(Length::Fixed(BAR_BOTTOM))
     ]
     .width(bounds)
     .height(bounds)

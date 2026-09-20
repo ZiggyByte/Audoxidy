@@ -209,6 +209,13 @@ impl crate::gui::app::AudoxidyApp {
             | Message::MeterResetPeak
             | Message::MeterToggleEnabled(..) => self.handle_meter(message),
             Message::NoOp => Task::none(),
+            // The consolidated tick messages carry no behavior yet: nothing emits
+            // them, and their handlers arrive together with the subscription wiring.
+            Message::FrameTick
+            | Message::UiTick
+            | Message::TransportTick
+            | Message::ScanTick
+            | Message::IdleTick => Task::none(),
             Message::CoreEvent(event) => self.on_core_event(event),
         }
     }

@@ -9,6 +9,7 @@ mod message;
 mod persistence;
 mod state;
 mod subscription;
+pub(in crate::gui::app) mod tick;
 mod update;
 mod view;
 

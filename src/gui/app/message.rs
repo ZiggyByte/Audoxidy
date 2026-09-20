@@ -16,6 +16,12 @@ pub enum Message {
     DragTick,
     MeterTick,
     SearchPulse,
+    // Authorized tick taxonomy: one timer per kind, each with its own recipe.
+    FrameTick,
+    UiTick,
+    TransportTick,
+    ScanTick,
+    IdleTick,
     GlobalMemoryPurge,
     PlayPause,
     NextTrack,

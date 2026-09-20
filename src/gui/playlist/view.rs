@@ -1,6 +1,10 @@
 use crate::audio::AudioManager;
 use crate::db::database::PlaylistSongRef;
 use crate::gui::app::Message;
+use crate::gui::dimensions::{
+    BAR_BOTTOM, BAR_TAB, MARGIN_MD, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW, SPACE_MD, SPACE_SM,
+    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+};
 use crate::gui::theme::*;
 use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
 use crate::utils::format_duration;
@@ -31,10 +35,6 @@ pub static PLAYLIST_SEARCH_ID: std::sync::LazyLock<iced::widget::Id> =
 // Vista principal del módulo de Playlist
 // ============================================================
 
-const TABS_BAR_HEIGHT: f32 = 40.0;
-const BOTTOM_BAR_HEIGHT: f32 = 40.0;
-const TABS_PADDING_H: u16 = 7;
-
 pub fn view<'a>(
     manager: &'a PlaylistManager,
     _audio_manager: &AudioManager,
@@ -49,7 +49,7 @@ pub fn view<'a>(
 
     mouse_area(
         container(column![tabs_container, playlist_scroll, bottom_container])
-            .width(Length::Fixed(400.0))
+            .width(Length::Fixed(PLAYLIST_PANEL_WIDTH))
             .height(Length::Fill)
             .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
     )
@@ -65,7 +65,10 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let playlists = &manager.playlists;
 
     // Use zero padding internally so the scrollable bounds determine visibility
-    let mut tabs_row = row![].spacing(5).padding([0, 0]).align_y(Alignment::Center);
+    let mut tabs_row = row![]
+        .spacing(SPACE_XS)
+        .padding([0.0, 0.0])
+        .align_y(Alignment::Center);
 
     let mut total_tabs_width: f32 = 0.0;
 
@@ -85,7 +88,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
             .font(FONT_INTER_SANS_MEDIUM);
 
         let tab_btn = button(tab)
-            .padding([5, 5])
+            .padding([SPACE_XS, SPACE_XS])
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
             .on_press(Message::SwitchPlaylist(id, false));
 
@@ -222,7 +225,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     mouse_area(
         container(content)
             .width(Length::Fill)
-            .height(Length::Fixed(TABS_BAR_HEIGHT))
+            .height(Length::Fixed(BAR_TAB))
             .align_y(iced::alignment::Vertical::Center)
             .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST)),
     )
@@ -249,7 +252,7 @@ fn build_tab_dropdown_button<'a>(manager: &'a PlaylistManager) -> Element<'a, Me
         });
 
     button(chevron)
-        .padding(4)
+        .padding(SPACE_XS)
         .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
         .on_press(Message::ToggleTabDropdown)
         .into()
@@ -259,7 +262,7 @@ fn build_dropdown_menu<'a>(
     playlists: &[crate::db::database::PlaylistData],
     visible_count: usize,
 ) -> Element<'a, Message> {
-    let mut items = column![].padding([5, TABS_PADDING_H as u16]).spacing(4);
+    let mut items = column![].padding([SPACE_XS, SPACE_SM]).spacing(SPACE_XS);
 
     for p_data in playlists.iter().skip(visible_count) {
         let name = &p_data.name;
@@ -272,7 +275,7 @@ fn build_dropdown_menu<'a>(
 
         let item_btn = button(item)
             .width(Length::Fill)
-            .padding([5, 5])
+            .padding([SPACE_XS, SPACE_XS])
             .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_BG))
             .on_press(Message::SwitchPlaylist(id, false));
 
@@ -292,8 +295,8 @@ fn build_dropdown_menu<'a>(
 // Lista de canciones con separadores de carpeta
 // ============================================================
 
-pub(in crate::gui::playlist) const SONG_ROW_HEIGHT: f32 = 46.0;
-pub(in crate::gui::playlist) const FOLDER_SEPARATOR_HEIGHT: f32 = 46.0;
+pub(in crate::gui::playlist) const SONG_ROW_HEIGHT: f32 = PLAYLIST_ROW;
+pub(in crate::gui::playlist) const FOLDER_SEPARATOR_HEIGHT: f32 = PLAYLIST_ROW;
 
 fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
     let groups = manager.active_groups();
@@ -309,7 +312,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
-            .padding(15),
+            .padding(MARGIN_MD),
         )
         .on_enter(Message::PlaylistMouseOver(true))
         .on_exit(Message::PlaylistMouseOver(false))
@@ -491,14 +494,16 @@ fn build_folder_separator<'a>(
                 .width(Length::Fill)
                 .height(Length::Fixed(FOLDER_SEPARATOR_HEIGHT - 11.0))
                 .align_y(iced::alignment::Vertical::Center),
-            container(Space::new().width(Length::Fill).height(1.0)).style(move |_t: &Theme| {
-                let col = if is_selected {
-                    COLOR_TEXT_PRIMARY
-                } else {
-                    COLOR_TEXT_SECONDARY
-                };
-                container::Style::default().background(col)
-            }),
+            container(Space::new().width(Length::Fill).height(STROKE_HAIRLINE)).style(
+                move |_t: &Theme| {
+                    let col = if is_selected {
+                        COLOR_TEXT_PRIMARY
+                    } else {
+                        COLOR_TEXT_SECONDARY
+                    };
+                    container::Style::default().background(col)
+                }
+            ),
             Space::new().height(10.0)
         ])
         .width(Length::Fill)
@@ -683,7 +688,7 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         &manager.search_query,
         Message::PlaylistSearchChanged,
         Message::PlaylistSearchChanged(String::new()),
-        Length::Fixed(180.0),
+        Length::Fixed(WIDTH_SEARCH),
     );
 
     let eq_btn = icon_button(
@@ -715,7 +720,7 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         shuffle_btn,
         eq_btn
     ]
-    .spacing(10)
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center);
 
     let bar_content = row![
@@ -723,13 +728,13 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         Space::new().width(Length::Fill),
         container(icons_group).center_y(Length::Fill)
     ]
-    .padding([0, 15])
-    .spacing(10)
+    .padding([0.0, MARGIN_MD])
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center);
 
     container(bar_content)
         .width(Length::Fill)
-        .height(Length::Fixed(BOTTOM_BAR_HEIGHT))
+        .height(Length::Fixed(BAR_BOTTOM))
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
         .into()
 }

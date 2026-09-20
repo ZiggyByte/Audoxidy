@@ -3,6 +3,7 @@ use iced::{
     widget::{Space, column, container, mouse_area, row, svg, text},
 };
 
+use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_MD, SPACE_XS};
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_MEDIUM,
@@ -221,7 +222,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
         let pad_left = if col == SortColumn::TrackNumber {
             0.0
         } else {
-            15.0
+            MARGIN_MD
         };
         container(content)
             .width(Length::Fixed(w))
@@ -229,7 +230,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
             .center_y(Length::Fill)
             .padding(Padding {
                 left: pad_left,
-                right: 5.0,
+                right: SPACE_XS,
                 top: 0.0,
                 bottom: 0.0,
             })
@@ -252,7 +253,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
 
         elements.push(
             container(thumb_img)
-                .width(Length::Fixed(42.0))
+                .width(Length::Fixed(LIST_ROW))
                 .height(Length::Fixed(row_height))
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Center)
@@ -269,7 +270,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
 
     let song_row_inner = iced::widget::Row::with_children(elements)
         .align_y(Alignment::Center)
-        .padding([0, 5])
+        .padding([0.0, SPACE_XS])
         .height(Length::Fill);
 
     mouse_area(
@@ -307,7 +308,7 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
         column_widths,
         on_select,
         playing_path,
-        32.0,
+        LIST_ROW_HEADER,
         false,
     )
 }
@@ -331,7 +332,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
         column_widths,
         on_select,
         playing_path,
-        42.0,
+        LIST_ROW,
         true,
     )
 }
@@ -368,15 +369,15 @@ where
     }
 
     let header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList {
-        42.0
+        LIST_ROW
     } else {
-        32.0
+        LIST_ROW_HEADER
     };
     let album_header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList
     {
-        42.0
+        LIST_ROW
     } else {
-        32.0
+        LIST_ROW_HEADER
     };
 
     let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) =
@@ -479,8 +480,8 @@ where
     }
 
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
-        left: 10.0,
-        right: 15.0,
+        left: SPACE_MD,
+        right: MARGIN_MD,
         top: 0.0,
         bottom: 0.0,
     }))
@@ -532,8 +533,8 @@ where
             .width(Length::Fill)
             .height(Length::Fixed(header_h))
             .padding(Padding {
-                left: 10.0,
-                right: 15.0,
+                left: SPACE_MD,
+                right: MARGIN_MD,
                 top: 0.0,
                 bottom: 0.0,
             })
@@ -579,11 +580,11 @@ where
     }
 
     let _header_h = if manager.view_mode == crate::gui::library::LibraryViewMode::ThumbnailList {
-        42.0
+        LIST_ROW
     } else {
-        32.0
+        LIST_ROW_HEADER
     };
-    let album_header_h = 32.0;
+    let album_header_h = LIST_ROW_HEADER;
     let card_w = 250.0;
 
     let (top_space, bottom_space, _total_h, visible_elements, sticky_artist_info) =
@@ -629,7 +630,7 @@ where
                     albums_count,
                     songs_count,
                     duration_secs,
-                    32.0,
+                    LIST_ROW_HEADER,
                     crate::gui::app::Message::SelectArtistHeader(name.clone()),
                     crate::gui::app::Message::ToggleArtistExpansion(name.clone()),
                 );
@@ -812,8 +813,8 @@ where
     }
 
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
-        left: 10.0,
-        right: 15.0,
+        left: SPACE_MD,
+        right: MARGIN_MD,
         top: 0.0,
         bottom: 0.0,
     }))
@@ -858,15 +859,15 @@ where
                 st_albums,
                 st_songs,
                 st_duration,
-                32.0,
+                LIST_ROW_HEADER,
                 crate::gui::app::Message::SelectArtistHeader(st_name.clone()),
                 crate::gui::app::Message::ToggleArtistExpansion(st_name.clone()),
             ))
             .width(Length::Fill)
-            .height(Length::Fixed(32.0))
+            .height(Length::Fixed(LIST_ROW_HEADER))
             .padding(Padding {
-                left: 10.0,
-                right: 15.0,
+                left: SPACE_MD,
+                right: MARGIN_MD,
                 top: 0.0,
                 bottom: 0.0,
             })

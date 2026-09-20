@@ -7,6 +7,7 @@ use super::types::{
     LibraryAlbumGroup, LibraryGridElement, LibraryGridRowData, LibraryListItem, LibraryViewMode,
     LibraryVirtualArtist, LibraryVirtualRow,
 };
+use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER};
 
 impl LibraryManager {
     /// Descarga los datos pesados de la RAM por inactividad, conservando un margen de seguridad
@@ -91,14 +92,14 @@ impl LibraryManager {
         }
 
         let row_height = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
 
         for group in groups {
@@ -143,9 +144,9 @@ impl LibraryManager {
                     let is_album_expanded = !self.collapsed_albums.contains(&composite_id);
 
                     let album_header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-                        42.0
+                        LIST_ROW
                     } else {
-                        32.0
+                        LIST_ROW_HEADER
                     };
                     let card_h: f32 =
                         if self.view_mode == LibraryViewMode::DetailedList && is_album_expanded {
@@ -231,19 +232,19 @@ impl LibraryManager {
         let mut sticky_artist_info = None;
 
         let header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let album_header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let row_height = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
 
         for va in v_artists {
@@ -460,7 +461,7 @@ impl LibraryManager {
                         1 // "Cargando..."
                     };
                     // 60px de padding/headers + canciones (32px cada una)
-                    row_h += 60.0 + (songs_count.max(1) as f32 * 32.0);
+                    row_h += 60.0 + (songs_count.max(1) as f32 * LIST_ROW_HEADER);
                     break;
                 }
             }
@@ -506,7 +507,7 @@ impl LibraryManager {
                         let query = self.search_query.trim();
 
                         // El bloque de canciones empieza después de las tarjetas (252px) + header (32px)
-                        let songs_block_start_y = row.top_y + 252.0 + 32.0;
+                        let songs_block_start_y = row.top_y + 252.0 + LIST_ROW_HEADER;
 
                         let mut v_songs = Vec::new();
                         let mut songs_top_space = 0.0;
@@ -519,14 +520,16 @@ impl LibraryManager {
                                 continue;
                             }
 
-                            if current_song_y + 32.0 >= render_min && current_song_y <= render_max {
+                            if current_song_y + LIST_ROW_HEADER >= render_min
+                                && current_song_y <= render_max
+                            {
                                 v_songs.push((song.clone(), idx));
-                            } else if current_song_y + 32.0 < render_min {
-                                songs_top_space += 32.0;
+                            } else if current_song_y + LIST_ROW_HEADER < render_min {
+                                songs_top_space += LIST_ROW_HEADER;
                             } else {
-                                songs_bottom_space += 32.0;
+                                songs_bottom_space += LIST_ROW_HEADER;
                             }
-                            current_song_y += 32.0;
+                            current_song_y += LIST_ROW_HEADER;
                         }
 
                         if !v_songs.is_empty() || songs_top_space > 0.0 || songs_bottom_space > 0.0
@@ -550,19 +553,19 @@ impl LibraryManager {
     pub fn get_item_y_range(&self, item: &LibraryListItem) -> Option<(f32, f32)> {
         let (_total_h, v_artists) = self.get_view_structure();
         let header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let album_header_h = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let row_height = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
 
         match item {
@@ -661,15 +664,15 @@ impl LibraryManager {
     /// Devuelve (NuevaCabecera, NuevoIndiceCanción, FocoEnCanción).
     pub fn get_row_height(&self) -> f32 {
         match self.view_mode {
-            LibraryViewMode::ThumbnailList => 42.0,
-            _ => 32.0,
+            LibraryViewMode::ThumbnailList => LIST_ROW,
+            _ => LIST_ROW_HEADER,
         }
     }
 
     pub fn get_header_height(&self) -> f32 {
         match self.view_mode {
-            LibraryViewMode::ThumbnailList => 42.0,
-            _ => 32.0,
+            LibraryViewMode::ThumbnailList => LIST_ROW,
+            _ => LIST_ROW_HEADER,
         }
     }
 
@@ -683,19 +686,19 @@ impl LibraryManager {
         let mut items = Vec::new();
         let mut current_y = 0.0;
         let header_h: f32 = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let album_header_h: f32 = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let row_height: f32 = if self.view_mode == LibraryViewMode::ThumbnailList {
-            42.0
+            LIST_ROW
         } else {
-            32.0
+            LIST_ROW_HEADER
         };
         let lib_width = self.library_area_width.max(100.0);
 
@@ -806,18 +809,18 @@ impl LibraryManager {
                                     .collect()
                             };
 
-                            let mut song_y = current_y + 252.0 + 32.0; // aprox padding
+                            let mut song_y = current_y + 252.0 + LIST_ROW_HEADER; // aprox padding
                             for song in filtered {
                                 items.push((
                                     LibraryListItem::Song(song.id),
                                     iced::Rectangle::new(
                                         iced::Point::new(0.0, song_y),
-                                        iced::Size::new(lib_width, 32.0),
+                                        iced::Size::new(lib_width, LIST_ROW_HEADER),
                                     ),
                                 ));
-                                song_y += 32.0;
+                                song_y += LIST_ROW_HEADER;
                             }
-                            row_h += 60.0 + (songs.len() as f32 * 32.0); // Ajuste de altura de fila para navegación
+                            row_h += 60.0 + (songs.len() as f32 * LIST_ROW_HEADER); // Ajuste de altura de fila para navegación
                         }
                     }
                     current_y += row_h;
@@ -873,10 +876,10 @@ impl LibraryManager {
     pub fn get_scroll_task<Message: 'static>(&self, force_top: bool) -> Task<Message> {
         let scroll_id = LIBRARY_SCROLL_ID.clone();
         let margin_top = match self.view_mode {
-            LibraryViewMode::DetailedList => 32.0_f32,
-            LibraryViewMode::ThumbnailList => 42.0_f32,
+            LibraryViewMode::DetailedList => LIST_ROW_HEADER,
+            LibraryViewMode::ThumbnailList => LIST_ROW,
             LibraryViewMode::Grid => 0.0, // Barra superior + tabs
-            _ => 32.0_f32,
+            _ => LIST_ROW_HEADER,
         };
 
         // FAST PATH: use the exact hint coordinates stored during keyboard navigation.

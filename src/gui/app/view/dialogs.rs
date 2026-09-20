@@ -1,8 +1,13 @@
 //! Modal dialog overlay rendering.
 
 use crate::gui::dimensions::{
-    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, CONTROL_MD, CONTROL_SM, DIVIDER_THIN, MARGIN_MD,
-    PRESET_LIST_WIDTH, RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, CONTROL_MD, CONTROL_SM, DIALOG_ANCHOR_OFFSET,
+    DIALOG_BUTTON_WIDTH, DIALOG_CLAMP_MARGIN, DIALOG_DEFAULT_HEIGHT, DIALOG_DEFAULT_WIDTH,
+    DIALOG_EDGE_MARGIN, DIALOG_FALLBACK_POS, DIVIDER_THIN, EQ_DIALOG_HEIGHT, EQ_DIALOG_PADDING,
+    EQ_DIALOG_VERTICAL_OFFSET, EQ_DIALOG_WIDTH, EQ_PRESET_PANEL_HEIGHT, EQ_PRESET_SCROLL_HEIGHT,
+    EQ_SAVE_BUTTON_WIDTH, EQ_SAVE_DIALOG_HEIGHT, EQ_SAVE_DIALOG_TOP, EQ_SAVE_DIALOG_WIDTH,
+    MARGIN_MD, PRESET_LIST_WIDTH, RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
+    STROKE_HAIRLINE,
 };
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
@@ -228,11 +233,11 @@ impl AudoxidyApp {
                                 iced::widget::scrollable::Scrollbar::default(),
                             ),
                         )
-                        .height(iced::Length::Fixed(287.0)),
+                        .height(EQ_PRESET_SCROLL_HEIGHT),
                     )
                     .width(iced::Length::Fixed(PRESET_LIST_WIDTH))
-                    .height(iced::Length::Fixed(289.0))
-                    .padding(1)
+                    .height(EQ_PRESET_PANEL_HEIGHT)
+                    .padding(STROKE_HAIRLINE as u16)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(COLOR_CONTRAST)
                         .border(iced::Border {
@@ -257,7 +262,7 @@ impl AudoxidyApp {
                             .center_x(iced::Length::Fill)
                             .center_y(iced::Length::Fill),
                         )
-                        .width(iced::Length::Fixed(150.0))
+                        .width(DIALOG_BUTTON_WIDTH)
                         .height(iced::Length::Fixed(CONTROL_MD))
                         .padding(0)
                         .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
@@ -320,7 +325,7 @@ impl AudoxidyApp {
                     ]
                     .spacing(SPACE_SM)
                     .align_x(iced::Alignment::Center)
-                    .width(iced::Length::Fixed(150.0));
+                    .width(DIALOG_BUTTON_WIDTH);
 
                     let content = iced::widget::row![
                         preset_list,
@@ -351,9 +356,9 @@ impl AudoxidyApp {
                         ]
                         .align_x(iced::Alignment::Center),
                     )
-                    .width(iced::Length::Fixed(330.0))
-                    .height(iced::Length::Fixed(352.0))
-                    .padding(17)
+                    .width(EQ_DIALOG_WIDTH)
+                    .height(EQ_DIALOG_HEIGHT)
+                    .padding(EQ_DIALOG_PADDING as u16)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(iced::Background::Color(COLOR_BG))
                         .border(iced::Border {
@@ -380,7 +385,7 @@ impl AudoxidyApp {
                         .id(DIALOG_TEXT_INPUT_ID.clone())
                         .on_input(Message::UpdateDialogInput)
                         .on_submit(Message::ConfirmDialogAction)
-                        .padding([4, 5])
+                        .padding([SPACE_XS as u16, SPACE_XS as u16])
                         .size(14)
                         .style(|_t: &iced::Theme, _status: iced::widget::text_input::Status| {
                             iced::widget::text_input::Style {
@@ -412,7 +417,7 @@ impl AudoxidyApp {
                             .center_x(iced::Length::Fill)
                             .center_y(iced::Length::Fill),
                         )
-                        .width(iced::Length::Fixed(74.0))
+                        .width(EQ_SAVE_BUTTON_WIDTH)
                         .height(iced::Length::Fixed(CONTROL_MD))
                         .padding(0)
                         .style(move |_t: &iced::Theme, status: iced::widget::button::Status| {
@@ -488,8 +493,8 @@ impl AudoxidyApp {
                         ]
                         .align_x(iced::Alignment::Center),
                     )
-                    .width(iced::Length::Fixed(190.0))
-                    .height(iced::Length::Fixed(162.0))
+                    .width(EQ_SAVE_DIALOG_WIDTH)
+                    .height(EQ_SAVE_DIALOG_HEIGHT)
                     .padding(MARGIN_MD)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(iced::Background::Color(COLOR_BG))
@@ -522,32 +527,42 @@ impl AudoxidyApp {
             });
             let (target_x, target_y) = match &self.active_dialog {
                 ActiveDialog::EqPresetLoad { .. } => {
-                    let dialog_w = 330.0;
-                    let dialog_h = 352.0;
+                    let dialog_w = EQ_DIALOG_WIDTH;
+                    let dialog_h = EQ_DIALOG_HEIGHT;
                     (
                         ac_pos.x + (ac_width - dialog_w) / 2.0,
-                        ac_pos.y + (ac_height - dialog_h) / 2.0 + 15.0,
+                        ac_pos.y + (ac_height - dialog_h) / 2.0 + EQ_DIALOG_VERTICAL_OFFSET,
                     )
                 }
                 ActiveDialog::EqPresetSave { .. } => {
-                    let dialog_w = 194.0;
-                    let x = ac_pos.x + ac_width - dialog_w - 15.0;
-                    let y = ac_pos.y + 120.0;
+                    let dialog_w = EQ_SAVE_DIALOG_WIDTH + SPACE_XS;
+                    let x = ac_pos.x + ac_width - dialog_w - EQ_DIALOG_VERTICAL_OFFSET;
+                    let y = ac_pos.y + EQ_SAVE_DIALOG_TOP;
                     (x, y)
                 }
                 _ => {
                     if let Some(pos) = self.dialog_pos {
-                        let mut x = pos.x - 20.0;
-                        let mut y = pos.y - 20.0;
-                        if x + 350.0 + 40.0 > self.window_size.0 as f32 {
-                            x = (self.window_size.0 as f32 - 350.0 - 40.0).max(10.0);
+                        let mut x = pos.x - DIALOG_ANCHOR_OFFSET;
+                        let mut y = pos.y - DIALOG_ANCHOR_OFFSET;
+                        if x + DIALOG_DEFAULT_WIDTH + DIALOG_CLAMP_MARGIN
+                            > self.window_size.0 as f32
+                        {
+                            x = (self.window_size.0 as f32
+                                - DIALOG_DEFAULT_WIDTH
+                                - DIALOG_CLAMP_MARGIN)
+                                .max(DIALOG_EDGE_MARGIN);
                         }
-                        if y + 240.0 + 40.0 > self.window_size.1 as f32 {
-                            y = (self.window_size.1 as f32 - 240.0 - 40.0).max(10.0);
+                        if y + DIALOG_DEFAULT_HEIGHT + DIALOG_CLAMP_MARGIN
+                            > self.window_size.1 as f32
+                        {
+                            y = (self.window_size.1 as f32
+                                - DIALOG_DEFAULT_HEIGHT
+                                - DIALOG_CLAMP_MARGIN)
+                                .max(DIALOG_EDGE_MARGIN);
                         }
                         (x, y)
                     } else {
-                        (200.0, 200.0)
+                        (DIALOG_FALLBACK_POS, DIALOG_FALLBACK_POS)
                     }
                 }
             };

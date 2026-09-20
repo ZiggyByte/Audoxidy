@@ -1,6 +1,11 @@
 use crate::audio::AudioManager;
 use crate::gui::app::{Message, fine_seek_enabled};
-use crate::gui::dimensions::{BAR_BOTTOM, BAR_TOP, IconSize, PLAYER_PANEL_SIZE, RADIUS_PILL};
+use crate::gui::dimensions::{
+    BAR_BOTTOM, BAR_TOP, DIVIDER_THIN, IconSize, PLAYER_ARTIST_HEIGHT, PLAYER_MENU_PADDING,
+    PLAYER_MENU_WIDTH, PLAYER_PANEL_SIZE, PLAYER_PROGRESS_PADDING_H, PLAYER_PROGRESS_PADDING_V,
+    PLAYER_PROGRESS_ROW_HEIGHT, PLAYER_TITLE_HEIGHT, PLAYER_TOOLTIP_PADDING, PLAYER_ZONE_PAD_TIGHT,
+    PLAYER_ZONE_PAD_WIDE, RADIUS_M, RADIUS_PILL, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+};
 use crate::gui::theme::*;
 use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
 use crate::utils::format_duration;
@@ -228,7 +233,7 @@ pub fn view<'a>(
     ]
     .height(Length::Fixed(BAR_TOP))
     .align_y(Alignment::Center)
-    .padding([0, 8]); // padding horizontal
+    .padding([0.0, SPACE_SM]); // padding horizontal
 
     let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
 
@@ -240,8 +245,8 @@ pub fn view<'a>(
             .shaping(iced::widget::text::Shaping::Advanced)
             .wrapping(iced::widget::text::Wrapping::None),
     )
-    .padding([0, 2])
-    .height(Length::Fixed(35.0))
+    .padding([0.0, SPACE_XS])
+    .height(PLAYER_TITLE_HEIGHT)
     .center_y(Length::Fill)
     .width(Length::Fill);
 
@@ -249,13 +254,13 @@ pub fn view<'a>(
         iced::widget::tooltip(
             title_el,
             container(text(state.title.clone()).size(13).color(Color::WHITE))
-                .padding(6)
+                .padding(PLAYER_TOOLTIP_PADDING)
                 .style(|_t: &Theme| {
                     container::Style::default()
                         .background(COLOR_CONTRAST)
                         .border(
                             iced::Border::default()
-                                .width(1.0)
+                                .width(STROKE_HAIRLINE)
                                 .color(COLOR_TEXT_SECONDARY),
                         )
                 }),
@@ -274,8 +279,8 @@ pub fn view<'a>(
             .shaping(iced::widget::text::Shaping::Advanced)
             .wrapping(iced::widget::text::Wrapping::None),
     )
-    .padding([0, 2])
-    .height(Length::Fixed(30.0))
+    .padding([0.0, SPACE_XS])
+    .height(PLAYER_ARTIST_HEIGHT)
     .center_y(Length::Fill)
     .width(Length::Fill);
 
@@ -283,13 +288,13 @@ pub fn view<'a>(
         iced::widget::tooltip(
             artist_el,
             container(text(state.artist.clone()).size(13).color(Color::WHITE))
-                .padding(6)
+                .padding(PLAYER_TOOLTIP_PADDING)
                 .style(|_t: &Theme| {
                     container::Style::default()
                         .background(COLOR_CONTRAST)
                         .border(
                             iced::Border::default()
-                                .width(1.0)
+                                .width(STROKE_HAIRLINE)
                                 .color(COLOR_TEXT_SECONDARY),
                         )
                 }),
@@ -306,7 +311,7 @@ pub fn view<'a>(
             container(title_widget)
                 .height(Length::Fixed(BAR_TOP))
                 .center_y(Length::Fill)
-                .padding([0, 10]),
+                .padding([0.0, SPACE_MD]),
             container(
                 row![
                     artist_widget,
@@ -317,12 +322,12 @@ pub fn view<'a>(
                             .color(Color::WHITE)
                             .font(FONT_INTER_SANS_NORMAL)
                     )
-                    .padding([0, 2])
+                    .padding([0.0, SPACE_XS])
                 ]
                 .align_y(Alignment::Center)
             )
-            .height(Length::Fixed(36.0))
-            .padding([0, 10])
+            .height(PLAYER_PROGRESS_ROW_HEIGHT)
+            .padding([0.0, SPACE_MD])
         ]
         .width(Length::Fill)
         .height(Length::Fixed(320.0))
@@ -348,7 +353,7 @@ pub fn view<'a>(
             if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
                 *radius = 0.0;
             }
-            st.rail.width = 5.0;
+            st.rail.width = SPACE_XS;
             st.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
             st
         })
@@ -356,9 +361,9 @@ pub fn view<'a>(
     } else {
         // Duración indeterminada: se muestra un riel plano no interactivo, sin
         // mango ni salto, para que la posición no se pueda arrastrar.
-        container(Space::new().height(Length::Fixed(5.0)))
+        container(Space::new().height(SPACE_XS))
             .width(Length::Fill)
-            .height(Length::Fixed(5.0))
+            .height(SPACE_XS)
             .style(|_t: &Theme| {
                 container::Style::default().background(Color::from_rgba(
                     COLOR_CONTRAST.r,
@@ -372,7 +377,7 @@ pub fn view<'a>(
 
     let progress_bar = mouse_area(
         container(progress_el)
-            .padding([15, 13])
+            .padding([PLAYER_PROGRESS_PADDING_V, PLAYER_PROGRESS_PADDING_H])
             .height(Length::Fill)
             .center_y(Length::Fill),
     )
@@ -399,9 +404,9 @@ pub fn view<'a>(
 
         let visual_content = if is_hovered {
             let pad = if icon == "pause-straight-fill.svg" {
-                7
+                PLAYER_ZONE_PAD_WIDE
             } else {
-                3
+                PLAYER_ZONE_PAD_TIGHT
             };
             container(
                 svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
@@ -445,10 +450,10 @@ pub fn view<'a>(
     let computed_zone = if let Some(pos) = ui_state.mouse_pos {
         if ui_state.is_active
             && ui_state.showing_volume.is_none()
-            && pos.x <= 400.0
-            && pos.y <= 400.0
-            && pos.y >= 40.0
-            && pos.y <= 360.0
+            && pos.x <= PLAYER_PANEL_SIZE
+            && pos.y <= PLAYER_PANEL_SIZE
+            && pos.y >= BAR_TOP
+            && pos.y <= PLAYER_PANEL_SIZE - BAR_TOP
             && !ui_state.is_menu_open
         {
             if pos.x < 133.3 {
@@ -545,9 +550,9 @@ pub fn view<'a>(
     .into();
 
     let capa5_positioned: Element<'a, Message> = column![
-        Space::new().height(Length::Fixed(BAR_TOP)),
+        Space::new().height(BAR_TOP),
         capa5,
-        Space::new().height(Length::Fixed(BAR_BOTTOM))
+        Space::new().height(BAR_BOTTOM)
     ]
     .width(bounds)
     .height(bounds)
@@ -563,7 +568,7 @@ pub fn view<'a>(
                     .font(FONT_INTER_SANS_MEDIUM),
             )
             .width(Length::Fill)
-            .padding([4, 0])
+            .padding([SPACE_XS, 0.0])
             .on_press(msg)
             .style(iced::widget::button::text)
         };
@@ -574,22 +579,22 @@ pub fn view<'a>(
             mk_menu_btn("Biblioteca", Message::ToggleMenu),
             mk_menu_btn("Lista de Reproduccion", Message::ToggleMenu),
             mk_menu_btn("Lirycs", Message::ToggleMenu),
-            Space::new().height(Length::Fixed(2.0)),
-            container(Space::new().height(1))
+            Space::new().height(SPACE_XS),
+            container(Space::new().height(STROKE_HAIRLINE))
                 .width(Length::Fill)
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
-            Space::new().height(Length::Fixed(2.0)),
+            Space::new().height(SPACE_XS),
             mk_menu_btn(
                 "Configuración de Audio",
                 Message::ToggleAudioCenter(Some(0))
             ),
             mk_menu_btn("Ecualizador", Message::ToggleAudioCenter(Some(1))),
             mk_menu_btn("Efectos de Audio", Message::ToggleAudioCenter(Some(2))),
-            Space::new().height(Length::Fixed(2.0)),
-            container(Space::new().height(1))
+            Space::new().height(SPACE_XS),
+            container(Space::new().height(STROKE_HAIRLINE))
                 .width(Length::Fill)
                 .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY)),
-            Space::new().height(Length::Fixed(2.0)),
+            Space::new().height(SPACE_XS),
             mk_menu_btn("Apagado Automatico", Message::ToggleMenu),
             mk_menu_btn("Personalizacion", Message::ToggleMenu),
             mk_menu_btn("Preferencias", Message::ToggleMenu),
@@ -597,13 +602,13 @@ pub fn view<'a>(
             mk_menu_btn("Acerca", Message::ToggleMenu),
             mk_menu_btn("Salir", Message::PlayerWindowAction(WindowAction::Close)),
         ])
-        .width(Length::Fixed(180.0))
-        .padding(15)
+        .width(PLAYER_MENU_WIDTH)
+        .padding(PLAYER_MENU_PADDING)
         .style(|_t: &Theme| {
             container::Style::default().background(COLOR_BG).border(
                 iced::Border::default()
-                    .rounded(8.0)
-                    .width(2.0)
+                    .rounded(RADIUS_M)
+                    .width(DIVIDER_THIN)
                     .color(COLOR_ACCENT),
             )
         });
@@ -640,8 +645,8 @@ pub fn view<'a>(
     // Dynamic Tooltip Cursor exacto para barra de progreso
     if let Some(pos) = ui_state.mouse_pos {
         if ui_state.is_active
-            && pos.y >= 360.0
-            && pos.y <= 400.0
+            && pos.y >= PLAYER_PANEL_SIZE - BAR_TOP
+            && pos.y <= PLAYER_PANEL_SIZE
             && pos.x >= 13.0
             && pos.x <= 387.0
             && state.total_duration_sec > 0.0
@@ -650,13 +655,13 @@ pub fn view<'a>(
             let tooltip_txt = format_duration(frac as f64 * state.total_duration_sec);
 
             let tooltip_box = container(text(tooltip_txt).size(12).color(Color::WHITE))
-                .padding(4)
+                .padding(SPACE_XS)
                 .style(|_t: &Theme| {
                     container::Style::default()
                         .background(COLOR_CONTRAST)
                         .border(
                             iced::Border::default()
-                                .width(1.0)
+                                .width(STROKE_HAIRLINE)
                                 .color(COLOR_TEXT_SECONDARY),
                         )
                 });

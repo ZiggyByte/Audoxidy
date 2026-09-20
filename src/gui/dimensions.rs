@@ -21,7 +21,10 @@
 //! - measurement-derived clamping and truncation math — the marquee clamp, the
 //!   text measurement helpers and the sort-bar column-width heuristic;
 //! - custom-widget internal geometry — the number-stepper bands, the slider bands
-//!   and the volume scroll area.
+//!   and the volume scroll area;
+//! - pointer hit-testing regions — the player transport and progress-bar mouse
+//!   bounds and the panel-alignment offsets, which approximate runtime geometry
+//!   rather than express a design size.
 //!
 //! Even inside those computations a literal that corresponds to a token must be
 //! derived from that token instead of repeated. The allow-list is for derived

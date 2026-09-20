@@ -9,6 +9,7 @@
 use crate::audio::engine::{LATENCY_PEAK_US, UNDERRUNS};
 use crate::gui::app::Message;
 use crate::gui::app::persistence::log_persist;
+use crate::gui::app::tick::{TickKind, tick_fires};
 use crate::gui::app::update::memory::gc_blocked_by_preload;
 use crate::gui::app::update::meter::{METER_FADE_OUT_SECS, ballistic_step, peak_hold_step};
 use crate::gui::player::{AUTOSAVE_INTERVAL_SECS, autosave_due};
@@ -35,6 +36,7 @@ impl crate::gui::app::AudoxidyApp {
     /// auto-scroll. It intentionally reaches no database, allocator-trim,
     /// subprocess or full-library work: the frame cadence only animates.
     fn handle_frame_tick(&mut self) -> Task<Message> {
+        TickKind::Frame.record_fire();
         self.update_meter();
 
         if self.library_manager.is_dragging {
@@ -69,6 +71,7 @@ impl crate::gui::app::AudoxidyApp {
     /// scrolling title/artist offsets and expires the activity window. This is
     /// the only writer and reader of `tick_count` inside the tick handlers.
     fn handle_ui_tick(&mut self) -> Task<Message> {
+        TickKind::Ui.record_fire();
         self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
 
         let state = self.core.audio_state();
@@ -136,6 +139,7 @@ impl crate::gui::app::AudoxidyApp {
     /// the same `remaining <= 15.0` window, the same per-track dedup and the
     /// same 500 ms cadence.
     fn handle_transport_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        TickKind::Transport.record_fire();
         // The transport tick carries the coarse progress snapshot: the published
         // position advances about once per second at this cadence, regardless of
         // the message stream.
@@ -235,6 +239,7 @@ impl crate::gui::app::AudoxidyApp {
     /// Library scan handler: the shared prelude and the maintenance tail while
     /// a scan runs and playback is stopped.
     fn handle_scan_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        TickKind::Scan.record_fire();
         if let Some(task) = self.tick_head() {
             return task;
         }
@@ -244,6 +249,7 @@ impl crate::gui::app::AudoxidyApp {
     /// Idle handler: the shared prelude and the maintenance tail at the slow
     /// cadence used while neither playback nor a scan is active.
     fn handle_idle_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        TickKind::Idle.record_fire();
         if let Some(task) = self.tick_head() {
             return task;
         }
@@ -257,6 +263,21 @@ impl crate::gui::app::AudoxidyApp {
     /// Returns `Some(task)` when the refresh was scheduled, so the caller stops
     /// before running the rest of the periodic work on this tick.
     fn tick_head(&mut self) -> Option<Task<Message>> {
+        // Snapshot of the per-kind fire counters, emitted on every non-frame
+        // tick so a manual run can read it with
+        // `RUST_LOG=audoxidy::metrics=debug`. Debug level is deliberate: the
+        // snapshot accompanies every 500 ms tick, so `info` would spam the log.
+        let fires = tick_fires();
+        tracing::debug!(
+            target: "audoxidy::metrics",
+            metric = "tick_fires",
+            frame = fires.frame,
+            ui = fires.ui,
+            transport = fires.transport,
+            scan = fires.scan,
+            idle = fires.idle
+        );
+
         // Refrescar caché de estado del sistema de audio (cada 3s, no cada frame)
         if self.audio_center_manager.open {
             self.audio_center_manager.refresh_system_status_cache();

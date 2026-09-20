@@ -16,9 +16,54 @@
 //! | [`TickKind::Scan`] | 500 ms | scanning while not playing |
 //! | [`TickKind::Idle`] | 5000 ms | neither playing nor scanning |
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::Message;
+
+// ── Fire instrumentation ──────────────────────────────────────────
+//
+// One process-global counter per tick kind. A zero counter after a scenario
+// that should have fired a kind is the signature of a tick whose subscription
+// recipe iced dropped, so the counters are read after a known scenario to
+// verify the cadence. The increments are relaxed: the counters order nothing,
+// they only make each cadence observable.
+static FRAME_TICK_FIRES: AtomicU64 = AtomicU64::new(0);
+static UI_TICK_FIRES: AtomicU64 = AtomicU64::new(0);
+static TRANSPORT_TICK_FIRES: AtomicU64 = AtomicU64::new(0);
+static SCAN_TICK_FIRES: AtomicU64 = AtomicU64::new(0);
+static IDLE_TICK_FIRES: AtomicU64 = AtomicU64::new(0);
+
+/// Snapshot of every tick kind's fire counter.
+///
+/// Read after a known scenario to show which cadence actually ran; the
+/// counters are process-global, so callers compare two snapshots rather than
+/// trusting an absolute value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(in crate::gui::app) struct TickFires {
+    /// Fires of the frame cadence.
+    pub(in crate::gui::app) frame: u64,
+    /// Fires of the UI cadence.
+    pub(in crate::gui::app) ui: u64,
+    /// Fires of the transport cadence.
+    pub(in crate::gui::app) transport: u64,
+    /// Fires of the scan cadence.
+    pub(in crate::gui::app) scan: u64,
+    /// Fires of the idle cadence.
+    pub(in crate::gui::app) idle: u64,
+}
+
+/// Reads every tick kind's fire counter.
+pub(in crate::gui::app) fn tick_fires() -> TickFires {
+    let [frame, ui, transport, scan, idle] = TickKind::all_five().map(TickKind::fires);
+    TickFires {
+        frame,
+        ui,
+        transport,
+        scan,
+        idle,
+    }
+}
 
 /// Identifies a periodic schedule and, together with its period, its recipe.
 ///
@@ -153,6 +198,46 @@ impl TickKind {
             TickKind::Transport => Message::TransportTick,
             TickKind::Scan => Message::ScanTick,
             TickKind::Idle => Message::IdleTick,
+        }
+    }
+
+    /// Every kind, in the canonical order frame, ui, transport, scan, idle.
+    ///
+    /// Used to enumerate the counters without repeating the variant list at
+    /// each call site.
+    pub(in crate::gui::app) fn all_five() -> [TickKind; 5] {
+        [
+            TickKind::Frame,
+            TickKind::Ui,
+            TickKind::Transport,
+            TickKind::Scan,
+            TickKind::Idle,
+        ]
+    }
+
+    /// Records one fire of this kind on its own counter.
+    ///
+    /// A zero counter after a scenario that should have fired this kind is the
+    /// signature of a tick whose recipe was dropped by iced, so the counters
+    /// must be read after a known scenario to verify the cadence. Recording one
+    /// kind never changes another kind's counter.
+    pub(in crate::gui::app) fn record_fire(self) {
+        self.counter().fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Reads this kind's fire counter.
+    pub(in crate::gui::app) fn fires(self) -> u64 {
+        self.counter().load(Ordering::Relaxed)
+    }
+
+    /// The counter owned by this kind.
+    fn counter(self) -> &'static AtomicU64 {
+        match self {
+            TickKind::Frame => &FRAME_TICK_FIRES,
+            TickKind::Ui => &UI_TICK_FIRES,
+            TickKind::Transport => &TRANSPORT_TICK_FIRES,
+            TickKind::Scan => &SCAN_TICK_FIRES,
+            TickKind::Idle => &IDLE_TICK_FIRES,
         }
     }
 }
@@ -358,5 +443,42 @@ mod tests {
             tick_identity(TickKind::Ui, period),
             tick_identity(TickKind::Ui, period)
         );
+    }
+
+    #[test]
+    fn test_record_fire_increments_only_its_own_kind() {
+        // The counters are process-global, so the assertions compare deltas:
+        // they stay valid even when another test records fires first. The
+        // whole scenario lives in one test function so parallel test threads
+        // cannot interleave counter mutations.
+        for kind in TickKind::all_five() {
+            let before = tick_fires();
+            kind.record_fire();
+            let after = tick_fires();
+
+            for probe in TickKind::all_five() {
+                let delta = fires_for(after, probe) - fires_for(before, probe);
+                let expected = u64::from(probe == kind);
+                assert_eq!(
+                    delta, expected,
+                    "recording {kind:?} must change only its own counter, not {probe:?}"
+                );
+            }
+
+            // The aggregate snapshot and the per-kind accessor must agree.
+            assert_eq!(fires_for(after, kind), kind.fires());
+            assert_eq!(fires_for(after, kind), fires_for(before, kind) + 1);
+        }
+    }
+
+    /// Reads one counter out of a snapshot, so the test can iterate the kinds.
+    fn fires_for(fires: TickFires, kind: TickKind) -> u64 {
+        match kind {
+            TickKind::Frame => fires.frame,
+            TickKind::Ui => fires.ui,
+            TickKind::Transport => fires.transport,
+            TickKind::Scan => fires.scan,
+            TickKind::Idle => fires.idle,
+        }
     }
 }

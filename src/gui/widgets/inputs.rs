@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::gui::dimensions::{CONTROL_SM, RADIUS_S, SPACE_XS, STROKE_HAIRLINE};
+
 /// Flag global: true cuando algún slider tiene is_selected activo.
 /// Los demás sliders revisan esto para ocultar su tooltip en hover.
 pub static GLOBAL_SLIDER_SELECTED: AtomicBool = AtomicBool::new(false);
@@ -154,7 +156,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 bounds,
                 border: iced::Border {
                     radius: 1.0.into(),
-                    width: 1.0,
+                    width: STROKE_HAIRLINE,
                     color: border_color,
                 },
                 ..Default::default()
@@ -1121,7 +1123,7 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
         content = content.push(
             container(clear_btn)
                 .width(Length::Fill)
-                .height(Length::Fixed(24.0))
+                .height(Length::Fixed(CONTROL_SM))
                 .align_x(iced::alignment::Horizontal::Right)
                 .padding(iced::Padding {
                     right: 5.0,
@@ -1132,7 +1134,7 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
 
     container(content)
         .width(width)
-        .height(Length::Fixed(24.0))
+        .height(Length::Fixed(CONTROL_SM))
         .center_y(Length::Fill)
         .into()
 }
@@ -1262,8 +1264,8 @@ impl Default for CustomSliderOptions {
             input_bg_color: Some(COLOR_BG),
             input_border_color: Some(COLOR_TEXT_SECONDARY),
             input_border_hover_color: Some(COLOR_ACCENT),
-            input_border_width: 1.0,
-            input_border_radius: 4.0,
+            input_border_width: STROKE_HAIRLINE,
+            input_border_radius: RADIUS_S,
             input_font_size: 11.0,
             input_font_color: Some(COLOR_TEXT_PRIMARY),
             input_align: InputAlign::Left,
@@ -1639,8 +1641,8 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
 
         let val_display = &self.value_text;
         let font_size = self.font_size;
-        let padding: f32 = 4.0;
-        let border_radius = 4.0;
+        let padding: f32 = SPACE_XS;
+        let border_radius = RADIUS_S;
 
         let char_width = font_size * 0.6;
         let text_width = (val_display.len() as f32 * char_width).ceil().max(20.0);
@@ -1665,7 +1667,7 @@ impl<Message, Theme> iced::advanced::overlay::Overlay<Message, Theme, iced::Rend
                 bounds: tooltip_rect,
                 border: iced::Border {
                     radius: border_radius.into(),
-                    width: 1.0,
+                    width: STROKE_HAIRLINE,
                     color: COLOR_TEXT_SECONDARY,
                 },
                 ..Default::default()

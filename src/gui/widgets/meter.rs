@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::gui::dimensions::METER_NUMERIC_WIDTH;
+
 use iced::widget::column;
 
 // ==============================
@@ -19,8 +21,6 @@ const METER_BAR_GAP: f32 = 2.0;
 const METER_LABEL_WIDTH: f32 = 12.0;
 const METER_LED_SIZE: f32 = 8.0;
 const METER_SCALE_HEIGHT: f32 = 8.0;
-/// Numeric readout area width on the right side.
-const METER_NUMERIC_WIDTH: f32 = 110.0;
 
 // Zone colors for dBFS level ranges
 const ZONE_GREEN: Color = color!(0x4CAF50);

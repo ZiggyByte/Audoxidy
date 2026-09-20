@@ -21,7 +21,23 @@ use iced::Task;
 impl crate::gui::app::AudoxidyApp {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         let state = self.core.audio_state();
-        self.media_controls.update(&state);
+        let refresh_media_controls = matches!(
+            &message,
+            Message::PlayPause
+                | Message::NextTrack
+                | Message::PreviousTrack
+                | Message::Stop
+                | Message::SetPlaying(..)
+                | Message::VolumeChanged(..)
+                | Message::SeekTo(..)
+                | Message::ExternalControl(..)
+                | Message::PlaySongIndex(..)
+                | Message::PlayAlbum(..)
+                | Message::PlayLibrarySelection
+                | Message::PlayLibraryAll
+                | Message::PlaylistContextMenuPlay(..)
+                | Message::CoreEvent(..)
+        );
 
         // Registro de actividad global y por sección
         match &message {
@@ -75,7 +91,7 @@ impl crate::gui::app::AudoxidyApp {
             _ => {}
         }
 
-        match message {
+        let task = match message {
             Message::FrameTick
             | Message::UiTick
             | Message::TransportTick
@@ -210,6 +226,17 @@ impl crate::gui::app::AudoxidyApp {
             | Message::MeterToggleEnabled(..) => self.handle_meter(message),
             Message::NoOp => Task::none(),
             Message::CoreEvent(event) => self.on_core_event(event),
+        };
+
+        // The panel is refreshed only after messages that can change the
+        // published playback state or track identity, plus the coarse progress
+        // snapshot carried by the 500 ms transport tick. Publishing on every
+        // message would put the D-Bus call on the render cadence.
+        if refresh_media_controls {
+            let state = self.core.audio_state();
+            self.media_controls.update(&state);
         }
+
+        task
     }
 }

@@ -136,6 +136,11 @@ impl crate::gui::app::AudoxidyApp {
     /// the same `remaining <= 15.0` window, the same per-track dedup and the
     /// same 500 ms cadence.
     fn handle_transport_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        // The transport tick carries the coarse progress snapshot: the published
+        // position advances about once per second at this cadence, regardless of
+        // the message stream.
+        self.media_controls.update(state);
+
         if let Some(task) = self.tick_head() {
             return task;
         }

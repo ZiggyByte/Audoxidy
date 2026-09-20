@@ -28,6 +28,9 @@ pub struct SystemMediaControls {
     /// Evita reenviar `set_metadata` en cada mensaje: en Windows souvlaki vuelve
     /// a leer el archivo de la carátula en disco en cada llamada.
     last_metadata: Mutex<Option<(String, String, String, Option<String>)>>,
+    // The playback publish is change-driven, so the D-Bus call never rides the
+    // caller's cadence: an unchanged published identity publishes nothing.
+    last_playback: Mutex<Option<PlaybackKey>>,
 }
 
 impl SystemMediaControls {
@@ -92,6 +95,7 @@ impl SystemMediaControls {
         Ok(Self {
             controls: Mutex::new(controls),
             last_metadata: Mutex::new(None),
+            last_playback: Mutex::new(None),
         })
     }
 
@@ -122,29 +126,8 @@ impl SystemMediaControls {
     }
 
     pub fn update(&self, state: &crate::audio::engine::AudioState) {
-        // Actualizar estado de reproducción
-        let mut controls = self.controls.lock().unwrap();
-        let status = if state.is_playing {
-            souvlaki::MediaPlayback::Playing {
-                progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
-                    state.current_pos_sec,
-                ))),
-            }
-        } else {
-            souvlaki::MediaPlayback::Paused {
-                progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
-                    state.current_pos_sec,
-                ))),
-            }
-        };
-        if let Err(e) = controls.set_playback(status) {
-            tracing::debug!(
-                "No se pudo reflejar el estado de reproducción en los controles multimedia: {e}"
-            );
-        }
-
-        // Actualizar metadatos solo cuando cambian (título, artista, álbum o
-        // carátula). `cover_file_url` solo devuelve URL si el AVIF cacheado existe.
+        // Build the published identities once, before taking any lock.
+        // `cover_file_url` only returns a URL if the cached AVIF exists.
         let cover = state.cover_path.as_deref().and_then(cover_file_url);
         let current = (
             state.title.clone(),
@@ -152,7 +135,54 @@ impl SystemMediaControls {
             state.album.clone(),
             cover.clone(),
         );
+        let playback_key: PlaybackKey = (
+            state.is_playing,
+            position_bucket_secs(state.current_pos_sec),
+            current.0.clone(),
+            current.1.clone(),
+            current.2.clone(),
+            cover.clone(),
+        );
 
+        // The playback publish is change-driven. The guard over the last
+        // published identity is dropped before the controls lock is taken, so
+        // the two are never held at the same time and no lock is held across
+        // the D-Bus call.
+        let should_publish = {
+            let last_playback = self.last_playback.lock().unwrap();
+            playback_should_publish(last_playback.as_ref(), &playback_key)
+        };
+
+        if should_publish {
+            {
+                let mut controls = self.controls.lock().unwrap();
+                let status = if state.is_playing {
+                    souvlaki::MediaPlayback::Playing {
+                        progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
+                            state.current_pos_sec,
+                        ))),
+                    }
+                } else {
+                    souvlaki::MediaPlayback::Paused {
+                        progress: Some(souvlaki::MediaPosition(Duration::from_secs_f64(
+                            state.current_pos_sec,
+                        ))),
+                    }
+                };
+                if let Err(e) = controls.set_playback(status) {
+                    tracing::debug!(
+                        "No se pudo reflejar el estado de reproducción en los controles multimedia: {e}"
+                    );
+                }
+            }
+            // Store the key whether or not `set_playback` failed, so a failing
+            // backend is not retried on every subsequent call.
+            *self.last_playback.lock().unwrap() = Some(playback_key);
+        }
+
+        // Actualizar metadatos solo cuando cambian (título, artista, álbum o
+        // carátula).
+        let mut controls = self.controls.lock().unwrap();
         let mut last = self.last_metadata.lock().unwrap();
         if last.as_ref() != Some(&current) {
             let result = controls.set_metadata(MediaMetadata {
@@ -180,16 +210,23 @@ impl SystemMediaControls {
 /// key must publish nothing.
 type PlaybackKey = (bool, u64, String, String, String, Option<String>);
 
-#[allow(dead_code)]
+/// Collapses a position in seconds to its one-second bucket.
+///
+/// The bucket bounds the publish rate to at most one per second even if a
+/// future caller regresses to the frame cadence; MPRIS clients interpolate
+/// `Position`/`Rate`, so a per-second snapshot is enough. A non-positive or
+/// non-finite position resolves to `0`.
 fn position_bucket_secs(current_pos_sec: f64) -> u64 {
-    let _ = current_pos_sec;
-    0
+    if !current_pos_sec.is_finite() || current_pos_sec <= 0.0 {
+        0
+    } else {
+        current_pos_sec.floor() as u64
+    }
 }
 
-#[allow(dead_code)]
+/// Reports whether the published playback identity changed.
 fn playback_should_publish(previous: Option<&PlaybackKey>, current: &PlaybackKey) -> bool {
-    let _ = (previous, current);
-    false
+    previous != Some(current)
 }
 
 /// Convierte la ruta relativa del cache AVIF en una URL `file://` válida.
@@ -265,7 +302,10 @@ mod tests {
 
         let mut changed_playing = base.clone();
         changed_playing.0 = false;
-        assert!(super::playback_should_publish(Some(&base), &changed_playing));
+        assert!(super::playback_should_publish(
+            Some(&base),
+            &changed_playing
+        ));
 
         let mut changed_bucket = base.clone();
         changed_bucket.1 = 13;

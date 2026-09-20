@@ -1,6 +1,10 @@
 //! Volume and mix tab.
 
 use crate::audio::AudioManager;
+use crate::gui::dimensions::{
+    DIVIDER_THIN, PANEL_SEPARATOR_COLUMN, PANEL_SEPARATOR_HEIGHT, SPACE_LG, SPACE_SM, SPACE_XL,
+    SPACE_XS, STROKE_HAIRLINE,
+};
 use crate::gui::theme::*;
 use iced::widget::{Space, column, container, mouse_area, row, text};
 use iced::{Alignment, Element, Length, Theme};
@@ -21,7 +25,7 @@ pub(super) fn view_volumen_mezcla<'a>(
 
     // Helper to build a horizontal separator line that fills remaining row space.
     let h_sep = || -> iced::Element<'a, crate::gui::app::Message> {
-        container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
+        container(Space::new().width(Length::Fill).height(STROKE_HAIRLINE))
             .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
             .into()
     };
@@ -84,14 +88,14 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(5.0)),
+        Space::new().width(SPACE_XS),
         clickable_toggle(
             group_title("Desvanecimiento de Volumen"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenFadesToggle(
                 !fades_master_on,
             )),
         ),
-        Space::new().width(Length::Fixed(8.0)),
+        Space::new().width(SPACE_SM),
         h_sep(),
     ]
     .align_y(Alignment::Center);
@@ -110,7 +114,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Suavizar el cambio de volumen",
@@ -175,7 +179,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Desvanecimiento de volumen al iniciar la cancion",
@@ -241,7 +245,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Desvanecimiento de volumen al terminar la cancion",
@@ -261,7 +265,8 @@ pub(super) fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    let fades_group = column![fades_title_row, smooth_row, fade_in_row, fade_out_row,].spacing(5);
+    let fades_group =
+        column![fades_title_row, smooth_row, fade_in_row, fade_out_row,].spacing(SPACE_XS);
 
     // --- Group 2: Silencio ---
     let silence_master_on = manager.volumen_silence_enabled;
@@ -276,14 +281,14 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(5.0)),
+        Space::new().width(SPACE_XS),
         clickable_toggle(
             group_title("Eliminar silencio"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenSilenceToggle(
                 !silence_master_on,
             )),
         ),
-        Space::new().width(Length::Fixed(8.0)),
+        Space::new().width(SPACE_SM),
         h_sep(),
     ]
     .align_y(Alignment::Center);
@@ -322,7 +327,7 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(SPACE_SM),
             subfunc_label("Eliminar los silencios mayores a:", silence_master_on,),
             Space::new().width(Length::Fill),
             stepper,
@@ -364,7 +369,7 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(SPACE_SM),
             subfunc_label(
                 "Umbral de eliminación de silencios menores a:",
                 silence_master_on
@@ -388,7 +393,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Eliminar silencios de inicio y fin de las canciones",
@@ -415,7 +420,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         silence_threshold_row,
         silence_border_row,
     ]
-    .spacing(5);
+    .spacing(SPACE_XS);
 
     // --- Group 3: Replay gain fijo ---
     // Igual que "gain para canciones sin etiqueta" pero se aplica SIEMPRE
@@ -432,14 +437,14 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(5.0)),
+        Space::new().width(SPACE_XS),
         clickable_toggle(
             group_title("Pre-Amplificador"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgFixedToggle(
                 !rg_fixed_on,
             )),
         ),
-        Space::new().width(Length::Fixed(8.0)),
+        Space::new().width(SPACE_SM),
         h_sep(),
     ]
     .align_y(Alignment::Center);
@@ -478,7 +483,7 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(SPACE_SM),
             subfunc_label("Nivel del Pre-Amplificador", rg_fixed_on),
             Space::new().width(Length::Fill),
             stepper,
@@ -486,7 +491,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    let rg_fixed_group = column![rg_fixed_title_row, rg_fixed_row,].spacing(5);
+    let rg_fixed_group = column![rg_fixed_title_row, rg_fixed_row,].spacing(SPACE_XS);
 
     // --- Group 4: Replay Gain ---
     let rg_master_on = manager.volumen_rg_master_enabled;
@@ -501,14 +506,14 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(5.0)),
+        Space::new().width(SPACE_XS),
         clickable_toggle(
             group_title("Replay Gain"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::VolumenRgMasterToggle(
                 !rg_master_on,
             )),
         ),
-        Space::new().width(Length::Fixed(8.0)),
+        Space::new().width(SPACE_SM),
         h_sep(),
     ]
     .align_y(Alignment::Center);
@@ -563,7 +568,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Usar valor de la etiqueta incrustada 'Album'",
@@ -630,7 +635,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Usar valor de la etiqueta incrustada 'Canción'",
@@ -697,7 +702,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subfunc_label(
                     "Replay Gain fijo para canciones sin etiquetas",
@@ -719,17 +724,18 @@ pub(super) fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Center)
     };
 
-    let rg_group = column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(5);
+    let rg_group =
+        column![rg_title_row, rg_album_row, rg_track_row, rg_untagged_row,].spacing(SPACE_XS);
 
     // Left column: all groups
     let left_col =
-        container(column![fades_group, silence_group, rg_fixed_group, rg_group,].spacing(18))
+        container(column![fades_group, silence_group, rg_fixed_group, rg_group,].spacing(SPACE_LG))
             .width(Length::FillPortion(1));
 
     // Vertical separator
     let vert_sep = container(Space::new())
-        .width(Length::Fixed(2.0))
-        .height(Length::Fixed(220.0))
+        .width(DIVIDER_THIN)
+        .height(PANEL_SEPARATOR_HEIGHT)
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // --- Right column: Crossfade (Mezcla Cruzada) ---
@@ -746,14 +752,14 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into();
             chk
         },
-        Space::new().width(Length::Fixed(5.0)),
+        Space::new().width(SPACE_XS),
         clickable_toggle(
             group_title("Mezcla Cruzada"),
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::CrossfadeToggle(
                 !xfade_master_on,
             )),
         ),
-        Space::new().width(Length::Fixed(8.0)),
+        Space::new().width(SPACE_SM),
         h_sep(),
     ]
     .align_y(Alignment::Center);
@@ -772,7 +778,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subgroup_label(
                     "Cambio manual:",
@@ -828,7 +834,7 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(SPACE_SM),
             subfunc_label(
                 "Mezclar canción actual con la siguiente",
                 xfade_master_on && manager.crossfade_manual_enabled,
@@ -851,7 +857,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         };
         row![
             chk,
-            Space::new().width(Length::Fixed(5.0)),
+            Space::new().width(SPACE_XS),
             clickable_toggle(
                 subgroup_label(
                     "Cambio automático:",
@@ -905,7 +911,7 @@ pub(super) fn view_volumen_mezcla<'a>(
             .into()
         };
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(SPACE_SM),
             subfunc_label(
                 "Mezclar canción actual con la siguiente",
                 xfade_master_on && manager.crossfade_auto_enabled,
@@ -923,9 +929,9 @@ pub(super) fn view_volumen_mezcla<'a>(
         xfade_auto_label,
         xfade_auto_row,
     ]
-    .spacing(5);
+    .spacing(SPACE_XS);
 
-    let right_col = container(column![xfade_group].spacing(18)).width(Length::FillPortion(1));
+    let right_col = container(column![xfade_group].spacing(SPACE_LG)).width(Length::FillPortion(1));
 
     column![
         row![
@@ -935,19 +941,19 @@ pub(super) fn view_volumen_mezcla<'a>(
                     top: 0.0,
                     bottom: 0.0,
                     left: 0.0,
-                    right: 5.0
+                    right: SPACE_XS
                 }),
             container(
                 container(vert_sep)
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )
-            .width(Length::Fixed(30.0))
+            .width(PANEL_SEPARATOR_COLUMN)
             .align_x(Alignment::Center)
             .padding(iced::Padding {
                 top: -48.0,
                 bottom: 0.0,
-                left: -5.0,
+                left: -SPACE_XS,
                 right: 0.0
             }),
             container(right_col)
@@ -955,7 +961,7 @@ pub(super) fn view_volumen_mezcla<'a>(
                 .padding(iced::Padding {
                     top: 0.0,
                     bottom: 0.0,
-                    left: -1.0,
+                    left: -STROKE_HAIRLINE,
                     right: 0.0
                 })
         ]
@@ -963,7 +969,7 @@ pub(super) fn view_volumen_mezcla<'a>(
         .align_y(Alignment::Start),
     ]
     .padding(iced::Padding {
-        top: 20.0,
+        top: SPACE_XL,
         right: 0.0,
         bottom: 0.0,
         left: 0.0,

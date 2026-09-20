@@ -2,6 +2,12 @@
 
 use crate::audio::AudioManager;
 use crate::audio::device_manager::BitDepth;
+use crate::gui::dimensions::{
+    CONFIG_DROPDOWN_WIDE, CONFIG_DROPDOWN_WIDTH, CONFIG_FIELD_LABEL_WIDTH, CONFIG_INFO_LABEL_WIDTH,
+    CONFIG_LABEL_STACK_SPACING, CONFIG_LABEL_WIDTH, CONFIG_SEPARATOR_COLUMN,
+    CONFIG_TABLE_DIVIDER_COLUMN, CONFIG_TABLE_DIVIDER_HEIGHT, CONFIG_TABLE_LABEL_WIDTH,
+    DIVIDER_THIN, PANEL_SEPARATOR_HEIGHT, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+};
 use crate::gui::theme::*;
 use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Color, Element, Length, Theme};
@@ -100,7 +106,7 @@ pub(super) fn view_audio_config<'a>(
         |o: OptionWrapper<String>| {
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::HostSelected(o.value))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
     let device_dropdown = crate::gui::widgets::standard_pick_list(
         device_options,
@@ -108,7 +114,7 @@ pub(super) fn view_audio_config<'a>(
         |o: OptionWrapper<String>| {
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::DeviceSelected(o.value))
         },
-        Length::Fixed(260.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDE),
     );
     let rate_dropdown = crate::gui::widgets::standard_pick_list(
         rate_options,
@@ -118,7 +124,7 @@ pub(super) fn view_audio_config<'a>(
                 o.value,
             ))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
     let bit_dropdown = crate::gui::widgets::standard_pick_list(
         bit_options,
@@ -126,7 +132,7 @@ pub(super) fn view_audio_config<'a>(
         |o: OptionWrapper<BitDepth>| {
             crate::gui::app::Message::AudioCenterMsg(AudioCenterMessage::BitDepthSelected(o.value))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
     let ch_dropdown = crate::gui::widgets::standard_pick_list(
         channels_options,
@@ -136,7 +142,7 @@ pub(super) fn view_audio_config<'a>(
                 o.value,
             ))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
     let buffer_dropdown = crate::gui::widgets::standard_pick_list(
         buffer_options,
@@ -146,7 +152,7 @@ pub(super) fn view_audio_config<'a>(
                 o.value,
             ))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
 
     // --- PICKLISTS DE SISTEMA OPERATIVO (Pipewire | PulseAudio) ---
@@ -198,7 +204,7 @@ pub(super) fn view_audio_config<'a>(
                 o.value,
             ))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
 
     let system_quantum_dropdown = crate::gui::widgets::standard_pick_list(
@@ -209,7 +215,7 @@ pub(super) fn view_audio_config<'a>(
                 o.value,
             ))
         },
-        Length::Fixed(125.0),
+        Length::Fixed(CONFIG_DROPDOWN_WIDTH),
     );
 
     let system_config_label = column![
@@ -222,7 +228,7 @@ pub(super) fn view_audio_config<'a>(
             .size(13)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(2);
+    .spacing(CONFIG_LABEL_STACK_SPACING);
 
     let left_col = column![
         row![
@@ -232,11 +238,11 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             host_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
             container(
                 text("Dispositivo de Salida:")
@@ -244,11 +250,11 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             device_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
             container(
                 text("Frecuencia de Muestreo:")
@@ -256,11 +262,11 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             rate_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
             container(
                 text("Profundidad de Bits:")
@@ -268,11 +274,11 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             bit_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
             container(
                 text("Canales de Salida:")
@@ -280,11 +286,11 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             ch_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
             container(
                 text("Quantum (Buffer):")
@@ -292,25 +298,25 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(180.0)),
+            .width(Length::Fixed(CONFIG_LABEL_WIDTH)),
             buffer_dropdown
         ]
         .align_y(Alignment::Center)
-        .spacing(10),
+        .spacing(SPACE_MD),
         row![
-            container(system_config_label).width(Length::Fixed(180.0)),
-            row![system_rate_dropdown, system_quantum_dropdown].spacing(10)
+            container(system_config_label).width(Length::Fixed(CONFIG_LABEL_WIDTH)),
+            row![system_rate_dropdown, system_quantum_dropdown].spacing(SPACE_MD)
         ]
         .align_y(Alignment::Center)
-        .spacing(10)
+        .spacing(SPACE_MD)
         .padding(iced::Padding {
-            top: 4.0,
+            top: SPACE_XS,
             bottom: 0.0,
             left: 0.0,
             right: 0.0,
         }),
     ]
-    .spacing(16);
+    .spacing(SPACE_LG);
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente
     let (
@@ -457,7 +463,7 @@ pub(super) fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(8);
+    .spacing(SPACE_SM);
 
     let entrada_col = column![
         text("Entrada")
@@ -477,13 +483,13 @@ pub(super) fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(8)
+    .spacing(SPACE_SM)
     .align_x(Alignment::Center);
 
     let vertical_divider = container(
         Space::new()
-            .width(Length::Fixed(2.0))
-            .height(Length::Fixed(90.0)),
+            .width(Length::Fixed(DIVIDER_THIN))
+            .height(Length::Fixed(CONFIG_TABLE_DIVIDER_HEIGHT)),
     )
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
@@ -505,17 +511,17 @@ pub(super) fn view_audio_config<'a>(
             .color(COLOR_TEXT_PRIMARY)
             .font(FONT_INTER_SANS_MEDIUM),
     ]
-    .spacing(8)
+    .spacing(SPACE_SM)
     .align_x(Alignment::Center);
 
     let table_row = row![
-        container(labels_col).width(Length::Fixed(90.0)),
+        container(labels_col).width(Length::Fixed(CONFIG_TABLE_LABEL_WIDTH)),
         container(entrada_col)
             .width(Length::FillPortion(1))
             .align_x(Alignment::Center),
         container(vertical_divider)
             .align_x(Alignment::Center)
-            .width(Length::Fixed(20.0)),
+            .width(Length::Fixed(CONFIG_TABLE_DIVIDER_COLUMN)),
         container(salida_col)
             .width(Length::FillPortion(1))
             .align_x(Alignment::Center),
@@ -540,7 +546,7 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(80.0)),
+            .width(Length::Fixed(CONFIG_FIELD_LABEL_WIDTH)),
             container(title_el).width(Length::Fill)
         ]
         .align_y(Alignment::Center),
@@ -551,7 +557,7 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(80.0)),
+            .width(Length::Fixed(CONFIG_FIELD_LABEL_WIDTH)),
             text(if file_format.is_empty() {
                 "--".to_string()
             } else {
@@ -575,9 +581,9 @@ pub(super) fn view_audio_config<'a>(
                         .size(13)
                         .font(FONT_INTER_SANS_MEDIUM),
                 ]
-                .spacing(2)
+                .spacing(CONFIG_LABEL_STACK_SPACING)
             )
-            .width(Length::Fixed(170.0)),
+            .width(Length::Fixed(CONFIG_INFO_LABEL_WIDTH)),
             text(gain_str)
                 .color(COLOR_TEXT_PRIMARY)
                 .size(14)
@@ -591,7 +597,7 @@ pub(super) fn view_audio_config<'a>(
                     .size(14)
                     .font(FONT_INTER_SANS_MEDIUM)
             )
-            .width(Length::Fixed(170.0)),
+            .width(Length::Fixed(CONFIG_INFO_LABEL_WIDTH)),
             text(quantum_repr)
                 .color(COLOR_TEXT_PRIMARY)
                 .size(14)
@@ -610,9 +616,9 @@ pub(super) fn view_audio_config<'a>(
                         .size(13)
                         .font(FONT_INTER_SANS_MEDIUM),
                 ]
-                .spacing(2)
+                .spacing(CONFIG_LABEL_STACK_SPACING)
             )
-            .width(Length::Fixed(170.0)),
+            .width(Length::Fixed(CONFIG_INFO_LABEL_WIDTH)),
             column![
                 text(system_sound_status)
                     .color(COLOR_TEXT_PRIMARY)
@@ -623,18 +629,18 @@ pub(super) fn view_audio_config<'a>(
                     .size(13)
                     .font(FONT_INTER_SANS_MEDIUM),
             ]
-            .spacing(2)
+            .spacing(CONFIG_LABEL_STACK_SPACING)
         ]
         .align_y(Alignment::Center),
     ]
-    .spacing(8);
+    .spacing(SPACE_SM);
 
     let restart_btn = button(
         text("Reiniciar Servicio de Audio")
             .size(15)
             .font(FONT_INTER_SANS_MEDIUM),
     )
-    .padding([8, 12])
+    .padding([SPACE_SM, SPACE_MD])
     .on_press(crate::gui::app::Message::AudioCenterMsg(
         AudioCenterMessage::RestartService,
     ))
@@ -661,7 +667,7 @@ pub(super) fn view_audio_config<'a>(
     });
 
     let reset_btn = button(text("Predeterminado").size(15).font(FONT_INTER_SANS_MEDIUM))
-        .padding([8, 12])
+        .padding([SPACE_SM, SPACE_MD])
         .on_press(crate::gui::app::Message::AudioCenterMsg(
             AudioCenterMessage::ResetToDefaults,
         ))
@@ -689,7 +695,7 @@ pub(super) fn view_audio_config<'a>(
 
     let apply_btn = if manager.apply_enabled {
         button(text("Aplicar").size(15).font(FONT_INTER_SANS_MEDIUM))
-            .padding([8, 12])
+            .padding([SPACE_SM, SPACE_MD])
             .on_press(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::ApplySettings,
             ))
@@ -716,7 +722,7 @@ pub(super) fn view_audio_config<'a>(
             })
     } else {
         button(text("Aplicar").size(15).font(FONT_INTER_SANS_MEDIUM))
-            .padding([8, 12])
+            .padding([SPACE_SM, SPACE_MD])
             .style(
                 |_t: &Theme, _status: iced::widget::button::Status| button::Style {
                     background: Some(COLOR_CONTRAST.into()),
@@ -733,12 +739,12 @@ pub(super) fn view_audio_config<'a>(
 
     let main_divider = container(
         Space::new()
-            .width(Length::Fixed(2.0))
-            .height(Length::Fixed(220.0)),
+            .width(Length::Fixed(DIVIDER_THIN))
+            .height(Length::Fixed(PANEL_SEPARATOR_HEIGHT)),
     )
     .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
-    let bottom_actions = row![restart_btn, reset_btn, apply_btn].spacing(10);
+    let bottom_actions = row![restart_btn, reset_btn, apply_btn].spacing(SPACE_MD);
 
     // Aviso no modal: la salida guardada ya no está y se usa la predeterminada.
     let notice: Element<'a, crate::gui::app::Message> =
@@ -753,7 +759,7 @@ pub(super) fn view_audio_config<'a>(
             container(left_col)
                 .width(Length::FillPortion(5))
                 .padding(iced::Padding {
-                    top: 16.0,
+                    top: SPACE_LG,
                     bottom: 0.0,
                     left: 0.0,
                     right: 0.0
@@ -763,10 +769,10 @@ pub(super) fn view_audio_config<'a>(
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )
-            .width(Length::Fixed(80.0))
+            .width(Length::Fixed(CONFIG_SEPARATOR_COLUMN))
             .align_x(Alignment::Center)
             .padding(iced::Padding {
-                top: 8.0,
+                top: SPACE_SM,
                 bottom: 0.0,
                 left: 0.0,
                 right: 0.0
@@ -774,10 +780,10 @@ pub(super) fn view_audio_config<'a>(
             container(right_col)
                 .width(Length::FillPortion(4))
                 .padding(iced::Padding {
-                    top: 18.0,
+                    top: SPACE_LG,
                     bottom: 0.0,
-                    left: 5.0,
-                    right: 1.0
+                    left: SPACE_XS,
+                    right: STROKE_HAIRLINE
                 })
                 .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
         ]

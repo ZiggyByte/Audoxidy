@@ -1,6 +1,10 @@
 //! Audio effects tab.
 
 use crate::audio::AudioManager;
+use crate::gui::dimensions::{
+    EFFECT_INPUT_WIDTH, EFFECT_SLIDER_HEIGHT, RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
+    STROKE_HAIRLINE,
+};
 use crate::gui::theme::*;
 use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Element, Length, Theme};
@@ -85,7 +89,7 @@ pub(super) fn view_audio_effects<'a>(
                 .size(13)
                 .color(COLOR_TEXT_PRIMARY)
                 .font(FONT_INTER_SANS_MEDIUM),
-            Space::new().width(Length::Fixed(6.0)),
+            Space::new().width(SPACE_SM),
             if let Some(w) = extra_widget {
                 w
             } else {
@@ -119,11 +123,11 @@ pub(super) fn view_audio_effects<'a>(
         )
         .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
         .width(Length::Fill)
-        .height(Length::Fixed(18.0))
+        .height(Length::Fixed(EFFECT_SLIDER_HEIGHT))
         .options(primary_opts)
         .with_keyboard_input(true)
-        .input_width_fixed(40.0)
-        .input_height_fixed(18.0)
+        .input_width_fixed(EFFECT_INPUT_WIDTH)
+        .input_height_fixed(EFFECT_SLIDER_HEIGHT)
         .input_align(crate::gui::widgets::InputAlign::Center)
         .input_style(
             Some(COLOR_BG),
@@ -149,7 +153,7 @@ pub(super) fn view_audio_effects<'a>(
                 .size(11)
                 .color(COLOR_TEXT_SECONDARY)
                 .font(FONT_INTER_SANS_MEDIUM),
-            Space::new().width(Length::Fixed(10.0)),
+            Space::new().width(SPACE_MD),
             param_slider,
         ]
         .align_y(Alignment::Center);
@@ -168,11 +172,11 @@ pub(super) fn view_audio_effects<'a>(
                     })
                     .orientation(crate::gui::widgets::SliderOrientation::Horizontal)
                     .width(Length::Fill)
-                    .height(Length::Fixed(18.0))
+                    .height(Length::Fixed(EFFECT_SLIDER_HEIGHT))
                     .options(sec_opts)
                     .with_keyboard_input(true)
-                    .input_width_fixed(40.0)
-                    .input_height_fixed(18.0)
+                    .input_width_fixed(EFFECT_INPUT_WIDTH)
+                    .input_height_fixed(EFFECT_SLIDER_HEIGHT)
                     .input_align(crate::gui::widgets::InputAlign::Center)
                     .input_style(
                         Some(COLOR_BG),
@@ -198,7 +202,7 @@ pub(super) fn view_audio_effects<'a>(
                         .size(11)
                         .color(COLOR_TEXT_SECONDARY)
                         .font(FONT_INTER_SANS_MEDIUM),
-                    Space::new().width(Length::Fixed(10.0)),
+                    Space::new().width(SPACE_MD),
                     sec_slider,
                 ]
                 .align_y(Alignment::Center)
@@ -209,23 +213,25 @@ pub(super) fn view_audio_effects<'a>(
         // Build column - top row then spacer then slider rows
         let mut col = column![
             top_row,
-            Space::new().height(Length::Fixed(10.0 + extra_padding_top)),
+            Space::new().height(SPACE_MD + extra_padding_top),
             bottom_row
         ];
         if let Some(sr) = secondary_row {
-            col = col.push(iced::widget::Space::new().height(Length::Fixed(6.0)));
+            col = col.push(iced::widget::Space::new().height(SPACE_SM));
             col = col.push(sr);
         }
 
-        let c = container(col).padding([12, 10]).style(move |_t: &Theme| {
-            container::Style::default()
-                .background(COLOR_CONTRAST)
-                .border(iced::Border {
-                    color: stroke_color,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                })
-        });
+        let c = container(col)
+            .padding([SPACE_MD, SPACE_MD])
+            .style(move |_t: &Theme| {
+                container::Style::default()
+                    .background(COLOR_CONTRAST)
+                    .border(iced::Border {
+                        color: stroke_color,
+                        width: STROKE_HAIRLINE,
+                        radius: RADIUS_M.into(),
+                    })
+            });
         let c: Element<_> = if let Some(h) = fixed_height {
             c.height(Length::Fixed(h)).into()
         } else {
@@ -369,14 +375,18 @@ pub(super) fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+            container(
+                Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fixed(STROKE_HAIRLINE))
+            )
+            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 6.0,
-            right: 15.0,
-            bottom: 4.0,
-            left: 15.0,
+            top: SPACE_SM,
+            right: SPACE_LG,
+            bottom: SPACE_XS,
+            left: SPACE_LG,
         }),
         view_effect_with_secondary(
             "Canal de Subwoofer",
@@ -404,7 +414,7 @@ pub(super) fn view_audio_effects<'a>(
             0.0,
         )
     ]
-    .spacing(15)
+    .spacing(SPACE_LG)
     .width(Length::FillPortion(1));
 
     let col2 = column![
@@ -465,7 +475,7 @@ pub(super) fn view_audio_effects<'a>(
                     ),
                     text("Surround").size(10).color(COLOR_TEXT_SECONDARY),
                 ]
-                .spacing(5)
+                .spacing(SPACE_XS)
                 .align_y(Alignment::Center)
                 .into()
             )
@@ -536,7 +546,7 @@ pub(super) fn view_audio_effects<'a>(
             0.0,
         )
     ]
-    .spacing(15)
+    .spacing(SPACE_LG)
     .width(Length::FillPortion(1));
 
     let col3 = column![
@@ -622,14 +632,18 @@ pub(super) fn view_audio_effects<'a>(
             0.0,
         ),
         container(
-            container(Space::new().width(Length::Fill).height(Length::Fixed(1.0)))
-                .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
+            container(
+                Space::new()
+                    .width(Length::Fill)
+                    .height(Length::Fixed(STROKE_HAIRLINE))
+            )
+            .style(|_t: &Theme| container::Style::default().background(COLOR_TEXT_SECONDARY))
         )
         .padding(iced::Padding {
-            top: 6.0,
-            right: 15.0,
-            bottom: 4.0,
-            left: 15.0,
+            top: SPACE_SM,
+            right: SPACE_LG,
+            bottom: SPACE_XS,
+            left: SPACE_LG,
         }),
         view_effect_with_secondary(
             "Canales Surround  SL/SR | SBL/SBR",
@@ -657,22 +671,22 @@ pub(super) fn view_audio_effects<'a>(
             0.0,
         )
     ]
-    .spacing(15)
+    .spacing(SPACE_LG)
     .width(Length::FillPortion(1));
 
     column![
-        Space::new().height(Length::Fixed(15.0)),
+        Space::new().height(SPACE_LG),
         row![
             col1,
-            Space::new().width(Length::Fixed(15.0)),
+            Space::new().width(SPACE_LG),
             col2,
-            Space::new().width(Length::Fixed(15.0)),
+            Space::new().width(SPACE_LG),
             col3
         ]
         .width(Length::Fill),
     ]
     .padding(iced::Padding {
-        top: 3.0,
+        top: SPACE_XS,
         right: 0.0,
         bottom: 0.0,
         left: 0.0,

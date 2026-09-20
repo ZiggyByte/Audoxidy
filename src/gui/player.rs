@@ -101,12 +101,36 @@ impl Default for MeterUiState {
     }
 }
 
+/// Autosave interval for the persisted playlist state, in seconds.
+pub(in crate::gui) const AUTOSAVE_INTERVAL_SECS: u64 = 20;
+
+/// Decides whether the persisted state must be flushed to disk again.
+///
+/// The decision is pure and iced-free: it compares the current clock with the
+/// timestamp of the last flush and returns `true` when nothing has been
+/// persisted yet (`last_persist_at` is `None`) or when the interval has elapsed.
+/// A clock that moves backwards never yields a negative wait: the
+/// `saturating_sub` keeps the result `false` until the mark is reached again.
+pub(in crate::gui) fn autosave_due(
+    now_secs: u64,
+    last_persist_at: Option<u64>,
+    interval_secs: u64,
+) -> bool {
+    match last_persist_at {
+        None => true,
+        Some(last) => now_secs.saturating_sub(last) >= interval_secs,
+    }
+}
+
 pub struct PlayerUiState {
     pub hover_zone: HoverZone,
     pub showing_volume: Option<f32>,
     pub is_menu_open: bool,
     pub volume_tick_id: u64,
     pub tick_count: u64,
+    // Autosave owns its own elapsed-time deadline: it is not driven by the
+    // marquee counter and never advances with it.
+    pub last_persist_at: Option<u64>,
     pub current_art_id: String,
     pub current_cover_path: String,
     pub cached_art_handle: Option<iced::widget::image::Handle>,
@@ -144,6 +168,7 @@ impl Default for PlayerUiState {
             is_menu_open: false,
             volume_tick_id: 0,
             tick_count: 0,
+            last_persist_at: None,
             current_art_id: String::new(),
             current_cover_path: String::new(),
             cached_art_handle: None,
@@ -651,4 +676,27 @@ pub fn view<'a>(
 
     // Apilar capas en el contenedor final
     container(main_stack).width(bounds).height(bounds).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autosave_due_first_run_persists() {
+        assert!(autosave_due(1_000, None, 20));
+    }
+
+    #[test]
+    fn autosave_due_respects_interval() {
+        assert!(!autosave_due(1000, Some(1000), 20));
+        assert!(!autosave_due(1019, Some(1000), 20));
+        assert!(autosave_due(1020, Some(1000), 20));
+        assert!(autosave_due(1030, Some(1000), 20));
+    }
+
+    #[test]
+    fn autosave_due_handles_backwards_clock() {
+        assert!(!autosave_due(999, Some(1000), 20));
+    }
 }

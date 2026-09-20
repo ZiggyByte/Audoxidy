@@ -139,9 +139,20 @@ impl crate::gui::app::AudoxidyApp {
                     }
                 }
 
-                // Auto-guardado de persistencia cada ~20 segundos (40 ticks de 500ms)
-                if self.player_ui_state.tick_count % 40 == 0 {
+                // Autosave by its own deadline: the mark of the last flush and
+                // the clock decide, so the marquee counter can no longer fire
+                // persistence on every tick.
+                let autosave_now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                if crate::gui::player::autosave_due(
+                    autosave_now,
+                    self.player_ui_state.last_persist_at,
+                    crate::gui::player::AUTOSAVE_INTERVAL_SECS,
+                ) {
                     self.persist_playlist_state();
+                    self.player_ui_state.last_persist_at = Some(autosave_now);
                 }
 
                 // Emisión de métricas desde la ruta no-RT de la GUI: convierte los

@@ -2,6 +2,10 @@
 
 use crate::db::Database;
 use crate::gui::app::Message;
+use crate::gui::dimensions::{
+    BAR_BOTTOM, BAR_TOP, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD, SPACE_XS,
+    STROKE_HAIRLINE, WIDTH_SEARCH,
+};
 use crate::gui::theme::*;
 use crate::gui::widgets::{VuMeterWidget, standard_scrollable, standard_scrollbar};
 use crate::utils::{SortColumn, format_duration, format_size};
@@ -81,20 +85,21 @@ pub fn view<'a>(
                 LibrarySource::Local => COLOR_ACCENT,
             };
 
-            let btn_container = container(text_el)
-                .padding([2, 10]) // 3px arriba/abajo, 10px lados
-                .style(move |_t: &Theme| {
-                    if is_active {
-                        container::Style::default()
-                            .background(source_color)
-                            .border(iced::Border {
-                                radius: 14.0.into(),
-                                ..Default::default()
-                            })
-                    } else {
-                        container::Style::default()
-                    }
-                });
+            let btn_container =
+                container(text_el)
+                    .padding([SPACE_XS, SPACE_MD])
+                    .style(move |_t: &Theme| {
+                        if is_active {
+                            container::Style::default().background(source_color).border(
+                                iced::Border {
+                                    radius: 14.0.into(),
+                                    ..Default::default()
+                                },
+                            )
+                        } else {
+                            container::Style::default()
+                        }
+                    });
 
             iced::widget::mouse_area(btn_container)
                 .on_press(Message::LibrarySourceSelected(source))
@@ -110,7 +115,7 @@ pub fn view<'a>(
         create_source_tab("Deezer", LibrarySource::Deezer, manager.source),
         create_source_tab("Tidal", LibrarySource::Tidal, manager.source),
     ]
-    .spacing(10)
+    .spacing(SPACE_MD)
     .align_y(Alignment::Center)
     .height(Length::Fill);
 
@@ -147,14 +152,14 @@ pub fn view<'a>(
     .height(Length::Fill)
     .padding(iced::Padding {
         top: 0.0,
-        right: 5.0,
+        right: SPACE_XS,
         bottom: 0.0,
-        left: 15.0,
+        left: SPACE_LG,
     });
 
     let top_container = container(top_bar)
         .width(Length::Fill)
-        .height(Length::Fixed(40.0))
+        .height(Length::Fixed(BAR_TOP))
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 
     // --- BARRA DE ORDENAMIENTO (30px) ---
@@ -451,7 +456,7 @@ pub fn view<'a>(
                                             &manager.column_widths,
                                             Message::SelectSong(Some(song.id)),
                                             playing_path,
-                                            32.0,
+                                            LIST_ROW_HEADER,
                                             false,
                                         );
                                     album_songs_col = album_songs_col.push(song_row);
@@ -519,7 +524,7 @@ pub fn view<'a>(
                         playing_path,
                     )
                 },
-                32.0,
+                LIST_ROW_HEADER,
                 playing_path,
             )
         }
@@ -538,7 +543,7 @@ pub fn view<'a>(
                         playing_path,
                     )
                 },
-                32.0,
+                LIST_ROW_HEADER,
                 playing_path,
             )
         }
@@ -557,7 +562,7 @@ pub fn view<'a>(
                         playing_path,
                     )
                 },
-                42.0,
+                LIST_ROW,
                 playing_path,
             )
         }
@@ -570,7 +575,7 @@ pub fn view<'a>(
         &manager.search_query,
         Message::LibrarySearchQueryChanged,
         Message::LibrarySearchQueryChanged(String::new()),
-        Length::Fixed(157.0),
+        Length::Fixed(WIDTH_SEARCH),
     );
 
     let (s_count, a_count, art_count, d_secs, s_bytes) = if let Some(sel) = &manager.selection_stats
@@ -633,11 +638,11 @@ pub fn view<'a>(
             Message::PlayLibrarySelection,
             36.0
         ),
-        Space::new().width(5.0),
+        Space::new().width(SPACE_XS),
         icon_btn_size("more-small.svg", Message::OpenFolderPicker, 31.0),
-        Space::new().width(5.0),
+        Space::new().width(SPACE_XS),
         icon_btn_size("radio-button-on.svg", Message::LibraryShowPlaying, 30.0),
-        Space::new().width(5.0),
+        Space::new().width(SPACE_XS),
         icon_btn_size(view_icon_str, Message::ToggleLibraryViewDropdown, 30.0),
     ]
     .align_y(Alignment::Center)
@@ -672,28 +677,28 @@ pub fn view<'a>(
     let bottom_bar = if meter_enabled {
         row![
             search_input,
-            Space::new().width(15.0),
+            Space::new().width(SPACE_LG),
             text(stats_text)
                 .size(13)
                 .color(COLOR_TEXT_SECONDARY)
                 .font(FONT_INTER_SANS_MEDIUM),
-            Space::new().width(10.0),
+            Space::new().width(SPACE_MD),
             meter_with_rightclick,
-            Space::new().width(10.0),
+            Space::new().width(SPACE_MD),
             bottom_actions
         ]
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: 20.0,
-            right: 15.0,
+            left: MARGIN_MD,
+            right: MARGIN_MD,
         })
         .height(Length::Fill)
         .align_y(Alignment::Center)
     } else {
         row![
             search_input,
-            Space::new().width(15.0),
+            Space::new().width(SPACE_LG),
             text(stats_text)
                 .size(13)
                 .color(COLOR_TEXT_SECONDARY)
@@ -704,8 +709,8 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: 20.0,
-            right: 15.0,
+            left: MARGIN_MD,
+            right: MARGIN_MD,
         })
         .height(Length::Fill)
         .align_y(Alignment::Center)
@@ -717,7 +722,7 @@ pub fn view<'a>(
                 top: 0.0,
                 right: 0.0,
                 bottom: 0.0,
-                left: 5.0,
+                left: SPACE_XS,
             })
             .width(Length::Fill)
             .height(Length::Fill),
@@ -758,7 +763,7 @@ pub fn view<'a>(
                         background: Some(COLOR_ACCENT.scale_alpha(0.3).into()),
                         border: iced::Border {
                             color: COLOR_ACCENT,
-                            width: 1.0,
+                            width: STROKE_HAIRLINE,
                             radius: 4.0.into(),
                         },
                         ..Default::default()
@@ -783,7 +788,7 @@ pub fn view<'a>(
             content_stack,
             container(bottom_bar)
                 .width(Length::Fill)
-                .height(Length::Fixed(40.0))
+                .height(Length::Fixed(BAR_BOTTOM))
                 .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
         ])
         .width(Length::Fill)

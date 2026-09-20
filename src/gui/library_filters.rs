@@ -1,4 +1,8 @@
 use crate::gui::app::Message;
+use crate::gui::dimensions::{
+    BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD,
+    SPACE_SM, WIDTH_SEARCH,
+};
 use crate::gui::theme::*;
 use crate::gui::widgets::{chevron_btn, standard_scrollable, standard_scrollbar};
 use iced::{
@@ -301,7 +305,7 @@ impl LibraryFiltersManager {
         let flattened_borrow = self.cached_flattened_tree.borrow();
         let flattened = flattened_borrow.as_ref().unwrap();
 
-        let item_height = 32.0;
+        let item_height = LIST_ROW_HEADER;
         let total_items = flattened.len();
 
         let viewport_height = self.last_viewport.map(|v| v.height).unwrap_or(800.0);
@@ -425,7 +429,7 @@ pub fn view<'a>(
             .color(COLOR_TEXT_PRIMARY),
     )
     .width(Length::Fill)
-    .height(Length::Fixed(40.0))
+    .height(Length::Fixed(BAR_TOP))
     .align_x(iced::alignment::Horizontal::Center)
     .align_y(iced::alignment::Vertical::Center)
     .padding(iced::Padding {
@@ -467,12 +471,12 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: 15.0,
-            right: 7.0,
+            left: MARGIN_MD,
+            right: SPACE_SM,
         }),
     )
     .width(Length::Fill)
-    .height(Length::Fixed(28.0))
+    .height(Length::Fixed(BAR_SUB))
     .padding(0)
     .style(move |_t: &Theme, _s: button::Status| {
         let mut st = button::Style::default().with_background(COLOR_BG);
@@ -484,7 +488,7 @@ pub fn view<'a>(
 
     middle_content = middle_content.push(column![
         dropdown_header,
-        container(iced::widget::Space::new().height(2.0))
+        container(iced::widget::Space::new().height(DIVIDER_THIN))
             .width(Length::Fill)
             .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
     ]);
@@ -529,7 +533,7 @@ pub fn view<'a>(
                             })
                         )
                         .width(Length::Fixed(18.0)),
-                        Space::new().width(Length::Fixed(15.0)),
+                        Space::new().width(Length::Fixed(SPACE_LG)),
                         text(f.label())
                             .size(14)
                             .font(FONT_INTER_SANS_NORMAL)
@@ -538,7 +542,7 @@ pub fn view<'a>(
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .height(Length::Fixed(32.0))
+                .height(Length::Fixed(LIST_ROW_HEADER))
                 .padding(iced::Padding {
                     left: 15.0,
                     right: 10.0,
@@ -728,7 +732,7 @@ pub fn view<'a>(
             } else {
                 "arrow-right-chevron.svg"
             };
-            let padding_left = item.depth as f32 * 12.0;
+            let padding_left = item.depth as f32 * SPACE_MD;
 
             let t_label = crate::gui::widgets::smart_truncate_text(
                 item.label,
@@ -757,7 +761,7 @@ pub fn view<'a>(
                         left: padding_left,
                         right: 15.0,
                     })
-                    .height(Length::Fixed(32.0))
+                    .height(Length::Fixed(LIST_ROW_HEADER))
                     .center_y(Length::Fill),
             )
             .width(Length::Fill)
@@ -794,19 +798,19 @@ pub fn view<'a>(
         &manager.search_query,
         Message::FilterSearchChanged,
         Message::FilterSearchChanged(String::new()),
-        Length::Fixed(157.0),
+        Length::Fixed(WIDTH_SEARCH),
     );
 
     let bottom_bar = container(search_input)
         .width(Length::Fill)
-        .height(Length::Fixed(40.0))
+        .height(Length::Fixed(BAR_BOTTOM))
         .align_x(iced::alignment::Horizontal::Center)
         .align_y(iced::alignment::Vertical::Center)
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: 15.0,
-            right: 15.0,
+            left: MARGIN_MD,
+            right: MARGIN_MD,
         })
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 

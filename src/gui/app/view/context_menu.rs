@@ -2,6 +2,10 @@
 
 use iced::Element;
 
+use crate::gui::dimensions::{
+    CONTEXT_MENU_PADDING, CONTEXT_MENU_WIDTH, CONTROL_MD, OVERLAY_EDGE_MARGIN,
+};
+
 use super::super::{AudoxidyApp, Message};
 
 impl AudoxidyApp {
@@ -21,14 +25,16 @@ impl AudoxidyApp {
             // Ajuste de bordes (Stay within window)
             let mut target_x = pos.x;
             let mut target_y = pos.y;
-            let menu_w = 260.0;
-            let menu_h = (entries.len() as f32 * 32.0) + 10.0; // aprox
+            let menu_w = CONTEXT_MENU_WIDTH;
+            let menu_h = (entries.len() as f32 * CONTROL_MD) + (2.0 * CONTEXT_MENU_PADDING); // aprox
 
             if target_x + menu_w > self.window_size.0 as f32 {
-                target_x = (self.window_size.0 as f32 - menu_w - 5.0).max(5.0);
+                target_x = (self.window_size.0 as f32 - menu_w - OVERLAY_EDGE_MARGIN)
+                    .max(OVERLAY_EDGE_MARGIN);
             }
             if target_y + menu_h > self.window_size.1 as f32 {
-                target_y = (self.window_size.1 as f32 - menu_h - 5.0).max(5.0);
+                target_y = (self.window_size.1 as f32 - menu_h - OVERLAY_EDGE_MARGIN)
+                    .max(OVERLAY_EDGE_MARGIN);
             }
             let mut final_stack = iced::widget::Stack::new();
             final_stack = final_stack.push(menu_blocker).push(

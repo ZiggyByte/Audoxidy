@@ -201,6 +201,18 @@ pub const PLAYER_ZONE_PAD_TIGHT: f32 = 3.0;
 
 /// Width of the native context menu.
 pub const CONTEXT_MENU_WIDTH: f32 = 260.0;
+/// Vertical padding of the native context menu.
+pub const CONTEXT_MENU_PADDING: f32 = 5.0;
+/// Minimum width of a standard modal dialog.
+pub const MODAL_MIN_WIDTH: f32 = 200.0;
+/// Width of the library filter dropdown.
+pub const FILTER_DROPDOWN_WIDTH: f32 = 172.0;
+/// Icon box of a row in the library filter dropdown.
+pub const FILTER_MENU_ICON: f32 = 18.0;
+/// Icon box of the library filter dropdown header chevron.
+pub const FILTER_DROPDOWN_ICON: f32 = 28.0;
+/// Top offset of the library filter menu overlay.
+pub const FILTER_OVERLAY_TOP: f32 = 70.0;
 /// Margin kept between an overlay and the window edge.
 pub const OVERLAY_EDGE_MARGIN: f32 = 5.0;
 /// Width of the VU-meter configuration popup.
@@ -349,6 +361,12 @@ mod tests {
         assert_eq!(PLAYER_ZONE_PAD_WIDE, 7.0);
         assert_eq!(PLAYER_ZONE_PAD_TIGHT, 3.0);
         assert_eq!(CONTEXT_MENU_WIDTH, 260.0);
+        assert_eq!(CONTEXT_MENU_PADDING, 5.0);
+        assert_eq!(MODAL_MIN_WIDTH, 200.0);
+        assert_eq!(FILTER_DROPDOWN_WIDTH, 172.0);
+        assert_eq!(FILTER_MENU_ICON, 18.0);
+        assert_eq!(FILTER_DROPDOWN_ICON, 28.0);
+        assert_eq!(FILTER_OVERLAY_TOP, 70.0);
         assert_eq!(OVERLAY_EDGE_MARGIN, 5.0);
         assert_eq!(METER_POPUP_WIDTH, 280.0);
         assert_eq!(METER_POPUP_HEIGHT, 200.0);

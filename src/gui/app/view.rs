@@ -11,6 +11,8 @@ use iced::advanced::widget::{Operation, Tree};
 use iced::advanced::{Clipboard, Layout, Shell, Widget, layout, mouse};
 use iced::{Element, Event, Length, Rectangle, Size};
 
+use crate::gui::dimensions::PLAYLIST_PANEL_WIDTH;
+
 use super::{AudoxidyApp, Message};
 
 impl AudoxidyApp {
@@ -109,7 +111,7 @@ impl AudoxidyApp {
                 .padding(iced::Padding {
                     top: 0.0,
                     bottom: 0.0,
-                    left: 400.0,
+                    left: PLAYLIST_PANEL_WIDTH,
                     right: 0.0,
                 })
                 .align_x(iced::alignment::Horizontal::Left)

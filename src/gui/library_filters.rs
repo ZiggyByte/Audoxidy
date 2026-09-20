@@ -1,7 +1,8 @@
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, IconSize, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG,
-    SPACE_MD, SPACE_SM, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, FILTER_DROPDOWN_ICON, FILTER_DROPDOWN_WIDTH,
+    FILTER_MENU_ICON, FILTER_OVERLAY_TOP, IconSize, LIST_ROW_HEADER, MARGIN_MD, RADIUS_M, SPACE_LG,
+    SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{chevron_btn_sized, standard_scrollable, standard_scrollbar};
@@ -459,8 +460,8 @@ pub fn view<'a>(
                 "assets/icons/{}",
                 drop_icon
             )))
-            .width(28)
-            .height(28)
+            .width(FILTER_DROPDOWN_ICON)
+            .height(FILTER_DROPDOWN_ICON)
             .style(
                 |_t: &Theme, _s: iced::widget::svg::Status| iced::widget::svg::Style {
                     color: Some(COLOR_TEXT_SECONDARY)
@@ -503,7 +504,9 @@ pub fn view<'a>(
             FilterType::Year,
         ];
 
-        let mut content = column![].spacing(0).width(Length::Fixed(172.0));
+        let mut content = column![]
+            .spacing(0)
+            .width(Length::Fixed(FILTER_DROPDOWN_WIDTH));
 
         for f in all_filters {
             let is_selected = manager.current_filter == f;
@@ -524,15 +527,15 @@ pub fn view<'a>(
                                 "assets/icons/{}",
                                 icon_path
                             )))
-                            .width(Length::Fixed(18.0))
-                            .height(Length::Fixed(18.0))
+                            .width(Length::Fixed(FILTER_MENU_ICON))
+                            .height(Length::Fixed(FILTER_MENU_ICON))
                             .style(|_t, _s| {
                                 iced::widget::svg::Style {
                                     color: Some(COLOR_TEXT_PRIMARY),
                                 }
                             })
                         )
-                        .width(Length::Fixed(18.0)),
+                        .width(Length::Fixed(FILTER_MENU_ICON)),
                         Space::new().width(Length::Fixed(SPACE_LG)),
                         text(f.label())
                             .size(14)
@@ -544,8 +547,8 @@ pub fn view<'a>(
                 .width(Length::Fill)
                 .height(Length::Fixed(LIST_ROW_HEADER))
                 .padding(iced::Padding {
-                    left: 15.0,
-                    right: 10.0,
+                    left: SPACE_LG,
+                    right: SPACE_MD,
                     ..Default::default()
                 })
                 .align_y(iced::alignment::Vertical::Center),
@@ -580,14 +583,14 @@ pub fn view<'a>(
 
         Some(
             container(content)
-                .width(Length::Fixed(172.0))
+                .width(Length::Fixed(FILTER_DROPDOWN_WIDTH))
                 .style(|_t: &Theme| {
                     container::Style::default()
                         .background(COLOR_BG)
                         .border(iced::Border {
                             color: COLOR_TEXT_SECONDARY,
-                            width: 1.0,
-                            radius: 8.0.into(),
+                            width: STROKE_HAIRLINE,
+                            radius: RADIUS_M.into(),
                         })
                         .shadow(iced::Shadow {
                             offset: iced::Vector::new(0.0, 4.0),
@@ -596,10 +599,10 @@ pub fn view<'a>(
                         })
                 })
                 .padding(iced::Padding {
-                    top: 5.0,
-                    bottom: 5.0,
-                    left: 1.0,
-                    right: 1.0,
+                    top: SPACE_XS,
+                    bottom: SPACE_XS,
+                    left: STROKE_HAIRLINE,
+                    right: STROKE_HAIRLINE,
                 }),
         )
     } else {
@@ -608,11 +611,11 @@ pub fn view<'a>(
 
     // Subfilters (Alfabeto/Numeros/Signos)
     if !manager.active_subfilters.is_empty() {
-        let mut rows_of_chars = column![].spacing(4).padding(iced::Padding {
-            top: 10.0,
-            bottom: 10.0,
-            left: 15.0,
-            right: 15.0,
+        let mut rows_of_chars = column![].spacing(SPACE_XS).padding(iced::Padding {
+            top: SPACE_MD,
+            bottom: SPACE_MD,
+            left: SPACE_LG,
+            right: SPACE_LG,
         });
 
         let mut line_width = 0.0;
@@ -623,8 +626,8 @@ pub fn view<'a>(
             iced::widget::svg(iced::widget::svg::Handle::from_path(
                 "assets/icons/restore-straight.svg",
             ))
-            .width(14)
-            .height(14)
+            .width(IconSize::S.px())
+            .height(IconSize::S.px())
             .style(move |_t, s: iced::widget::svg::Status| {
                 if s == iced::widget::svg::Status::Hovered {
                     iced::widget::svg::Style {
@@ -637,14 +640,14 @@ pub fn view<'a>(
                 }
             }),
         )
-        .width(Length::Fixed(16.0))
-        .height(Length::Fixed(16.0))
+        .width(IconSize::S.px())
+        .height(IconSize::S.px())
         .center_x(Length::Fill)
         .center_y(Length::Fill);
 
         let restore_btn = button(restore_icon)
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0))
+            .width(IconSize::S.px())
+            .height(IconSize::S.px())
             .padding(0)
             .style(move |_t: &Theme, _s: button::Status| {
                 let mut st = button::Style::default().with_background(Color::TRANSPARENT);
@@ -685,8 +688,8 @@ pub fn view<'a>(
                     .color(clr)
                     .font(FONT_INTER_SANS_MEDIUM),
             )
-            .width(Length::Fixed(16.0))
-            .height(Length::Fixed(16.0))
+            .width(IconSize::S.px())
+            .height(IconSize::S.px())
             .center_x(Length::Fill)
             .center_y(Length::Fill);
 
@@ -748,7 +751,11 @@ pub fn view<'a>(
                     t_label,
                 ]
             } else {
-                row![Space::new().width(16.0), Space::new().width(0.0), t_label,]
+                row![
+                    Space::new().width(IconSize::S.px()),
+                    Space::new().width(0.0),
+                    t_label,
+                ]
             };
 
             let is_active = manager.selected_tree_node.as_deref() == Some(item.id.as_str());
@@ -759,7 +766,7 @@ pub fn view<'a>(
                         top: 0.0,
                         bottom: 0.0,
                         left: padding_left,
-                        right: 15.0,
+                        right: SPACE_LG,
                     })
                     .height(Length::Fixed(LIST_ROW_HEADER))
                     .center_y(Length::Fill),
@@ -835,10 +842,10 @@ pub fn view<'a>(
                 .width(Length::Fixed(187.0))
                 .height(Length::Fill)
                 .padding(iced::Padding {
-                    top: 70.0,
+                    top: FILTER_OVERLAY_TOP,
                     bottom: 0.0,
-                    left: 15.0,
-                    right: 15.0,
+                    left: SPACE_LG,
+                    right: SPACE_LG,
                 })
                 .align_x(iced::alignment::Horizontal::Center)
                 .align_y(iced::alignment::Vertical::Top)

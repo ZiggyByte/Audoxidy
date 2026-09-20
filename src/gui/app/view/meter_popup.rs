@@ -2,6 +2,8 @@
 
 use iced::Element;
 
+use crate::gui::dimensions::{METER_POPUP_HEIGHT, METER_POPUP_WIDTH, OVERLAY_EDGE_MARGIN};
+
 use super::super::{AudoxidyApp, Message};
 
 impl AudoxidyApp {
@@ -28,16 +30,18 @@ impl AudoxidyApp {
                 .on_right_press(Message::MeterPopupClose);
 
                 // Ajuste de bordes (Stay within window)
-                let popup_w = 280.0;
-                let popup_h = 200.0; // aprox
+                let popup_w = METER_POPUP_WIDTH;
+                let popup_h = METER_POPUP_HEIGHT; // aprox
                 let mut target_x = pos.x;
                 let mut target_y = pos.y;
 
                 if target_x + popup_w > self.window_size.0 as f32 {
-                    target_x = (self.window_size.0 as f32 - popup_w - 5.0).max(5.0);
+                    target_x = (self.window_size.0 as f32 - popup_w - OVERLAY_EDGE_MARGIN)
+                        .max(OVERLAY_EDGE_MARGIN);
                 }
                 if target_y + popup_h > self.window_size.1 as f32 {
-                    target_y = (self.window_size.1 as f32 - popup_h - 5.0).max(5.0);
+                    target_y = (self.window_size.1 as f32 - popup_h - OVERLAY_EDGE_MARGIN)
+                        .max(OVERLAY_EDGE_MARGIN);
                 }
                 let mut final_stack = iced::widget::Stack::new();
                 final_stack = final_stack.push(popup_blocker).push(

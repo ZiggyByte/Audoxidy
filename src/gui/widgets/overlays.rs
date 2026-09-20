@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::gui::dimensions::{
-    CONTEXT_MENU_MIN_WIDTH, CONTROL_MD, DIVIDER_THIN, IconSize, MARGIN_MD, RADIUS_M, RADIUS_S,
-    STROKE_HAIRLINE,
+    CONTEXT_MENU_MIN_WIDTH, CONTROL_MD, DIVIDER_THIN, IconSize, MARGIN_MD, MODAL_MIN_WIDTH,
+    RADIUS_M, RADIUS_S, SPACE_MD, SPACE_XS, STROKE_HAIRLINE,
 };
 
 use iced::widget::column;
@@ -152,9 +152,9 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     confirm_label: String,
 ) -> Element<'a, Message> {
     let mut footer = row![]
-        .spacing(10)
+        .spacing(SPACE_MD)
         .padding(iced::Padding {
-            top: 5.0,
+            top: SPACE_XS,
             ..Default::default()
         })
         .align_y(Alignment::Center);
@@ -162,7 +162,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     if let Some(cancel) = cancel_msg {
         footer = footer.push(
             button(text("Cancelar").size(14).font(FONT_INTER_SANS_MEDIUM))
-                .padding([5, 10])
+                .padding([SPACE_XS, SPACE_MD])
                 .on_press(cancel)
                 .style(|_t: &Theme, status: iced::widget::button::Status| {
                     let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
@@ -191,7 +191,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     if let Some(confirm) = confirm_msg {
         footer = footer.push(
             button(text(confirm_label).size(14).font(FONT_INTER_SANS_MEDIUM))
-                .padding([5, 10])
+                .padding([SPACE_XS, SPACE_MD])
                 .on_press(confirm)
                 .style(|_t: &Theme, status: iced::widget::button::Status| {
                     let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
@@ -220,14 +220,16 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
     container(
         column![
             Space::new()
-                .width(Length::Fixed(200.0))
+                .width(Length::Fixed(MODAL_MIN_WIDTH))
                 .height(Length::Fixed(0.0)),
             text(title)
                 .size(16)
                 .font(FONT_INTER_SANS_MEDIUM)
                 .color(COLOR_TEXT_PRIMARY)
                 .align_x(iced::alignment::Horizontal::Center),
-            container(content).padding([10, 0]).width(Length::Shrink),
+            container(content)
+                .padding([SPACE_MD, 0.0])
+                .width(Length::Shrink),
             footer,
         ]
         .spacing(0)

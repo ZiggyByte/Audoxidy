@@ -175,14 +175,14 @@ impl crate::gui::app::AudoxidyApp {
             Message::PlayerWindowAction(action) => match action {
                 crate::gui::player::WindowAction::Minimize => {
                     if let Some(id) = self.window_id {
-                        iced::window::minimize(id, true).map(|_: ()| Message::Tick)
+                        iced::window::minimize(id, true).map(|_: ()| Message::UiTick)
                     } else {
                         Task::none()
                     }
                 }
                 crate::gui::player::WindowAction::Maximize => {
                     if let Some(id) = self.window_id {
-                        iced::window::toggle_maximize(id).map(|_: ()| Message::Tick)
+                        iced::window::toggle_maximize(id).map(|_: ()| Message::UiTick)
                     } else {
                         Task::none()
                     }

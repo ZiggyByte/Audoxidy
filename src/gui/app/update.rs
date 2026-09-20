@@ -76,11 +76,11 @@ impl crate::gui::app::AudoxidyApp {
         }
 
         match message {
-            Message::Tick
-            | Message::UITick
-            | Message::DragTick
-            | Message::MeterTick
-            | Message::SearchPulse => self.handle_ticks(message, &state),
+            Message::FrameTick
+            | Message::UiTick
+            | Message::TransportTick
+            | Message::ScanTick
+            | Message::IdleTick => self.handle_ticks(message, &state),
             Message::GlobalMemoryPurge => self.handle_memory(message),
             Message::PlayPause
             | Message::NextTrack
@@ -209,13 +209,6 @@ impl crate::gui::app::AudoxidyApp {
             | Message::MeterResetPeak
             | Message::MeterToggleEnabled(..) => self.handle_meter(message),
             Message::NoOp => Task::none(),
-            // The consolidated tick messages carry no behavior yet: nothing emits
-            // them, and their handlers arrive together with the subscription wiring.
-            Message::FrameTick
-            | Message::UiTick
-            | Message::TransportTick
-            | Message::ScanTick
-            | Message::IdleTick => Task::none(),
             Message::CoreEvent(event) => self.on_core_event(event),
         }
     }

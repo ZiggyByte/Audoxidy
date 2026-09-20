@@ -1,362 +1,415 @@
 //! Tick, meter and periodic message handlers extracted from the update dispatcher.
+//!
+//! Each authorized tick kind has its own handler. The frame handler is
+//! presentation-only; the heavier periodic maintenance lives in the shared
+//! [`tick_head`](AudoxidyApp::tick_head) /
+//! [`tick_tail`](AudoxidyApp::tick_tail) helpers reached by the transport, scan
+//! and idle ticks.
 
 use crate::audio::engine::{LATENCY_PEAK_US, UNDERRUNS};
 use crate::gui::app::Message;
 use crate::gui::app::persistence::log_persist;
 use crate::gui::app::update::memory::gc_blocked_by_preload;
 use crate::gui::app::update::meter::{METER_FADE_OUT_SECS, ballistic_step, peak_hold_step};
+use crate::gui::player::{AUTOSAVE_INTERVAL_SECS, autosave_due};
 use iced::Task;
 
 impl crate::gui::app::AudoxidyApp {
+    /// Routes a tick message to the handler for its kind.
     pub(in crate::gui::app) fn handle_ticks(
         &mut self,
         message: Message,
         state: &crate::audio::engine::AudioState,
     ) -> Task<Message> {
         match message {
-            Message::Tick => {
-                // 0. Refrescar caché de estado del sistema de audio (cada 3s, no cada frame)
-                if self.audio_center_manager.open {
-                    self.audio_center_manager.refresh_system_status_cache();
+            Message::FrameTick => self.handle_frame_tick(),
+            Message::UiTick => self.handle_ui_tick(),
+            Message::TransportTick => self.handle_transport_tick(state),
+            Message::ScanTick => self.handle_scan_tick(state),
+            Message::IdleTick => self.handle_idle_tick(state),
+            _ => Task::none(),
+        }
+    }
+
+    /// Presentation-only frame handler: the VU meter ballistics and the drag
+    /// auto-scroll. It intentionally reaches no database, allocator-trim,
+    /// subprocess or full-library work: the frame cadence only animates.
+    fn handle_frame_tick(&mut self) -> Task<Message> {
+        self.update_meter();
+
+        if self.library_manager.is_dragging {
+            if let Some(pos) = self.player_ui_state.mouse_pos {
+                let win_h = self.window_size.1 as f32;
+                let threshold_top = 150.0;
+                let threshold_bottom = win_h - 100.0;
+
+                let mut scroll_delta = 0.0;
+                if pos.y < threshold_top {
+                    scroll_delta = (pos.y - threshold_top) / 5.0;
+                } else if pos.y > threshold_bottom {
+                    scroll_delta = (pos.y - threshold_bottom) / 5.0;
                 }
 
-                // 1. Consultar al scanner si hay datos nuevos en la BD
-                if self.core.check_db_dirty() {
-                    self.db_needs_refresh = true;
-                }
-
-                // 2. Actualizar BD SOLO cuando el escáner marca cambios
-                if self.db_needs_refresh {
-                    self.db_needs_refresh = false;
-                    let core = self.core.clone();
-                    return Task::perform(
-                        async move { core.refresh_library_snapshot() },
-                        |(songs, albums, stats)| {
-                            Message::InternalLibraryRefreshed(songs, albums, stats)
+                if scroll_delta != 0.0 {
+                    let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                    return iced::widget::operation::scroll_by(
+                        scroll_id,
+                        iced::widget::scrollable::AbsoluteOffset {
+                            x: 0.0,
+                            y: scroll_delta,
                         },
                     );
                 }
-
-                // 3. Sincronización de carátulas solo si hay reproducción activa
-                if state.is_playing {
-                    self.sync_player_art();
-
-                    let duration = state.total_duration_sec;
-                    let position = state.current_pos_sec;
-                    if duration > 0.0 {
-                        let remaining = duration - position;
-                        // Prefetch de carátula y pre-carga de la siguiente canción
-                        // ~15s antes del final (transiciones sin cortes). El dedup
-                        // por handle/path evita repetir el trabajo en cada tick.
-                        if remaining <= 15.0 {
-                            if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
-                                if let Some(ref cover_path) = next_song.cover_path {
-                                    if self.player_ui_state.prefetched_next_handle.is_none()
-                                        && self.player_ui_state.current_cover_path
-                                            != cover_path.as_ref()
-                                    {
-                                        self.player_ui_state.prefetched_next_handle =
-                                            crate::utils::covers::load_cover_handle(cover_path)
-                                                .map(crate::gui::library::lists::cover_to_iced);
-                                    }
-                                }
-                                // The preload decision (15s window and per-track
-                                // dedup) lives in the Core domain; the cover is
-                                // prefetched separately, not gated on the dedup.
-                                let decision = crate::core::playback::check_preload_trigger(
-                                    remaining,
-                                    Some(next_song.file_path.as_ref()),
-                                    self.player_ui_state.preloaded_next_path.as_deref(),
-                                );
-                                if decision.should_preload {
-                                    if let Some(next_path) = decision.next_path.as_deref() {
-                                        let _ = self.core.preload_next(
-                                            next_path,
-                                            &next_song.title.to_string(),
-                                            &next_song.artist_name.to_string(),
-                                            &next_song.album_title.to_string(),
-                                            next_song.cover_path.as_deref().map(str::to_string),
-                                        );
-                                    }
-                                    self.player_ui_state.preloaded_next_path =
-                                        decision.new_preloaded_path;
-                                    if decision.clear_preload_finished {
-                                        // La pre-carga está activa: el GC no debe correr.
-                                        self.player_ui_state.preload_finished_at = None;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if state.eof_reached {
-                    self.core.clear_eof();
-                    self.playlist_manager.play_next(self.core.audio_manager());
-                    // Nueva pista activa: restablecer la pre-carga para la siguiente y
-                    // marcar el fin de la pre-carga (el GC se reactiva 20s después).
-                    self.player_ui_state.preloaded_next_path = None;
-                    self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .ok();
-
-                    if self.playlist_manager.shuffle_active {
-                        if let Some(session) = &self.playlist_manager.shuffle_session {
-                            log_persist(
-                                "shuffle_session",
-                                self.core.persist_shuffle_session(
-                                    self.playlist_manager.active_playlist_id,
-                                    session,
-                                ),
-                            );
-                        }
-                    }
-
-                    self.sync_player_art();
-                    self.persist_playlist_state();
-
-                    if !self.is_mouse_over_playlist {
-                        if let Some(idx) = self.playlist_manager.playing_song_idx {
-                            return self.execute_playlist_autoscroll(idx);
-                        }
-                    }
-                }
-
-                // 4. Actualizar Caché de caracteres y textos base (para detección inteligente)
-                if state.title != self.player_ui_state.last_title {
-                    self.player_ui_state.last_title = state.title.clone();
-                    self.player_ui_state.title_chars = state.title.chars().collect();
-                    if self.player_ui_state.title_chars.len() <= 39 {
-                        self.player_ui_state.display_title = state.title.clone();
-                    }
-                }
-                if state.artist != self.player_ui_state.last_artist {
-                    self.player_ui_state.last_artist = state.artist.clone();
-                    self.player_ui_state.artist_chars = state.artist.chars().collect();
-                    if self.player_ui_state.artist_chars.len() <= 40 {
-                        self.player_ui_state.display_artist = state.artist.clone();
-                    }
-                }
-
-                // Autosave by its own deadline: the mark of the last flush and
-                // the clock decide, so the marquee counter can no longer fire
-                // persistence on every tick.
-                let autosave_now = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                if crate::gui::player::autosave_due(
-                    autosave_now,
-                    self.player_ui_state.last_persist_at,
-                    crate::gui::player::AUTOSAVE_INTERVAL_SECS,
-                ) {
-                    self.persist_playlist_state();
-                    self.player_ui_state.last_persist_at = Some(autosave_now);
-                }
-
-                // Emisión de métricas desde la ruta no-RT de la GUI: convierte los
-                // contadores atómicos publicados por el callback en eventos
-                // estructurados que consume la capa de métricas.
-                let ram_bytes =
-                    crate::utils::memory_manager::MemoryManager::current_process_ram_bytes();
-                tracing::info!(
-                    target: "audoxidy::metrics",
-                    metric = "ram_usage_bytes",
-                    ram_usage_bytes = ram_bytes
-                );
-
-                let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);
-                if underruns > 0 {
-                    tracing::warn!(
-                        target: "audoxidy::metrics",
-                        metric = "underrun",
-                        count = underruns
-                    );
-                }
-
-                let peak = LATENCY_PEAK_US.load(std::sync::atomic::Ordering::Relaxed);
-                if peak > 0 {
-                    tracing::info!(
-                        target: "audoxidy::metrics",
-                        metric = "audio_latency",
-                        latency_us = peak
-                    );
-                }
-
-                // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente
-                if crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap() {
-                    tracing::debug!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
-                    return Task::done(Message::GlobalMemoryPurge);
-                }
-
-                // 5b. Purga por timer o por umbral de RAM del propio reproductor.
-                // Nunca durante un escaneo (extracción de metadatos y carátulas).
-                // La purga por RAM tiene cooldown (10s) para evitar el bucle
-                // GC → re-creación de pre-carga → GC cuando la RAM sigue alta.
-                let is_scanning_now = self.core.is_scanning();
-
-                // Seguro de pre-carga: el GC no corre mientras la pre-carga está activa
-                // ni en los 20s posteriores a su fin (evita interrumpir la transición
-                // de canciones y la mezcla cruzada). Es el mismo patrón que el seguro
-                // de escaneo.
-                let now_secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_secs())
-                    .unwrap_or(0);
-                let preload_active = self.player_ui_state.preloaded_next_path.is_some();
-                let preload_finished_recently = gc_blocked_by_preload(
-                    now_secs,
-                    preload_active,
-                    self.player_ui_state.preload_finished_at,
-                );
-
-                // The GC policy (60s timer, RAM thresholds and both guards) lives
-                // in the Core domain: a due timer or RAM pressure returns the
-                // purge intent, which is dispatched here synchronously. The
-                // matching MemoryPressure event is informational only.
-                if matches!(
-                    self.core
-                        .evaluate_gc(is_scanning_now, preload_finished_recently),
-                    Some(crate::core::CoreIntent::PurgeMemory)
-                ) {
-                    return Task::done(Message::GlobalMemoryPurge);
-                }
-
-                // Detección de fin de escáner para liberar memoria 30s después
-                if self.was_scanning && !is_scanning_now {
-                    self.scan_finished_at = Some(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs(),
-                    );
-                }
-                self.was_scanning = is_scanning_now;
-
-                if let Some(finished_at) = self.scan_finished_at {
-                    let now = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    // Liberar memoria 40s después del escaneo
-                    if now.saturating_sub(finished_at) >= 40 {
-                        self.scan_finished_at = None;
-                        tracing::debug!("Audoxidy GC: Scan complete, clearing memory");
-                        self.core.purge_old_covers(32); // Vaciar caché de covers generado por escáner
-
-                        // Reiniciar el temporizador global para que no haga otra purga en 2 mins
-                        crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();
-
-                        return Task::done(Message::GlobalMemoryPurge);
-                    }
-                }
-
-                Task::none()
             }
-            Message::SearchPulse => Task::none(),
-            Message::DragTick => {
-                if self.library_manager.is_dragging {
-                    if let Some(pos) = self.player_ui_state.mouse_pos {
-                        let win_h = self.window_size.1 as f32;
-                        let threshold_top = 150.0;
-                        let threshold_bottom = win_h - 100.0;
-
-                        let mut scroll_delta = 0.0;
-                        if pos.y < threshold_top {
-                            scroll_delta = (pos.y - threshold_top) / 5.0;
-                        } else if pos.y > threshold_bottom {
-                            scroll_delta = (pos.y - threshold_bottom) / 5.0;
-                        }
-
-                        if scroll_delta != 0.0 {
-                            let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
-                            return iced::widget::operation::scroll_by(
-                                scroll_id,
-                                iced::widget::scrollable::AbsoluteOffset {
-                                    x: 0.0,
-                                    y: scroll_delta,
-                                },
-                            );
-                        }
-                    }
-                }
-                Task::none()
-            }
-            Message::MeterTick => {
-                self.update_meter();
-                return Task::none();
-            }
-            Message::UITick => {
-                self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
-
-                let state = self.core.audio_state();
-
-                // Cálculo de marquesina cada 500ms
-                let limit_t = 39;
-                let limit_a = 40;
-
-                self.player_ui_state.display_title = if self.player_ui_state.title_chars.len()
-                    > limit_t
-                {
-                    let chars = &self.player_ui_state.title_chars;
-                    let offset = (self.player_ui_state.tick_count as usize) % (chars.len() + 10);
-                    if offset < chars.len() {
-                        let end = (offset + limit_t).min(chars.len());
-                        let mut s: String = chars[offset..end].iter().collect();
-                        if offset + limit_t > chars.len() {
-                            s.push_str("   ");
-                            let needed = (offset + limit_t) - chars.len();
-                            if needed > 3 {
-                                let rem = needed - 3;
-                                s.push_str(
-                                    &chars[0..rem.min(chars.len())].iter().collect::<String>(),
-                                );
-                            }
-                        }
-                        s
-                    } else {
-                        chars[0..limit_t.min(chars.len())].iter().collect()
-                    }
-                } else {
-                    state.title.clone()
-                };
-
-                self.player_ui_state.display_artist = if self.player_ui_state.artist_chars.len()
-                    > limit_a
-                {
-                    let chars = &self.player_ui_state.artist_chars;
-                    let offset = (self.player_ui_state.tick_count as usize) % (chars.len() + 10);
-                    if offset < chars.len() {
-                        let end = (offset + limit_a).min(chars.len());
-                        let mut s: String = chars[offset..end].iter().collect();
-                        if offset + limit_a > chars.len() {
-                            s.push_str("   ");
-                            let needed = (offset + limit_a) - chars.len();
-                            if needed > 3 {
-                                let rem = needed - 3;
-                                s.push_str(
-                                    &chars[0..rem.min(chars.len())].iter().collect::<String>(),
-                                );
-                            }
-                        }
-                        s
-                    } else {
-                        chars[0..limit_a.min(chars.len())].iter().collect()
-                    }
-                } else {
-                    state.artist.clone()
-                };
-
-                if self.player_ui_state.is_active
-                    && self.player_ui_state.tick_count > self.player_ui_state.active_until_tick
-                {
-                    self.player_ui_state.is_active = false;
-                }
-                Task::none()
-            }
-            _ => Task::none(),
         }
+        Task::none()
+    }
+
+    /// Player chrome handler: advances the marquee counter, recomputes the
+    /// scrolling title/artist offsets and expires the activity window. This is
+    /// the only writer and reader of `tick_count` inside the tick handlers.
+    fn handle_ui_tick(&mut self) -> Task<Message> {
+        self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
+
+        let state = self.core.audio_state();
+
+        // Cálculo de marquesina cada 500ms
+        let limit_t = 39;
+        let limit_a = 40;
+
+        self.player_ui_state.display_title = if self.player_ui_state.title_chars.len() > limit_t {
+            let chars = &self.player_ui_state.title_chars;
+            let offset = (self.player_ui_state.tick_count as usize) % (chars.len() + 10);
+            if offset < chars.len() {
+                let end = (offset + limit_t).min(chars.len());
+                let mut s: String = chars[offset..end].iter().collect();
+                if offset + limit_t > chars.len() {
+                    s.push_str("   ");
+                    let needed = (offset + limit_t) - chars.len();
+                    if needed > 3 {
+                        let rem = needed - 3;
+                        s.push_str(&chars[0..rem.min(chars.len())].iter().collect::<String>());
+                    }
+                }
+                s
+            } else {
+                chars[0..limit_t.min(chars.len())].iter().collect()
+            }
+        } else {
+            state.title.clone()
+        };
+
+        self.player_ui_state.display_artist = if self.player_ui_state.artist_chars.len() > limit_a {
+            let chars = &self.player_ui_state.artist_chars;
+            let offset = (self.player_ui_state.tick_count as usize) % (chars.len() + 10);
+            if offset < chars.len() {
+                let end = (offset + limit_a).min(chars.len());
+                let mut s: String = chars[offset..end].iter().collect();
+                if offset + limit_a > chars.len() {
+                    s.push_str("   ");
+                    let needed = (offset + limit_a) - chars.len();
+                    if needed > 3 {
+                        let rem = needed - 3;
+                        s.push_str(&chars[0..rem.min(chars.len())].iter().collect::<String>());
+                    }
+                }
+                s
+            } else {
+                chars[0..limit_a.min(chars.len())].iter().collect()
+            }
+        } else {
+            state.artist.clone()
+        };
+
+        if self.player_ui_state.is_active
+            && self.player_ui_state.tick_count > self.player_ui_state.active_until_tick
+        {
+            self.player_ui_state.is_active = false;
+        }
+        Task::none()
+    }
+
+    /// Playback transport handler: art sync, the preload trigger, the
+    /// end-of-track advance and the shared maintenance tail.
+    ///
+    /// The preload block is audio-critical and stays byte-for-byte as it was:
+    /// the same `remaining <= 15.0` window, the same per-track dedup and the
+    /// same 500 ms cadence.
+    fn handle_transport_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        if let Some(task) = self.tick_head() {
+            return task;
+        }
+
+        // Sincronización de carátulas solo si hay reproducción activa
+        if state.is_playing {
+            self.sync_player_art();
+
+            let duration = state.total_duration_sec;
+            let position = state.current_pos_sec;
+            if duration > 0.0 {
+                let remaining = duration - position;
+                // Prefetch de carátula y pre-carga de la siguiente canción
+                // ~15s antes del final (transiciones sin cortes). El dedup
+                // por handle/path evita repetir el trabajo en cada tick.
+                if remaining <= 15.0 {
+                    if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
+                        if let Some(ref cover_path) = next_song.cover_path {
+                            if self.player_ui_state.prefetched_next_handle.is_none()
+                                && self.player_ui_state.current_cover_path != cover_path.as_ref()
+                            {
+                                self.player_ui_state.prefetched_next_handle =
+                                    crate::utils::covers::load_cover_handle(cover_path)
+                                        .map(crate::gui::library::lists::cover_to_iced);
+                            }
+                        }
+                        // The preload decision (15s window and per-track
+                        // dedup) lives in the Core domain; the cover is
+                        // prefetched separately, not gated on the dedup.
+                        let decision = crate::core::playback::check_preload_trigger(
+                            remaining,
+                            Some(next_song.file_path.as_ref()),
+                            self.player_ui_state.preloaded_next_path.as_deref(),
+                        );
+                        if decision.should_preload {
+                            if let Some(next_path) = decision.next_path.as_deref() {
+                                let _ = self.core.preload_next(
+                                    next_path,
+                                    &next_song.title.to_string(),
+                                    &next_song.artist_name.to_string(),
+                                    &next_song.album_title.to_string(),
+                                    next_song.cover_path.as_deref().map(str::to_string),
+                                );
+                            }
+                            self.player_ui_state.preloaded_next_path = decision.new_preloaded_path;
+                            if decision.clear_preload_finished {
+                                // La pre-carga está activa: el GC no debe correr.
+                                self.player_ui_state.preload_finished_at = None;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if state.eof_reached {
+            self.core.clear_eof();
+            self.playlist_manager.play_next(self.core.audio_manager());
+            // Nueva pista activa: restablecer la pre-carga para la siguiente y
+            // marcar el fin de la pre-carga (el GC se reactiva 20s después).
+            self.player_ui_state.preloaded_next_path = None;
+            self.player_ui_state.preload_finished_at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .ok();
+
+            if self.playlist_manager.shuffle_active {
+                if let Some(session) = &self.playlist_manager.shuffle_session {
+                    log_persist(
+                        "shuffle_session",
+                        self.core.persist_shuffle_session(
+                            self.playlist_manager.active_playlist_id,
+                            session,
+                        ),
+                    );
+                }
+            }
+
+            self.sync_player_art();
+            self.persist_playlist_state();
+
+            if !self.is_mouse_over_playlist {
+                if let Some(idx) = self.playlist_manager.playing_song_idx {
+                    return self.execute_playlist_autoscroll(idx);
+                }
+            }
+        }
+
+        self.tick_tail(state)
+    }
+
+    /// Library scan handler: the shared prelude and the maintenance tail while
+    /// a scan runs and playback is stopped.
+    fn handle_scan_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        if let Some(task) = self.tick_head() {
+            return task;
+        }
+        self.tick_tail(state)
+    }
+
+    /// Idle handler: the shared prelude and the maintenance tail at the slow
+    /// cadence used while neither playback nor a scan is active.
+    fn handle_idle_tick(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        if let Some(task) = self.tick_head() {
+            return task;
+        }
+        self.tick_tail(state)
+    }
+
+    /// Shared tick prelude: refresh the audio-center status cache, poll the
+    /// scanner for database changes and schedule the library refresh when one
+    /// is pending.
+    ///
+    /// Returns `Some(task)` when the refresh was scheduled, so the caller stops
+    /// before running the rest of the periodic work on this tick.
+    fn tick_head(&mut self) -> Option<Task<Message>> {
+        // Refrescar caché de estado del sistema de audio (cada 3s, no cada frame)
+        if self.audio_center_manager.open {
+            self.audio_center_manager.refresh_system_status_cache();
+        }
+
+        // 1. Consultar al scanner si hay datos nuevos en la BD
+        if self.core.check_db_dirty() {
+            self.db_needs_refresh = true;
+        }
+
+        // 2. Actualizar BD SOLO cuando el escáner marca cambios
+        if self.db_needs_refresh {
+            self.db_needs_refresh = false;
+            let core = self.core.clone();
+            return Some(Task::perform(
+                async move { core.refresh_library_snapshot() },
+                |(songs, albums, stats)| Message::InternalLibraryRefreshed(songs, albums, stats),
+            ));
+        }
+
+        None
+    }
+
+    /// Shared tick coda: title/artist cache, autosave, metrics, the RAM hard
+    /// cap, the garbage-collection policy and the post-scan reclaim.
+    ///
+    /// The destructive work only runs when the respective policy, deadline or
+    /// flag decides, so it never reaches the frame cadence.
+    fn tick_tail(&mut self, state: &crate::audio::engine::AudioState) -> Task<Message> {
+        // 4. Actualizar Caché de caracteres y textos base (para detección inteligente)
+        if state.title != self.player_ui_state.last_title {
+            self.player_ui_state.last_title = state.title.clone();
+            self.player_ui_state.title_chars = state.title.chars().collect();
+            if self.player_ui_state.title_chars.len() <= 39 {
+                self.player_ui_state.display_title = state.title.clone();
+            }
+        }
+        if state.artist != self.player_ui_state.last_artist {
+            self.player_ui_state.last_artist = state.artist.clone();
+            self.player_ui_state.artist_chars = state.artist.chars().collect();
+            if self.player_ui_state.artist_chars.len() <= 40 {
+                self.player_ui_state.display_artist = state.artist.clone();
+            }
+        }
+
+        // Autosave by its own deadline: the mark of the last flush and the
+        // clock decide, so the marquee counter can no longer fire persistence
+        // on every tick.
+        let autosave_now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        if autosave_due(
+            autosave_now,
+            self.player_ui_state.last_persist_at,
+            AUTOSAVE_INTERVAL_SECS,
+        ) {
+            self.persist_playlist_state();
+            self.player_ui_state.last_persist_at = Some(autosave_now);
+        }
+
+        // Emisión de métricas desde la ruta no-RT de la GUI: convierte los
+        // contadores atómicos publicados por el callback en eventos
+        // estructurados que consume la capa de métricas.
+        let ram_bytes = crate::utils::memory_manager::MemoryManager::current_process_ram_bytes();
+        tracing::info!(
+            target: "audoxidy::metrics",
+            metric = "ram_usage_bytes",
+            ram_usage_bytes = ram_bytes
+        );
+
+        let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);
+        if underruns > 0 {
+            tracing::warn!(
+                target: "audoxidy::metrics",
+                metric = "underrun",
+                count = underruns
+            );
+        }
+
+        let peak = LATENCY_PEAK_US.load(std::sync::atomic::Ordering::Relaxed);
+        if peak > 0 {
+            tracing::info!(
+                target: "audoxidy::metrics",
+                metric = "audio_latency",
+                latency_us = peak
+            );
+        }
+
+        // 5a. Hard Cap de RAM: si supera el 75%, purgar inmediatamente
+        if crate::utils::memory_manager::MemoryManager::is_ram_over_hard_cap() {
+            tracing::debug!("Audoxidy GC: RAM over 75% hard cap — forcing immediate purge");
+            return Task::done(Message::GlobalMemoryPurge);
+        }
+
+        // 5b. Purga por timer o por umbral de RAM del propio reproductor.
+        // Nunca durante un escaneo (extracción de metadatos y carátulas).
+        // La purga por RAM tiene cooldown (10s) para evitar el bucle
+        // GC → re-creación de pre-carga → GC cuando la RAM sigue alta.
+        let is_scanning_now = self.core.is_scanning();
+
+        // Seguro de pre-carga: el GC no corre mientras la pre-carga está activa
+        // ni en los 20s posteriores a su fin (evita interrumpir la transición
+        // de canciones y la mezcla cruzada). Es el mismo patrón que el seguro
+        // de escaneo.
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let preload_active = self.player_ui_state.preloaded_next_path.is_some();
+        let preload_finished_recently = gc_blocked_by_preload(
+            now_secs,
+            preload_active,
+            self.player_ui_state.preload_finished_at,
+        );
+
+        // The GC policy (60s timer, RAM thresholds and both guards) lives
+        // in the Core domain: a due timer or RAM pressure returns the
+        // purge intent, which is dispatched here synchronously. The
+        // matching MemoryPressure event is informational only.
+        if matches!(
+            self.core
+                .evaluate_gc(is_scanning_now, preload_finished_recently),
+            Some(crate::core::CoreIntent::PurgeMemory)
+        ) {
+            return Task::done(Message::GlobalMemoryPurge);
+        }
+
+        // Detección de fin de escáner para liberar memoria 30s después
+        if self.was_scanning && !is_scanning_now {
+            self.scan_finished_at = Some(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs(),
+            );
+        }
+        self.was_scanning = is_scanning_now;
+
+        if let Some(finished_at) = self.scan_finished_at {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs();
+            // Liberar memoria 40s después del escaneo
+            if now.saturating_sub(finished_at) >= 40 {
+                self.scan_finished_at = None;
+                tracing::debug!("Audoxidy GC: Scan complete, clearing memory");
+                self.core.purge_old_covers(32); // Vaciar caché de covers generado por escáner
+
+                // Reiniciar el temporizador global para que no haga otra purga en 2 mins
+                crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();
+
+                return Task::done(Message::GlobalMemoryPurge);
+            }
+        }
+
+        Task::none()
     }
 
     /// Lee los 4 atómicos del data layer (MeterData), aplica ballistics,

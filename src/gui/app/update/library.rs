@@ -21,8 +21,7 @@ impl crate::gui::app::AudoxidyApp {
                 self.core.scan_folder(folder);
                 // Marcar que la BD necesita refrescarse tras el escaneo
                 self.db_needs_refresh = true;
-                self.player_ui_state.tick_count = 0;
-                self.update(Message::Tick)
+                self.update(Message::ScanTick)
             }
             Message::SearchQueryChanged(q) => {
                 self.playlist_manager.search_query = q;

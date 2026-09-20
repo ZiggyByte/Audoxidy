@@ -92,51 +92,36 @@ impl AudoxidyApp {
     }
 
     pub fn subscription(&self) -> iced::Subscription<Message> {
-        // 1. Tick Standard (Progreso): 500ms
-        // 2. Tick Idle (Scanner/Pausa): 5000ms
+        // The timed set is decided by the pure policy: frame 33 ms
+        // (meter/drag/stepper), ui 500 ms (marquee/activity), transport 500 ms
+        // (playing), scan 500 ms (scanning while stopped) and idle 5000 ms
+        // (neither). The union of transport, scan and idle reproduces the
+        // previous base schedule exactly.
+        let audio_state = self.core.audio_state();
+        let is_playing = audio_state.is_playing;
         let is_scanning = self.core.is_scanning();
-        let tick_interval = if self.core.audio_state().is_playing || is_scanning {
-            std::time::Duration::from_millis(500)
-        } else {
-            std::time::Duration::from_millis(5000)
-        };
-        let mut subs = vec![iced::time::every(tick_interval).map(|_| Message::Tick)];
-
-        // 3. UI/Marquee Tick: 500ms
-        // Solo se activa si la UI está activa (controles) o si algún texto requiere efecto marquesina
+        let ui_active = self.player_ui_state.is_active;
         let needs_marquee = self.player_ui_state.title_chars.len() > 39
             || self.player_ui_state.artist_chars.len() > 40;
+        let is_dragging = self.library_manager.is_dragging;
+        let meter_fading = self.player_ui_state.meter.is_fading_out;
+        let stepper_held = crate::gui::widgets::GLOBAL_STEPPER_HOLD
+            .load(std::sync::atomic::Ordering::Relaxed)
+            != 0;
 
-        if self.player_ui_state.is_active || (self.core.audio_state().is_playing && needs_marquee) {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(500)).map(|_| Message::UITick),
-            );
-        }
-
-        // 4. Hybrid Auto-scroll: 32ms (solo si se está arrastrando)
-        if self.library_manager.is_dragging {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(32)).map(|_| Message::DragTick),
-            );
-        }
-
-        // 5. VU Meter Tick: 30ms (~33Hz) — smooth meter animation
-        //    Active when playing OR fading out (pause fade needs ticks to animate)
-        if self.core.audio_state().is_playing || self.player_ui_state.meter.is_fading_out {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::MeterTick),
-            );
-        }
-
-        // 6. Search Pulse: 100ms (solo si hay algo en búsqueda para el Grid)
-        if !self.library_manager.search_query.is_empty()
-            || !self.filters_manager.search_query.is_empty()
-        {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(100))
-                    .map(|_| Message::SearchPulse),
-            );
-        }
+        let mut subs: Vec<iced::Subscription<Message>> = super::tick::tick_policy(
+            is_playing,
+            is_scanning,
+            ui_active,
+            needs_marquee,
+            is_dragging,
+            meter_fading,
+            stepper_held,
+        )
+        .active_kinds()
+        .into_iter()
+        .map(|(kind, period)| super::tick::tick(kind, period))
+        .collect();
 
         let mouse_evs = iced::event::listen_with(|event, _status, window_id| {
             // Registrar actividad global (Modo Fantasma / Garbage Collector)
@@ -195,18 +180,6 @@ impl AudoxidyApp {
         });
 
         subs.push(mouse_evs);
-
-        // 6. Stepper hold-to-repeat: while a NumberStepper arrow is held
-        //    (GLOBAL_STEPPER_HOLD != 0), emit a periodic Tick so iced keeps redrawing
-        //    and the widget's RedrawRequested handler drives the auto-repeat with real
-        //    timestamps. Without this the runtime stops redrawing (no animation) and
-        //    the hold would fire only once.
-        if crate::gui::widgets::GLOBAL_STEPPER_HOLD.load(std::sync::atomic::Ordering::Relaxed) != 0
-        {
-            subs.push(
-                iced::time::every(std::time::Duration::from_millis(30)).map(|_| Message::Tick),
-            );
-        }
 
         // Eventos externos: controles multimedia del sistema (y, en el futuro,
         // atajos globales). La suscripción se añade siempre y su receta tiene un

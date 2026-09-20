@@ -11,12 +11,11 @@ use crate::integrations::control::ExternalControlEvent;
 
 pub enum Message {
     // Engine & Playback
-    Tick,
-    UITick,
-    DragTick,
-    MeterTick,
-    SearchPulse,
-    // Authorized tick taxonomy: one timer per kind, each with its own recipe.
+    // The five general ticks, each built with an explicit recipe identity:
+    // frame 33 ms (meter ballistics, drag auto-scroll, stepper redraw),
+    // ui 500 ms (marquee, activity window), transport 500 ms (preload, EOF,
+    // art sync while playing), scan 500 ms (library dirty poll while scanning)
+    // and idle 5000 ms (memory and garbage-collection policy).
     FrameTick,
     UiTick,
     TransportTick,

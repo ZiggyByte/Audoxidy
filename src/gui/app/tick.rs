@@ -70,7 +70,6 @@ pub(in crate::gui::app) const IDLE_TICK_PERIOD: Duration = Duration::from_millis
 ///
 /// Produced by [`tick_policy`] and consumed by the subscription builder that
 /// declares the live timers.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(in crate::gui::app) struct TickSet {
     /// Whether the frame cadence runs.
@@ -88,7 +87,6 @@ pub(in crate::gui::app) struct TickSet {
 impl TickSet {
     /// Lists the active kinds paired with their period, in the canonical order
     /// frame, ui, transport, scan, idle.
-    #[allow(dead_code)]
     pub(in crate::gui::app) fn active_kinds(&self) -> Vec<(TickKind, Duration)> {
         let mut active = Vec::new();
         if self.frame {
@@ -117,7 +115,6 @@ impl TickSet {
 /// cadence is suppressed while playing because the transport cadence already
 /// polls the library-dirty flag at 500 ms; running both would repeat the shared
 /// tick prelude twice per tick.
-#[allow(dead_code)]
 pub(in crate::gui::app) fn tick_policy(
     is_playing: bool,
     is_scanning: bool,
@@ -138,7 +135,6 @@ pub(in crate::gui::app) fn tick_policy(
 
 impl TickKind {
     /// The authorized period for this kind.
-    #[allow(dead_code)]
     pub(in crate::gui::app) fn cadence(self) -> Duration {
         match self {
             TickKind::Frame => FRAME_TICK_PERIOD,
@@ -150,7 +146,6 @@ impl TickKind {
     }
 
     /// The message this kind's timer emits.
-    #[allow(dead_code)]
     pub(in crate::gui::app) fn message(self) -> Message {
         match self {
             TickKind::Frame => Message::FrameTick,
@@ -178,7 +173,6 @@ pub(in crate::gui::app) fn tick_identity(kind: TickKind, period: Duration) -> (D
 /// arrives after `period`, and missed ticks are skipped rather than replayed, so
 /// a stalled executor cannot produce a catch-up burst of heavy work. That keeps
 /// the transport cadence exact.
-#[allow(dead_code)]
 pub(in crate::gui::app) fn tick(kind: TickKind, period: Duration) -> iced::Subscription<Message> {
     // The recipe data is the explicit `(period, kind)` identity: two ticks that
     // share a duration but differ in kind stay distinct streams, so identity no

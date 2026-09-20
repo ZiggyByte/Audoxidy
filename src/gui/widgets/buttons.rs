@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::gui::dimensions::{SPACE_MD, SPACE_XS};
+
 // ==========================================
 // 2. Funciones Libres y Componentes UI Globales
 // ==========================================
@@ -206,7 +208,7 @@ where
 {
     let pick = pick_list(options, selected, on_selected)
         .width(width)
-        .padding([4, 10]) // Padding vertical mínimo para que tenga 24px de alto con fuente de 14px
+        .padding([SPACE_XS, SPACE_MD]) // Vertical padding that yields a 24 px control with a 14 px font
         .font(FONT_INTER_SANS_MEDIUM)
         .text_size(14)
         .style(|_theme: &Theme, status| {

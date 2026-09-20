@@ -1,5 +1,10 @@
 use super::*;
 
+use crate::gui::dimensions::{
+    CONTEXT_MENU_MIN_WIDTH, CONTROL_MD, DIVIDER_THIN, IconSize, MARGIN_MD, RADIUS_M, RADIUS_S,
+    STROKE_HAIRLINE,
+};
+
 use iced::widget::column;
 
 // ==========================================
@@ -24,7 +29,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
         .max()
         .unwrap_or(0);
     let calculated_width = (max_chars as f32 * 7.5) + 52.0;
-    let final_width = calculated_width.max(80.0);
+    let final_width = calculated_width.max(CONTEXT_MENU_MIN_WIDTH);
 
     let mut content = column![].spacing(0).width(Length::Fixed(final_width));
 
@@ -45,16 +50,16 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                             Element::from(
                                 container(
                                     svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                                        .width(Length::Fixed(24.0))
-                                        .height(Length::Fixed(24.0))
+                                        .width(Length::Fixed(IconSize::M.px()))
+                                        .height(Length::Fixed(IconSize::M.px()))
                                         .style(|_t, _s| iced::widget::svg::Style {
                                             color: Some(COLOR_TEXT_PRIMARY),
                                         }),
                                 )
-                                .width(Length::Fixed(24.0)),
+                                .width(Length::Fixed(IconSize::M.px())),
                             )
                         } else {
-                            Element::from(Space::new().width(Length::Fixed(24.0)))
+                            Element::from(Space::new().width(Length::Fixed(IconSize::M.px())))
                         },
                         Space::new().width(Length::Fixed(row_spacing)),
                         // Texto
@@ -66,7 +71,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                     .align_y(Alignment::Center),
                 )
                 .width(Length::Fill)
-                .height(Length::Fixed(32.0))
+                .height(Length::Fixed(CONTROL_MD))
                 .padding(iced::Padding {
                     left: left_padding,
                     right: 0.0,
@@ -99,7 +104,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
         } else {
             // Divisor
             content = content.push(
-                container(Space::new().height(Length::Fixed(1.0)))
+                container(Space::new().height(Length::Fixed(STROKE_HAIRLINE)))
                     .width(Length::Fill)
                     .padding(iced::Padding {
                         top: 0.0,
@@ -120,8 +125,8 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                 .background(COLOR_BG)
                 .border(iced::Border {
                     color: COLOR_TEXT_SECONDARY,
-                    width: 1.0,
-                    radius: 8.0.into(),
+                    width: STROKE_HAIRLINE,
+                    radius: RADIUS_M.into(),
                 })
                 .shadow(iced::Shadow {
                     offset: iced::Vector::new(0.0, 4.0),
@@ -173,7 +178,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                             COLOR_TEXT_SECONDARY
                         },
                         border: iced::Border {
-                            radius: 6.0.into(),
+                            radius: RADIUS_S.into(),
                             width: 0.0,
                             color: Color::TRANSPARENT,
                         },
@@ -202,7 +207,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
                             COLOR_TEXT_SECONDARY
                         },
                         border: iced::Border {
-                            radius: 6.0.into(),
+                            radius: RADIUS_S.into(),
                             width: 0.0,
                             color: Color::TRANSPARENT,
                         },
@@ -229,14 +234,14 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
         .align_x(Alignment::Center)
         .width(Length::Shrink),
     )
-    .padding(15)
+    .padding(MARGIN_MD)
     .width(Length::Shrink)
     .style(|_t: &Theme| container::Style {
         background: Some(COLOR_BG.into()),
         border: iced::Border {
             color: COLOR_ACCENT,
-            width: 2.0,
-            radius: 8.0.into(),
+            width: DIVIDER_THIN,
+            radius: RADIUS_M.into(),
         },
         shadow: iced::Shadow {
             offset: iced::Vector::new(0.0, 10.0),

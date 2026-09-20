@@ -1,5 +1,9 @@
 use super::*;
 
+use crate::gui::dimensions::{
+    BAR_SUB, DIVIDER_THIN, IconSize, RADIUS_S, SORT_COLUMN_MIN, SPACE_LG, SPACE_XS,
+};
+
 use iced::widget::column;
 
 /// Construye una barra de ordenamiento interactiva, reciclable para cualquier tabla.
@@ -27,7 +31,9 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
     for &sort in columns {
         let is_active = current_sort == Some(sort);
-        let width = *column_widths.get(&sort).unwrap_or(&100) as f32;
+        let width = *column_widths
+            .get(&sort)
+            .unwrap_or(&(SORT_COLUMN_MIN as u16)) as f32;
 
         let available_w = width - 15.0; // Espacio reservado para icono/separador
         let max_chars = (available_w / 7.0).max(1.0) as usize;
@@ -51,8 +57,8 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             if let Some(h) = handle {
                 Some(
                     svg(h)
-                        .width(20)
-                        .height(20)
+                        .width(IconSize::M.px())
+                        .height(IconSize::M.px())
                         .style(move |_t: &Theme, _s: svg::Status| svg::Style {
                             color: Some(COLOR_TEXT_SECONDARY),
                         }),
@@ -77,8 +83,8 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
                 container::Style::default()
                     .background(bg_color)
                     .border(iced::Border {
-                        radius: 4.0.into(),
-                        width: 4.0,
+                        radius: RADIUS_S.into(),
+                        width: RADIUS_S,
                         color: Color::TRANSPARENT,
                     })
             });
@@ -87,7 +93,7 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
         let on_h_exit = on_hover(None);
         let separator_area: Element<Message> =
             if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
-                Space::new().width(4.0).into()
+                Space::new().width(SPACE_XS).into()
             } else {
                 mouse_area(separator_visual)
                     .on_enter(on_h)
@@ -103,12 +109,16 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
                     Space::new().width(Length::Fill),
                     t,
                     ic,
-                    Space::new().width(3.0)
+                    Space::new().width(SPACE_XS)
                 ]
                 .align_y(Alignment::Center)
             } else {
-                row![Space::new().width(Length::Fill), t, Space::new().width(3.0)]
-                    .align_y(Alignment::Center)
+                row![
+                    Space::new().width(Length::Fill),
+                    t,
+                    Space::new().width(SPACE_XS)
+                ]
+                .align_y(Alignment::Center)
             }
         } else {
             if let Some(ic) = icon_el {
@@ -147,9 +157,9 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
         let content = row![
             sort_btn,
-            Space::new().width(3.0),
+            Space::new().width(SPACE_XS),
             separator_area,
-            Space::new().width(3.0)
+            Space::new().width(SPACE_XS)
         ]
         .align_y(Alignment::Center)
         .width(Length::Fixed(width));
@@ -167,9 +177,9 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
                 ))
         )
             .width(Length::Fill)
-            .height(Length::Fixed(28.0))
+            .height(Length::Fixed(BAR_SUB))
             .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
-        container(Space::new().width(Length::Fill).height(2.0))
+        container(Space::new().width(Length::Fill).height(DIVIDER_THIN))
             .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
     ]
     .into()
@@ -239,7 +249,7 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
             bottom: 0.0
         })
         .center_y(Length::Fill),
-        Space::new().width(15),
+        Space::new().width(SPACE_LG),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
     ]
     .align_y(Alignment::Center)
@@ -317,7 +327,7 @@ pub fn album_header_widget<'a, Message: Clone + 'a>(
             bottom: 0.0
         })
         .center_y(Length::Fill),
-        Space::new().width(15),
+        Space::new().width(SPACE_LG),
         chevron_btn(chevron, on_toggle_clone, row_h, row_h - 4.0),
     ]
     .align_y(Alignment::Center)

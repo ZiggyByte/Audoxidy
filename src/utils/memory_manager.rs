@@ -5,8 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// Gestor global del ciclo de vida y recolección de basura de la memoria (GC Automático).
 pub struct MemoryManager;
 
-// Marca de tiempo del inicio de la aplicación y última purga
-static START_TIME: AtomicU64 = AtomicU64::new(0);
+// Marca de tiempo de la última purga global
 static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 
 // Última purga forzada por exceso de RAM (cooldown: evita purgar en cada tick).
@@ -108,16 +107,8 @@ impl MemoryManager {
     /// Debe llamarse una sola vez al arrancar la aplicación.
     pub fn init() {
         let now = Self::get_now_secs();
-        START_TIME.store(now, Ordering::Relaxed);
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
-
-    /// Registra actividad general (actualmente no operativa).
-    pub fn register_activity() {}
-    /// Registra actividad en la playlist (actualmente no operativa).
-    pub fn register_playlist_activity() {}
-    /// Registra actividad en la biblioteca (actualmente no operativa).
-    pub fn register_library_activity() {}
 
     /// Reinicia el temporizador de la purga global (útil tras escaneos o acciones masivas)
     pub fn reset_global_purge_timer() {

@@ -599,7 +599,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::PlaylistFocus => {
                 self.focus = AppFocus::Playlist;
-                crate::utils::memory_manager::MemoryManager::register_playlist_activity();
                 if self.playlist_manager.data_unloaded {
                     self.playlist_manager.data_unloaded = false;
                     let id = self.playlist_manager.active_playlist_id;

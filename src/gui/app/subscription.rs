@@ -124,14 +124,6 @@ impl AudoxidyApp {
         .collect();
 
         let mouse_evs = iced::event::listen_with(|event, _status, window_id| {
-            // Registrar actividad global (Modo Fantasma / Garbage Collector)
-            match event {
-                iced::Event::Mouse(_) | iced::Event::Keyboard(_) | iced::Event::Touch(_) => {
-                    crate::utils::memory_manager::MemoryManager::register_activity();
-                }
-                _ => {}
-            }
-
             // Capturar el ID de la ventana si aún no lo tenemos
             if let iced::Event::Window(iced::window::Event::Opened { .. }) = event {
                 return Some(Message::SetWindowId(window_id));

@@ -39,58 +39,6 @@ impl crate::gui::app::AudoxidyApp {
                 | Message::CoreEvent(..)
         );
 
-        // Registro de actividad global y por sección
-        match &message {
-            // Actividad de Playlist
-            Message::PlaylistFocus
-            | Message::SwitchPlaylist(..)
-            | Message::PlaylistSearchChanged(..)
-            | Message::PlaylistScrolled(..)
-            | Message::PlaylistTabsScrolled(..)
-            | Message::PlaylistDeselect
-            | Message::AddSongToPlaylist(..)
-            | Message::ToggleSongEnabled(..)
-            | Message::ToggleGroupEnabled(..)
-            | Message::TogglePlaylistFolder(..)
-            | Message::PlaySongIndex(..) => {
-                crate::utils::memory_manager::MemoryManager::register_playlist_activity();
-            }
-            // Actividad de Biblioteca
-            Message::LibraryFocus
-            | Message::LibraryScroll(..)
-            | Message::LibraryKeyNav(..)
-            | Message::LibrarySearchQueryChanged(..)
-            | Message::ChangeGeneralFilter(..)
-            | Message::SelectSubfilter(..)
-            | Message::SelectTreeNode(..)
-            | Message::SelectAlbum(..)
-            | Message::SelectArtistHeader(..)
-            | Message::SelectSong(..)
-            | Message::LibraryRefresh
-            | Message::LibrarySourceSelected(..)
-            | Message::FilterSearchChanged(..)
-            | Message::FilterScroll(..)
-            | Message::SelectFolder(..) => {
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
-            }
-            // Actividad Global (Interacciones directas del usuario)
-            Message::GlobalClick
-            | Message::GlobalKeyDown(..)
-            | Message::GlobalMouseRelease
-            | Message::PlayerMouseMoved(..)
-            | Message::PlayerScroll(..)
-            | Message::WindowResized(..)
-            | Message::OpenFolderPicker
-            | Message::OpenPlaylistFilePicker
-            | Message::ToggleMenu
-            | Message::ToggleAudioCenter(..)
-            | Message::ToggleLyrics => {
-                crate::utils::memory_manager::MemoryManager::register_activity();
-            }
-            // Los demás mensajes (Tick, NoOp, Mensajes internos del Player, etc.) NO cuentan como actividad
-            _ => {}
-        }
-
         let task = match message {
             Message::FrameTick
             | Message::UiTick
@@ -203,7 +151,6 @@ impl crate::gui::app::AudoxidyApp {
             | Message::PlayerWindowAction(..)
             | Message::PlayerMouseMoved(..)
             | Message::GlobalMouseRelease
-            | Message::PlayerActivityTimeout(..)
             | Message::InitStartup => self.handle_window(message),
 
             Message::ToggleAudioCenter(..)

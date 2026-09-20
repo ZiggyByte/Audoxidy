@@ -312,7 +312,6 @@ impl crate::gui::app::AudoxidyApp {
 
                 Task::none()
             }
-            Message::PlayerActivityTimeout(_tick) => Task::none(),
             Message::InitStartup => {
                 // Sincronizar carátula inicial
                 self.sync_player_art();

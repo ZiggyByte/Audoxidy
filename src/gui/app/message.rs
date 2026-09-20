@@ -133,7 +133,6 @@ pub enum Message {
     PlaylistTabsScrolled(iced::widget::scrollable::Viewport),
     PlaylistMouseOver(bool),
     GlobalMouseRelease,
-    PlayerActivityTimeout(u64),
     GlobalClick,
     WindowResized(u32, u32),
     InitStartup,

@@ -10,7 +10,6 @@ impl crate::gui::app::AudoxidyApp {
         match message {
             Message::LibraryFocus => {
                 self.focus = AppFocus::Library;
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 if self.library_manager.data_unloaded {
                     self.library_manager.data_unloaded = false;
                     return self.update(Message::LibraryRefresh);
@@ -30,7 +29,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibrarySearchQueryChanged(q) => {
                 self.focus = AppFocus::Library;
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 if self.library_manager.data_unloaded {
                     self.library_manager.data_unloaded = false;
                     self.library_manager.search_query = q;
@@ -358,7 +356,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibraryKeyNav(dir, modifiers) => {
                 self.focus = AppFocus::Library;
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 if self.library_manager.data_unloaded {
                     self.library_manager.data_unloaded = false;
                     return self.update(Message::LibraryRefresh);
@@ -733,7 +730,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibraryRefresh => {
                 self.focus = AppFocus::Library;
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 self.library_manager.data_unloaded = false;
 
                 let core = self.core.clone();
@@ -808,7 +804,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::ChangeGeneralFilter(ft) => {
                 self.focus = AppFocus::Library;
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 if self.library_manager.data_unloaded {
                     self.library_manager.data_unloaded = false;
                     self.filters_manager.current_filter = ft;
@@ -996,7 +991,6 @@ impl crate::gui::app::AudoxidyApp {
                 )
             }
             Message::LibraryScroll(offset) => {
-                crate::utils::memory_manager::MemoryManager::register_library_activity();
                 if self.library_manager.data_unloaded {
                     self.library_manager.data_unloaded = false;
                     return self.update(Message::LibraryRefresh);

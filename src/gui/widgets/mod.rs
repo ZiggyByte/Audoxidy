@@ -33,8 +33,8 @@ mod overlays;
 mod text_ui;
 
 pub use buttons::{
-    action_icon_button, chevron_btn, icon_button, standard_pick_list, standard_radio,
-    standard_toggler, standard_toggler_full,
+    IconState, IconVariant, action_icon_button, chevron_btn, chevron_btn_sized, icon_button,
+    standard_pick_list, standard_radio, standard_toggler, standard_toggler_full,
 };
 pub use headers::{album_header_widget, artist_header_widget, build_sort_bar};
 pub use inputs::{

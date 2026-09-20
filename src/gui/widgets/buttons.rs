@@ -1,68 +1,115 @@
 use super::*;
 
-use crate::gui::dimensions::{SPACE_MD, SPACE_XS};
+use crate::gui::dimensions::{IconSize, RADIUS_S, SPACE_MD, SPACE_XS, icon_button_box};
 
 // ==========================================
 // 2. Funciones Libres y Componentes UI Globales
 // ==========================================
 
-/// Crea un botón transparente que muestra un ícono SVG y emite un mensaje al presionarse.
-/// Útil para la barra superior, cabeceras, o cualquier elemento "sin bordes".
-pub fn action_icon_button<'a, Message: Clone + 'a>(
-    icon_filename: &str,
-    size: u32,
-    action: Message,
-) -> Element<'a, Message> {
-    let content = svg(svg::Handle::from_path(format!(
-        "assets/icons/{}",
-        icon_filename
-    )))
-    .width(size)
-    .height(size);
-
-    mouse_area(content)
-        .on_press(action)
-        .interaction(iced::mouse::Interaction::Pointer)
-        .into()
+/// Interaction state shared by every icon button.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IconState {
+    /// Resting state: the icon is drawn in the secondary text color.
+    Default,
+    /// Toggled on: the icon is drawn in the accent color.
+    Active,
+    /// Non-interactive state: secondary icon, no press and no hover feedback.
+    Disabled,
 }
 
-/// Botón icono SVG reutilizable con hover y estado deshabilitado.
-/// - action: Some(msg) = botón activo con on_press. None = deshabilitado, sin interacción.
+/// Visual variant shared by every icon button.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum IconVariant {
+    /// Reacts to hover with an accent background and a primary icon.
+    Default,
+    /// Never reacts to hover; used for window controls.
+    Borderless,
+}
+
+/// Resolves the `(icon color, background color)` pair of an icon button.
+///
+/// `Disabled` and `Borderless` never react to hover; an actionable `Default`
+/// button turns its background into the accent and its icon into the primary
+/// text color.
+pub fn icon_palette(state: IconState, variant: IconVariant, is_hovered: bool) -> (Color, Color) {
+    let base_color = match state {
+        IconState::Active => COLOR_ACCENT,
+        IconState::Default | IconState::Disabled => COLOR_TEXT_SECONDARY,
+    };
+
+    let is_hovering = is_hovered && variant == IconVariant::Default && state != IconState::Disabled;
+
+    if is_hovering {
+        (COLOR_TEXT_PRIMARY, COLOR_ACCENT)
+    } else {
+        (base_color, Color::TRANSPARENT)
+    }
+}
+
+/// Botón transparente que muestra un ícono SVG y emite un mensaje al presionarse.
+/// Variante sin borde ni realce al pasar el puntero; delega en `icon_button`.
+pub fn action_icon_button<'a, Message: Clone + 'a>(
+    icon_filename: &str,
+    size: IconSize,
+    action: Message,
+) -> Element<'a, Message> {
+    icon_button(
+        icon_filename,
+        size,
+        IconState::Default,
+        Some(action),
+        IconVariant::Borderless,
+        None,
+    )
+}
+
+/// Botón de ícono SVG reutilizable con estados compartidos por toda la interfaz.
+///
+/// - `state`: descanso (`Default`), activado (`Active`) o deshabilitado (`Disabled`).
+/// - `action`: `Some(msg)` habilita el botón; `None` o `Disabled` lo dejan sin interacción.
+/// - `variant`: `Default` realza al pasar el puntero, `Borderless` no.
+/// - `label`: nombre accesible opcional; cuando existe y el botón es accionable se
+///   envuelve en un tooltip.
 pub fn icon_button<'a, Message: Clone + 'a>(
     icon_filename: &str,
-    size: u32,
+    size: IconSize,
+    state: IconState,
     action: Option<Message>,
+    variant: IconVariant,
+    label: Option<&'static str>,
 ) -> Element<'a, Message> {
-    let has_action = action.is_some();
-    let btn_size = (size + 4).max(20);
+    let is_actionable = action.is_some() && state != IconState::Disabled;
+
     let icon = svg(svg::Handle::from_path(format!(
         "assets/icons/{}",
         icon_filename
     )))
     .width(iced::Length::Fill)
     .height(iced::Length::Fill)
-    .style(|_t: &Theme, status| svg::Style {
-        color: Some(match status {
-            svg::Status::Hovered => COLOR_TEXT_PRIMARY,
-            _ => COLOR_TEXT_SECONDARY,
-        }),
+    .style(move |_t: &Theme, status| {
+        let is_hovered = matches!(status, svg::Status::Hovered);
+        let (icon_color, _) = icon_palette(state, variant, is_hovered);
+        svg::Style {
+            color: Some(icon_color),
+        }
     });
 
     let btn = button(icon)
-        .width(btn_size)
-        .height(btn_size)
+        .width(icon_button_box(size))
+        .height(icon_button_box(size))
         .padding(0)
         .style(move |_t: &Theme, status| {
             let is_hovered = matches!(status, button::Status::Hovered);
+            let (_, background) = icon_palette(state, variant, is_hovered);
             button::Style {
-                background: if has_action && is_hovered {
-                    Some(COLOR_ACCENT.into())
+                background: Some(iced::Background::Color(if is_actionable {
+                    background
                 } else {
-                    Some(Color::TRANSPARENT.into())
-                },
+                    Color::TRANSPARENT
+                })),
                 text_color: COLOR_TEXT_PRIMARY,
                 border: iced::Border {
-                    radius: 4.0.into(),
+                    radius: RADIUS_S.into(),
                     width: 0.0,
                     color: Color::TRANSPARENT,
                 },
@@ -70,10 +117,19 @@ pub fn icon_button<'a, Message: Clone + 'a>(
             }
         });
 
-    if let Some(msg) = action {
-        btn.on_press(msg).into()
-    } else {
-        btn.into()
+    let element: Element<'a, Message> = match action {
+        Some(msg) if is_actionable => btn.on_press(msg).into(),
+        _ => btn.into(),
+    };
+
+    match label {
+        Some(name) if is_actionable => iced::widget::tooltip(
+            element,
+            iced::widget::text(name),
+            iced::widget::tooltip::Position::FollowCursor,
+        )
+        .into(),
+        _ => element,
     }
 }
 
@@ -290,4 +346,93 @@ pub fn chevron_btn<'a, Message: Clone + 'a>(
     .padding(0)
     .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
     .into()
+}
+
+/// Botón chevron con el tamaño de caja y de ícono tomados de un token.
+///
+/// Delega en `chevron_btn`; los llamadores de tamaño fijo usan este punto de
+/// entrada para no repetir el número en el sitio de llamada.
+pub fn chevron_btn_sized<'a, Message: Clone + 'a>(
+    icon_filename: &str,
+    action: Message,
+    size: IconSize,
+) -> Element<'a, Message> {
+    chevron_btn(icon_filename, action, size.px(), size.px())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{IconState, IconVariant, icon_palette};
+    use crate::gui::dimensions::{IconSize, icon_button_box};
+    use crate::gui::theme::{COLOR_ACCENT, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY};
+    use iced::Color;
+
+    #[test]
+    fn test_icon_palette_default_resting_uses_secondary() {
+        assert_eq!(
+            icon_palette(IconState::Default, IconVariant::Default, false),
+            (COLOR_TEXT_SECONDARY, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_default_hover_uses_accent_background() {
+        assert_eq!(
+            icon_palette(IconState::Default, IconVariant::Default, true),
+            (COLOR_TEXT_PRIMARY, COLOR_ACCENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_active_resting_uses_accent_icon() {
+        assert_eq!(
+            icon_palette(IconState::Active, IconVariant::Default, false),
+            (COLOR_ACCENT, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_active_hover_still_uses_accent_background() {
+        assert_eq!(
+            icon_palette(IconState::Active, IconVariant::Default, true),
+            (COLOR_TEXT_PRIMARY, COLOR_ACCENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_disabled_resting_uses_secondary() {
+        assert_eq!(
+            icon_palette(IconState::Disabled, IconVariant::Default, false),
+            (COLOR_TEXT_SECONDARY, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_disabled_ignores_hover() {
+        assert_eq!(
+            icon_palette(IconState::Disabled, IconVariant::Default, true),
+            (COLOR_TEXT_SECONDARY, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_borderless_ignores_hover() {
+        assert_eq!(
+            icon_palette(IconState::Default, IconVariant::Borderless, true),
+            (COLOR_TEXT_SECONDARY, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_palette_borderless_shares_the_active_color() {
+        assert_eq!(
+            icon_palette(IconState::Active, IconVariant::Borderless, false),
+            (COLOR_ACCENT, Color::TRANSPARENT)
+        );
+    }
+
+    #[test]
+    fn test_icon_button_box_small_preserves_the_eq_hit_box() {
+        assert_eq!(icon_button_box(IconSize::S), 20.0);
+    }
 }

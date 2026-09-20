@@ -2,15 +2,17 @@ use crate::audio::AudioManager;
 use crate::db::database::PlaylistSongRef;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_TAB, MARGIN_MD, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW, SPACE_MD, SPACE_SM,
-    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_TAB, IconSize, MARGIN_MD, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW, SPACE_MD,
+    SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
-use crate::gui::widgets::{standard_scrollable, standard_scrollbar};
+use crate::gui::widgets::{
+    IconState, IconVariant, icon_button, standard_scrollable, standard_scrollbar,
+};
 use crate::utils::format_duration;
 use iced::{
     Alignment, Background, Color, Element, Length, Padding, Theme,
-    widget::{Space, button, column, container, mouse_area, row, svg, text},
+    widget::{Space, button, column, container, mouse_area, row, text},
 };
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -238,24 +240,20 @@ pub fn estimate_tab_width(name: &str) -> f32 {
 }
 
 fn build_tab_dropdown_button<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
-    let icon_path = if manager.show_tab_dropdown {
-        "assets/icons/arrow-up-chevron.svg"
+    let icon = if manager.show_tab_dropdown {
+        "arrow-up-chevron.svg"
     } else {
-        "assets/icons/arrow-down-chevron.svg"
+        "arrow-down-chevron.svg"
     };
 
-    let chevron = svg(svg::Handle::from_path(icon_path))
-        .width(28)
-        .height(28)
-        .style(|_t: &Theme, _s| svg::Style {
-            color: Some(COLOR_TEXT_SECONDARY),
-        });
-
-    button(chevron)
-        .padding(SPACE_XS)
-        .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-        .on_press(Message::ToggleTabDropdown)
-        .into()
+    icon_button(
+        icon,
+        IconSize::M,
+        IconState::Default,
+        Some(Message::ToggleTabDropdown),
+        IconVariant::Default,
+        Some("Más listas"),
+    )
 }
 
 fn build_dropdown_menu<'a>(
@@ -693,21 +691,49 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
     let eq_btn = icon_button(
         "equalizer-straight.svg",
-        false,
-        Message::ToggleAudioCenter(Some(1)),
+        IconSize::M,
+        IconState::Default,
+        Some(Message::ToggleAudioCenter(Some(1))),
+        IconVariant::Default,
+        Some("Ecualizador"),
     );
     let shuffle_btn = icon_button(
         "shuffle-straight.svg",
-        manager.shuffle_active,
-        Message::ToggleShuffle,
+        IconSize::M,
+        if manager.shuffle_active {
+            IconState::Active
+        } else {
+            IconState::Default
+        },
+        Some(Message::ToggleShuffle),
+        IconVariant::Default,
+        Some("Aleatorio"),
     );
     let (repeat_icon, repeat_active) = if manager.repeat_mode == 2 {
         ("repeat-one-straight-outlined.svg", true)
     } else {
         ("repeat-straight-outlined.svg", manager.repeat_mode > 0)
     };
-    let repeat_btn = icon_button(repeat_icon, repeat_active, Message::ToggleRepeat);
-    let lyrics_icon = icon_button("lyrics-straight-outlined.svg", false, Message::ToggleLyrics);
+    let repeat_btn = icon_button(
+        repeat_icon,
+        IconSize::M,
+        if repeat_active {
+            IconState::Active
+        } else {
+            IconState::Default
+        },
+        Some(Message::ToggleRepeat),
+        IconVariant::Default,
+        Some("Repetir"),
+    );
+    let lyrics_icon = icon_button(
+        "lyrics-straight-outlined.svg",
+        IconSize::M,
+        IconState::Default,
+        Some(Message::ToggleLyrics),
+        IconVariant::Default,
+        Some("Letras"),
+    );
 
     let icons_group = row![
         container(lyrics_icon).padding(Padding {
@@ -736,29 +762,5 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         .width(Length::Fill)
         .height(Length::Fixed(BAR_BOTTOM))
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
-        .into()
-}
-
-fn icon_button<'a>(icon_name: &str, active: bool, msg: Message) -> Element<'a, Message> {
-    let icon_color = if active {
-        COLOR_ACCENT
-    } else {
-        COLOR_TEXT_SECONDARY
-    };
-
-    let icon = svg(svg::Handle::from_path(format!(
-        "assets/icons/{}",
-        icon_name
-    )))
-    .width(24)
-    .height(24)
-    .style(move |_t: &Theme, _s| svg::Style {
-        color: Some(icon_color),
-    });
-
-    button(icon)
-        .padding(2)
-        .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-        .on_press(msg)
         .into()
 }

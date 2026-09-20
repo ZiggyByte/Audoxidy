@@ -2,13 +2,14 @@
 
 use crate::audio::AudioManager;
 use crate::gui::dimensions::{
-    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, BAR_TAB, DIVIDER_THIN, MARGIN_MD, MARGIN_SM, RADIUS_M,
-    RADIUS_S, SPACE_LG, SPACE_MD, SPACE_XS,
+    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, BAR_TAB, DIVIDER_THIN, IconSize, MARGIN_MD, MARGIN_SM,
+    RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_XS,
 };
 use crate::gui::theme::*;
+use crate::gui::widgets::{IconState, IconVariant, icon_button};
 use iced::{
     Alignment, Color, Element, Length, Theme,
-    widget::{Space, button, column, container, mouse_area, opaque, row, svg, text},
+    widget::{Space, button, column, container, mouse_area, opaque, row, text},
 };
 use std::sync::Arc;
 
@@ -56,34 +57,18 @@ pub fn view<'a>(
         left: 0.0,
     });
 
-    // 2. Botón de cerrar con icono SVG "close-big.svg" de 24px
-    let close_icon = svg(iced::widget::svg::Handle::from_path(
-        "assets/icons/close-big.svg",
-    ))
-    .width(Length::Fixed(24.0))
-    .height(Length::Fixed(24.0))
-    .style(|_t: &Theme, status| {
-        if status == iced::widget::svg::Status::Hovered {
-            iced::widget::svg::Style {
-                color: Some(COLOR_ACCENT),
-            }
-        } else {
-            iced::widget::svg::Style {
-                color: Some(COLOR_TEXT_PRIMARY),
-            }
-        }
-    });
-
-    let close_btn = button(close_icon)
-        .padding(SPACE_XS)
-        .style(|_t: &Theme, _status| button::Style {
-            background: Some(Color::TRANSPARENT.into()),
-            border: iced::Border::default(),
-            ..Default::default()
-        })
-        .on_press(crate::gui::app::Message::AudioCenterMsg(
+    // 2. Botón de cerrar: al pasar el puntero el acento se usa como fondo y el
+    //    icono pasa al color primario.
+    let close_btn = icon_button(
+        "close-big.svg",
+        IconSize::M,
+        IconState::Default,
+        Some(crate::gui::app::Message::AudioCenterMsg(
             AudioCenterMessage::Close,
-        ));
+        )),
+        IconVariant::Default,
+        Some("Cerrar"),
+    );
 
     // 3. Contenido de la cabecera con espacio y alineación vertical centrada
     let header_content = row![logo, Space::new().width(Length::Fill), close_btn,]

@@ -1,19 +1,23 @@
 //! Source-scan convention guards for the UI-agnostic boundary.
 //!
-//! Two guards walk the source tree and assert, with no exclusion list and no
+//! Three guards walk the source tree and assert, with no exclusion list and no
 //! self-skip:
 //!
 //! 1. every file under `src/core/` is free of declarations that import the GUI
-//!    toolkit or the GUI module; and
-//! 2. no code comment anywhere under `src/` carries a planning identifier.
+//!    toolkit or the GUI module;
+//! 2. no code comment anywhere under `src/` carries a planning identifier; and
+//! 3. the `handle_frame_tick` handler performs no heavy work: no database
+//!    access, system probe, subprocess, allocator trim, or system-media-panel
+//!    publish on the fast frame cadence.
 //!
 //! Each guard is a pure predicate over a source string, so it can be exercised
 //! with synthetic violating and clean sources; the tree tests are thin wrappers
 //! that feed real files to the same predicate. Matching is deliberately narrow:
-//! the isolation guard inspects only import declarations, and the identifier
-//! guard inspects only comment text and only the identifier forms named by the
-//! convention, so standard names, numeric ranges, standards references and
-//! file/line references are never touched.
+//! the isolation guard inspects only import declarations, the identifier guard
+//! inspects only comment text and only the identifier forms named by the
+//! convention, and the frame guard inspects only the extracted handler body
+//! with whole-word token matching — so standard names, numeric ranges, standard
+//! references, file/line references and prose mentions are never touched.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -423,6 +427,139 @@ fn comment_line(text: &str) -> String {
     format!("// {text}")
 }
 
+// ── Guard 3: the frame tick stays presentation-only ───────────────
+
+/// Heavy tokens the frame handler must never reach.
+///
+/// The first four are the general heavy-work markers: database access, system
+/// probes, subprocesses and allocator trimming. The rest are the concrete heavy
+/// domain calls a tick handler could reach, including the system-media-panel
+/// publish surface — a D-Bus publish on the frame cadence is as disruptive as a
+/// database write or a subprocess.
+const FRAME_TICK_HEAVY_TOKENS: [&str; 14] = [
+    "Database",
+    "sysinfo",
+    "Command",
+    "malloc_trim",
+    "persist_playlist_state",
+    "refresh_library_snapshot",
+    "check_db_dirty",
+    "evaluate_gc",
+    "purge_buffers",
+    "system_sound_status",
+    "media_controls",
+    "SystemMediaControls",
+    "set_playback",
+    "set_metadata",
+];
+
+/// Locate the body of `fn name` in `source`.
+///
+/// Returns the one-based line number of the `fn` keyword and the matched brace
+/// block, or `None` when the function is absent or its braces do not balance.
+/// The brace scan skips line comments and double-quoted string literals, so a
+/// brace in prose or in a message cannot shift the match.
+fn extract_function_body<'a>(source: &'a str, name: &str) -> Option<(usize, &'a str)> {
+    let mut search_from = 0;
+    while let Some(relative) = source[search_from..].find("fn ") {
+        let fn_start = search_from + relative;
+        let after_keyword = &source[fn_start + 3..];
+        let name_len = after_keyword
+            .find(|character: char| !is_word_char(character))
+            .unwrap_or(after_keyword.len());
+        if &after_keyword[..name_len] == name {
+            let open = fn_start + source[fn_start..].find('{')?;
+            let line = source[..fn_start].matches('\n').count() + 1;
+            return brace_block(source, open).map(|body| (line, body));
+        }
+        search_from = fn_start + 3;
+    }
+    None
+}
+
+/// Return the brace-delimited block that starts at `open`, or `None` when the
+/// braces never balance.
+fn brace_block(source: &str, open: usize) -> Option<&str> {
+    let bytes = source.as_bytes();
+    let mut depth = 0usize;
+    let mut index = open;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'/' if bytes_at(bytes, index, b"//") => {
+                while index < bytes.len() && bytes[index] != b'\n' {
+                    index += 1;
+                }
+                continue;
+            }
+            b'"' => {
+                index += 1;
+                while index < bytes.len() && bytes[index] != b'"' {
+                    if bytes[index] == b'\\' {
+                        index += 1;
+                    }
+                    index += 1;
+                }
+            }
+            b'{' => depth += 1,
+            b'}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&source[open..=index]);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+/// Report every heavy token used by the `handle_frame_tick` body.
+///
+/// When the handler cannot be found the guard returns one violation, so a
+/// renamed or deleted handler fails instead of passing vacuously.
+fn frame_tick_heavy_calls(source: &str) -> Vec<Violation> {
+    let Some((line, body)) = extract_function_body(source, "handle_frame_tick") else {
+        return vec![Violation {
+            line: 0,
+            text: "`handle_frame_tick` was not found, so its body cannot be inspected".to_string(),
+        }];
+    };
+    let mut violations = Vec::new();
+    for token in FRAME_TICK_HEAVY_TOKENS {
+        for offset in whole_word_offsets(body, token) {
+            violations.push(Violation {
+                line: line + body[..offset].matches('\n').count(),
+                text: format!("frame handler reaches heavy `{token}`"),
+            });
+        }
+    }
+    violations
+}
+
+/// Offsets of every whole-word occurrence of `token` in `text`.
+fn whole_word_offsets(text: &str, token: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut offset = 0;
+    while let Some(relative) = text[offset..].find(token) {
+        let start = offset + relative;
+        let end = start + token.len();
+        let after_is_boundary = match text[end..].chars().next() {
+            Some(character) => !is_word_char(character),
+            None => true,
+        };
+        if is_boundary_before(text, start) && after_is_boundary {
+            offsets.push(start);
+        }
+        offset = end;
+    }
+    offsets
+}
+
+fn contains_whole_word(text: &str, token: &str) -> bool {
+    !whole_word_offsets(text, token).is_empty()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────
 
 #[test]
@@ -558,5 +695,98 @@ fn test_source_tree_has_no_planning_identifiers_in_comments() {
         violations.is_empty(),
         "code comments must not carry planning identifiers:\n{}",
         violations.join("\n")
+    );
+}
+
+#[test]
+fn test_frame_tick_guard_flags_heavy_calls() {
+    let offenders = [
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    let db = Database::new();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.check_db_dirty();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    let system = sysinfo::System::new();\n    malloc_trim(0);\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    let output = Command::new(\"pw-cli\").output();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.persist_playlist_state();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.refresh_library_snapshot();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.evaluate_gc(false, false);\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.purge_buffers();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.core.system_sound_status();\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    self.media_controls.update(&state);\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    let controls = SystemMediaControls::new(sender);\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    controls.set_playback(true, position);\n    Task::none()\n}\n",
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n    controls.set_metadata(metadata);\n    Task::none()\n}\n",
+    ];
+    for source in offenders {
+        assert!(
+            !frame_tick_heavy_calls(source).is_empty(),
+            "a heavy frame body must be flagged:\n{source}"
+        );
+    }
+}
+
+#[test]
+fn test_frame_tick_guard_flags_missing_handler() {
+    let source = "fn handle_other_tick(&mut self) -> Task<Message> {\n    Task::none()\n}\n";
+    let violations = frame_tick_heavy_calls(source);
+    assert_eq!(
+        violations.len(),
+        1,
+        "a missing frame handler must fail the guard instead of passing vacuously"
+    );
+}
+
+#[test]
+fn test_frame_tick_guard_ignores_presentation_only_body() {
+    let source = concat!(
+        "fn handle_frame_tick(&mut self) -> Task<Message> {\n",
+        "    // the database is not touched here\n",
+        "    self.update_meter();\n",
+        "    iced::widget::operation::scroll_by(id, offset)\n",
+        "}\n",
+    );
+    assert!(
+        frame_tick_heavy_calls(source).is_empty(),
+        "a presentation-only frame body must not be flagged"
+    );
+}
+
+#[test]
+fn test_frame_tick_handler_has_no_heavy_calls() {
+    let path = source_root()
+        .join("gui")
+        .join("app")
+        .join("update")
+        .join("ticks.rs");
+    let source = fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+
+    let Some((_, body)) = extract_function_body(&source, "handle_frame_tick") else {
+        panic!("the frame handler must exist so the guard is not vacuous");
+    };
+    assert!(
+        !body.trim().is_empty(),
+        "the extracted frame handler body must not be empty"
+    );
+
+    for token in [
+        "media_controls",
+        "SystemMediaControls",
+        "set_playback",
+        "set_metadata",
+    ] {
+        assert!(
+            !contains_whole_word(body, token),
+            "the frame handler must not reach the system media panel via `{token}`"
+        );
+    }
+
+    let violations = frame_tick_heavy_calls(&source);
+    let report = violations
+        .iter()
+        .map(|violation| format!("line {}: {}", violation.line, violation.text))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        violations.is_empty(),
+        "the frame handler must be presentation-only:\n{report}"
     );
 }

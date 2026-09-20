@@ -15,6 +15,12 @@ pub enum CoreEvent {
     /// A library scan has started.
     ScanStarted,
     /// Progress update during a scan.
+    ///
+    /// Reserved and not emitted: the scanner reports progress by writing its
+    /// `is_scanning`/`db_dirty` flags, which the scan tick reads, so no
+    /// producer sends this variant today and the channel round-trip test is
+    /// its only sender. It is retained as the Core integration surface for a
+    /// future scanner progress hook and for non-desktop front-ends.
     ScanProgress {
         /// Number of files processed so far.
         files_processed: usize,

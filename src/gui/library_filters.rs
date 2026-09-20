@@ -1,10 +1,10 @@
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD,
-    SPACE_SM, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, IconSize, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG,
+    SPACE_MD, SPACE_SM, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
-use crate::gui::widgets::{chevron_btn, standard_scrollable, standard_scrollbar};
+use crate::gui::widgets::{chevron_btn_sized, standard_scrollable, standard_scrollbar};
 use iced::{
     Alignment, Color, Element, Length, Theme,
     widget::{Space, button, column, container, mouse_area, row, text},
@@ -743,7 +743,7 @@ pub fn view<'a>(
 
             let row_content = if item.has_children {
                 row![
-                    chevron_btn(icon, Message::ToggleTreeNode(item.id.clone()), 22.0, 22.0),
+                    chevron_btn_sized(icon, Message::ToggleTreeNode(item.id.clone()), IconSize::M),
                     Space::new().width(0.0),
                     t_label,
                 ]

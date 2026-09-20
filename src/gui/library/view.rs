@@ -3,11 +3,14 @@
 use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_TOP, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD, SPACE_XS,
-    STROKE_HAIRLINE, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD,
+    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
-use crate::gui::widgets::{VuMeterWidget, standard_scrollable, standard_scrollbar};
+use crate::gui::widgets::{
+    IconState, IconVariant, VuMeterWidget, action_icon_button, icon_button, standard_scrollable,
+    standard_scrollbar,
+};
 use crate::utils::{SortColumn, format_duration, format_size};
 use iced::{
     Alignment, Color, Element, Length, Theme,
@@ -31,37 +34,6 @@ pub fn view<'a>(
     meter_enabled: bool,
 ) -> Element<'a, Message> {
     library_redraw_count_log();
-    // Función auxiliar para iconos sin fondo (top y bottom bar) interactivos
-    let icon_btn_size = |icon: &str, action: Message, size: f32| -> Element<'a, Message> {
-        let content = iced::widget::svg(iced::widget::svg::Handle::from_path(format!(
-            "assets/icons/{}",
-            icon
-        )))
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size));
-        iced::widget::mouse_area(content)
-            .on_press(action)
-            .interaction(iced::mouse::Interaction::Pointer)
-            .into()
-    };
-
-    let _icon_btn =
-        |icon: &str, action: Message| -> Element<'a, Message> { icon_btn_size(icon, action, 20.0) };
-
-    // Controles de ventana
-    let win_action_btn = |icon: &str, action: Message, size: f32| -> Element<'a, Message> {
-        let content = iced::widget::svg(iced::widget::svg::Handle::from_path(format!(
-            "assets/icons/{}",
-            icon
-        )))
-        .width(Length::Fixed(size))
-        .height(Length::Fixed(size));
-
-        iced::widget::mouse_area(content)
-            .on_press(action)
-            .interaction(iced::mouse::Interaction::Pointer)
-            .into()
-    };
 
     // --- BARRA SUPERIOR (40px) ---
     let create_source_tab =
@@ -123,10 +95,10 @@ pub fn view<'a>(
         source_tabs,
         Space::new().width(Length::Fill),
         row![
-            container(win_action_btn(
+            container(action_icon_button(
                 "minimize.svg",
+                IconSize::L,
                 Message::PlayerWindowAction(crate::gui::player::WindowAction::Minimize),
-                30.0
             ))
             .padding(iced::Padding {
                 top: 0.0,
@@ -134,18 +106,18 @@ pub fn view<'a>(
                 bottom: 8.0,
                 left: 0.0
             }),
-            win_action_btn(
+            action_icon_button(
                 "maximize.svg",
+                IconSize::L,
                 Message::PlayerWindowAction(crate::gui::player::WindowAction::Maximize),
-                30.0
             ),
-            win_action_btn(
+            action_icon_button(
                 "close.svg",
+                IconSize::L,
                 Message::PlayerWindowAction(crate::gui::player::WindowAction::Close),
-                34.0
             ),
         ]
-        .spacing(5)
+        .spacing(SPACE_XS)
         .align_y(Alignment::Center)
     ]
     .align_y(Alignment::Center)
@@ -365,8 +337,8 @@ pub fn view<'a>(
                                         iced::widget::svg(iced::widget::svg::Handle::from_path(
                                             format!("assets/icons/{}", chevron_svg),
                                         ))
-                                        .width(30)
-                                        .height(30)
+                                        .width(IconSize::L.px())
+                                        .height(IconSize::L.px())
                                         .style(
                                             move |_t: &Theme, _s| iced::widget::svg::Style {
                                                 color: Some(COLOR_TEXT_PRIMARY),
@@ -633,17 +605,41 @@ pub fn view<'a>(
     };
 
     let bottom_actions = row![
-        icon_btn_size(
+        icon_button(
             "play-straight-outlined.svg",
-            Message::PlayLibrarySelection,
-            36.0
+            IconSize::L,
+            IconState::Default,
+            Some(Message::PlayLibrarySelection),
+            IconVariant::Default,
+            Some("Reproducir selección"),
         ),
         Space::new().width(SPACE_XS),
-        icon_btn_size("more-small.svg", Message::OpenFolderPicker, 31.0),
+        icon_button(
+            "more-small.svg",
+            IconSize::L,
+            IconState::Default,
+            Some(Message::OpenFolderPicker),
+            IconVariant::Default,
+            Some("Elegir carpeta"),
+        ),
         Space::new().width(SPACE_XS),
-        icon_btn_size("radio-button-on.svg", Message::LibraryShowPlaying, 30.0),
+        icon_button(
+            "radio-button-on.svg",
+            IconSize::L,
+            IconState::Default,
+            Some(Message::LibraryShowPlaying),
+            IconVariant::Default,
+            Some("Mostrar en reproducción"),
+        ),
         Space::new().width(SPACE_XS),
-        icon_btn_size(view_icon_str, Message::ToggleLibraryViewDropdown, 30.0),
+        icon_button(
+            view_icon_str,
+            IconSize::L,
+            IconState::Default,
+            Some(Message::ToggleLibraryViewDropdown),
+            IconVariant::Default,
+            Some("Cambiar vista"),
+        ),
     ]
     .align_y(Alignment::Center)
     .height(Length::Fill);

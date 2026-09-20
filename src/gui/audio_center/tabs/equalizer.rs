@@ -1,8 +1,9 @@
 //! Equalizer tab.
 
 use crate::audio::AudioManager;
-use crate::gui::dimensions::{SPACE_MD, SPACE_SM, SPACE_XS};
+use crate::gui::dimensions::{IconSize, SPACE_MD, SPACE_SM, SPACE_XS};
 use crate::gui::theme::*;
+use crate::gui::widgets::{IconState, IconVariant, icon_button};
 use iced::widget::{Space, column, container, row, text};
 use iced::{Alignment, Element, Length};
 
@@ -70,26 +71,35 @@ pub(super) fn view_equalizer<'a>(
 
     let preset_actions = row![
         preset_label,
-        crate::gui::widgets::icon_button(
+        icon_button(
             "equalizer-straight.svg",
-            14,
+            IconSize::S,
+            IconState::Default,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconLoad
             )),
+            IconVariant::Default,
+            Some("Cargar preset"),
         ),
-        crate::gui::widgets::icon_button(
+        icon_button(
             "save-outlined-straight.svg",
-            14,
+            IconSize::S,
+            IconState::Default,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconSave
             )),
+            IconVariant::Default,
+            Some("Guardar preset"),
         ),
-        crate::gui::widgets::icon_button(
+        icon_button(
             "restore-straight.svg",
-            14,
+            IconSize::S,
+            IconState::Default,
             Some(crate::gui::app::Message::AudioCenterMsg(
                 AudioCenterMessage::EqPresetIconReset
             )),
+            IconVariant::Default,
+            Some("Restablecer preset"),
         ),
     ]
     .spacing(SPACE_SM)

@@ -1,6 +1,6 @@
 use crate::audio::AudioManager;
 use crate::gui::app::{Message, fine_seek_enabled};
-use crate::gui::dimensions::{BAR_BOTTOM, BAR_TOP, PLAYER_PANEL_SIZE, RADIUS_PILL};
+use crate::gui::dimensions::{BAR_BOTTOM, BAR_TOP, IconSize, PLAYER_PANEL_SIZE, RADIUS_PILL};
 use crate::gui::theme::*;
 use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
 use crate::utils::format_duration;
@@ -222,7 +222,7 @@ pub fn view<'a>(
 
     // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
     let top_row = row![
-        action_icon_button("menu.svg", 31, Message::ToggleMenu),
+        action_icon_button("menu.svg", IconSize::L, Message::ToggleMenu),
         Space::new().width(Length::Fill),
         // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
     ]
@@ -392,9 +392,9 @@ pub fn view<'a>(
 
     let make_zone = |icon: &str, action: Message, is_hovered: bool| -> Element<'a, Message> {
         let size = if icon == "pause-straight-fill.svg" {
-            34
+            IconSize::L.px()
         } else {
-            42
+            IconSize::Xl.px()
         };
 
         let visual_content = if is_hovered {

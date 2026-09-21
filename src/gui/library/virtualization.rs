@@ -40,6 +40,7 @@ impl LibraryManager {
             if albums.len() > 100 {
                 tracing::debug!("Audoxidy GC: Cleaning inactive albums from the library");
                 albums.truncate(100);
+                albums.shrink_to_fit();
                 self.filtered_albums = None;
                 cleared = true;
             }
@@ -49,6 +50,7 @@ impl LibraryManager {
             if songs.len() > 500 {
                 tracing::debug!("Audoxidy GC: Cleaning inactive songs from the library");
                 songs.truncate(500);
+                songs.shrink_to_fit();
                 self.filtered_songs = None;
                 cleared = true;
             }
@@ -56,6 +58,8 @@ impl LibraryManager {
 
         if cleared {
             self.invalidate_cache();
+            self.artist_groups.clear();
+            self.artist_groups.shrink_to_fit();
             self.data_unloaded = true;
         }
     }

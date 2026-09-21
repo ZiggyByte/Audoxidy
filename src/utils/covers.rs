@@ -223,11 +223,18 @@ fn clear_negative_cache(set: &mut HashSet<String>) {
     set.clear();
 }
 
-/// Clears the negative cache (failed file paths). Useful after a re-scan.
-pub fn clear_all_cover_cache() {
+/// Clears the negative cache (failed file paths) only. Useful after a re-scan.
+pub fn clear_negative_cover_cache() {
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
         clear_negative_cache(&mut neg_cache_mtx.lock());
     }
+}
+
+/// Clears both the negative cache and the LRU cover cache. Use when a full
+/// reset is needed (e.g. after deleting cover files on disk).
+pub fn clear_all_cover_cache() {
+    clear_negative_cover_cache();
+    clear_raw_cache();
 }
 
 /// Generates a unique hash for an image from raw bytes.

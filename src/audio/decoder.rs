@@ -1652,6 +1652,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                     crossfade_elapsed_sec = 0.0;
                                     crossfade_duration_sec = 0.0;
                                     preloaded_pending.clear();
+                                    preloaded_pending.shrink_to_fit();
 
                                     // Limpiar la cola (tail) de una mezcla en curso: la
                                     // pista cargada manualmente no debe heredarla.
@@ -2135,6 +2136,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             preload_rg = (None, None);
             preload_pending = None;
             preloaded_pending.clear();
+            preloaded_pending.shrink_to_fit();
             last_out_rate = out_rate;
         }
 

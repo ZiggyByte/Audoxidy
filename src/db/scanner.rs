@@ -131,7 +131,7 @@ impl Scanner {
             db.flush_prepared_statements();
         }
 
-        crate::utils::covers::clear_all_cover_cache();
+        crate::utils::covers::clear_negative_cover_cache();
         dirty_flag.store(true, Ordering::Relaxed);
         (current_order - start_order).max(0) as usize
     }

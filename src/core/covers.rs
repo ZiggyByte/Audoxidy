@@ -38,7 +38,7 @@ impl Core {
     /// Useful after a re-scan to allow retrying paths that previously
     /// failed to load.
     pub fn clear_cover_cache(&self) {
-        crate::utils::covers::clear_all_cover_cache();
+        crate::utils::covers::clear_negative_cover_cache();
     }
 
     /// Enqueues a cover art processing job.

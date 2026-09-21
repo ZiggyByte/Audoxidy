@@ -476,7 +476,7 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::ChangeLibraryViewMode(mode) => {
                 // Limpiar caché negativa al cambiar de vista
-                crate::utils::covers::clear_all_cover_cache();
+                crate::utils::covers::clear_negative_cover_cache();
 
                 self.library_manager.view_mode = mode;
                 self.library_manager.view_menu_open = false;

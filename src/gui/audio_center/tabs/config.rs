@@ -737,7 +737,8 @@ pub(super) fn view_audio_config<'a>(
             )
     };
 
-    let main_divider = container(
+    // Vertical separator
+    let vertical_separator = container(
         Space::new()
             .width(Length::Fixed(DIVIDER_THIN))
             .height(Length::Fixed(PANEL_SEPARATOR_HEIGHT)),
@@ -765,7 +766,7 @@ pub(super) fn view_audio_config<'a>(
                     right: 0.0
                 }),
             container(
-                container(main_divider)
+                container(vertical_separator)
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )

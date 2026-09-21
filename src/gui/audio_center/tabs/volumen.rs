@@ -732,12 +732,6 @@ pub(super) fn view_volumen_mezcla<'a>(
         container(column![fades_group, silence_group, rg_fixed_group, rg_group,].spacing(SPACE_LG))
             .width(Length::FillPortion(1));
 
-    // Vertical separator
-    let vert_sep = container(Space::new())
-        .width(DIVIDER_THIN)
-        .height(PANEL_SEPARATOR_HEIGHT)
-        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
-
     // --- Right column: Crossfade (Mezcla Cruzada) ---
     // Replica el patrón de la columna izquierda: checkbox master + título clicable
     // + separador horizontal; sub-grupos como etiquetas visuales; sub-funciones con
@@ -931,6 +925,12 @@ pub(super) fn view_volumen_mezcla<'a>(
     ]
     .spacing(SPACE_XS);
 
+    // Vertical separator
+    let vertical_separator = container(Space::new())
+        .width(DIVIDER_THIN)
+        .height(PANEL_SEPARATOR_HEIGHT)
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+
     let right_col = container(column![xfade_group].spacing(SPACE_LG)).width(Length::FillPortion(1));
 
     column![
@@ -944,14 +944,14 @@ pub(super) fn view_volumen_mezcla<'a>(
                     right: SPACE_XS
                 }),
             container(
-                container(vert_sep)
+                container(vertical_separator)
                     .height(Length::Fill)
                     .align_y(Alignment::Center)
             )
             .width(PANEL_SEPARATOR_COLUMN)
             .align_x(Alignment::Center)
             .padding(iced::Padding {
-                top: -48.0,
+                top: -52.0,
                 bottom: 0.0,
                 left: -SPACE_XS,
                 right: 0.0

@@ -30,3 +30,4 @@ logs/
 AGENTS.md
 .claude/
 skills-lock.json
+.config/

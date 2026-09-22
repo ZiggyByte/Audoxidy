@@ -56,6 +56,32 @@ fn main() -> iced::Result {
 
     let window_size = app_config.ui.window_size();
 
+    // Geometría inicial: en el primer arranque la ventana nace maximizada; en
+    // arranques posteriores se restaura el tamaño, la posición y el estado
+    // maximizado guardados. Aplicarlo aquí, al crear la ventana, evita el
+    // parpadeo de abrir a un tamaño y maximizar unos instantes después.
+    let ui = &app_config.ui;
+    let window_maximized = !ui.window_geometry_initialized || ui.window_maximized;
+    // Al arrancar maximizada se crea la ventana ya con el tamaño de pantalla
+    // completa conocido; así el maximizado del gestor de ventanas no cambia
+    // nada y no se ve el parpadeo de abrir pequeña y maximizar después.
+    let window_size = if window_maximized {
+        match (ui.window_maximized_width, ui.window_maximized_height) {
+            (Some(w), Some(h)) => (w, h),
+            _ => window_size,
+        }
+    } else {
+        window_size
+    };
+    let window_position = if window_maximized {
+        iced::window::Position::Centered
+    } else {
+        match (ui.window_x, ui.window_y) {
+            (Some(x), Some(y)) => iced::window::Position::Specific(iced::Point::new(x, y)),
+            _ => iced::window::Position::Centered,
+        }
+    };
+
     tracing::info!(
         "Audoxidy listo. Ventana: {}x{}, Audio perfil: {:?}",
         window_size.0,
@@ -76,6 +102,8 @@ fn main() -> iced::Result {
     .theme(|state: &AudoxidyApp| state.theme())
     .window(iced::window::Settings {
         size: iced::Size::new(window_size.0, window_size.1),
+        position: window_position,
+        maximized: window_maximized,
         min_size: Some(iced::Size::new(900.0, 500.0)),
         decorations: false,
         transparent: true,

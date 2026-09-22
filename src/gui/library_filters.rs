@@ -423,23 +423,27 @@ pub fn view<'a>(
     manager: &'a LibraryFiltersManager,
 ) -> (Element<'a, Message>, Option<Element<'a, Message>>) {
     // --- 1. TOP BAR (40px) ---
-    let top_bar = container(
-        text("AuDoxiDY")
-            .font(FONT_STAGE_WANDER)
-            .size(18)
-            .color(COLOR_TEXT_PRIMARY),
+    let top_bar = mouse_area(
+        container(
+            text("AuDoxiDY")
+                .font(FONT_STAGE_WANDER)
+                .size(18)
+                .color(COLOR_TEXT_PRIMARY),
+        )
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_TOP))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .padding(iced::Padding {
+            top: 4.0,
+            bottom: 0.0,
+            left: 0.0,
+            right: 0.0,
+        })
+        .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST)),
     )
-    .width(Length::Fill)
-    .height(Length::Fixed(BAR_TOP))
-    .align_x(iced::alignment::Horizontal::Center)
-    .align_y(iced::alignment::Vertical::Center)
-    .padding(iced::Padding {
-        top: 4.0,
-        bottom: 0.0,
-        left: 0.0,
-        right: 0.0,
-    })
-    .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
+    .on_press(Message::WindowDrag)
+    .interaction(iced::mouse::Interaction::Pointer);
 
     // --- 2. MIDDLE SECTION ---
     let mut middle_content = column![].spacing(0);

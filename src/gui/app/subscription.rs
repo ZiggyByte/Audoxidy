@@ -166,6 +166,8 @@ impl AudoxidyApp {
                     new_size.width as u32,
                     new_size.height as u32,
                 ))
+            } else if let iced::Event::Window(iced::window::Event::Moved(position)) = event {
+                Some(Message::WindowMoved(position))
             } else {
                 None
             }

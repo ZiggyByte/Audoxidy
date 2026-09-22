@@ -91,43 +91,47 @@ pub fn view<'a>(
     .align_y(Alignment::Center)
     .height(Length::Fill);
 
-    let top_bar = row![
-        source_tabs,
-        Space::new().width(Length::Fill),
+    let top_bar = mouse_area(
         row![
-            container(action_icon_button(
-                "minimize.svg",
-                IconSize::L,
-                Message::PlayerWindowAction(crate::gui::player::WindowAction::Minimize),
-            ))
-            .padding(iced::Padding {
-                top: 0.0,
-                right: 0.0,
-                bottom: 8.0,
-                left: 0.0
-            }),
-            action_icon_button(
-                "maximize.svg",
-                IconSize::L,
-                Message::PlayerWindowAction(crate::gui::player::WindowAction::Maximize),
-            ),
-            action_icon_button(
-                "close.svg",
-                IconSize::L,
-                Message::PlayerWindowAction(crate::gui::player::WindowAction::Close),
-            ),
+            source_tabs,
+            Space::new().width(Length::Fill),
+            row![
+                container(action_icon_button(
+                    "minimize.svg",
+                    IconSize::L,
+                    Message::PlayerWindowAction(crate::gui::player::WindowAction::Minimize),
+                ))
+                .padding(iced::Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 8.0,
+                    left: 0.0
+                }),
+                action_icon_button(
+                    "maximize.svg",
+                    IconSize::L,
+                    Message::PlayerWindowAction(crate::gui::player::WindowAction::Maximize),
+                ),
+                action_icon_button(
+                    "close.svg",
+                    IconSize::L,
+                    Message::PlayerWindowAction(crate::gui::player::WindowAction::Close),
+                ),
+            ]
+            .spacing(SPACE_XS)
+            .align_y(Alignment::Center)
         ]
-        .spacing(SPACE_XS)
         .align_y(Alignment::Center)
-    ]
-    .align_y(Alignment::Center)
-    .height(Length::Fill)
-    .padding(iced::Padding {
-        top: 0.0,
-        right: SPACE_XS,
-        bottom: 0.0,
-        left: SPACE_LG,
-    });
+        .height(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            right: SPACE_XS,
+            bottom: 0.0,
+            left: SPACE_LG,
+        }),
+    )
+    .on_press(Message::WindowDrag)
+    .interaction(iced::mouse::Interaction::Pointer);
 
     let top_container = container(top_bar)
         .width(Length::Fill)

@@ -141,7 +141,13 @@ impl crate::gui::app::AudoxidyApp {
 
             Message::GlobalKeyDown(..)
             | Message::WindowResized(..)
+            | Message::WindowMoved(..)
+            | Message::WindowMaximizedState(..)
+            | Message::QueryMaximized
+            | Message::WindowMonitorSize(..)
             | Message::SetWindowId(..)
+            | Message::WindowDrag
+            | Message::WindowResize(..)
             | Message::ModifiersChanged(..)
             | Message::PlayerHoverZone(..)
             | Message::PlayerScroll(..)

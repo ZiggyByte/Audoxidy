@@ -4,6 +4,10 @@ use crate::gui::app::persistence::log_persist;
 use crate::gui::app::{AppFocus, Message};
 use iced::Task;
 
+/// Distancia al cuadrado (en px²) que el puntero debe recorrer con el botón
+/// pulsado sobre una barra para que comience el arrastre de la ventana.
+const WINDOW_DRAG_THRESHOLD_SQ: f32 = 16.0;
+
 impl crate::gui::app::AudoxidyApp {
     pub(in crate::gui::app) fn handle_window(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -113,13 +117,69 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::WindowResized(w, h) => {
                 self.window_size = (w, h);
-                // La biblioteca ocupa todo el ancho menos el panel izquierdo (~520px) y filtros (~202px)
                 let sidebar_w = 722.0_f32;
                 self.library_manager.library_area_width = (w as f32 - sidebar_w).max(202.0);
+                self.geometry_dirty_at = Some(std::time::Instant::now());
+
+                // El runtime no emite un evento de maximizado y la propiedad
+                // `_NET_WM_STATE` puede actualizarse después del cambio de
+                // tamaño, así que se consulta con un pequeño retardo. El flag
+                // evita apilar consultas durante un arrastre de redimensionado.
+                if !self.maximized_query_pending {
+                    self.maximized_query_pending = true;
+                    return Task::perform(
+                        async {
+                            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        },
+                        |_| Message::QueryMaximized,
+                    );
+                }
+                Task::none()
+            }
+            Message::QueryMaximized => {
+                if let Some(id) = self.window_id {
+                    iced::window::is_maximized(id).map(Message::WindowMaximizedState)
+                } else {
+                    self.maximized_query_pending = false;
+                    Task::none()
+                }
+            }
+            Message::WindowMoved(position) => {
+                self.window_position = Some(position);
+                self.geometry_dirty_at = Some(std::time::Instant::now());
+                Task::none()
+            }
+            Message::WindowMaximizedState(maximized) => {
+                self.maximized_query_pending = false;
+                if maximized != self.window_maximized {
+                    self.window_maximized = maximized;
+                    self.geometry_dirty_at = Some(std::time::Instant::now());
+                }
+                if maximized {
+                    // Tamaño de pantalla completa: se guarda para crear la
+                    // ventana ya a este tamaño en el próximo arranque y evitar
+                    // el parpadeo de abrir pequeño y maximizar después.
+                    self.maximized_size = Some(self.window_size);
+                } else {
+                    // El tamaño actual es el restaurado; es el valor que se
+                    // persiste como tamaño normal de la ventana.
+                    self.unmaximized_size = self.window_size;
+                    self.geometry_dirty_at = Some(std::time::Instant::now());
+                }
                 Task::none()
             }
             Message::SetWindowId(id) => {
                 self.window_id = Some(id);
+
+                // El flag `maximized` de `window::Settings` se envía antes de
+                // mapear la ventana y algunos gestores de ventanas lo ignoran.
+                // Con la ventana ya creada la petición sí se aplica, y ocurre
+                // antes del primer render, así que no se ve el cambio de tamaño.
+                let cfg = crate::utils::config::load_config();
+                if !cfg.ui.window_geometry_initialized || cfg.ui.window_maximized {
+                    self.window_maximized = true;
+                    return iced::window::maximize(id, true).map(|_: ()| Message::NoOp);
+                }
                 Task::none()
             }
             Message::ModifiersChanged(modifiers) => {
@@ -172,6 +232,26 @@ impl crate::gui::app::AudoxidyApp {
                 self.context_menu = None;
                 Task::none()
             }
+            Message::WindowDrag => {
+                // El press solo arma el arrastre: el arrastre del sistema
+                // comienza cuando el puntero supera el umbral, de modo que un
+                // clic breve no mueve la ventana.
+                self.window_drag_armed = true;
+                self.window_drag_origin = self.player_ui_state.mouse_pos;
+                Task::none()
+            }
+            Message::WindowResize(direction) => {
+                // Con la ventana maximizada el redimensionado está desactivado:
+                // el comportamiento esperado es no poder cambiar el tamaño.
+                if self.window_maximized {
+                    return Task::none();
+                }
+                if let Some(id) = self.window_id {
+                    iced::window::drag_resize(id, direction).map(|_: ()| Message::NoOp)
+                } else {
+                    Task::none()
+                }
+            }
             Message::PlayerWindowAction(action) => match action {
                 crate::gui::player::WindowAction::Minimize => {
                     if let Some(id) = self.window_id {
@@ -182,17 +262,41 @@ impl crate::gui::app::AudoxidyApp {
                 }
                 crate::gui::player::WindowAction::Maximize => {
                     if let Some(id) = self.window_id {
-                        iced::window::toggle_maximize(id).map(|_: ()| Message::UiTick)
+                        // El toggle del botón es la intención explícita; se
+                        // refleja de inmediato y la consulta diferida posterior
+                        // confirma o corrige el estado real.
+                        self.window_maximized = !self.window_maximized;
+                        self.geometry_dirty_at = Some(std::time::Instant::now());
+                        iced::window::toggle_maximize(id).map(|_: ()| Message::NoOp)
                     } else {
                         Task::none()
                     }
                 }
                 crate::gui::player::WindowAction::Close => {
+                    self.persist_geometry();
                     std::process::exit(0);
                 }
             },
             Message::PlayerMouseMoved(pos) => {
                 self.last_mouse_pos = pos;
+
+                // Arrastre de ventana armado: el sistema empieza a mover (y a
+                // des-maximizar si procede) solo tras superar el umbral, para
+                // que un clic breve no arrastre la ventana.
+                if self.window_drag_armed {
+                    if let Some(origin) = self.window_drag_origin {
+                        let dx = pos.x - origin.x;
+                        let dy = pos.y - origin.y;
+                        if dx * dx + dy * dy > WINDOW_DRAG_THRESHOLD_SQ {
+                            self.window_drag_armed = false;
+                            self.window_drag_origin = None;
+                            if let Some(id) = self.window_id {
+                                return iced::window::drag(id).map(|_: ()| Message::NoOp);
+                            }
+                        }
+                    }
+                }
+
                 let is_resizing = self.library_manager.resizing_column.is_some();
                 if is_resizing {
                     let col = self.library_manager.resizing_column.unwrap();
@@ -261,6 +365,10 @@ impl crate::gui::app::AudoxidyApp {
                 crate::gui::widgets::GLOBAL_STEPPER_HOLD
                     .store(0, std::sync::atomic::Ordering::Relaxed);
 
+                // Un press liberado sin superar el umbral no arrastra nada.
+                self.window_drag_armed = false;
+                self.window_drag_origin = None;
+
                 if self.library_manager.resizing_column.is_some() {
                     self.library_manager.resizing_column = None;
                 }
@@ -313,10 +421,18 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::InitStartup => {
-                // Sincronizar carátula inicial
                 self.sync_player_art();
 
                 let mut tasks = Vec::new();
+
+                // La geometría inicial (tamaño, posición y maximizado) ya se
+                // aplicó al crear la ventana en `main`. Aquí se sincroniza el
+                // estado maximizado real y se valida que la ventana no haya
+                // quedado fuera del monitor (guard anti fuera-de-pantalla).
+                if let Some(id) = self.window_id {
+                    tasks.push(iced::window::is_maximized(id).map(Message::WindowMaximizedState));
+                    tasks.push(iced::window::monitor_size(id).map(Message::WindowMonitorSize));
+                }
 
                 // Forzar auto-scroll a la canción que se restauró
                 if let Some(idx) = self.playlist_manager.playing_song_idx {
@@ -332,6 +448,28 @@ impl crate::gui::app::AudoxidyApp {
 
                 Task::batch(tasks)
             }
+            Message::WindowMonitorSize(Some(monitor)) => {
+                // Si la ventana restaurada quedó completamente fuera del
+                // monitor (por un cambio de resolución o de configuración de
+                // pantallas), se recoloca en la esquina superior izquierda.
+                if !self.window_maximized {
+                    if let Some(pos) = self.window_position {
+                        let (w, h) = self.unmaximized_size;
+                        let off_screen = pos.x >= monitor.width
+                            || pos.y >= monitor.height
+                            || pos.x + w as f32 <= 0.0
+                            || pos.y + h as f32 <= 0.0;
+                        if off_screen {
+                            if let Some(id) = self.window_id {
+                                return iced::window::move_to(id, iced::Point::new(0.0, 0.0))
+                                    .map(|_: ()| Message::NoOp);
+                            }
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::WindowMonitorSize(None) => Task::none(),
             _ => Task::none(),
         }
     }
@@ -374,6 +512,28 @@ impl crate::gui::app::AudoxidyApp {
             Task::none()
         } else {
             Task::batch(tasks)
+        }
+    }
+
+    pub(in crate::gui::app) fn persist_geometry(&mut self) {
+        if self.window_id.is_some() {
+            let (w, h) = self.unmaximized_size;
+            let mut cfg = crate::utils::config::load_config();
+            cfg.ui.window_width = w as f32;
+            cfg.ui.window_height = h as f32;
+            if let Some(pos) = self.window_position {
+                cfg.ui.window_x = Some(pos.x);
+                cfg.ui.window_y = Some(pos.y);
+            }
+            cfg.ui.window_maximized = self.window_maximized;
+            if let Some((mw, mh)) = self.maximized_size {
+                cfg.ui.window_maximized_width = Some(mw as f32);
+                cfg.ui.window_maximized_height = Some(mh as f32);
+            }
+            cfg.ui.window_geometry_initialized = true;
+            if let Err(e) = crate::utils::config::save_config(&cfg) {
+                tracing::warn!("Failed to persist window geometry: {e}");
+            }
         }
     }
 }

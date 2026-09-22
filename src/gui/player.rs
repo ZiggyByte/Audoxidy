@@ -226,14 +226,18 @@ pub fn view<'a>(
     .into();
 
     // --- Capa 4: Información y Marquesinas (Top + Bottom) ---
-    let top_row = row![
-        action_icon_button("menu.svg", IconSize::L, Message::ToggleMenu),
-        Space::new().width(Length::Fill),
-        // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
-    ]
-    .height(Length::Fixed(BAR_TOP))
-    .align_y(Alignment::Center)
-    .padding([0.0, SPACE_SM]); // padding horizontal
+    let top_row = mouse_area(
+        row![
+            action_icon_button("menu.svg", IconSize::L, Message::ToggleMenu),
+            Space::new().width(Length::Fill),
+            // Aquí irían los canales ej: text("5.1").color(Color::WHITE),
+        ]
+        .height(Length::Fixed(BAR_TOP))
+        .align_y(Alignment::Center)
+        .padding([0.0, SPACE_SM]),
+    )
+    .on_press(Message::WindowDrag)
+    .interaction(iced::mouse::Interaction::Pointer);
 
     let is_playing_or_paused = state.is_playing || state.current_pos_sec > 0.0;
 

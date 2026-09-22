@@ -172,6 +172,19 @@ pub struct UiConfig {
     pub window_width: f32,
     /// Alto de ventana
     pub window_height: f32,
+    /// Posición horizontal de la ventana (None = centrada)
+    pub window_x: Option<f32>,
+    /// Posición vertical de la ventana (None = centrada)
+    pub window_y: Option<f32>,
+    /// Ventana maximizada al iniciar
+    pub window_maximized: bool,
+    /// Indica si la geometría ya se guardó alguna vez. Distingue el primer
+    /// arranque (ventana maximizada) de un arranque con geometría conocida.
+    pub window_geometry_initialized: bool,
+    /// Último tamaño de pantalla completa conocido. Se usa para crear la
+    /// ventana ya maximizada al arrancar, sin parpadeo.
+    pub window_maximized_width: Option<f32>,
+    pub window_maximized_height: Option<f32>,
     /// Tema (dark/light)
     pub theme: String,
 }
@@ -189,16 +202,34 @@ impl UiConfig {
             ConfigProfile::HighFidelity => Self {
                 window_width: 1600.0,
                 window_height: 1000.0,
+                window_x: None,
+                window_y: None,
+                window_maximized: false,
+                window_geometry_initialized: false,
+                window_maximized_width: None,
+                window_maximized_height: None,
                 theme: "dark".into(),
             },
             ConfigProfile::Default => Self {
                 window_width: 1360.0,
                 window_height: 880.0,
+                window_x: None,
+                window_y: None,
+                window_maximized: false,
+                window_geometry_initialized: false,
+                window_maximized_width: None,
+                window_maximized_height: None,
                 theme: "dark".into(),
             },
             ConfigProfile::LowResource => Self {
                 window_width: 1024.0,
                 window_height: 720.0,
+                window_x: None,
+                window_y: None,
+                window_maximized: false,
+                window_geometry_initialized: false,
+                window_maximized_width: None,
+                window_maximized_height: None,
                 theme: "dark".into(),
             },
         }

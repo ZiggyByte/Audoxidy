@@ -1027,6 +1027,25 @@ impl AudoxidyApp {
             false
         };
 
+        // Geometría de ventana persistida: se refleja en el estado inicial para
+        // que los eventos de redimensionado no confundan el tamaño maximizado
+        // con el tamaño restaurado. En el primer arranque la ventana nace
+        // maximizada.
+        let ui_cfg = crate::utils::config::load_config().ui;
+        let window_maximized = !ui_cfg.window_geometry_initialized || ui_cfg.window_maximized;
+        let initial_size = (ui_cfg.window_width as u32, ui_cfg.window_height as u32);
+        let initial_position = match (ui_cfg.window_x, ui_cfg.window_y) {
+            (Some(x), Some(y)) => Some(iced::Point::new(x, y)),
+            _ => None,
+        };
+        let initial_maximized_size = match (
+            ui_cfg.window_maximized_width,
+            ui_cfg.window_maximized_height,
+        ) {
+            (Some(w), Some(h)) => Some((w as u32, h as u32)),
+            _ => None,
+        };
+
         (
             Self {
                 core,
@@ -1055,10 +1074,19 @@ impl AudoxidyApp {
                 last_mouse_pos: iced::Point::ORIGIN,
                 dialog_pos: None,
                 context_menu: None,
-                window_size: (1360, 880),
+                window_size: initial_size,
+                unmaximized_size: initial_size,
+                window_maximized,
+                maximized_query_pending: false,
+                maximized_size: initial_maximized_size,
+                window_drag_armed: false,
+                window_drag_origin: None,
+                window_position: initial_position,
                 modifiers: iced::keyboard::Modifiers::default(),
                 was_scanning: false,
                 scan_finished_at: None,
+                geometry_dirty_at: None,
+                geometry_last_saved: None,
             },
             Task::perform(
                 async {

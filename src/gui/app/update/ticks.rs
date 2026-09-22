@@ -74,6 +74,15 @@ impl crate::gui::app::AudoxidyApp {
         TickKind::Ui.record_fire();
         self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
 
+        // Geometry persistence debounce
+        if let Some(dirty_at) = self.geometry_dirty_at {
+            if dirty_at.elapsed() >= std::time::Duration::from_millis(500) {
+                self.persist_geometry();
+                self.geometry_dirty_at = None;
+                self.geometry_last_saved = Some(std::time::Instant::now());
+            }
+        }
+
         let state = self.core.audio_state();
 
         // Cálculo de marquesina cada 500ms

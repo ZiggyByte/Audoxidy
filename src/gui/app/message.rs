@@ -128,6 +128,8 @@ pub enum Message {
     ToggleMenu,
     PlayerWindowAction(crate::gui::player::WindowAction),
     SetWindowId(iced::window::Id),
+    WindowDrag,
+    WindowResize(iced::window::Direction),
     PlayerMouseMoved(iced::Point),
     PlaylistScrolled(iced::widget::scrollable::Viewport),
     PlaylistTabsScrolled(iced::widget::scrollable::Viewport),
@@ -135,6 +137,11 @@ pub enum Message {
     GlobalMouseRelease,
     GlobalClick,
     WindowResized(u32, u32),
+    WindowMoved(iced::Point),
+    WindowMaximizedState(bool),
+    /// Consulta diferida del estado maximizado tras un cambio de tamaño.
+    QueryMaximized,
+    WindowMonitorSize(Option<iced::Size>),
     InitStartup,
 
     // Dialogs

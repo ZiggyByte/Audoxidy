@@ -339,7 +339,7 @@ pub fn view<'a>(
                                     };
                                     let chevron_btn = button(
                                         iced::widget::svg(iced::widget::svg::Handle::from_path(
-                                            format!("assets/icons/{}", chevron_svg),
+                                            crate::gui::widgets::icon_asset_path(chevron_svg),
                                         ))
                                         .width(IconSize::L.px())
                                         .height(IconSize::L.px())

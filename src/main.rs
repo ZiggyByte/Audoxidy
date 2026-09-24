@@ -54,32 +54,16 @@ fn main() -> iced::Result {
     // 7. Construir el dominio Core con sus rutas inyectadas.
     let core = Arc::new(Core::new(audio_manager, database, scanner, core_paths));
 
-    let window_size = app_config.ui.window_size();
-
-    // Geometría inicial: en el primer arranque la ventana nace maximizada; en
-    // arranques posteriores se restaura el tamaño, la posición y el estado
-    // maximizado guardados. Aplicarlo aquí, al crear la ventana, evita el
-    // parpadeo de abrir a un tamaño y maximizar unos instantes después.
+    // Initial geometry: a fresh install opens maximized; later launches
+    // restore the saved size, position and maximized state. Applying it here,
+    // while the window is created, avoids the flash of opening at one size and
+    // maximizing moments later.
     let ui = &app_config.ui;
-    let window_maximized = !ui.window_geometry_initialized || ui.window_maximized;
-    // Al arrancar maximizada se crea la ventana ya con el tamaño de pantalla
-    // completa conocido; así el maximizado del gestor de ventanas no cambia
-    // nada y no se ve el parpadeo de abrir pequeña y maximizar después.
-    let window_size = if window_maximized {
-        match (ui.window_maximized_width, ui.window_maximized_height) {
-            (Some(w), Some(h)) => (w, h),
-            _ => window_size,
-        }
-    } else {
-        window_size
-    };
-    let window_position = if window_maximized {
-        iced::window::Position::Centered
-    } else {
-        match (ui.window_x, ui.window_y) {
-            (Some(x), Some(y)) => iced::window::Position::Specific(iced::Point::new(x, y)),
-            _ => iced::window::Position::Centered,
-        }
+    let window_maximized = ui.starts_maximized();
+    let window_size = ui.startup_size();
+    let window_position = match ui.startup_position() {
+        Some((x, y)) => iced::window::Position::Specific(iced::Point::new(x, y)),
+        None => iced::window::Position::Centered,
     };
 
     tracing::info!(
@@ -95,8 +79,8 @@ fn main() -> iced::Result {
         AudoxidyApp::update,
         AudoxidyApp::view,
     )
-    .font(include_bytes!("../assets/fonts/Inter.ttf").as_slice())
-    .font(include_bytes!("../assets/fonts/Stage-Wanders.ttf").as_slice())
+    .font(include_bytes!("assets/fonts/Inter.ttf").as_slice())
+    .font(include_bytes!("assets/fonts/Stage-Wanders.ttf").as_slice())
     .title(|_state: &AudoxidyApp| String::from("Audoxidy"))
     .subscription(|state: &AudoxidyApp| state.subscription())
     .theme(|state: &AudoxidyApp| state.theme())

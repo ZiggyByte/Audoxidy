@@ -194,6 +194,45 @@ impl UiConfig {
     pub fn window_size(&self) -> (f32, f32) {
         (self.window_width, self.window_height)
     }
+
+    /// Whether the window must be created maximized.
+    ///
+    /// A fresh install (geometry never persisted) and a window that was
+    /// maximized when it was last closed both start maximized.
+    pub fn starts_maximized(&self) -> bool {
+        !self.window_geometry_initialized || self.window_maximized
+    }
+
+    /// Size the window is created with.
+    ///
+    /// When starting maximized, the last known full-screen size is used so the
+    /// window manager does not resize it after creation; otherwise the saved
+    /// normal size is restored. The known maximized size can be absent on a
+    /// first launch, in which case the normal size is the best hint available.
+    pub fn startup_size(&self) -> (f32, f32) {
+        if self.starts_maximized() {
+            match (self.window_maximized_width, self.window_maximized_height) {
+                (Some(width), Some(height)) => (width, height),
+                _ => self.window_size(),
+            }
+        } else {
+            self.window_size()
+        }
+    }
+
+    /// Saved top-left position to restore, if any.
+    ///
+    /// Returns `None` when the window starts maximized or when only one of the
+    /// two coordinates was persisted; both are required to place the window.
+    pub fn startup_position(&self) -> Option<(f32, f32)> {
+        if self.starts_maximized() {
+            return None;
+        }
+        match (self.window_x, self.window_y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        }
+    }
 }
 
 impl UiConfig {
@@ -887,5 +926,134 @@ mod config_tests {
             );
         }
         cleanup(&path);
+    }
+
+    /// A UI config with the geometry fields under the test's control, so the
+    /// startup decision does not depend on the auto-detected hardware profile.
+    fn ui_config() -> UiConfig {
+        UiConfig {
+            window_width: 1360.0,
+            window_height: 880.0,
+            window_x: None,
+            window_y: None,
+            window_maximized: false,
+            window_geometry_initialized: false,
+            window_maximized_width: None,
+            window_maximized_height: None,
+            theme: "dark".into(),
+        }
+    }
+
+    #[test]
+    fn test_first_launch_starts_maximized() {
+        // No geometry has ever been persisted: the window opens maximized.
+        let ui = ui_config();
+        assert!(ui.starts_maximized());
+        assert_eq!(ui.startup_size(), ui.window_size());
+        assert_eq!(ui.startup_position(), None);
+    }
+
+    #[test]
+    fn test_saved_normal_geometry_is_restored() {
+        let ui = UiConfig {
+            window_geometry_initialized: true,
+            window_x: Some(120.0),
+            window_y: Some(80.0),
+            window_maximized: false,
+            ..ui_config()
+        };
+
+        assert!(!ui.starts_maximized());
+        assert_eq!(ui.startup_size(), (1360.0, 880.0));
+        assert_eq!(ui.startup_position(), Some((120.0, 80.0)));
+    }
+
+    #[test]
+    fn test_saved_maximized_state_restores_full_screen_size() {
+        let ui = UiConfig {
+            window_geometry_initialized: true,
+            window_maximized: true,
+            window_maximized_width: Some(2560.0),
+            window_maximized_height: Some(1440.0),
+            ..ui_config()
+        };
+
+        assert!(ui.starts_maximized());
+        assert_eq!(ui.startup_size(), (2560.0, 1440.0));
+        // A maximized window is centered by the window manager.
+        assert_eq!(ui.startup_position(), None);
+    }
+
+    #[test]
+    fn test_maximized_without_known_screen_size_falls_back_to_normal_size() {
+        // A maximized state with no recorded full-screen size still opens
+        // maximized, using the saved normal size as the creation hint.
+        let ui = UiConfig {
+            window_geometry_initialized: true,
+            window_maximized: true,
+            ..ui_config()
+        };
+
+        assert!(ui.starts_maximized());
+        assert_eq!(ui.startup_size(), (1360.0, 880.0));
+        assert_eq!(ui.startup_position(), None);
+    }
+
+    #[test]
+    fn test_startup_position_requires_both_coordinates() {
+        let only_x = UiConfig {
+            window_geometry_initialized: true,
+            window_x: Some(500.0),
+            ..ui_config()
+        };
+        assert_eq!(only_x.startup_position(), None);
+
+        let only_y = UiConfig {
+            window_geometry_initialized: true,
+            window_y: Some(500.0),
+            ..ui_config()
+        };
+        assert_eq!(only_y.startup_position(), None);
+    }
+
+    #[test]
+    fn test_geometry_fields_survive_ron_round_trip() {
+        let original = UiConfig {
+            window_x: Some(64.0),
+            window_y: Some(32.0),
+            window_maximized: true,
+            window_geometry_initialized: true,
+            window_maximized_width: Some(1920.0),
+            window_maximized_height: Some(1080.0),
+            ..ui_config()
+        };
+
+        let encoded = ron::ser::to_string(&original).expect("serializar la geometría");
+        let decoded: UiConfig = ron::from_str(&encoded).expect("releer la geometría");
+
+        assert_eq!(decoded.window_x, Some(64.0));
+        assert_eq!(decoded.window_y, Some(32.0));
+        assert!(decoded.window_maximized);
+        assert!(decoded.window_geometry_initialized);
+        assert_eq!(decoded.window_maximized_width, Some(1920.0));
+        assert_eq!(decoded.window_maximized_height, Some(1080.0));
+    }
+
+    #[test]
+    fn test_legacy_config_without_geometry_fields_uses_defaults() {
+        // An older config file that predates the window-shell fields must still
+        // deserialize, leaving the geometry in its "never persisted" state.
+        let ui: UiConfig =
+            ron::from_str("(window_width: 1280.0, window_height: 800.0)").expect("config heredada");
+
+        assert_eq!(ui.window_x, None);
+        assert_eq!(ui.window_y, None);
+        assert!(!ui.window_maximized);
+        assert!(!ui.window_geometry_initialized);
+        assert_eq!(ui.window_maximized_width, None);
+        assert_eq!(ui.window_maximized_height, None);
+        // The legacy file predates the persisted geometry, so the first launch
+        // after the upgrade opens maximized.
+        assert!(ui.starts_maximized());
     }
 }

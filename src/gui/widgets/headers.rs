@@ -47,10 +47,12 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
         let icon_el = if is_active {
             let handle = match sort_ascending {
-                Some(true) => Some(svg::Handle::from_path("assets/icons/arrow-up-chevron.svg")),
-                Some(false) => Some(svg::Handle::from_path(
-                    "assets/icons/arrow-down-chevron.svg",
-                )),
+                Some(true) => Some(svg::Handle::from_path(icon_asset_path(
+                    "arrow-up-chevron.svg",
+                ))),
+                Some(false) => Some(svg::Handle::from_path(icon_asset_path(
+                    "arrow-down-chevron.svg",
+                ))),
                 _ => None,
             };
 

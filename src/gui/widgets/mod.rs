@@ -32,6 +32,7 @@ mod overlays;
 #[path = "text.rs"]
 mod text_ui;
 
+pub(crate) use buttons::icon_asset_path;
 pub use buttons::{
     IconState, IconVariant, action_icon_button, chevron_btn, chevron_btn_sized, icon_button,
     standard_pick_list, standard_radio, standard_toggler, standard_toggler_full,

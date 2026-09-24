@@ -4,9 +4,31 @@ use crate::gui::app::persistence::log_persist;
 use crate::gui::app::{AppFocus, Message};
 use iced::Task;
 
-/// Distancia al cuadrado (en px²) que el puntero debe recorrer con el botón
-/// pulsado sobre una barra para que comience el arrastre de la ventana.
+/// Squared distance (in px²) the pointer must travel while pressed on a bar
+/// before the window drag starts.
 const WINDOW_DRAG_THRESHOLD_SQ: f32 = 16.0;
+
+/// Whether the pointer moved far enough from the press origin to start dragging.
+///
+/// A short click stays below the threshold, so it never moves the window; the
+/// comparison is strict, so travelling exactly the threshold distance is not
+/// enough yet.
+fn exceeds_drag_threshold(origin: iced::Point, position: iced::Point) -> bool {
+    let dx = position.x - origin.x;
+    let dy = position.y - origin.y;
+    dx * dx + dy * dy > WINDOW_DRAG_THRESHOLD_SQ
+}
+
+/// Whether the window rectangle lies entirely outside the monitor.
+///
+/// A window merely overlapping an edge is restored as-is; only a rectangle with
+/// no visible area in the monitor triggers the relocation fallback.
+fn window_fully_off_screen(position: iced::Point, size: (u32, u32), monitor: iced::Size) -> bool {
+    position.x >= monitor.width
+        || position.y >= monitor.height
+        || position.x + size.0 as f32 <= 0.0
+        || position.y + size.1 as f32 <= 0.0
+}
 
 impl crate::gui::app::AudoxidyApp {
     pub(in crate::gui::app) fn handle_window(&mut self, message: Message) -> Task<Message> {
@@ -285,9 +307,7 @@ impl crate::gui::app::AudoxidyApp {
                 // que un clic breve no arrastre la ventana.
                 if self.window_drag_armed {
                     if let Some(origin) = self.window_drag_origin {
-                        let dx = pos.x - origin.x;
-                        let dy = pos.y - origin.y;
-                        if dx * dx + dy * dy > WINDOW_DRAG_THRESHOLD_SQ {
+                        if exceeds_drag_threshold(origin, pos) {
                             self.window_drag_armed = false;
                             self.window_drag_origin = None;
                             if let Some(id) = self.window_id {
@@ -452,19 +472,14 @@ impl crate::gui::app::AudoxidyApp {
                 // Si la ventana restaurada quedó completamente fuera del
                 // monitor (por un cambio de resolución o de configuración de
                 // pantallas), se recoloca en la esquina superior izquierda.
-                if !self.window_maximized {
-                    if let Some(pos) = self.window_position {
-                        let (w, h) = self.unmaximized_size;
-                        let off_screen = pos.x >= monitor.width
-                            || pos.y >= monitor.height
-                            || pos.x + w as f32 <= 0.0
-                            || pos.y + h as f32 <= 0.0;
-                        if off_screen {
-                            if let Some(id) = self.window_id {
-                                return iced::window::move_to(id, iced::Point::new(0.0, 0.0))
-                                    .map(|_: ()| Message::NoOp);
-                            }
-                        }
+                if let Some(id) = self.window_id {
+                    let off_screen = !self.window_maximized
+                        && self.window_position.is_some_and(|pos| {
+                            window_fully_off_screen(pos, self.unmaximized_size, monitor)
+                        });
+                    if off_screen {
+                        return iced::window::move_to(id, iced::Point::new(0.0, 0.0))
+                            .map(|_: ()| Message::NoOp);
                     }
                 }
                 Task::none()
@@ -535,5 +550,65 @@ impl crate::gui::app::AudoxidyApp {
                 tracing::warn!("Failed to persist window geometry: {e}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod window_shell_tests {
+    use super::*;
+
+    fn point(x: f32, y: f32) -> iced::Point {
+        iced::Point::new(x, y)
+    }
+
+    #[test]
+    fn drag_threshold_ignores_short_clicks() {
+        // Press and a tiny movement stay below the 4 px threshold.
+        let origin = point(100.0, 100.0);
+        assert!(!exceeds_drag_threshold(origin, point(102.0, 102.0)));
+        // A purely horizontal move of 3 px is still under it.
+        assert!(!exceeds_drag_threshold(origin, point(103.0, 100.0)));
+    }
+
+    #[test]
+    fn drag_threshold_is_strict_at_the_boundary() {
+        let origin = point(0.0, 0.0);
+        // Exactly the threshold distance squared (4 px) does not start the drag.
+        assert!(!exceeds_drag_threshold(origin, point(4.0, 0.0)));
+        // One pixel further does.
+        assert!(exceeds_drag_threshold(origin, point(5.0, 0.0)));
+    }
+
+    #[test]
+    fn drag_threshold_handles_diagonals_and_both_directions() {
+        let origin = point(50.0, 50.0);
+        // Diagonal movement past the threshold in either direction starts it.
+        assert!(exceeds_drag_threshold(origin, point(53.0, 53.0)));
+        assert!(exceeds_drag_threshold(origin, point(47.0, 47.0)));
+        assert!(exceeds_drag_threshold(origin, point(47.0, 53.0)));
+    }
+
+    #[test]
+    fn window_fully_off_screen_detects_every_outside_case() {
+        let size = (800, 600);
+        let monitor = iced::Size::new(1920.0, 1080.0);
+
+        assert!(window_fully_off_screen(point(1920.0, 0.0), size, monitor));
+        assert!(window_fully_off_screen(point(0.0, 1080.0), size, monitor));
+        assert!(window_fully_off_screen(point(-800.0, 0.0), size, monitor));
+        assert!(window_fully_off_screen(point(0.0, -600.0), size, monitor));
+    }
+
+    #[test]
+    fn window_fully_off_screen_keeps_partially_visible_windows() {
+        let size = (800, 600);
+        let monitor = iced::Size::new(1920.0, 1080.0);
+
+        // Overlapping an edge by a single pixel is still restored as-is.
+        assert!(!window_fully_off_screen(point(1919.0, 0.0), size, monitor));
+        assert!(!window_fully_off_screen(point(-799.0, 0.0), size, monitor));
+        assert!(!window_fully_off_screen(point(0.0, 1079.0), size, monitor));
+        assert!(!window_fully_off_screen(point(0.0, -599.0), size, monitor));
+        assert!(!window_fully_off_screen(point(100.0, 100.0), size, monitor));
     }
 }

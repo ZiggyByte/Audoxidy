@@ -460,10 +460,9 @@ pub fn view<'a>(
                 .size(14)
                 .font(FONT_INTER_SANS_MEDIUM),
             Space::new().width(Length::Fill),
-            iced::widget::svg(iced::widget::svg::Handle::from_path(format!(
-                "assets/icons/{}",
-                drop_icon
-            )))
+            iced::widget::svg(iced::widget::svg::Handle::from_path(
+                crate::gui::widgets::icon_asset_path(drop_icon),
+            ))
             .width(FILTER_DROPDOWN_ICON)
             .height(FILTER_DROPDOWN_ICON)
             .style(
@@ -527,10 +526,9 @@ pub fn view<'a>(
                 container(
                     row![
                         container(
-                            iced::widget::svg(iced::widget::svg::Handle::from_path(format!(
-                                "assets/icons/{}",
-                                icon_path
-                            )))
+                            iced::widget::svg(iced::widget::svg::Handle::from_path(
+                                crate::gui::widgets::icon_asset_path(icon_path),
+                            ))
                             .width(Length::Fixed(FILTER_MENU_ICON))
                             .height(Length::Fixed(FILTER_MENU_ICON))
                             .style(|_t, _s| {
@@ -628,7 +626,7 @@ pub fn view<'a>(
 
         let restore_icon = container(
             iced::widget::svg(iced::widget::svg::Handle::from_path(
-                "assets/icons/restore-straight.svg",
+                crate::gui::widgets::icon_asset_path("restore-straight.svg"),
             ))
             .width(IconSize::S.px())
             .height(IconSize::S.px())

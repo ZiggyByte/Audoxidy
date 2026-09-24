@@ -15,7 +15,7 @@ use iced::widget::column;
 #[derive(Debug, Clone)]
 pub struct ContextMenuEntry<Message> {
     pub label: String,
-    pub icon: Option<String>,    // Nombre del icono en assets/icons/
+    pub icon: Option<String>, // Bare icon filename; icon_asset_path adds the asset prefix.
     pub action: Option<Message>, // None representa un divisor
 }
 
@@ -49,7 +49,7 @@ pub fn build_context_menu_content<'a, Message: Clone + 'a>(
                         if let Some(icon) = icon_name {
                             Element::from(
                                 container(
-                                    svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
+                                    svg(svg::Handle::from_path(icon_asset_path(&icon)))
                                         .width(Length::Fixed(IconSize::M.px()))
                                         .height(Length::Fixed(IconSize::M.px()))
                                         .style(|_t, _s| iced::widget::svg::Style {

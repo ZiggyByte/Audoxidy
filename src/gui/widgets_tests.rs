@@ -1,7 +1,22 @@
 #[cfg(test)]
 mod tests {
     // Import strip_suffix from the widgets module (now pub(crate) for test access)
-    use crate::gui::widgets::{StepperUnit, format_stepper_value, strip_suffix};
+    use crate::gui::widgets::{StepperUnit, format_stepper_value, icon_asset_path, strip_suffix};
+
+    // ========================================================================
+    // Icon asset path helper
+    // ========================================================================
+
+    #[test]
+    fn test_icon_asset_path_uses_repository_root_relative_prefix() {
+        assert_eq!(icon_asset_path("album.svg"), "src/assets/icons/album.svg");
+
+        let dynamic_filename = "play-straight-fill.svg";
+        assert_eq!(
+            icon_asset_path(dynamic_filename),
+            "src/assets/icons/play-straight-fill.svg"
+        );
+    }
 
     // ========================================================================
     // Suffix stripping tests

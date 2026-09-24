@@ -159,110 +159,124 @@ impl AudoxidyApp {
     }
 }
 
-/// Franjas transparentes de 2 px pegadas a los bordes de la ventana.
+/// Thickness of the invisible resize strips, in logical pixels.
+const RESIZE_HANDLE_HIT: f32 = 2.0;
+
+/// The eight resize strips in stacking order: edges first, corners last.
 ///
-/// Al vivir en la capa superior de la pila interceptan el press antes que las
-/// barras de arrastre y las scrollbars, muestran el cursor de redimensionado y
-/// disparan el arrastre de redimensionado del sistema operativo. Las esquinas
-/// se apilan al final para tener prioridad sobre los lados.
+/// Later entries sit above earlier ones, so the corners take the press before
+/// the edges and the pointer shows the diagonal cursor in the overlap.
+const RESIZE_HANDLE_DIRECTIONS: [iced::window::Direction; 8] = [
+    iced::window::Direction::North,
+    iced::window::Direction::South,
+    iced::window::Direction::West,
+    iced::window::Direction::East,
+    iced::window::Direction::NorthWest,
+    iced::window::Direction::NorthEast,
+    iced::window::Direction::SouthWest,
+    iced::window::Direction::SouthEast,
+];
+
+/// Which axis a resize direction stretches the window along.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResizeAxis {
+    Horizontal,
+    Vertical,
+    Both,
+}
+
+/// Axis a resize direction stretches the window along.
+///
+/// A corner is exactly a direction whose axis is [`ResizeAxis::Both`].
+fn resize_axis(direction: iced::window::Direction) -> ResizeAxis {
+    use iced::window::Direction;
+    match direction {
+        Direction::North | Direction::South => ResizeAxis::Vertical,
+        Direction::East | Direction::West => ResizeAxis::Horizontal,
+        Direction::NorthWest
+        | Direction::NorthEast
+        | Direction::SouthWest
+        | Direction::SouthEast => ResizeAxis::Both,
+    }
+}
+
+/// Cursor interaction shown while hovering a resize strip.
+///
+/// The diagonal cursor points along the NW↔SE axis (`Down`) or the NE↔SW axis
+/// (`Up`); edge strips show the matching single-axis cursor.
+fn resize_interaction(direction: iced::window::Direction) -> iced::mouse::Interaction {
+    use iced::mouse::Interaction;
+    use iced::window::Direction;
+    match direction {
+        Direction::North | Direction::South => Interaction::ResizingVertically,
+        Direction::East | Direction::West => Interaction::ResizingHorizontally,
+        Direction::NorthWest | Direction::SouthEast => Interaction::ResizingDiagonallyDown,
+        Direction::NorthEast | Direction::SouthWest => Interaction::ResizingDiagonallyUp,
+    }
+}
+
+/// Size of a strip: the perpendicular axis is fixed to the hit thickness.
+fn resize_strip_extent(direction: iced::window::Direction) -> (iced::Length, iced::Length) {
+    match resize_axis(direction) {
+        ResizeAxis::Vertical => (iced::Length::Fill, iced::Length::Fixed(RESIZE_HANDLE_HIT)),
+        ResizeAxis::Horizontal => (iced::Length::Fixed(RESIZE_HANDLE_HIT), iced::Length::Fill),
+        ResizeAxis::Both => (
+            iced::Length::Fixed(RESIZE_HANDLE_HIT),
+            iced::Length::Fixed(RESIZE_HANDLE_HIT),
+        ),
+    }
+}
+
+/// Alignment that pins the strip to its edge or corner of the window.
+fn resize_strip_alignment(
+    direction: iced::window::Direction,
+) -> (iced::Alignment, iced::Alignment) {
+    use iced::window::Direction;
+    match direction {
+        Direction::North => (iced::Alignment::Center, iced::Alignment::Start),
+        Direction::South => (iced::Alignment::Center, iced::Alignment::End),
+        Direction::West => (iced::Alignment::Start, iced::Alignment::Center),
+        Direction::East => (iced::Alignment::End, iced::Alignment::Center),
+        Direction::NorthWest => (iced::Alignment::Start, iced::Alignment::Start),
+        Direction::NorthEast => (iced::Alignment::End, iced::Alignment::Start),
+        Direction::SouthWest => (iced::Alignment::Start, iced::Alignment::End),
+        Direction::SouthEast => (iced::Alignment::End, iced::Alignment::End),
+    }
+}
+
+/// Transparent strips pinned to the window edges and corners.
+///
+/// Living on the top layer of the stack they intercept the press before the
+/// drag bars and the scrollbars, show the resize cursor and trigger the
+/// operating system's resize drag. The corners are stacked last so they take
+/// priority over the edges.
 fn resize_handles() -> Element<'static, Message> {
     use iced::widget::{Space, Stack, container, mouse_area};
-    use iced::window::Direction;
-    use iced::{Alignment, Length};
 
-    const HIT: f32 = 2.0;
-
-    fn strip(
-        width: Length,
-        height: Length,
-        align_x: Alignment,
-        align_y: Alignment,
-        direction: Direction,
-        interaction: iced::mouse::Interaction,
-    ) -> Element<'static, Message> {
+    fn strip(direction: iced::window::Direction) -> Element<'static, Message> {
+        let (width, height) = resize_strip_extent(direction);
+        let (align_x, align_y) = resize_strip_alignment(direction);
         container(
             mouse_area(Space::new().width(width).height(height))
                 .on_press(Message::WindowResize(direction))
-                .interaction(interaction),
+                .interaction(resize_interaction(direction)),
         )
-        .width(Length::Fill)
-        .height(Length::Fill)
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
         .align_x(align_x)
         .align_y(align_y)
         .into()
     }
 
     let mut stack = Stack::new();
+    for direction in RESIZE_HANDLE_DIRECTIONS {
+        stack = stack.push(strip(direction));
+    }
 
-    // Lados
-    stack = stack.push(strip(
-        Length::Fill,
-        Length::Fixed(HIT),
-        Alignment::Center,
-        Alignment::Start,
-        Direction::North,
-        iced::mouse::Interaction::ResizingVertically,
-    ));
-    stack = stack.push(strip(
-        Length::Fill,
-        Length::Fixed(HIT),
-        Alignment::Center,
-        Alignment::End,
-        Direction::South,
-        iced::mouse::Interaction::ResizingVertically,
-    ));
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fill,
-        Alignment::Start,
-        Alignment::Center,
-        Direction::West,
-        iced::mouse::Interaction::ResizingHorizontally,
-    ));
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fill,
-        Alignment::End,
-        Alignment::Center,
-        Direction::East,
-        iced::mouse::Interaction::ResizingHorizontally,
-    ));
-
-    // Esquinas (por encima de los lados)
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fixed(HIT),
-        Alignment::Start,
-        Alignment::Start,
-        Direction::NorthWest,
-        iced::mouse::Interaction::ResizingDiagonallyDown,
-    ));
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fixed(HIT),
-        Alignment::End,
-        Alignment::Start,
-        Direction::NorthEast,
-        iced::mouse::Interaction::ResizingDiagonallyUp,
-    ));
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fixed(HIT),
-        Alignment::Start,
-        Alignment::End,
-        Direction::SouthWest,
-        iced::mouse::Interaction::ResizingDiagonallyUp,
-    ));
-    stack = stack.push(strip(
-        Length::Fixed(HIT),
-        Length::Fixed(HIT),
-        Alignment::End,
-        Alignment::End,
-        Direction::SouthEast,
-        iced::mouse::Interaction::ResizingDiagonallyDown,
-    ));
-
-    stack.width(Length::Fill).height(Length::Fill).into()
+    stack
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
+        .into()
 }
 
 /// Envuelve un contenido forzando el cursor indicado en toda su superficie.
@@ -406,5 +420,157 @@ where
 {
     fn from(widget: CursorOff<'a, Message, Theme, Renderer>) -> Self {
         Element::new(widget)
+    }
+}
+
+#[cfg(test)]
+mod resize_shell_tests {
+    use super::*;
+    use iced::mouse::Interaction;
+    use iced::window::Direction;
+
+    /// `Direction` has no `PartialEq`, so compare by discriminant.
+    fn same(a: Direction, b: Direction) -> bool {
+        std::mem::discriminant(&a) == std::mem::discriminant(&b)
+    }
+
+    /// A corner is a direction that stretches both axes.
+    fn is_corner(direction: Direction) -> bool {
+        resize_axis(direction) == ResizeAxis::Both
+    }
+
+    const ALL: [Direction; 8] = [
+        Direction::North,
+        Direction::South,
+        Direction::West,
+        Direction::East,
+        Direction::NorthWest,
+        Direction::NorthEast,
+        Direction::SouthWest,
+        Direction::SouthEast,
+    ];
+
+    #[test]
+    fn every_resize_direction_appears_exactly_once() {
+        assert_eq!(RESIZE_HANDLE_DIRECTIONS.len(), ALL.len());
+        for expected in ALL {
+            let count = RESIZE_HANDLE_DIRECTIONS
+                .iter()
+                .filter(|direction| same(**direction, expected))
+                .count();
+            assert_eq!(count, 1, "direction {expected:?} must appear once");
+        }
+    }
+
+    #[test]
+    fn corner_strips_stack_above_the_edges() {
+        let last_edge = RESIZE_HANDLE_DIRECTIONS
+            .iter()
+            .rposition(|direction| !is_corner(*direction))
+            .expect("there are edge strips");
+        let first_corner = RESIZE_HANDLE_DIRECTIONS
+            .iter()
+            .position(|direction| is_corner(*direction))
+            .expect("there are corner strips");
+
+        assert!(
+            last_edge < first_corner,
+            "every corner must be stacked after every edge"
+        );
+    }
+
+    #[test]
+    fn edge_and_corner_counts_are_four_each() {
+        let corners = RESIZE_HANDLE_DIRECTIONS
+            .iter()
+            .filter(|direction| is_corner(**direction))
+            .count();
+        assert_eq!(corners, 4);
+        assert_eq!(RESIZE_HANDLE_DIRECTIONS.len() - corners, 4);
+    }
+
+    #[test]
+    fn resize_axis_matches_direction() {
+        assert_eq!(resize_axis(Direction::North), ResizeAxis::Vertical);
+        assert_eq!(resize_axis(Direction::South), ResizeAxis::Vertical);
+        assert_eq!(resize_axis(Direction::East), ResizeAxis::Horizontal);
+        assert_eq!(resize_axis(Direction::West), ResizeAxis::Horizontal);
+        for corner in [
+            Direction::NorthWest,
+            Direction::NorthEast,
+            Direction::SouthWest,
+            Direction::SouthEast,
+        ] {
+            assert_eq!(resize_axis(corner), ResizeAxis::Both);
+        }
+    }
+
+    #[test]
+    fn resize_interaction_matches_direction() {
+        assert_eq!(
+            resize_interaction(Direction::North),
+            Interaction::ResizingVertically
+        );
+        assert_eq!(
+            resize_interaction(Direction::South),
+            Interaction::ResizingVertically
+        );
+        assert_eq!(
+            resize_interaction(Direction::East),
+            Interaction::ResizingHorizontally
+        );
+        assert_eq!(
+            resize_interaction(Direction::West),
+            Interaction::ResizingHorizontally
+        );
+        assert_eq!(
+            resize_interaction(Direction::NorthWest),
+            Interaction::ResizingDiagonallyDown
+        );
+        assert_eq!(
+            resize_interaction(Direction::SouthEast),
+            Interaction::ResizingDiagonallyDown
+        );
+        assert_eq!(
+            resize_interaction(Direction::NorthEast),
+            Interaction::ResizingDiagonallyUp
+        );
+        assert_eq!(
+            resize_interaction(Direction::SouthWest),
+            Interaction::ResizingDiagonallyUp
+        );
+    }
+
+    #[test]
+    fn resize_strip_extent_fixes_only_the_perpendicular_axis() {
+        let hit = iced::Length::Fixed(RESIZE_HANDLE_HIT);
+
+        assert_eq!(
+            resize_strip_extent(Direction::North),
+            (iced::Length::Fill, hit)
+        );
+        assert_eq!(
+            resize_strip_extent(Direction::West),
+            (hit, iced::Length::Fill)
+        );
+        let square = resize_strip_extent(Direction::SouthEast);
+        assert_eq!(square.0, hit);
+        assert_eq!(square.1, hit);
+    }
+
+    #[test]
+    fn resize_strip_alignment_pins_each_edge() {
+        assert_eq!(
+            resize_strip_alignment(Direction::North),
+            (iced::Alignment::Center, iced::Alignment::Start)
+        );
+        assert_eq!(
+            resize_strip_alignment(Direction::SouthEast),
+            (iced::Alignment::End, iced::Alignment::End)
+        );
+        assert_eq!(
+            resize_strip_alignment(Direction::NorthWest),
+            (iced::Alignment::Start, iced::Alignment::Start)
+        );
     }
 }

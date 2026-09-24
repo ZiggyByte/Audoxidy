@@ -413,9 +413,11 @@ pub fn view<'a>(
                 PLAYER_ZONE_PAD_TIGHT
             };
             container(
-                svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                    .width(size)
-                    .height(size),
+                svg(svg::Handle::from_path(
+                    crate::gui::widgets::icon_asset_path(icon),
+                ))
+                .width(size)
+                .height(size),
             )
             .padding(pad)
             .style(|_t: &Theme| {
@@ -507,9 +509,11 @@ pub fn view<'a>(
             let vol_ui = container(
                 container(
                     column![
-                        svg(svg::Handle::from_path(format!("assets/icons/{}", icon)))
-                            .width(44)
-                            .height(44),
+                        svg(svg::Handle::from_path(
+                            crate::gui::widgets::icon_asset_path(icon)
+                        ))
+                        .width(44)
+                        .height(44),
                         text(format!("{:.0}", vol))
                             .size(20)
                             .color(Color::WHITE)

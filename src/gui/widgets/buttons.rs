@@ -46,6 +46,13 @@ pub fn icon_palette(state: IconState, variant: IconVariant, is_hovered: bool) ->
     }
 }
 
+const ICON_ASSET_PREFIX: &str = "src/assets/icons";
+
+/// Accepts an internal bare icon filename and returns a repository-root-relative path.
+pub(crate) fn icon_asset_path(icon_filename: &str) -> String {
+    format!("{ICON_ASSET_PREFIX}/{icon_filename}")
+}
+
 /// Botón transparente que muestra un ícono SVG y emite un mensaje al presionarse.
 /// Variante sin borde ni realce al pasar el puntero; delega en `icon_button`.
 pub fn action_icon_button<'a, Message: Clone + 'a>(
@@ -80,19 +87,16 @@ pub fn icon_button<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     let is_actionable = action.is_some() && state != IconState::Disabled;
 
-    let icon = svg(svg::Handle::from_path(format!(
-        "assets/icons/{}",
-        icon_filename
-    )))
-    .width(iced::Length::Fill)
-    .height(iced::Length::Fill)
-    .style(move |_t: &Theme, status| {
-        let is_hovered = matches!(status, svg::Status::Hovered);
-        let (icon_color, _) = icon_palette(state, variant, is_hovered);
-        svg::Style {
-            color: Some(icon_color),
-        }
-    });
+    let icon = svg(svg::Handle::from_path(icon_asset_path(icon_filename)))
+        .width(iced::Length::Fill)
+        .height(iced::Length::Fill)
+        .style(move |_t: &Theme, status| {
+            let is_hovered = matches!(status, svg::Status::Hovered);
+            let (icon_color, _) = icon_palette(state, variant, is_hovered);
+            svg::Style {
+                color: Some(icon_color),
+            }
+        });
 
     let btn = button(icon)
         .width(icon_button_box(size))
@@ -327,15 +331,12 @@ pub fn chevron_btn<'a, Message: Clone + 'a>(
 ) -> Element<'a, Message> {
     button(
         container(
-            svg(svg::Handle::from_path(format!(
-                "assets/icons/{}",
-                icon_filename
-            )))
-            .width(icon_size)
-            .height(icon_size)
-            .style(move |_t: &Theme, _s: svg::Status| svg::Style {
-                color: Some(COLOR_TEXT_SECONDARY),
-            }),
+            svg(svg::Handle::from_path(icon_asset_path(icon_filename)))
+                .width(icon_size)
+                .height(icon_size)
+                .style(move |_t: &Theme, _s: svg::Status| svg::Style {
+                    color: Some(COLOR_TEXT_SECONDARY),
+                }),
         )
         .width(btn_size)
         .height(btn_size)

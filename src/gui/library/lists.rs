@@ -91,12 +91,14 @@ pub fn album_art_widget<'a, Message: 'a>(
         match style {
             PlaceholderStyle::Large => container(
                 column![
-                    svg(svg::Handle::from_path("assets/icons/album.svg"))
-                        .width(Length::Fixed(96.0))
-                        .height(Length::Fixed(96.0))
-                        .style(|_t: &Theme, _s| svg::Style {
-                            color: Some(Color::from(COLOR_TEXT_SECONDARY))
-                        }),
+                    svg(svg::Handle::from_path(
+                        crate::gui::widgets::icon_asset_path("album.svg")
+                    ))
+                    .width(Length::Fixed(96.0))
+                    .height(Length::Fixed(96.0))
+                    .style(|_t: &Theme, _s| svg::Style {
+                        color: Some(Color::from(COLOR_TEXT_SECONDARY))
+                    }),
                     text("AuDoxiDY")
                         .font(crate::gui::theme::FONT_STAGE_WANDER)
                         .size(11)
@@ -119,12 +121,14 @@ pub fn album_art_widget<'a, Message: 'a>(
             })
             .into(),
             PlaceholderStyle::Small => container(
-                svg(svg::Handle::from_path("assets/icons/album.svg"))
-                    .width(Length::Fixed(20.0))
-                    .height(Length::Fixed(20.0))
-                    .style(|_t: &Theme, _s| svg::Style {
-                        color: Some(Color::from(COLOR_TEXT_SECONDARY)),
-                    }),
+                svg(svg::Handle::from_path(
+                    crate::gui::widgets::icon_asset_path("album.svg"),
+                ))
+                .width(Length::Fixed(20.0))
+                .height(Length::Fixed(20.0))
+                .style(|_t: &Theme, _s| svg::Style {
+                    color: Some(Color::from(COLOR_TEXT_SECONDARY)),
+                }),
             )
             .width(bounds)
             .height(bounds)

@@ -24,6 +24,7 @@ graphify-out/
 .criterion/
 logs/
 .changelogs-crates-update
+.gsd
 .planning/
 .opencode/
 .agents/

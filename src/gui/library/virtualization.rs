@@ -7,7 +7,7 @@ use super::types::{
     LibraryAlbumGroup, LibraryGridElement, LibraryGridRowData, LibraryListItem, LibraryViewMode,
     LibraryVirtualArtist, LibraryVirtualRow,
 };
-use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER};
+use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER, SPACE_XS};
 
 impl LibraryManager {
     /// Descarga los datos pesados de la RAM por inactividad, conservando un margen de seguridad
@@ -442,7 +442,7 @@ impl LibraryManager {
 
         // 1. Calcular estructura completa (Altura de cada fila)
         for chunk in albums.chunks(columns) {
-            let mut row_h = 252.0;
+            let mut row_h = 253.0;
             let mut expanded_id = None;
 
             for album_entry in chunk {
@@ -510,8 +510,8 @@ impl LibraryManager {
                     if let Some(songs) = self.expanded_album_songs.as_ref() {
                         let query = self.search_query.trim();
 
-                        // El bloque de canciones empieza después de las tarjetas (252px) + header (32px)
-                        let songs_block_start_y = row.top_y + 252.0 + LIST_ROW_HEADER;
+                        // El bloque de canciones empieza después de las tarjetas (253px) + header (32px)
+                        let songs_block_start_y = row.top_y + 253.0 + LIST_ROW_HEADER;
 
                         let mut v_songs = Vec::new();
                         let mut songs_top_space = 0.0;
@@ -775,23 +775,26 @@ impl LibraryManager {
 
             if let Some(albums) = albums_to_show {
                 let per_row = self.albums_per_row.get().max(1);
-                let card_inner_width = 182.0;
-                let spacing = 5.0;
-                let x_start = 5.0; // El padding left: 5.0 definido en library.rs para content_with_deselection
+                let card_inner_width = 189.0;
+                // La fila del grid no tiene separacion entre tarjetas y el contenedor
+                // interno no aplica padding lateral, de modo que la primera tarjeta
+                // arranca en el padding izquierdo del contenedor externo.
+                let spacing = 0.0;
+                let x_start = SPACE_XS;
 
                 for chunk in albums.chunks(per_row) {
-                    let mut row_h = 252.0;
+                    let mut row_h = 253.0;
                     let mut expanded_id = None;
 
                     for (col, album_entry) in chunk.iter().enumerate() {
                         let composite_id = format!("{}|{}", album_entry.artist, album_entry.id);
                         let x = x_start + col as f32 * (card_inner_width + spacing);
-                        // Usamos el ancho exacto de la tarjeta (182) para una selección precisa
+                        // Usamos el ancho exacto de la tarjeta (189) para una selección precisa
                         items.push((
                             LibraryListItem::Album(composite_id.clone()),
                             iced::Rectangle::new(
                                 iced::Point::new(x, current_y),
-                                iced::Size::new(card_inner_width, 252.0),
+                                iced::Size::new(card_inner_width, 253.0),
                             ),
                         ));
 
@@ -813,7 +816,7 @@ impl LibraryManager {
                                     .collect()
                             };
 
-                            let mut song_y = current_y + 252.0 + LIST_ROW_HEADER; // aprox padding
+                            let mut song_y = current_y + 253.0 + LIST_ROW_HEADER; // aprox padding
                             for song in filtered {
                                 items.push((
                                     LibraryListItem::Song(song.id),

@@ -241,7 +241,7 @@ pub fn view<'a>(
                 .into()
             } else {
                 let res_grid = iced::widget::responsive(move |size| {
-                    let card_w = 187.0;
+                    let card_w = 189.0;
                     let mut columns_count = (size.width / card_w).floor() as usize;
                     if columns_count < 2 {
                         columns_count = 2;
@@ -276,7 +276,7 @@ pub fn view<'a>(
                                 albums,
                                 active_expansion_id,
                             } => {
-                                let mut current_row = row![].spacing(5);
+                                let mut current_row = row![].spacing(0);
 
                                 for album_entry in albums {
                                     let album_id = album_entry.id.clone();
@@ -298,7 +298,7 @@ pub fn view<'a>(
                                         None,
                                         None,
                                         crate::gui::library::lists::PlaceholderStyle::Large,
-                                        Length::Fixed(152.0),
+                                        Length::Fixed(159.0),
                                         8.0,
                                     );
 
@@ -365,10 +365,10 @@ pub fn view<'a>(
                                         .interaction(iced::mouse::Interaction::Pointer);
 
                                     let card_container = container(card_wrapper)
-                                        .width(Length::Fixed(182.0))
+                                        .width(Length::Fixed(189.0))
                                         .padding(iced::Padding {
-                                            top: 18.0,
-                                            bottom: 15.0,
+                                            top: 15.0,
+                                            bottom: 12.0,
                                             left: 15.0,
                                             right: 15.0,
                                         })
@@ -448,9 +448,9 @@ pub fn view<'a>(
                                         .width(Length::Fill)
                                         .padding(iced::Padding {
                                             top: 0.0,
-                                            right: 10.0,
+                                            right: 8.0,
                                             bottom: 5.0,
-                                            left: 5.0,
+                                            left: 0.0,
                                         })
                                         .style(|_t| {
                                             container::Style::default().background(COLOR_BG)

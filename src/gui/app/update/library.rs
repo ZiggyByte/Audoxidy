@@ -1134,7 +1134,7 @@ impl crate::gui::app::AudoxidyApp {
                                     let search_query = self.library_manager.search_query.trim();
 
                                     for chunk in albums.chunks(cols) {
-                                        let mut row_h = 252.0;
+                                        let mut row_h = 253.0;
                                         let mut _has_expanded_here = false;
                                         for a in chunk {
                                             let comp = format!("{}|{}", a.artist, a.id);
@@ -1202,7 +1202,7 @@ impl crate::gui::app::AudoxidyApp {
 
                                                             found_y = Some(
                                                                 current_y
-                                                                    + 252.0
+                                                                    + 253.0
                                                                     + 30.0
                                                                     + (rendered_idx as f32 * 32.0),
                                                             );

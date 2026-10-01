@@ -57,6 +57,9 @@ Plays MP3, FLAC, WAV, OGG, AAC, M4A, and more.
 sudo apt install libasound2-dev libdav1d libdav1d-dev libpipewire-0.3-dev  # ALSA + PipeWire
 
 # Build and run
+git clone https://github.com/ZiggyByte/Audoxidy
+cd Audoxidy
+
 cargo build --release
 cargo run --release
 ```

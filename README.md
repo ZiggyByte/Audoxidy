@@ -4,7 +4,13 @@
 
 Audoxidy is a desktop audio player powered by a custom audio engine and a modern interface built with [Iced](https://iced.rs/). Designed for listeners who care about sound quality, it delivers advanced DSP processing, seamless transitions, and a responsive, native experience across Linux, Windows, and macOS.
 
+![](assets/screenshot.png)
+
 ## Features
+
+### Format Support
+
+Plays MP3, FLAC, WAV, OGG, AAC, M4A, and more.
 
 ### Audio Engine
 
@@ -20,10 +26,6 @@ Audoxidy is a desktop audio player powered by a custom audio engine and a modern
 - **Volume smoothing** — natural fade-in/fade-out with configurable ramp times, no clicks or pops
 - **ReplayGain** — automatic volume normalization with track and album gain from metadata tags
 - **Real-time loudness analysis** — fallback normalization when ReplayGain tags are absent
-
-### Format Support
-
-Plays MP3, FLAC, WAV, OGG, AAC, M4A, and more — powered by the Symphonia decoding framework with metadata extraction via Lofty.
 
 ### Library & Organization
 
@@ -52,24 +54,17 @@ Plays MP3, FLAC, WAV, OGG, AAC, M4A, and more — powered by the Symphonia decod
 
 ```bash
 # Prerequisites (Linux)
-sudo apt install libasound2-dev libpipewire-0.3-dev  # ALSA + PipeWire
+sudo apt install libasound2-dev libdav1d libdav1d-dev libpipewire-0.3-dev  # ALSA + PipeWire
 
 # Build and run
+git clone https://github.com/ZiggyByte/Audoxidy
+cd Audoxidy
+
 cargo build --release
 cargo run --release
 ```
 
 The configuration file is automatically created at `~/.config/audoxidy/config.ron` on first launch.
-
-## Key Crates
-
-| Crate | Purpose |
-|---|---|
-| `iced` | GPU-accelerated Rust GUI framework |
-| `cpal` | Cross-platform low-latency audio output |
-| `symphonia` | Audio format decoding (MP3, FLAC, WAV, OGG, AAC, and more) |
-| `rubato` | High-quality asynchronous sample rate conversion |
-| `rusqlite` | SQLite database with FTS5 full-text search |
 
 ## Roadmap
 

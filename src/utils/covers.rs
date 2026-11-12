@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Front-end-agnostic handle to a cover art image.
 ///
@@ -192,10 +192,25 @@ pub fn get_cover_pool() -> &'static rayon::ThreadPool {
     })
 }
 
+/// Cover files this process has queued for, or is currently writing.
+///
+/// A queued or running write means a cover file may appear on disk that no
+/// album or song row references yet, so the reference-based cleanup paths read
+/// this counter before they treat an unreferenced file as an orphan.
+pub static COVER_WRITES_IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+/// Number of cover writes queued or running.
+pub fn cover_writes_in_flight() -> usize {
+    COVER_WRITES_IN_FLIGHT.load(Ordering::Relaxed)
+}
+
 /// Enqueues a cover processing job safely.
 /// When too many jobs are pending (16), the scanner thread waits,
 /// preventing thousands of image buffers from being cloned into RAM simultaneously.
-pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
+///
+/// `file_name` is the complete name the writer stores the cover under; it is
+/// forwarded untouched, so the gateway channel carries no other representation.
+pub fn enqueue_cover_job(data: Vec<u8>, file_name: String) {
     let tx = COVER_GATEWAY.get_or_init(|| {
         let (tx, rx) = crossbeam::channel::bounded::<(Vec<u8>, String)>(16);
 
@@ -215,6 +230,7 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
                             );
                         }
                     });
+                    COVER_WRITES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
                 }
             });
         }
@@ -222,7 +238,11 @@ pub fn enqueue_cover_job(data: Vec<u8>, hash: String) {
         tx
     });
 
-    let _ = tx.send((data, hash));
+    COVER_WRITES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
+    if tx.send((data, file_name)).is_err() {
+        // Nothing will be written, so the queue depth must not keep the sweep away.
+        COVER_WRITES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 /// Clears the set of file paths that previously failed to load.
@@ -266,13 +286,29 @@ fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
 }
 
 /// Extracts from a raw image buffer, crops/scales to 400x400, and saves as .avif at 90% quality.
+///
+/// `safe_album_name` is a stem without extension; this variant appends `.avif`.
 pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
-    let cache_dir = crate::utils::paths::get().cover_cache_dir.clone();
-    if !cache_dir.exists() {
-        std::fs::create_dir_all(&cache_dir)?;
+    let cache_dir = &crate::utils::paths::get().cover_cache_dir;
+    process_and_save_cover_in(cache_dir, data, &format!("{}.avif", safe_album_name))
+}
+
+/// Writes a cover into `dir` under its complete file name.
+///
+/// `file_name` is joined verbatim: it already carries the `.avif` extension and
+/// the owner and content hashes the naming helpers composed, so no layer appends
+/// a second extension. The image is scaled to a square of the native cover edge
+/// and encoded as AVIF at 90% quality; an existing file is left untouched.
+pub fn process_and_save_cover_in(
+    dir: &Path,
+    data: &[u8],
+    file_name: &str,
+) -> std::io::Result<PathBuf> {
+    if !dir.exists() {
+        std::fs::create_dir_all(dir)?;
     }
 
-    let dst_path = cache_dir.join(format!("{}.avif", safe_album_name));
+    let dst_path = dir.join(file_name);
     if dst_path.exists() {
         return Ok(dst_path);
     }
@@ -520,6 +556,43 @@ pub fn album_cover_file_name(album_hash: &str, cover_hash: &str) -> Result<Strin
 pub fn song_cover_file_name(song_id: i64, cover_hash: &str) -> Result<String, CoverNameError> {
     validate_cover_hash(cover_hash)?;
     Ok(format!("song-{song_id}-{cover_hash}.avif"))
+}
+
+/// Resolves the one cover path a song row shows.
+///
+/// A per-song override wins over the album's cover; without one the album path is
+/// returned unchanged. `album_cover_path` is already the complete stored path and
+/// `override_hash` the raw hash kept in `SONGS.cover_override`, so the composed
+/// path is `cover_cache_dir/song-{song_id}-{hash}.avif`. A hash the naming helper
+/// refuses falls back to the album path instead of hiding the album's art.
+pub fn effective_cover_path(
+    album_cover_path: Option<&str>,
+    override_hash: Option<&str>,
+    song_id: i64,
+) -> Option<String> {
+    let album_cover_path = album_cover_path.filter(|path| !path.is_empty());
+
+    let Some(override_hash) = override_hash.filter(|hash| !hash.is_empty()) else {
+        return album_cover_path.map(str::to_owned);
+    };
+
+    match song_cover_file_name(song_id, override_hash) {
+        Ok(file_name) => Some(
+            crate::utils::paths::get()
+                .cover_cache_dir
+                .join(file_name)
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        Err(error) => {
+            tracing::warn!(
+                song_id,
+                error = %error,
+                "A song cover override cannot compose a file name; using the album cover"
+            );
+            album_cover_path.map(str::to_owned)
+        }
+    }
 }
 
 /// Decoded RGBA8 pixels ready to become a front-end image handle.
@@ -1774,5 +1847,86 @@ mod tests {
         assert!(matches!(error, CoverDecodeError::NotFound(_)));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_effective_cover_path_override_wins() {
+        let album_path = "cache/covers/album-hash-cover-hash.avif";
+
+        let resolved = effective_cover_path(Some(album_path), Some("ab12cd34"), 42)
+            .expect("un override siempre resuelve una ruta");
+
+        let file_name = Path::new(&resolved)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .expect("la ruta resuelta debe tener un nombre de archivo");
+        assert_eq!(
+            file_name, "song-42-ab12cd34.avif",
+            "el override nombra el archivo por su dueño y su contenido"
+        );
+        assert!(
+            resolved.starts_with(
+                crate::utils::paths::get()
+                    .cover_cache_dir
+                    .to_string_lossy()
+                    .as_ref()
+            ),
+            "la ruta del override vive en el directorio de carátulas"
+        );
+    }
+
+    #[test]
+    fn test_effective_cover_path_falls_back_to_album() {
+        let album_path = "cache/covers/album-hash-cover-hash.avif";
+
+        assert_eq!(
+            effective_cover_path(Some(album_path), None, 7),
+            Some(album_path.to_string()),
+            "sin override se muestra la carátula del álbum tal cual"
+        );
+        assert_eq!(
+            effective_cover_path(Some(album_path), Some(""), 7),
+            Some(album_path.to_string()),
+            "un override vacío no es una carátula propia"
+        );
+    }
+
+    #[test]
+    fn test_effective_cover_path_none_when_no_cover() {
+        assert_eq!(
+            effective_cover_path(None, None, 1),
+            None,
+            "sin carátula de álbum ni override no hay ruta que mostrar"
+        );
+        assert_eq!(effective_cover_path(Some(""), None, 1), None);
+    }
+
+    #[test]
+    fn test_cover_file_name_rejects_non_hex_hash() {
+        assert_eq!(
+            album_cover_file_name("aa", "bb"),
+            Ok("aa-bb.avif".to_string()),
+            "un nombre de álbum válido lleva ambos hashes"
+        );
+        assert_eq!(
+            song_cover_file_name(3, "bb"),
+            Ok("song-3-bb.avif".to_string()),
+            "un nombre propio válido lleva el dueño y el contenido"
+        );
+
+        assert_eq!(
+            album_cover_file_name("", "bb"),
+            Err(CoverNameError::EmptyHash)
+        );
+        assert_eq!(song_cover_file_name(3, ""), Err(CoverNameError::EmptyHash));
+        assert_eq!(
+            album_cover_file_name("aa", "../evil"),
+            Err(CoverNameError::NonHexHash),
+            "un hash no hexadecimal no puede convertirse en nombre de archivo"
+        );
+        assert_eq!(
+            song_cover_file_name(3, "zz"),
+            Err(CoverNameError::NonHexHash)
+        );
     }
 }

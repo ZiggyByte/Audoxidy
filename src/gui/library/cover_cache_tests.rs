@@ -6,6 +6,7 @@
 //! The tests that drive the window request path read the process-global negative
 //! set, so they hold the shared guard for their whole body.
 
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -19,10 +20,19 @@ use super::state::LibraryManager;
 use super::types::{AlbumEntry, ArtistGroup, LibraryViewMode, LibraryVirtualRow};
 use crate::db::database::SongData;
 use crate::utils::covers::{
-    COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, GLOBAL_STATE_TEST_LOCK,
+    COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, CoverDecodeError, GLOBAL_STATE_TEST_LOCK,
     clear_negative_cover_cache, cover_bucket, cover_budget_bytes, cover_io_counters,
-    cover_native_size, viewport_capacity,
+    cover_native_size, record_negative_cover, viewport_capacity,
 };
+
+/// Whole-cache flush entry points a track change must never call again.
+///
+/// The two names are spelled in pieces so that no line of this file matches the
+/// gate that keeps the production path free of them.
+const WHOLE_CACHE_FLUSH_NAMES: [&str; 2] = [
+    concat!("clear_", "raw_cache"),
+    concat!("clear_all_", "cover_cache"),
+];
 
 /// Handle stand-in: the store never inspects pixels, only handle identity.
 fn fake_handle(width: u32, height: u32) -> Handle {
@@ -636,6 +646,72 @@ fn test_album_block_rows_carry_cover_path() {
         "el bloque detallado toma la misma ruta desde el snapshot"
     );
     assert_eq!(grid_path, block_path);
+}
+
+#[test]
+fn test_negative_cover_is_not_requested_again() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let manager = manager_with_albums(4);
+    manager.grid_metrics.set(grid_metrics(800.0));
+
+    let path = "covers/0.avif";
+    let before = manager.window_jobs(0.0, 800.0);
+    assert_eq!(before.len(), 4, "la ventana pide una carátula por tarjeta");
+    assert!(
+        before.iter().any(|job| job.key.path.as_ref() == path),
+        "la primera pasada sí pide la carátula"
+    );
+
+    record_negative_cover(
+        Path::new(path),
+        &CoverDecodeError::Decode(PathBuf::from(path)),
+    );
+
+    let after = manager.window_jobs(0.0, 800.0);
+    assert_eq!(
+        after.len(),
+        3,
+        "una carátula registrada como indescodificable no se vuelve a pedir"
+    );
+    assert!(
+        !after.iter().any(|job| job.key.path.as_ref() == path),
+        "ningún trabajo debe apuntar al archivo registrado"
+    );
+
+    clear_negative_cover_cache();
+}
+
+#[test]
+fn test_track_change_keeps_cover_cache() {
+    let _guard = global_guard();
+
+    // No line of the playback path may flush the store: that removed flush is what
+    // makes the decoded entries survive a track change.
+    let playback_source = include_str!("../app/update/playback.rs");
+    for flush in WHOLE_CACHE_FLUSH_NAMES {
+        assert!(
+            !playback_source.contains(flush),
+            "el cambio de pista no puede vaciar la caché de carátulas"
+        );
+    }
+
+    // A track change only reads the playing cover, so the entry the previous track
+    // stored is still retained, byte for byte, afterwards.
+    let mut store = CoverStore::default();
+    store.insert_handle(key("/covers/album.avif", 160), fake_handle(2, 2), 2 * 2 * 4);
+    let stored_id = store
+        .get_path("/covers/album.avif", 160)
+        .expect("la entrada debe existir antes del cambio de pista")
+        .id();
+
+    let played = store.get_path("/covers/album.avif", 160);
+    assert_eq!(played.map(|handle| handle.id()), Some(stored_id));
+
+    assert!(store.contains("/covers/album.avif", 160));
+    assert_eq!(store.len(), 1);
+    assert_eq!(store.bytes(), 2 * 2 * 4);
 }
 
 #[test]

@@ -489,13 +489,20 @@ fn decode_worker_loop(
                     error: None,
                 }
             }
-            Ok(Err(error)) => CoverDecodeOutcome {
-                key: job.key,
-                generation: job.generation,
-                handle: None,
-                bytes: 0,
-                error: Some(error.to_string()),
-            },
+            Ok(Err(error)) => {
+                // A file that is present and still undecodable is recorded, so the
+                // request window stops asking for it; a missing or unreadable file
+                // stays retryable because a write may still land.
+                crate::utils::covers::record_negative_cover(&job.path, &error);
+
+                CoverDecodeOutcome {
+                    key: job.key,
+                    generation: job.generation,
+                    handle: None,
+                    bytes: 0,
+                    error: Some(error.to_string()),
+                }
+            }
             Err(_) => CoverDecodeOutcome {
                 key: job.key,
                 generation: job.generation,

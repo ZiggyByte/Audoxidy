@@ -1,6 +1,7 @@
 //! iced subscription and theme wiring for `AudoxidyApp`.
 
 use crate::core::CoreEvent;
+use crate::gui::library::cover_cache::{CoverDecodeOutcome, cover_decode_outcomes};
 use crate::integrations::control::{
     ExternalControlEvent, ExternalControlReceiver, external_control_stream,
 };
@@ -81,6 +82,48 @@ fn core_event_stream(
         });
     if let Err(e) = spawn_result {
         tracing::error!("No se pudo crear el hilo puente de CoreEvent: {e}");
+    }
+
+    out
+}
+
+/// Wrapper around the crossbeam decode-outcome receiver for iced subscription
+/// identity.
+///
+/// As with the CoreEvent recipe, hashing only by `TypeId` keeps the hash stable
+/// across subscription evaluations, so the bridge thread is created once instead
+/// of being canceled and restarted on every update.
+#[derive(Clone)]
+pub struct CoverDecodeReceiver(pub crossbeam::channel::Receiver<CoverDecodeOutcome>);
+
+impl std::hash::Hash for CoverDecodeReceiver {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::any::TypeId::of::<CoverDecodeOutcome>().hash(state);
+    }
+}
+
+/// Adapts the synchronous decode-outcome receiver to an async stream for iced.
+///
+/// A dedicated bridge thread performs the blocking `recv()` and forwards each
+/// outcome to an unbounded async channel, so the UI thread never waits on a
+/// decode backlog. If the subscription is replaced or dropped,
+/// `unbounded_send` fails and the bridge thread exits.
+fn cover_decode_stream(
+    rx: crossbeam::channel::Receiver<CoverDecodeOutcome>,
+) -> impl iced::futures::Stream<Item = CoverDecodeOutcome> + Send + 'static {
+    let (tx, out) = iced::futures::channel::mpsc::unbounded();
+
+    let spawn_result = std::thread::Builder::new()
+        .name("cover-decode-bridge".into())
+        .spawn(move || {
+            while let Ok(outcome) = rx.recv() {
+                if tx.unbounded_send(outcome).is_err() {
+                    break;
+                }
+            }
+        });
+    if let Err(e) = spawn_result {
+        tracing::error!("No se pudo crear el hilo puente de decodificación de carátulas: {e}");
     }
 
     out
@@ -194,6 +237,15 @@ impl AudoxidyApp {
                 core_event_stream(rx.0.clone())
             })
             .map(Message::CoreEvent),
+        );
+
+        // Decoded covers: one bridge for the whole run, fed by the decode workers.
+        subs.push(
+            iced::Subscription::run_with(
+                CoverDecodeReceiver(cover_decode_outcomes().clone()),
+                |rx| cover_decode_stream(rx.0.clone()),
+            )
+            .map(Message::CoverDecoded),
         );
 
         iced::Subscription::batch(subs)

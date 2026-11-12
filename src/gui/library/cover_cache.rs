@@ -11,15 +11,22 @@
 //! write pool, whose workers park on its own queue for the life of the process
 //! and never run a spawned job. Results return as [`CoverDecodeOutcome`] values
 //! that the app forwards as the `CoverDecoded` message.
+//!
+//! The grid window builder memoizes its row elements in [`GridRowsMemo`], so a
+//! layout pass that changes no geometry clones one `Rc` and the stored spacers
+//! instead of rebuilding the rows and resolving a handle per card.
 
 use std::cell::Cell;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::OnceLock;
 
 use iced::widget::image::Handle;
 
+use super::grid_metrics::GridMetrics;
+use super::state::LibraryManager;
 use crate::utils::covers::{CoverBudget, cover_metrics, decode_cover_file};
 
 /// Job queue capacity: a scroll burst waits in the queue instead of allocating
@@ -214,6 +221,59 @@ impl std::fmt::Debug for CoverDecodeOutcome {
     }
 }
 
+/// One element of the memoized grid window.
+///
+/// The set carries everything the grid draws: the album cards with a handle
+/// already resolved for each one, and the expanded album's song block, which must
+/// survive every memo hit unchanged.
+#[derive(Debug, Clone)]
+pub enum GridCoverElement {
+    /// One row of album cards.
+    AlbumRow {
+        /// Albums of the row.
+        albums: Vec<crate::gui::library::AlbumEntry>,
+        /// Handle per album, aligned with `albums`; `None` until its decode lands.
+        handles: Vec<Option<Handle>>,
+        /// Composite id of the expanded album when it sits in this row.
+        active_expansion_id: Option<String>,
+    },
+    /// The song block of the expanded album.
+    ExpandedSongs {
+        /// Composite id of the expanded album.
+        album_id: String,
+        /// Rendered songs with their index inside the snapshot list.
+        songs: Vec<(Arc<crate::db::database::SongData>, usize)>,
+        /// Height of the songs above the render window.
+        top_space: f32,
+        /// Height of the songs below the render window.
+        bottom_space: f32,
+    },
+}
+
+/// Memoized grid window: the geometry it was built for and every value it returns.
+///
+/// Storing the spacers beside the row slice is deliberate. The grid renders the
+/// accumulated heights of the rows outside the render window, so a hit that
+/// returned zero for either spacer would collapse the content height and shift
+/// the scroll position.
+#[derive(Debug)]
+pub struct GridRowsMemo {
+    /// Geometry the rows were built with.
+    pub metrics: GridMetrics,
+    /// Viewport top the rows were built for.
+    pub viewport_y: f32,
+    /// Viewport height the rows were built for.
+    pub viewport_h: f32,
+    /// Decode bucket of the resolved handles.
+    pub bucket: u32,
+    /// Height of the rows above the render window.
+    pub top_space: f32,
+    /// Height of the rows below the render window.
+    pub bottom_space: f32,
+    /// Row elements shared by every layout pass with the same key.
+    pub elements: Rc<[GridCoverElement]>,
+}
+
 /// Bounded job queue and unbounded result channel behind the decode workers.
 struct DecodePipeline {
     jobs: crossbeam::channel::Sender<DecodeJob>,
@@ -329,6 +389,44 @@ fn decode_worker_loop(
         if outcomes.send(outcome).is_err() {
             break;
         }
+    }
+}
+
+impl LibraryManager {
+    /// Requests a decode for every job whose key is neither stored nor in flight.
+    ///
+    /// `enqueue` is the queue seam: production passes the global decode queue and
+    /// a test passes a counting closure, so the request policy runs without a
+    /// worker. Returns the number of accepted jobs.
+    pub fn request_jobs_with(
+        &mut self,
+        jobs: Vec<DecodeJob>,
+        mut enqueue: impl FnMut(&DecodeJob) -> bool,
+    ) -> usize {
+        let mut accepted = 0;
+
+        for job in jobs {
+            if self.cover_store.request_key(job, |job| enqueue(job)) {
+                accepted += 1;
+            }
+        }
+
+        accepted
+    }
+
+    /// Requests the decode of every cover the current viewport shows.
+    ///
+    /// The visible rows already resolve to a handle; this only asks for the paths
+    /// whose handle is still missing. A full queue drops the request and leaves
+    /// the key retryable for the next scroll or decode completion.
+    pub fn request_cover_window(&mut self) {
+        let height = self
+            .last_viewport
+            .map(|viewport| viewport.height)
+            .unwrap_or(800.0);
+        let jobs = self.window_jobs(self.scroll_offset.y, height);
+
+        self.request_jobs_with(jobs, |job| request_cover_decode(job.clone()));
     }
 }
 

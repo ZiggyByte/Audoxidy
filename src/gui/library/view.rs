@@ -21,12 +21,11 @@ use iced::{
 };
 use std::sync::{Arc, Mutex};
 
+use super::cover_cache::GridCoverElement;
 use super::state::{
     LIBRARY_SCROLL_ID, LIBRARY_SEARCH_ID, LibraryManager, library_redraw_count_log,
 };
-use super::types::{
-    AlbumEntry, LibraryGridElement, LibraryListItem, LibrarySource, LibraryViewMode,
-};
+use super::types::{AlbumEntry, LibraryListItem, LibrarySource, LibraryViewMode};
 
 pub fn view<'a>(
     manager: &'a LibraryManager,
@@ -252,8 +251,8 @@ pub fn view<'a>(
                         .as_ref()
                         .map(|v| v.height)
                         .unwrap_or(1000.0);
-                    let (top_space, bottom_space, visible_elements) = manager
-                        .get_visible_grid_elements(&metrics, manager.scroll_offset.y, view_h);
+                    let (top_space, bottom_space, visible_elements) =
+                        manager.get_visible_grid_rows(&metrics, manager.scroll_offset.y, view_h);
 
                     let mut grid_col: iced::widget::Column<'_, Message> = column![].spacing(0);
 
@@ -261,21 +260,21 @@ pub fn view<'a>(
                         grid_col = grid_col.push(Space::new().height(Length::Fixed(top_space)));
                     }
 
-                    for element in visible_elements {
+                    for element in visible_elements.iter() {
                         match element {
-                            LibraryGridElement::AlbumRow {
+                            GridCoverElement::AlbumRow {
                                 albums,
+                                handles,
                                 active_expansion_id,
                             } => {
                                 let mut current_row = row![].spacing(0);
 
-                                for album_entry in albums {
+                                for (index, album_entry) in albums.iter().enumerate() {
                                     let album_id = album_entry.id.clone();
                                     let album_title = album_entry.title.clone();
                                     let artist_name = album_entry.artist.clone();
                                     let genre_name = album_entry.genre.clone();
                                     let year_str = album_entry.year.clone();
-                                    let cover_path = album_entry.cover_path.clone();
 
                                     let composite_id = format!("{}|{}", artist_name, album_id);
                                     let is_expanded = active_expansion_id.as_deref()
@@ -285,9 +284,9 @@ pub fn view<'a>(
                                         .contains(&LibraryListItem::Album(composite_id.clone()));
 
                                     let album_art = crate::gui::library::lists::album_art_widget(
-                                        cover_path.as_deref(),
                                         None,
                                         None,
+                                        handles.get(index).cloned().flatten(),
                                         crate::gui::library::lists::PlaceholderStyle::Large {
                                             icon_side:
                                                 crate::gui::library::grid_metrics::album_placeholder_icon_side(
@@ -386,7 +385,7 @@ pub fn view<'a>(
                                 }
                                 grid_col = grid_col.push(current_row);
                             }
-                            LibraryGridElement::ExpandedSongs {
+                            GridCoverElement::ExpandedSongs {
                                 album_id: _,
                                 songs,
                                 top_space: s_top,
@@ -400,9 +399,9 @@ pub fn view<'a>(
                                         left: 0.0,
                                     });
 
-                                if s_top > 0.0 {
+                                if *s_top > 0.0 {
                                     album_songs_col = album_songs_col
-                                        .push(Space::new().height(Length::Fixed(s_top)));
+                                        .push(Space::new().height(Length::Fixed(*s_top)));
                                 }
 
                                 for (song, _song_i) in songs {
@@ -428,7 +427,7 @@ pub fn view<'a>(
 
                                     let song_row =
                                         crate::gui::library::lists::universal_song_row_widget(
-                                            &song,
+                                            song,
                                             0,
                                             is_song_selected,
                                             &columns,
@@ -441,9 +440,9 @@ pub fn view<'a>(
                                     album_songs_col = album_songs_col.push(song_row);
                                 }
 
-                                if s_bottom > 0.0 {
+                                if *s_bottom > 0.0 {
                                     album_songs_col = album_songs_col
-                                        .push(Space::new().height(Length::Fixed(s_bottom)));
+                                        .push(Space::new().height(Length::Fixed(*s_bottom)));
                                 }
 
                                 grid_col = grid_col.push(

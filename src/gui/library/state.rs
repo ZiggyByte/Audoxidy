@@ -105,6 +105,18 @@ pub struct LibraryManager {
             Option<(String, bool, usize, usize, f64)>,
         )>,
     >, // (top_space, bottom_space, total_h, rows, sticky_info)
+    /// Handles minted by the decode workers, indexed by cover path and bucket.
+    ///
+    /// It is a plain field with no lock: the update handlers mutate it and the
+    /// row builders read it through `&self`.
+    pub cover_store: super::cover_cache::CoverStore,
+    /// Memoized grid window: its geometry key, the spacers and the row elements.
+    pub cached_grid_rows: std::cell::RefCell<Option<super::cover_cache::GridRowsMemo>>,
+    /// Display scale factor used to pick the decode bucket for a rendered cover.
+    pub scale_factor: f32,
+    /// Scroll counter stamped on every decode request, so a stale result can be
+    /// told apart from one belonging to the current scroll.
+    pub scroll_generation: u64,
     pub data_unloaded: bool,
     pub pending_reveal_path: Option<String>,
 }
@@ -187,6 +199,10 @@ impl Default for LibraryManager {
             scroll_offset: iced::Vector::new(0.0, 0.0),
             cached_detailed_view: std::cell::RefCell::new(None),
             cached_visible_elements: std::cell::RefCell::new(None),
+            cover_store: super::cover_cache::CoverStore::default(),
+            cached_grid_rows: std::cell::RefCell::new(None),
+            scale_factor: 1.0,
+            scroll_generation: 0,
             data_unloaded: false,
             pending_reveal_path: None,
         }

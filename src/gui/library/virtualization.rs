@@ -2,6 +2,7 @@
 
 use iced::Task;
 
+use super::cover_cache::{CoverKey, DecodeJob, GridCoverElement, GridRowsMemo};
 use super::grid_metrics::{GridMetrics, grid_rows, song_y_in_row};
 use super::state::{LIBRARY_SCROLL_ID, LibraryManager};
 use super::types::{
@@ -68,12 +69,14 @@ impl LibraryManager {
     pub fn invalidate_cache(&mut self) {
         self.cached_detailed_view.replace(None);
         self.cached_visible_elements.replace(None);
+        self.cached_grid_rows.replace(None);
         // Al invalidar caché por cambio de estructura, el hint de scroll ya no es válido
         self.selected_item_hint = None;
     }
 
     pub fn invalidate_visible_cache(&mut self) {
         self.cached_visible_elements.replace(None);
+        self.cached_grid_rows.replace(None);
     }
 
     /// Genera la estructura jerárquica para la vista de biblioteca
@@ -560,6 +563,165 @@ impl LibraryManager {
         }
 
         (top_space, bottom_space, visible_elements)
+    }
+
+    /// Returns the grid window with one handle already resolved per album card.
+    ///
+    /// A memo hit for the same geometry, viewport and bucket clones the stored
+    /// row slice and returns the stored spacers, so the layout pass opens no file
+    /// and performs no cover lookup. A miss rebuilds every element from the
+    /// snapshot, resolving one borrowed lookup per card and keeping the expanded
+    /// album's song block verbatim.
+    pub fn get_visible_grid_rows(
+        &self,
+        metrics: &GridMetrics,
+        viewport_y: f32,
+        viewport_h: f32,
+    ) -> (f32, f32, std::rc::Rc<[GridCoverElement]>) {
+        let bucket = crate::utils::covers::cover_bucket(
+            metrics.cover_size,
+            self.scale_factor,
+            crate::utils::covers::cover_native_size(),
+        );
+
+        let memo_hit = {
+            let memo = self.cached_grid_rows.borrow();
+            memo.as_ref()
+                .filter(|memo| {
+                    memo.metrics == *metrics
+                        && memo.viewport_y == viewport_y
+                        && memo.viewport_h == viewport_h
+                        && memo.bucket == bucket
+                })
+                .map(|memo| {
+                    (
+                        memo.top_space,
+                        memo.bottom_space,
+                        std::rc::Rc::clone(&memo.elements),
+                    )
+                })
+        };
+
+        if let Some(hit) = memo_hit {
+            return hit;
+        }
+
+        let (top_space, bottom_space, elements) =
+            self.get_visible_grid_elements(metrics, viewport_y, viewport_h);
+
+        let mut rows = Vec::with_capacity(elements.len());
+        for element in elements {
+            rows.push(match element {
+                LibraryGridElement::AlbumRow {
+                    albums,
+                    active_expansion_id,
+                } => {
+                    let handles = albums
+                        .iter()
+                        .map(|album| {
+                            album
+                                .cover_path
+                                .as_deref()
+                                .filter(|path| !path.is_empty())
+                                .and_then(|path| self.cover_store.get_path(path, bucket as u16))
+                        })
+                        .collect();
+
+                    GridCoverElement::AlbumRow {
+                        albums,
+                        handles,
+                        active_expansion_id,
+                    }
+                }
+                LibraryGridElement::ExpandedSongs {
+                    album_id,
+                    songs,
+                    top_space,
+                    bottom_space,
+                } => GridCoverElement::ExpandedSongs {
+                    album_id,
+                    songs,
+                    top_space,
+                    bottom_space,
+                },
+            });
+        }
+
+        let elements: std::rc::Rc<[GridCoverElement]> = std::rc::Rc::from(rows);
+        self.cached_grid_rows.replace(Some(GridRowsMemo {
+            metrics: *metrics,
+            viewport_y,
+            viewport_h,
+            bucket,
+            top_space,
+            bottom_space,
+            elements: std::rc::Rc::clone(&elements),
+        }));
+
+        (top_space, bottom_space, elements)
+    }
+
+    /// Returns the handle stored for a cover path at the rendered logical size.
+    ///
+    /// The bucket is derived here from the display scale so a read cannot pick a
+    /// different bucket from the request that filled the entry. The lookup is
+    /// borrowed: no key allocation and no lock.
+    pub fn cover_handle(
+        &self,
+        path: Option<&str>,
+        logical_px: f32,
+    ) -> Option<iced::widget::image::Handle> {
+        let path = path.filter(|path| !path.is_empty())?;
+        let bucket = crate::utils::covers::cover_bucket(
+            logical_px,
+            self.scale_factor,
+            crate::utils::covers::cover_native_size(),
+        );
+
+        self.cover_store.get_path(path, bucket as u16)
+    }
+
+    /// Decode jobs for the cover paths the current viewport shows.
+    ///
+    /// Only album cards request decodes here, and a path the negative set already
+    /// knows to fail is skipped. Every job is stamped with the current scroll
+    /// generation so a result can be identified as stale.
+    pub fn window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
+        let metrics = self.grid_metrics.get();
+        let bucket = crate::utils::covers::cover_bucket(
+            metrics.cover_size,
+            self.scale_factor,
+            crate::utils::covers::cover_native_size(),
+        );
+        let (_, _, elements) = self.get_visible_grid_elements(&metrics, viewport_y, viewport_h);
+
+        let mut jobs = Vec::new();
+        for element in &elements {
+            let LibraryGridElement::AlbumRow { albums, .. } = element else {
+                continue;
+            };
+
+            for album in albums {
+                let Some(path) = album.cover_path.as_deref().filter(|path| !path.is_empty()) else {
+                    continue;
+                };
+                if crate::utils::covers::is_cover_negative(path) {
+                    continue;
+                }
+
+                jobs.push(DecodeJob {
+                    key: CoverKey {
+                        path: std::sync::Arc::from(path),
+                        bucket: bucket as u16,
+                    },
+                    path: std::path::PathBuf::from(path),
+                    bucket,
+                    generation: self.scroll_generation,
+                });
+            }
+        }
+
+        jobs
     }
 
     /// Obtiene el rango Y (y, height) de un ítem en la biblioteca virtualizada

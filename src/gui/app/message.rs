@@ -87,6 +87,11 @@ pub enum Message {
         Vec<(String, String, String, String, String, Option<String>)>,
         (usize, usize, f64, f64, usize), // songs, albums, duration, size, artists
     ),
+    /// A decoded cover arrived from a decode worker.
+    ///
+    /// The payload owns the one handle minted for its entry, so cloning the
+    /// message only bumps a reference count.
+    CoverDecoded(crate::gui::library::cover_cache::CoverDecodeOutcome),
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     LibraryShowPlaying,

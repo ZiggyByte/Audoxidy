@@ -796,11 +796,39 @@ impl crate::gui::app::AudoxidyApp {
                 self.filters_manager
                     .build_filter_index(self.core.database());
                 self.update_selection_stats();
+                // The snapshot now holds the cover paths the next layout will read.
+                self.library_manager.request_cover_window();
 
                 // Si había una petición de revelado pendiente (esperando a que los filtros se limpiaran), continuar ahora.
                 if let Some(path) = self.library_manager.pending_reveal_path.clone() {
                     return self.handle_library_reveal(Some(path));
                 }
+
+                Task::none()
+            }
+            Message::CoverDecoded(outcome) => {
+                if let Some(handle) = outcome.handle {
+                    self.library_manager.cover_store.insert_handle(
+                        outcome.key.clone(),
+                        handle,
+                        outcome.bytes,
+                    );
+                    // The grid rows carry the resolved handles, so a new one
+                    // changes the rows the next layout pass receives.
+                    self.library_manager.cached_grid_rows.replace(None);
+                } else if let Some(error) = outcome.error.as_deref() {
+                    tracing::debug!(
+                        path = %outcome.key.path,
+                        error,
+                        "No se pudo decodificar una carátula"
+                    );
+                }
+
+                // A failure releases its key too, so the next request retries it.
+                self.library_manager
+                    .cover_store
+                    .clear_in_flight(&outcome.key);
+                self.library_manager.request_cover_window();
 
                 Task::none()
             }
@@ -1037,6 +1065,7 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 self.library_manager.invalidate_visible_cache();
+                self.library_manager.request_cover_window();
                 Task::none()
             }
             Message::FilterScroll(viewport) => {

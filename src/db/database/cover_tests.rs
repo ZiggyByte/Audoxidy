@@ -263,3 +263,73 @@ fn test_override_only_when_image_differs() {
         "el archivo propio se nombra por el id de la canción y el hash del contenido"
     );
 }
+
+#[test]
+fn test_album_cover_file_name_embeds_album_and_content_hash() {
+    let album_hash = "aa11bb22";
+    let cover_hash = "cc33dd44";
+
+    let file_name = crate::utils::covers::album_cover_file_name(album_hash, cover_hash)
+        .expect("dos hashes hexadecimales componen un nombre");
+    assert_eq!(file_name, format!("{album_hash}-{cover_hash}.avif"));
+    assert_eq!(
+        file_name.matches(".avif").count(),
+        1,
+        "el nombre lleva la extensión una sola vez"
+    );
+    assert_eq!(
+        crate::utils::covers::album_cover_stem(album_hash, cover_hash),
+        Ok(format!("{album_hash}-{cover_hash}")),
+        "el tallo es el nombre sin extensión"
+    );
+
+    // The same picture under a different owner composes a different file.
+    let other = crate::utils::covers::album_cover_file_name("ee55ff66", cover_hash)
+        .expect("el otro álbum también compone un nombre");
+    assert_ne!(file_name, other);
+
+    // The write path stores exactly this composition for a real album row.
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+    let (stored_name, needs_processing) = insert_song(
+        &mut db,
+        "/music/embed/track.flac",
+        "Embed Album",
+        Some(cover_hash),
+    );
+    assert!(needs_processing);
+    assert_eq!(
+        stored_name,
+        format!("{}-{cover_hash}.avif", album_hash_id(&db, "Embed Album")),
+        "el nombre escrito lleva el hash del álbum y el del contenido"
+    );
+}
+
+#[test]
+fn test_song_cover_file_name_embeds_owner_and_content_hash() {
+    let cover_hash = "cc33dd44";
+
+    let file_name = crate::utils::covers::song_cover_file_name(42, cover_hash)
+        .expect("un hash hexadecimal compone un nombre propio");
+    assert_eq!(file_name, format!("song-42-{cover_hash}.avif"));
+    assert_eq!(
+        crate::utils::covers::song_cover_stem(42, cover_hash),
+        Ok(format!("song-42-{cover_hash}")),
+        "el tallo es el nombre sin extensión"
+    );
+
+    // A different owner never shares the file.
+    let other = crate::utils::covers::song_cover_file_name(43, cover_hash)
+        .expect("otra canción también compone un nombre");
+    assert_ne!(file_name, other);
+
+    // The resolved path the read layer hands out ends in this same file name.
+    let album_path = "cache/covers/album-hash-cover-hash.avif";
+    let resolved = effective_cover_path(Some(album_path), Some(cover_hash), 42)
+        .expect("un override siempre resuelve una ruta");
+    assert_eq!(
+        Path::new(&resolved)
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(file_name.as_str())
+    );
+}

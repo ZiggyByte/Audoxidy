@@ -436,6 +436,7 @@ pub fn view<'a>(
                                             playing_path,
                                             LIST_ROW_HEADER,
                                             false,
+                                            None,
                                         );
                                     album_songs_col = album_songs_col.push(song_row);
                                 }
@@ -538,6 +539,7 @@ pub fn view<'a>(
                         &manager.column_widths,
                         Message::SelectSong(Some(song.id)),
                         playing_path,
+                        manager.cover_handle(song.compressed_cached_cover_root.as_deref(), 32.0),
                     )
                 },
                 LIST_ROW,

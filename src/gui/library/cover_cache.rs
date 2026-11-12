@@ -586,11 +586,9 @@ impl LibraryManager {
             .map(|viewport| viewport.height)
             .unwrap_or(800.0);
         let metrics = self.grid_metrics.get();
-        let bucket = crate::utils::covers::cover_bucket(
-            metrics.cover_size,
-            self.scale_factor,
-            crate::utils::covers::cover_native_size(),
-        );
+        // The budget follows the bucket the current mode renders, so a list mode
+        // sizes its retained bytes by the covers its rows actually use.
+        let bucket = self.window_bucket();
         let capacity = match self.view_mode {
             LibraryViewMode::Grid => {
                 crate::utils::covers::viewport_capacity(metrics.columns, height, metrics.row_height)

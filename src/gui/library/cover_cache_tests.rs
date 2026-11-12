@@ -16,11 +16,12 @@ use super::cover_cache::{
 };
 use super::grid_metrics::{grid_metrics, row_count, total_content_height};
 use super::state::LibraryManager;
-use super::types::AlbumEntry;
+use super::types::{AlbumEntry, ArtistGroup, LibraryViewMode, LibraryVirtualRow};
 use crate::db::database::SongData;
 use crate::utils::covers::{
     COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, GLOBAL_STATE_TEST_LOCK,
-    clear_negative_cover_cache, cover_budget_bytes, cover_io_counters, viewport_capacity,
+    clear_negative_cover_cache, cover_bucket, cover_budget_bytes, cover_io_counters,
+    cover_native_size, viewport_capacity,
 };
 
 /// Handle stand-in: the store never inspects pixels, only handle identity.
@@ -59,6 +60,63 @@ fn manager_with_albums(count: usize) -> LibraryManager {
     );
 
     manager
+}
+
+/// Manager with one artist group whose songs belong to a single album.
+///
+/// `cover` is the already-resolved path the read layer put on each song row, and
+/// the album snapshot exposes the same path, so a test can compare what the grid
+/// card and the detailed list receive.
+fn manager_with_one_album(cover: &str, songs: usize) -> LibraryManager {
+    let mut manager = LibraryManager::default();
+
+    let songs: Vec<Arc<SongData>> = (0..songs)
+        .map(|index| {
+            let mut song = SongData::default();
+            song.id = index as i64 + 1;
+            song.title = Some(Arc::from(format!("Song {index}").into_boxed_str()));
+            song.artist = Some(Arc::from("Artist"));
+            song.album = Some(Arc::from("Album 0"));
+            song.compressed_cached_cover_root = Some(Arc::from(cover));
+            Arc::new(song)
+        })
+        .collect();
+
+    manager.artist_groups = vec![ArtistGroup {
+        name: "Artist".to_string(),
+        albums_count: 1,
+        songs_count: songs.len(),
+        songs,
+        duration_secs: 0.0,
+    }];
+    manager.cached_albums = Some(vec![AlbumEntry {
+        id: "album-0".to_string(),
+        title: "Album 0".to_string(),
+        artist: "Artist".to_string(),
+        genre: "Genre".to_string(),
+        year: "2024".to_string(),
+        cover_path: Some(cover.to_string()),
+    }]);
+
+    manager
+}
+
+/// Cover path of the first album card in a grid row set.
+fn first_grid_cover_path(rows: &[GridCoverElement]) -> Option<String> {
+    rows.iter().find_map(|element| match element {
+        GridCoverElement::AlbumRow { albums, .. } => {
+            albums.first().and_then(|album| album.cover_path.clone())
+        }
+        GridCoverElement::ExpandedSongs { .. } => None,
+    })
+}
+
+/// Cover path of the first album block in a row set.
+fn first_block_cover_path(rows: &[LibraryVirtualRow]) -> Option<String> {
+    rows.iter().find_map(|row| match row {
+        LibraryVirtualRow::AlbumBlock { cover_path, .. } => cover_path.clone(),
+        _ => None,
+    })
 }
 
 #[test]
@@ -492,4 +550,156 @@ fn test_cover_prefetch_discards_stale_generation() {
     // One generation older but still needed by the window is kept.
     assert!(manager.apply_cover_decoded(outcome("covers/window.avif", 3)));
     assert!(manager.cover_store.contains("covers/window.avif", 160));
+}
+
+#[test]
+fn test_request_window_emits_list_mode_buckets() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let native = cover_native_size();
+
+    // The detailed list draws the album card's cover at 220 logical pixels.
+    let mut manager = manager_with_one_album("covers/detailed.avif", 2);
+    manager.view_mode = LibraryViewMode::DetailedList;
+    let detailed_bucket = cover_bucket(220.0, manager.scale_factor, native);
+    let jobs = manager.window_jobs(0.0, 800.0);
+    assert!(
+        !jobs.is_empty(),
+        "el modo detallado debe pedir la carátula de su tarjeta"
+    );
+    assert!(
+        jobs.iter()
+            .all(|job| job.key.bucket == detailed_bucket as u16),
+        "cada trabajo del modo detallado usa el bucket de 220"
+    );
+
+    // The thumbnail list draws one 32 px thumbnail per visible song row.
+    let mut manager = manager_with_one_album("covers/thumb.avif", 3);
+    manager.view_mode = LibraryViewMode::ThumbnailList;
+    let thumbnail_bucket = cover_bucket(32.0, manager.scale_factor, native);
+    let jobs = manager.window_jobs(0.0, 800.0);
+    assert!(
+        !jobs.is_empty(),
+        "el modo miniatura debe pedir una carátula por fila"
+    );
+    assert!(
+        jobs.iter()
+            .all(|job| job.key.bucket == thumbnail_bucket as u16),
+        "cada trabajo del modo miniatura usa el bucket de 32"
+    );
+    assert_ne!(
+        detailed_bucket, thumbnail_bucket,
+        "los dos modos de lista no comparten bucket"
+    );
+
+    // The grid keeps requesting the bucket its measured card reads.
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(4);
+    manager.view_mode = LibraryViewMode::Grid;
+    manager.grid_metrics.set(metrics);
+    let grid_bucket = cover_bucket(metrics.cover_size, manager.scale_factor, native);
+    let jobs = manager.window_jobs(0.0, 800.0);
+    assert_eq!(jobs.len(), 4);
+    assert!(
+        jobs.iter().all(|job| job.key.bucket == grid_bucket as u16),
+        "cada trabajo de la cuadrícula usa el bucket de su tarjeta"
+    );
+}
+
+#[test]
+fn test_album_block_rows_carry_cover_path() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let cover = "covers/one-album.avif";
+    let metrics = grid_metrics(800.0);
+
+    let mut manager = manager_with_one_album(cover, 2);
+    manager.grid_metrics.set(metrics);
+    let (_, _, grid_rows) = manager.get_visible_grid_rows(&metrics, 0.0, 800.0);
+    let grid_path = first_grid_cover_path(&grid_rows);
+
+    manager.view_mode = LibraryViewMode::DetailedList;
+    manager.invalidate_cache();
+    let (_, _, _, rows, _) = manager.visible_rows_at(0.0, 800.0);
+    let block_path = first_block_cover_path(&rows);
+
+    assert_eq!(
+        grid_path.as_deref(),
+        Some(cover),
+        "la tarjeta de la cuadrícula toma la ruta de su entrada de álbum"
+    );
+    assert_eq!(
+        block_path.as_deref(),
+        Some(cover),
+        "el bloque detallado toma la misma ruta desde el snapshot"
+    );
+    assert_eq!(grid_path, block_path);
+}
+
+#[test]
+fn test_album_block_ambiguous_title_falls_back_to_the_row_path() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let row_path = "covers/row-version.avif";
+    let mut manager = manager_with_one_album(row_path, 2);
+
+    // Two album identities share one (artist, title) key, so the album map alone
+    // cannot say which version the group belongs to.
+    manager.cached_albums = Some(vec![
+        AlbumEntry {
+            id: "album-first".to_string(),
+            title: "Album 0".to_string(),
+            artist: "Artist".to_string(),
+            genre: "Genre".to_string(),
+            year: "2024".to_string(),
+            cover_path: Some("covers/first-version.avif".to_string()),
+        },
+        AlbumEntry {
+            id: "album-last".to_string(),
+            title: "Album 0".to_string(),
+            artist: "Artist".to_string(),
+            genre: "Genre".to_string(),
+            year: "2025".to_string(),
+            cover_path: Some("covers/last-version.avif".to_string()),
+        },
+    ]);
+
+    manager.view_mode = LibraryViewMode::DetailedList;
+    let (_, structure) = manager.get_view_structure();
+    let group_path = structure
+        .first()
+        .and_then(|artist| artist.albums.first())
+        .and_then(|album| album.cover_path.clone());
+
+    assert_eq!(
+        group_path.as_deref(),
+        Some(row_path),
+        "un título ambiguo usa la ruta de la primera canción, nunca la del último álbum insertado"
+    );
+
+    let (_, _, _, rows, _) = manager.visible_rows_at(0.0, 800.0);
+    assert_eq!(
+        first_block_cover_path(&rows).as_deref(),
+        Some(row_path),
+        "el bloque detallado expone la ruta de la canción"
+    );
+
+    // The non-detailed construction site must expose the same path.
+    manager.view_mode = LibraryViewMode::ThumbnailList;
+    manager.invalidate_cache();
+    let (_, _, _, rows, _) = manager.visible_rows_at(0.0, 800.0);
+    let thumbnail_path = first_block_cover_path(&rows);
+    assert_eq!(
+        thumbnail_path.as_deref(),
+        Some(row_path),
+        "el otro brazo de la fila expone la misma ruta"
+    );
+    assert_ne!(
+        thumbnail_path.as_deref(),
+        Some("covers/last-version.avif"),
+        "la ruta adivinada por el mapa de álbumes nunca llega a la tarjeta"
+    );
 }

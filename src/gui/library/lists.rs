@@ -175,6 +175,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     playing_path: &str,
     row_height: f32,
     show_thumbnail: bool,
+    cover_handle: Option<iced::widget::image::Handle>,
 ) -> Element<'a, Message> {
     let txt_color = if is_selected {
         COLOR_TEXT_PRIMARY
@@ -250,9 +251,9 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     // 1. Agregar Miniatura si se solicita
     if show_thumbnail {
         let thumb_img = album_art_widget(
-            song.compressed_cached_cover_root.as_deref(),
             None,
             None,
+            cover_handle,
             PlaceholderStyle::Small,
             Length::Fixed(32.0),
             4.0,
@@ -317,11 +318,15 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
         playing_path,
         LIST_ROW_HEADER,
         false,
+        None,
     )
 }
 
 /// Renderiza una fila de canción en modo ThumbnailList (42px) con thumbnail 32x32 redondeado al inicio.
 /// Renderiza una fila de canción en modo ThumbnailList (42px) con thumbnail 32x32 redondeado al inicio.
+// The arguments are the columns and widths the shared row widget already needs plus
+// the prebuilt thumbnail handle; grouping them would only add a wrapper type.
+#[allow(clippy::too_many_arguments)]
 pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     song: &crate::db::database::SongData,
     song_idx: usize,
@@ -330,6 +335,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     column_widths: &HashMap<SortColumn, u16>,
     on_select: Message,
     playing_path: &str,
+    cover_handle: Option<iced::widget::image::Handle>,
 ) -> Element<'a, Message> {
     universal_song_row_widget(
         song,
@@ -341,6 +347,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
         playing_path,
         LIST_ROW,
         true,
+        cover_handle,
     )
 }
 
@@ -647,6 +654,7 @@ where
                 album_name,
                 album_hash,
                 artist_name,
+                cover_path,
                 genre,
                 year,
                 is_expanded,
@@ -654,19 +662,10 @@ where
                 songs_count,
                 duration_secs,
             } => {
-                let cover_path = if let Some(albums) = &manager.cached_albums {
-                    albums
-                        .iter()
-                        .find(|a| a.title == *album_name && a.artist == *artist_name)
-                        .and_then(|a| a.cover_path.clone())
-                } else {
-                    None
-                };
-
                 let card_wrapper = album_art_widget(
-                    cover_path.as_deref(),
                     None,
                     None,
+                    manager.cover_handle(cover_path.as_deref(), 220.0),
                     PlaceholderStyle::Large {
                         icon_side: crate::gui::library::grid_metrics::album_placeholder_icon_side(
                             crate::gui::dimensions::ALBUM_COVER_REFERENCE,

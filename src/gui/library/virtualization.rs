@@ -93,9 +93,25 @@ impl LibraryManager {
 
         // Crear mapa de búsqueda de álbumes para evitar O(N^2)
         let mut album_hash_map = std::collections::HashMap::new();
+        // Ruta de carátula por identidad de álbum; dos álbumes nunca comparten id.
+        let mut album_path_map: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
+        // Identidades vistas por (artista, título): más de una es una colisión.
+        let mut album_key_ids: std::collections::HashMap<(String, String), Vec<String>> =
+            std::collections::HashMap::new();
         if let Some(albums_cache) = &self.cached_albums {
             for alb in albums_cache {
                 album_hash_map.insert((alb.artist.clone(), alb.title.clone()), alb.id.clone());
+                album_path_map
+                    .entry(alb.id.clone())
+                    .or_insert_with(|| alb.cover_path.clone());
+
+                let ids = album_key_ids
+                    .entry((alb.artist.clone(), alb.title.clone()))
+                    .or_default();
+                if !ids.contains(&alb.id) {
+                    ids.push(alb.id.clone());
+                }
             }
         }
 
@@ -131,14 +147,46 @@ impl LibraryManager {
                     }
                 }
 
+                let album_key = (group.name.clone(), alb_name.clone());
                 let album_hash = album_hash_map
-                    .get(&(group.name.clone(), alb_name.clone()))
+                    .get(&album_key)
                     .cloned()
                     .unwrap_or_else(|| alb_name.clone());
+
+                // Dos álbumes con el mismo título y artista no se pueden distinguir
+                // por la clave de agrupación, así que la tarjeta usa la ruta ya
+                // resuelta de su primera canción en vez de adivinar la del álbum.
+                let ambiguous_title = album_key_ids
+                    .get(&album_key)
+                    .is_some_and(|ids| ids.len() > 1);
+                if ambiguous_title {
+                    tracing::debug!(
+                        artist = %group.name,
+                        album = %alb_name,
+                        "Se detectó un título de álbum ambiguo; se usa la ruta de la primera canción"
+                    );
+                }
+
+                let cover_path = if ambiguous_title {
+                    song.compressed_cached_cover_root
+                        .as_deref()
+                        .map(str::to_owned)
+                } else {
+                    album_path_map
+                        .get(&album_hash)
+                        .cloned()
+                        .flatten()
+                        .or_else(|| {
+                            song.compressed_cached_cover_root
+                                .as_deref()
+                                .map(str::to_owned)
+                        })
+                };
 
                 albums_map.push(LibraryAlbumGroup {
                     album_name: alb_name,
                     album_hash,
+                    cover_path,
                     songs: vec![(song.clone(), global_song_idx)],
                     duration_secs: song.duration_secs.unwrap_or(0.0),
                 });
@@ -212,13 +260,46 @@ impl LibraryManager {
             return (ts, bs, th, rows.clone(), sticky.clone());
         }
 
-        let (total_content_h, v_artists) = self.get_view_structure();
         let viewport_h = self
             .last_viewport
             .as_ref()
             .map(|v| v.height)
             .unwrap_or(800.0);
-        let view_min_raw = self.scroll_offset.y;
+        let result = self.visible_rows_at(self.scroll_offset.y, viewport_h);
+
+        self.cached_visible_elements.replace(Some((
+            result.0,
+            result.1,
+            result.2,
+            result.3.clone(),
+            result.4.clone(),
+        )));
+
+        result
+    }
+
+    /// Rows visible at an arbitrary viewport, without touching the row memo.
+    ///
+    /// The layout path reads the memoized rows; the cover request path needs the
+    /// rows for a viewport that is not the one on screen (the look-ahead band), so
+    /// both go through this builder instead of the request path forcing a memo
+    /// write for an offset nothing is rendering.
+    // The tuple is the row-window contract the memoized getter returns too; a type
+    // alias would only rename the same five elements.
+    #[allow(clippy::type_complexity)]
+    pub fn visible_rows_at(
+        &self,
+        viewport_y: f32,
+        viewport_h: f32,
+    ) -> (
+        f32,
+        f32,
+        f32,
+        Vec<LibraryVirtualRow>,
+        Option<(String, bool, usize, usize, f64)>,
+    ) {
+        let (total_content_h, v_artists) = self.get_view_structure();
+        let view_min_raw = viewport_y;
 
         let max_scroll = (total_content_h - viewport_h).max(0.0);
         let view_min = view_min_raw.min(max_scroll);
@@ -328,6 +409,7 @@ impl LibraryManager {
                                         album_name: alb.album_name.clone(),
                                         album_hash: alb.album_hash.clone(),
                                         artist_name: va.artist_name.clone(),
+                                        cover_path: alb.cover_path.clone(),
                                         genre: String::new(),
                                         year: String::new(), // No se usan en este modo
                                         is_expanded: is_album_expanded,
@@ -376,6 +458,7 @@ impl LibraryManager {
                                     album_name: alb.album_name.clone(),
                                     album_hash: alb.album_hash.clone(),
                                     artist_name: va.artist_name.clone(),
+                                    cover_path: alb.cover_path.clone(),
                                     genre,
                                     year,
                                     is_expanded: is_album_expanded,
@@ -395,13 +478,6 @@ impl LibraryManager {
             }
         }
 
-        self.cached_visible_elements.replace(Some((
-            top_space,
-            bottom_space,
-            total_content_h,
-            visible_elements.clone(),
-            sticky_artist_info.clone(),
-        )));
         (
             top_space,
             bottom_space,
@@ -681,12 +757,47 @@ impl LibraryManager {
         self.cover_store.get_path(path, bucket as u16)
     }
 
+    /// Decode bucket the current view mode renders its covers at.
+    ///
+    /// The grid follows the measured card edge, the detailed list its 220 px card
+    /// (`250 - 30`) and the thumbnail list its 32 px thumbnail; every value is
+    /// resolved through the same scale-aware bucket rule the rows read with.
+    pub fn window_bucket(&self) -> u32 {
+        let native = crate::utils::covers::cover_native_size();
+        match self.view_mode {
+            LibraryViewMode::DetailedList => {
+                crate::utils::covers::cover_bucket(220.0, self.scale_factor, native)
+            }
+            LibraryViewMode::ThumbnailList => {
+                crate::utils::covers::cover_bucket(32.0, self.scale_factor, native)
+            }
+            _ => crate::utils::covers::cover_bucket(
+                self.grid_metrics.get().cover_size,
+                self.scale_factor,
+                native,
+            ),
+        }
+    }
+
     /// Decode jobs for the cover paths the current viewport shows.
     ///
-    /// Only album cards request decodes here, and a path the negative set already
-    /// knows to fail is skipped. Every job is stamped with the current scroll
-    /// generation so a result can be identified as stale.
+    /// The job set follows the view mode, so no mode requests a bucket its rows do
+    /// not read: the grid asks for its card edge, the detailed list for the album
+    /// card paths and the thumbnail list for the per-song thumbnails. A path the
+    /// negative set already knows to fail is skipped, and every job carries the
+    /// current scroll generation so a result can be identified as stale.
     pub fn window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
+        match self.view_mode {
+            LibraryViewMode::Grid => self.grid_window_jobs(viewport_y, viewport_h),
+            LibraryViewMode::DetailedList | LibraryViewMode::ThumbnailList => {
+                self.list_window_jobs(viewport_y, viewport_h, self.window_bucket())
+            }
+            LibraryViewMode::SimpleList => Vec::new(),
+        }
+    }
+
+    /// Jobs for one grid viewport at the grid's card bucket.
+    fn grid_window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
         let metrics = self.grid_metrics.get();
         let bucket = crate::utils::covers::cover_bucket(
             metrics.cover_size,
@@ -719,6 +830,47 @@ impl LibraryManager {
                     generation: self.scroll_generation,
                 });
             }
+        }
+
+        jobs
+    }
+
+    /// Jobs for one list viewport at the bucket its rows render.
+    ///
+    /// The detailed list draws the album card's cover and the thumbnail list draws
+    /// each song's own cover, which is already the resolved path the row shows.
+    fn list_window_jobs(&self, viewport_y: f32, viewport_h: f32, bucket: u32) -> Vec<DecodeJob> {
+        let (_, _, _, rows, _) = self.visible_rows_at(viewport_y, viewport_h);
+
+        let mut jobs = Vec::new();
+        for row in &rows {
+            let path = match (self.view_mode, row) {
+                (
+                    LibraryViewMode::DetailedList,
+                    LibraryVirtualRow::AlbumBlock { cover_path, .. },
+                ) => cover_path.as_deref(),
+                (LibraryViewMode::ThumbnailList, LibraryVirtualRow::SimpleSong { song, .. }) => {
+                    song.compressed_cached_cover_root.as_deref()
+                }
+                _ => None,
+            };
+
+            let Some(path) = path.filter(|path| !path.is_empty()) else {
+                continue;
+            };
+            if crate::utils::covers::is_cover_negative(path) {
+                continue;
+            }
+
+            jobs.push(DecodeJob {
+                key: CoverKey {
+                    path: std::sync::Arc::from(path),
+                    bucket: bucket as u16,
+                },
+                path: std::path::PathBuf::from(path),
+                bucket,
+                generation: self.scroll_generation,
+            });
         }
 
         jobs

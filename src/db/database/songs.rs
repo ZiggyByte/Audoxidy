@@ -185,9 +185,9 @@ impl Database {
                     .query_row([&album_hash_id], |row| row.get(0))?;
 
                 if album_cover_hash.as_ref() != Some(&current_pic_hash) {
-                    // Es una carátula diferente a la del álbum (Override). El hash
-                    // se guarda puro: el nombre del archivo lo compone el id de la
-                    // canción, que todavía no existe.
+                    // A different image than the album's cover. The hash is stored
+                    // pure: the file name is composed from the song id, which does
+                    // not exist yet.
                     let song_cover_hash = Self::generate_hash(&format!(
                         "{}{}",
                         song.full_file_path, current_pic_hash
@@ -223,7 +223,7 @@ impl Database {
             .prepare_cached("SELECT id FROM SONGS WHERE file_path = ?1")?
             .query_row([&song.full_file_path], |row| row.get(0))?;
 
-        // El nombre propio incluye el id de la canción, que solo existe tras el INSERT.
+        // The per-song name carries the song id, which only exists after the insert.
         if let Some(cover_hash) = final_song_cover_override.as_deref() {
             match crate::utils::covers::song_cover_file_name(song_id, cover_hash) {
                 Ok(file_name) => target_file_name_for_processing = file_name,

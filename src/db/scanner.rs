@@ -310,9 +310,9 @@ impl Scanner {
             {
                 if needs_processing && !enqueued_covers.contains(&target_file_name) {
                     if let Some(data) = pic_bytes {
-                        // Solo encolamos si el archivo AVIF todavía no existe. El
-                        // nombre viene completo del insert, así que la comprobación
-                        // y la escritura no pueden discrepar.
+                        // Only enqueue when the AVIF file does not exist yet. The
+                        // name arrives complete from the insert, so the existence
+                        // check and the write cannot disagree.
                         let expected_path = crate::utils::paths::get()
                             .cover_cache_dir
                             .join(&target_file_name);

@@ -93,10 +93,11 @@ impl LibraryManager {
 
         // Crear mapa de búsqueda de álbumes para evitar O(N^2)
         let mut album_hash_map = std::collections::HashMap::new();
-        // Ruta de carátula por identidad de álbum; dos álbumes nunca comparten id.
+        // Album cards need their cover path resolved once per snapshot; album ids
+        // are unique, so the map is keyed by id rather than by display title.
         let mut album_path_map: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
-        // Identidades vistas por (artista, título): más de una es una colisión.
+        // Identity list per (artist, title): more than one id is a title collision.
         let mut album_key_ids: std::collections::HashMap<(String, String), Vec<String>> =
             std::collections::HashMap::new();
         if let Some(albums_cache) = &self.cached_albums {
@@ -153,9 +154,9 @@ impl LibraryManager {
                     .cloned()
                     .unwrap_or_else(|| alb_name.clone());
 
-                // Dos álbumes con el mismo título y artista no se pueden distinguir
-                // por la clave de agrupación, así que la tarjeta usa la ruta ya
-                // resuelta de su primera canción en vez de adivinar la del álbum.
+                // Two albums with the same title and artist cannot be told apart by
+                // the grouping key, so the card uses the already-resolved path of
+                // its first song instead of guessing the album row's path.
                 let ambiguous_title = album_key_ids
                     .get(&album_key)
                     .is_some_and(|ids| ids.len() > 1);

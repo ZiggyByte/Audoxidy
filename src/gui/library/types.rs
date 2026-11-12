@@ -92,7 +92,7 @@ pub struct AlbumEntry {
 pub struct LibraryAlbumGroup {
     pub album_name: String,
     pub album_hash: String,
-    /// Ruta de carátula ya resuelta para este álbum, tomada del snapshot.
+    /// Cover path already resolved for this album, taken from the snapshot.
     pub cover_path: Option<String>,
     pub songs: Vec<(std::sync::Arc<crate::db::database::SongData>, usize)>, // (song, global_idx)
     pub duration_secs: f64,
@@ -140,7 +140,7 @@ pub enum LibraryVirtualRow {
         album_name: String,
         album_hash: String,
         artist_name: String,
-        /// Ruta de carátula ya resuelta para este álbum, tomada del snapshot.
+        /// Cover path already resolved for this album, taken from the snapshot.
         cover_path: Option<String>,
         genre: String,
         year: String,

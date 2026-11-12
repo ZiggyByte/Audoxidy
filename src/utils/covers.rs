@@ -8,6 +8,12 @@
 //! The [`CoverHandle`] type replaces iced handles in this module so
 //! that `utils/` has zero front-end imports. The GUI adapter wraps a
 //! `CoverHandle` into an iced handle at render time.
+//!
+//! The module also owns the front-end-free decode funnel and the pure cover
+//! policy: [`decode_cover_file`] turns a stored cover file into RGBA pixels once,
+//! while [`cover_bucket`] and [`cover_budget_bytes`] decide the decode size and
+//! the retained-byte target. Keeping both here lets `utils/` stay free of iced
+//! types while the GUI store only holds the handles they produce.
 
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
@@ -17,10 +23,11 @@ use lru::LruCache;
 use parking_lot::Mutex;
 use rayon::ThreadPoolBuilder;
 use sha2::{Digest, Sha256};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Front-end-agnostic handle to a cover art image.
 ///
@@ -291,11 +298,7 @@ pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Re
         ));
     }
 
-    let target_size = if crate::utils::is_low_resource() {
-        200
-    } else {
-        400
-    };
+    let target_size = cover_native_size();
 
     let src_image = Image::from_vec_u8(
         width,
@@ -452,6 +455,512 @@ pub fn clear_raw_cache() {
     let mut cache = cache_mtx.lock();
     clear_cover_cache(&mut cache);
 }
+
+/// Returns whether a cover path is known to fail loading.
+///
+/// Consulted while decode requests are built, never while rows are rendered, so
+/// the negative set stays off the layout path.
+pub fn is_cover_negative(path: &str) -> bool {
+    NEGATIVE_CACHE
+        .get()
+        .is_some_and(|negative| negative.lock().contains(path))
+}
+
+/// Decoded RGBA8 pixels ready to become a front-end image handle.
+///
+/// `pixels` is always `width * height * 4` bytes. [`decode_cover_file`] refuses
+/// to return a buffer that does not match its declared dimensions, because a
+/// front-end handle built from a mismatched buffer stays blank for the whole
+/// lifetime of its id.
+#[derive(Debug)]
+pub struct DecodedCover {
+    /// Decoded width in pixels.
+    pub width: u32,
+    /// Decoded height in pixels.
+    pub height: u32,
+    /// RGBA8 pixels, `width * height * 4` bytes.
+    pub pixels: Vec<u8>,
+}
+
+/// Failure of [`decode_cover_file`].
+#[derive(Debug)]
+pub enum CoverDecodeError {
+    /// The cover file does not exist.
+    NotFound(PathBuf),
+    /// The cover file exists but could not be read.
+    Io(PathBuf, std::io::Error),
+    /// The bytes are not a decodable image, or the image has a zero dimension.
+    Decode(PathBuf),
+    /// The image could not be resized; the payload is the library message.
+    Resize(PathBuf, String),
+    /// The produced pixel buffer does not match its declared dimensions.
+    PixelLength {
+        /// Width the buffer was decoded or resized to.
+        width: u32,
+        /// Height the buffer was decoded or resized to.
+        height: u32,
+        /// Actual buffer length in bytes.
+        len: usize,
+    },
+}
+
+impl std::fmt::Display for CoverDecodeError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(path) => {
+                write!(formatter, "cover file not found: {}", path.display())
+            }
+            Self::Io(path, error) => {
+                write!(
+                    formatter,
+                    "cover file could not be read ({}): {error}",
+                    path.display()
+                )
+            }
+            Self::Decode(path) => {
+                write!(
+                    formatter,
+                    "cover image could not be decoded: {}",
+                    path.display()
+                )
+            }
+            Self::Resize(path, error) => {
+                write!(
+                    formatter,
+                    "cover image could not be resized ({}): {error}",
+                    path.display()
+                )
+            }
+            Self::PixelLength { width, height, len } => write!(
+                formatter,
+                "cover pixel buffer has {len} bytes, expected {width}x{height}x4"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CoverDecodeError {}
+
+/// Native cover edge produced by the writer and accepted by the decode cap.
+///
+/// The writer emits this edge, so decoding must never scale beyond it: 200 px in
+/// low-resource mode, 400 px otherwise.
+pub fn cover_native_size() -> u32 {
+    if crate::utils::is_low_resource() {
+        200
+    } else {
+        400
+    }
+}
+
+/// Decodes a cover file into RGBA8 pixels sized for the rendered bucket.
+///
+/// The file is read exactly once and resized only downwards: a target at or
+/// above the native width returns the native pixels untouched. This is the
+/// library decode funnel; the player's per-track path handle and its next-cover
+/// prefetch stay outside it.
+pub fn decode_cover_file(path: &Path, target_px: u32) -> Result<DecodedCover, CoverDecodeError> {
+    if target_px == 0 {
+        return Err(CoverDecodeError::Resize(
+            path.to_path_buf(),
+            "the target size must be greater than zero".to_string(),
+        ));
+    }
+
+    cover_metrics().record_file_open();
+
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CoverDecodeError::NotFound(path.to_path_buf()));
+        }
+        Err(error) => return Err(CoverDecodeError::Io(path.to_path_buf(), error)),
+    };
+
+    let image = image::load_from_memory(&bytes)
+        .map_err(|_| CoverDecodeError::Decode(path.to_path_buf()))?
+        .to_rgba8();
+    cover_metrics().record_decode();
+
+    let width = image.width();
+    let height = image.height();
+
+    if width == 0 || height == 0 {
+        return Err(CoverDecodeError::Decode(path.to_path_buf()));
+    }
+
+    let (out_width, out_height, pixels) = if target_px >= width {
+        // Never upscale: the native pixels are already the largest usable image.
+        (width, height, image.into_raw())
+    } else {
+        // Cover files are written square, so the target is a square edge.
+        let pixels = resize_cover_pixels(path, width, height, image.into_raw(), target_px)?;
+        (target_px, target_px, pixels)
+    };
+
+    let expected = (out_width as usize) * (out_height as usize) * 4;
+    if pixels.len() != expected {
+        return Err(CoverDecodeError::PixelLength {
+            width: out_width,
+            height: out_height,
+            len: pixels.len(),
+        });
+    }
+
+    Ok(DecodedCover {
+        width: out_width,
+        height: out_height,
+        pixels,
+    })
+}
+
+/// Resizes decoded RGBA pixels to a square target edge with Lanczos3.
+fn resize_cover_pixels(
+    path: &Path,
+    width: u32,
+    height: u32,
+    pixels: Vec<u8>,
+    target_px: u32,
+) -> Result<Vec<u8>, CoverDecodeError> {
+    let source = Image::from_vec_u8(width, height, pixels, fast_image_resize::PixelType::U8x4)
+        .map_err(|error| CoverDecodeError::Resize(path.to_path_buf(), error.to_string()))?;
+
+    let mut destination = Image::new(target_px, target_px, source.pixel_type());
+    let mut resizer = Resizer::new();
+
+    if let Some(ext) = forced_cpu_extension() {
+        // SAFETY: `forced_cpu_extension` only returns `Avx2` after checking at
+        // runtime with `is_x86_feature_detected!("avx2")` that the processor
+        // supports it.
+        unsafe {
+            resizer.set_cpu_extensions(ext);
+        }
+    }
+
+    let options = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FilterType::Lanczos3));
+
+    resizer
+        .resize(&source, &mut destination, &options)
+        .map_err(|error| CoverDecodeError::Resize(path.to_path_buf(), error.to_string()))?;
+
+    Ok(destination.buffer().to_vec())
+}
+
+/// Process-global counters for the cover read path.
+///
+/// Every field is a relaxed atomic because the counters describe a trend, not an
+/// invariant: decode workers update them without a lock and the GUI reads a
+/// snapshot when it logs or measures.
+#[derive(Debug, Default)]
+pub struct CoverMetrics {
+    file_opens: AtomicU64,
+    decodes: AtomicU64,
+    cache_hits: AtomicU64,
+    cache_misses: AtomicU64,
+    key_lookups: AtomicU64,
+    evictions: AtomicU64,
+    cache_bytes: AtomicU64,
+    in_flight: AtomicU64,
+}
+
+impl CoverMetrics {
+    /// Creates a zeroed counter set; the process-global instance uses this.
+    const fn new() -> Self {
+        Self {
+            file_opens: AtomicU64::new(0),
+            decodes: AtomicU64::new(0),
+            cache_hits: AtomicU64::new(0),
+            cache_misses: AtomicU64::new(0),
+            key_lookups: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+            cache_bytes: AtomicU64::new(0),
+            in_flight: AtomicU64::new(0),
+        }
+    }
+
+    fn increment(counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Counts one cover file open performed by the decode funnel.
+    pub fn record_file_open(&self) {
+        Self::increment(&self.file_opens);
+    }
+
+    /// Counts one image decoded from a cover file.
+    pub fn record_decode(&self) {
+        Self::increment(&self.decodes);
+    }
+
+    /// Counts one decoded-cover lookup that found a handle.
+    pub fn record_cache_hit(&self) {
+        Self::increment(&self.cache_hits);
+    }
+
+    /// Counts one decoded-cover lookup that found no handle.
+    pub fn record_cache_miss(&self) {
+        Self::increment(&self.cache_misses);
+    }
+
+    /// Counts one decoded-cover store lookup, hit or miss.
+    pub fn record_key_lookup(&self) {
+        Self::increment(&self.key_lookups);
+    }
+
+    /// Counts one decoded cover removed from the store.
+    pub fn record_eviction(&self) {
+        Self::increment(&self.evictions);
+    }
+
+    /// Publishes the decoded bytes the store currently retains.
+    pub fn set_cache_bytes(&self, bytes: usize) {
+        self.cache_bytes.store(bytes as u64, Ordering::Relaxed);
+    }
+
+    /// Counts a decode that entered a worker.
+    pub fn increment_in_flight(&self) {
+        Self::increment(&self.in_flight);
+    }
+
+    /// Counts a decode that left a worker.
+    pub fn decrement_in_flight(&self) {
+        self.in_flight.fetch_sub(1, Ordering::Relaxed);
+    }
+
+    /// Reads every counter once, for logging or a test assertion.
+    pub fn snapshot(&self) -> CoverIoCounters {
+        CoverIoCounters {
+            file_opens: self.file_opens.load(Ordering::Relaxed),
+            decodes: self.decodes.load(Ordering::Relaxed),
+            cache_hits: self.cache_hits.load(Ordering::Relaxed),
+            cache_misses: self.cache_misses.load(Ordering::Relaxed),
+            key_lookups: self.key_lookups.load(Ordering::Relaxed),
+            evictions: self.evictions.load(Ordering::Relaxed),
+            cache_bytes: self.cache_bytes.load(Ordering::Relaxed),
+            in_flight: self.in_flight.load(Ordering::Relaxed),
+        }
+    }
+}
+
+static COVER_METRICS: CoverMetrics = CoverMetrics::new();
+
+/// Returns the process-global cover counters.
+pub fn cover_metrics() -> &'static CoverMetrics {
+    &COVER_METRICS
+}
+
+/// Point-in-time copy of every cover counter.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CoverIoCounters {
+    /// Cover file opens performed by the decode funnel.
+    pub file_opens: u64,
+    /// Covers decoded from a file.
+    pub decodes: u64,
+    /// Decoded-cover lookups that found a handle.
+    pub cache_hits: u64,
+    /// Decoded-cover lookups that found no handle.
+    pub cache_misses: u64,
+    /// Decoded-cover store lookups, hit or miss.
+    pub key_lookups: u64,
+    /// Decoded covers removed from the store.
+    pub evictions: u64,
+    /// Decoded bytes the store currently retains.
+    pub cache_bytes: u64,
+    /// Decodes currently running on a worker.
+    pub in_flight: u64,
+}
+
+/// Returns a snapshot of the process-global cover counters.
+pub fn cover_io_counters() -> CoverIoCounters {
+    cover_metrics().snapshot()
+}
+
+/// Decode buckets, in pixels of the cover edge.
+///
+/// The set covers the thumbnail row, the album grid's responsive range and the
+/// detailed-list card (`220`), and ends at the native writer size so the decoder
+/// never upscales.
+pub const COVER_BUCKETS: [u32; 10] = [32, 64, 96, 128, 160, 192, 220, 256, 320, 400];
+
+/// Picks the smallest decode bucket that covers a rendered cover.
+///
+/// `logical_px` is the cover edge the layout asks for and `scale` the display
+/// scale factor; the product is rounded to the nearest pixel, raised to the next
+/// bucket and clamped to `native_px`, the largest image the writer produces. A
+/// target above the whole set falls back to the largest bucket before the clamp.
+/// Non-finite or non-positive input falls back to the smallest bucket.
+pub fn cover_bucket(logical_px: f32, scale: f32, native_px: u32) -> u32 {
+    if !logical_px.is_finite() || !scale.is_finite() || logical_px <= 0.0 || scale <= 0.0 {
+        return COVER_BUCKETS[0];
+    }
+
+    let target = (logical_px * scale).round();
+    let bucket = COVER_BUCKETS
+        .iter()
+        .copied()
+        .find(|bucket| *bucket as f32 >= target)
+        .unwrap_or(COVER_BUCKETS[COVER_BUCKETS.len() - 1]);
+
+    bucket.min(native_px)
+}
+
+/// Number of covers a viewport shows, used to size the decoded-cover budget.
+///
+/// `columns` is the grid column count, or 1 for the list views where a row shows
+/// one cover. A non-positive or non-finite measurement yields zero, so a budget
+/// cannot be derived from an unmeasured viewport.
+pub fn viewport_capacity(columns: usize, viewport_h: f32, row_height: f32) -> usize {
+    if columns == 0
+        || !viewport_h.is_finite()
+        || !row_height.is_finite()
+        || viewport_h <= 0.0
+        || row_height <= 0.0
+    {
+        return 0;
+    }
+
+    let rows = (viewport_h / row_height).ceil() as usize;
+    columns.saturating_mul(rows)
+}
+
+/// Floor for the decoded-cover budget, in bytes.
+pub const COVER_BUDGET_MIN_BYTES: usize = 8 * 1024 * 1024;
+
+/// Ceiling for the decoded-cover budget, in bytes.
+pub const COVER_BUDGET_MAX_BYTES: usize = 48 * 1024 * 1024;
+
+/// Budget for decoded covers: two viewports of one bucket, clamped.
+///
+/// The cushion is one extra viewport, so returning inside the retained window
+/// finds its covers still decoded. The clamp keeps a large window from retaining
+/// an unreasonable amount of host RGBA.
+pub fn cover_budget_bytes(capacity: usize, bucket: u32) -> usize {
+    let bucket_bytes = (bucket as usize)
+        .saturating_mul(bucket as usize)
+        .saturating_mul(4);
+    let target = capacity.saturating_mul(2).saturating_mul(bucket_bytes);
+
+    target.clamp(COVER_BUDGET_MIN_BYTES, COVER_BUDGET_MAX_BYTES)
+}
+
+/// Byte and recency ledger for the decoded-cover store.
+///
+/// Entries are keyed by cover path and decode bucket, and `bytes` is the exact
+/// RGBA size retained for them. The ledger owns no lock and no front-end type,
+/// so the store holds it as a plain field and delegates accounting here.
+#[derive(Debug, Default)]
+pub struct CoverBudget {
+    /// Bucket → cover path → retained bytes.
+    entries: HashMap<u16, HashMap<String, usize>>,
+    /// Recency order, most recently used first.
+    order: VecDeque<(String, u16)>,
+    bytes: usize,
+}
+
+impl CoverBudget {
+    /// Records the retained bytes for one path and bucket, promoting the entry to
+    /// most recently used and replacing any previous accounting for it.
+    pub fn insert(&mut self, path: &str, bucket: u16, bytes: usize) {
+        if let Some(previous) = self
+            .entries
+            .entry(bucket)
+            .or_default()
+            .insert(path.to_string(), bytes)
+        {
+            self.bytes = self.bytes.saturating_sub(previous);
+            if let Some(index) = self.position(path, bucket) {
+                self.order.remove(index);
+            }
+        }
+
+        self.bytes += bytes;
+        self.order.push_front((path.to_string(), bucket));
+    }
+
+    /// Promotes an entry to most recently used; returns whether it exists.
+    pub fn touch(&mut self, path: &str, bucket: u16) -> bool {
+        let Some(index) = self.position(path, bucket) else {
+            return false;
+        };
+
+        if let Some(entry) = self.order.remove(index) {
+            self.order.push_front(entry);
+        }
+
+        true
+    }
+
+    /// Returns the retained bytes for an entry without changing its recency.
+    pub fn get(&self, path: &str, bucket: u16) -> Option<usize> {
+        self.entries
+            .get(&bucket)
+            .and_then(|by_path| by_path.get(path))
+            .copied()
+    }
+
+    /// Drops an entry and returns the bytes it retained.
+    pub fn remove(&mut self, path: &str, bucket: u16) -> Option<usize> {
+        let removed = self.entries.get_mut(&bucket)?.remove(path)?;
+        self.bytes = self.bytes.saturating_sub(removed);
+
+        if let Some(index) = self.position(path, bucket) {
+            self.order.remove(index);
+        }
+
+        if self
+            .entries
+            .get(&bucket)
+            .is_some_and(|by_path| by_path.is_empty())
+        {
+            self.entries.remove(&bucket);
+        }
+
+        Some(removed)
+    }
+
+    /// Drops every entry.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.order.clear();
+        self.bytes = 0;
+    }
+
+    /// Retained bytes across every entry.
+    pub fn bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Number of retained entries.
+    pub fn len(&self) -> usize {
+        self.entries.values().map(HashMap::len).sum()
+    }
+
+    /// Returns whether the ledger holds no entry.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Entry keys as `path@bucket`, most recently used first.
+    pub fn order_mru_to_lru(&self) -> Vec<String> {
+        self.order
+            .iter()
+            .map(|(path, bucket)| format!("{path}@{bucket}"))
+            .collect()
+    }
+
+    fn position(&self, path: &str, bucket: u16) -> Option<usize> {
+        self.order
+            .iter()
+            .position(|(entry_path, entry_bucket)| entry_path == path && *entry_bucket == bucket)
+    }
+}
+
+/// Serializes the tests that read or mutate process-global cover state.
+///
+/// The counters and the negative set are shared by every test in the binary, so
+/// tests asserting deltas on them take this guard for their whole body.
+#[cfg(test)]
+pub(crate) static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -888,5 +1397,212 @@ mod tests {
         // Limpia solo el archivo generado; el directorio cache/covers/ es un
         // artefacto de runtime ignorado por git y se deja en su sitio.
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Creates a unique temporary directory for a test that needs a real file.
+    fn temp_cover_dir() -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!(
+            "audoxidy-cover-test-{}-{sequence}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).expect("no se pudo crear el directorio temporal de prueba");
+        dir
+    }
+
+    /// Encodes a solid PNG in memory so the decode funnel reads a real image file.
+    fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+        let image = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
+        let mut bytes = Vec::new();
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(
+                &mut std::io::Cursor::new(&mut bytes),
+                image::ImageFormat::Png,
+            )
+            .expect("no se pudo codificar el PNG de prueba");
+        bytes
+    }
+
+    #[test]
+    fn test_cover_bucket_rounds_up_to_bucket_set() {
+        assert_eq!(cover_bucket(96.0, 1.0, 400), 96);
+        assert_eq!(cover_bucket(120.0, 1.0, 400), 128);
+        assert_eq!(cover_bucket(159.0, 1.0, 400), 160);
+        assert_eq!(cover_bucket(206.7, 1.0, 400), 220);
+    }
+
+    #[test]
+    fn test_cover_bucket_includes_the_detailed_list_size() {
+        assert!(COVER_BUCKETS.contains(&220));
+        assert_eq!(cover_bucket(220.0, 1.0, 400), 220);
+    }
+
+    #[test]
+    fn test_cover_bucket_scales_with_display_scale() {
+        assert_eq!(cover_bucket(159.0, 1.5, 400), 256);
+        assert_eq!(cover_bucket(159.0, 2.0, 400), 320);
+    }
+
+    #[test]
+    fn test_cover_bucket_caps_at_native_size() {
+        assert_eq!(cover_bucket(500.0, 1.0, 400), 400);
+        assert_eq!(cover_bucket(500.0, 1.0, 200), 200);
+        assert_eq!(cover_bucket(159.0, 1.0, 96), 96);
+    }
+
+    #[test]
+    fn test_cover_bucket_rejects_invalid_input() {
+        assert_eq!(cover_bucket(f32::NAN, 1.0, 400), COVER_BUCKETS[0]);
+        assert_eq!(cover_bucket(0.0, 1.0, 400), COVER_BUCKETS[0]);
+        assert_eq!(cover_bucket(-1.0, 1.0, 400), COVER_BUCKETS[0]);
+        assert_eq!(cover_bucket(100.0, f32::INFINITY, 400), COVER_BUCKETS[0]);
+        assert_eq!(cover_bucket(100.0, 0.0, 400), COVER_BUCKETS[0]);
+    }
+
+    #[test]
+    fn test_viewport_capacity_counts_a_grid_viewport() {
+        assert_eq!(viewport_capacity(7, 800.0, 200.0), 28);
+        assert_eq!(viewport_capacity(7, 800.0, 250.0), 28);
+        assert_eq!(viewport_capacity(1, 800.0, 200.0), 4);
+        assert_eq!(viewport_capacity(0, 800.0, 200.0), 0);
+        assert_eq!(viewport_capacity(7, 0.0, 200.0), 0);
+        assert_eq!(viewport_capacity(7, 800.0, 0.0), 0);
+    }
+
+    #[test]
+    fn test_cover_budget_bytes_clamps_to_its_bounds() {
+        assert_eq!(cover_budget_bytes(1, 32), COVER_BUDGET_MIN_BYTES);
+        assert_eq!(cover_budget_bytes(10_000, 400), COVER_BUDGET_MAX_BYTES);
+        assert_eq!(cover_budget_bytes(50, 192), 14_745_600);
+    }
+
+    #[test]
+    fn test_cover_budget_ledger_tracks_bytes_and_recency() {
+        let mut budget = CoverBudget::default();
+        assert!(budget.is_empty());
+
+        budget.insert("a.avif", 160, 100);
+        budget.insert("b.avif", 160, 40);
+        assert_eq!(budget.bytes(), 140);
+        assert_eq!(budget.len(), 2);
+        assert_eq!(
+            budget.order_mru_to_lru(),
+            vec!["b.avif@160".to_string(), "a.avif@160".to_string()]
+        );
+
+        // A peek reports the retained bytes without changing recency.
+        assert_eq!(budget.get("a.avif", 160), Some(100));
+        assert_eq!(
+            budget.order_mru_to_lru(),
+            vec!["b.avif@160".to_string(), "a.avif@160".to_string()]
+        );
+
+        assert!(budget.touch("a.avif", 160));
+        assert_eq!(
+            budget.order_mru_to_lru(),
+            vec!["a.avif@160".to_string(), "b.avif@160".to_string()]
+        );
+        assert!(!budget.touch("missing.avif", 160));
+
+        assert_eq!(budget.remove("a.avif", 160), Some(100));
+        assert_eq!(budget.bytes(), 40);
+        assert_eq!(budget.len(), 1);
+        assert_eq!(budget.get("a.avif", 160), None);
+
+        budget.clear();
+        assert_eq!(budget.bytes(), 0);
+        assert!(budget.is_empty());
+    }
+
+    #[test]
+    fn test_cover_budget_ledger_replaces_bytes_on_reinsert() {
+        let mut budget = CoverBudget::default();
+        budget.insert("a.avif", 160, 100);
+        budget.insert("a.avif", 160, 25);
+
+        assert_eq!(budget.bytes(), 25);
+        assert_eq!(budget.len(), 1);
+        assert_eq!(budget.order_mru_to_lru(), vec!["a.avif@160".to_string()]);
+
+        budget.insert("a.avif", 220, 25);
+        assert_eq!(budget.len(), 2);
+        assert_eq!(budget.bytes(), 50);
+    }
+
+    /// Holds the guard the process-global cover counters are asserted against.
+    fn global_guard() -> std::sync::MutexGuard<'static, ()> {
+        GLOBAL_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn test_decode_cover_file_opens_the_file_once() {
+        let _guard = global_guard();
+
+        let dir = temp_cover_dir();
+        let path = dir.join("test-cover.png");
+        std::fs::write(&path, png_bytes(4, 4)).expect("no se pudo escribir el PNG de prueba");
+
+        let before = cover_io_counters().file_opens;
+        let decoded =
+            decode_cover_file(&path, 400).expect("la carátula de prueba no se decodificó");
+        let after = cover_io_counters().file_opens;
+
+        assert_eq!(
+            after - before,
+            1,
+            "una decodificación abre el archivo una vez"
+        );
+        assert_eq!(
+            decoded.pixels.len(),
+            (decoded.width * decoded.height * 4) as usize
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_decode_cover_file_does_not_upscale() {
+        let _guard = global_guard();
+        let dir = temp_cover_dir();
+        let path = dir.join("native-cover.png");
+        std::fs::write(&path, png_bytes(8, 8)).expect("no se pudo escribir el PNG de prueba");
+
+        let decoded =
+            decode_cover_file(&path, 10_000).expect("la carátula de prueba no se decodificó");
+
+        assert_eq!((decoded.width, decoded.height), (8, 8));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_decode_cover_file_downscales_to_the_target() {
+        let _guard = global_guard();
+        let dir = temp_cover_dir();
+        let path = dir.join("large-cover.png");
+        std::fs::write(&path, png_bytes(8, 8)).expect("no se pudo escribir el PNG de prueba");
+
+        let decoded = decode_cover_file(&path, 4).expect("la carátula de prueba no se decodificó");
+
+        assert_eq!((decoded.width, decoded.height), (4, 4));
+        assert_eq!(decoded.pixels.len(), 4 * 4 * 4);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_decode_cover_file_reports_a_missing_file() {
+        let _guard = global_guard();
+        let dir = temp_cover_dir();
+        let path = dir.join("absent.avif");
+
+        let error =
+            decode_cover_file(&path, 160).expect_err("un archivo ausente no puede decodificar");
+        assert!(matches!(error, CoverDecodeError::NotFound(_)));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

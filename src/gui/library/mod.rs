@@ -3,6 +3,7 @@
 //! The module root declares the concern submodules and re-exports the public
 //! surface so existing `crate::gui::library::*` paths keep resolving.
 
+pub(crate) mod cover_cache;
 mod data;
 pub mod grid_metrics;
 pub(crate) mod lists;

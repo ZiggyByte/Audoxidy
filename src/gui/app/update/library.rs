@@ -733,6 +733,9 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::InternalLibraryRefreshed(songs, albums, stats) => {
+                // Read before either collection is consumed: the sweep trigger
+                // below needs this snapshot's emptiness, not the rows built from it.
+                let library_is_empty = songs.is_empty() && albums.is_empty();
                 self.library_manager.cached_all_songs = Some(songs.clone());
                 self.library_manager.cached_albums = Some(
                     albums
@@ -768,6 +771,39 @@ impl crate::gui::app::AudoxidyApp {
                     return self.handle_library_reveal(Some(path));
                 }
 
+                // An empty snapshot with no filter active means the library is
+                // genuinely empty, so no row can own a cover file any more.
+                let params = self.library_manager.get_search_params();
+                let unfiltered = params.query.is_none()
+                    && params.artist.is_none()
+                    && params.album.is_none()
+                    && params.genre.is_none()
+                    && params.year.is_none()
+                    && params.folder_id.is_none();
+                if library_is_empty && unfiltered {
+                    // Read both guards inside the worker: a scan can start, and a
+                    // cover write can be enqueued, between this dispatch and the
+                    // sweep itself, so a value captured here would guard the
+                    // wrong instant.
+                    let core = self.core.clone();
+                    return Task::perform(
+                        async move {
+                            let scanning = core.is_scanning();
+                            let cover_work =
+                                crate::gui::library::cover_cache::cover_work_in_flight()
+                                    + crate::utils::covers::cover_writes_in_flight() as u64;
+                            core.sweep_orphan_covers(scanning, cover_work > 0)
+                        },
+                        |result| match result {
+                            Ok(report) => Message::CoverSweepFinished {
+                                removed: report.removed,
+                                failed: report.failed,
+                            },
+                            Err(_) => Message::NoOp,
+                        },
+                    );
+                }
+
                 Task::none()
             }
             Message::CoverDecoded(outcome) => {
@@ -776,6 +812,18 @@ impl crate::gui::app::AudoxidyApp {
                 self.library_manager.apply_cover_decoded(outcome);
                 self.library_manager.request_cover_window();
 
+                Task::none()
+            }
+            Message::CoverSweepFinished { removed, failed } => {
+                if removed + failed > 0 {
+                    tracing::info!(
+                        target: "audoxidy::metrics",
+                        metric = "cover_sweep",
+                        removed,
+                        failed,
+                        "cover sweep reported unreferenced files"
+                    );
+                }
                 Task::none()
             }
             Message::CoverPrefetchDue => {

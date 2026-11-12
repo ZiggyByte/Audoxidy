@@ -76,7 +76,26 @@ impl crate::gui::app::AudoxidyApp {
                 // 7. FINAL: Reclamar memoria física al SO (Linux)
                 crate::core::Core::execute_global_purge();
 
-                Task::none()
+                // 8. Sweep the cover files no row references any more. The task
+                //    runs on a worker and reads both guards there, so a scan or
+                //    a cover write that starts after this dispatch still keeps
+                //    the sweep away.
+                let core = self.core.clone();
+                Task::perform(
+                    async move {
+                        let scanning = core.is_scanning();
+                        let cover_work = crate::gui::library::cover_cache::cover_work_in_flight()
+                            + crate::utils::covers::cover_writes_in_flight() as u64;
+                        core.sweep_orphan_covers(scanning, cover_work > 0)
+                    },
+                    |result| match result {
+                        Ok(report) => Message::CoverSweepFinished {
+                            removed: report.removed,
+                            failed: report.failed,
+                        },
+                        Err(_) => Message::NoOp,
+                    },
+                )
             }
             _ => Task::none(),
         }

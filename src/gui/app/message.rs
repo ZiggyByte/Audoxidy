@@ -94,6 +94,13 @@ pub enum Message {
     CoverDecoded(crate::gui::library::cover_cache::CoverDecodeOutcome),
     /// The scroll has been idle long enough to request the look-ahead band.
     CoverPrefetchDue,
+    /// A cover-cache sweep finished, whether it removed anything or was skipped.
+    CoverSweepFinished {
+        /// Files removed by the sweep.
+        removed: usize,
+        /// Files whose removal failed; each one was logged.
+        failed: usize,
+    },
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     LibraryShowPlaying,

@@ -1,5 +1,9 @@
 //! Song, artist, album, and folder persistence.
 
+use std::collections::HashSet;
+use std::ffi::OsString;
+use std::path::Path;
+
 use hex;
 use rusqlite::{OptionalExtension, Result, params};
 use sha2::{Digest, Sha256};
@@ -460,5 +464,56 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    /// Returns every cover file name a surviving row references.
+    ///
+    /// Two statements, one lock scope: every non-null `ALBUMS.cover_path` reduced
+    /// to its file name, and every non-null `SONGS.cover_override` composed into
+    /// the name owned by its song. The set holds file names, never full paths, so
+    /// a moved working directory or a differently configured cache directory
+    /// cannot make the comparison disagree with the files on disk.
+    ///
+    /// A failed statement propagates: a partial set would look like a set of
+    /// orphans, so the caller must refuse to delete anything rather than guess.
+    pub fn referenced_cover_file_names(&self) -> Result<HashSet<OsString>> {
+        let mut referenced = HashSet::new();
+
+        {
+            let mut stmt = self
+                .conn
+                .prepare_cached("SELECT cover_path FROM ALBUMS WHERE cover_path IS NOT NULL")?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let cover_path: String = row.get(0)?;
+                if let Some(file_name) = Path::new(&cover_path).file_name() {
+                    referenced.insert(file_name.to_os_string());
+                }
+            }
+        }
+
+        {
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT id, cover_override FROM SONGS WHERE cover_override IS NOT NULL",
+            )?;
+            let mut rows = stmt.query([])?;
+            while let Some(row) = rows.next()? {
+                let song_id: i64 = row.get(0)?;
+                let cover_hash: String = row.get(1)?;
+                match crate::utils::covers::song_cover_file_name(song_id, &cover_hash) {
+                    Ok(file_name) => {
+                        referenced.insert(OsString::from(file_name));
+                    }
+                    Err(error) => tracing::warn!(
+                        target: "audoxidy::persistence",
+                        song_id,
+                        error = %error,
+                        "No se pudo componer el nombre de la carátula propia de una canción"
+                    ),
+                }
+            }
+        }
+
+        Ok(referenced)
     }
 }

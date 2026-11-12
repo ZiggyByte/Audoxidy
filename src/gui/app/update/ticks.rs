@@ -435,7 +435,6 @@ impl crate::gui::app::AudoxidyApp {
             if now.saturating_sub(finished_at) >= 40 {
                 self.scan_finished_at = None;
                 tracing::debug!("Audoxidy GC: Scan complete, clearing memory");
-                self.core.purge_old_covers(32); // Vaciar caché de covers generado por escáner
 
                 // Reiniciar el temporizador global para que no haga otra purga en 2 mins
                 crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();

@@ -250,9 +250,9 @@ pub const SCROLL_IDLE_MS: u64 = 250;
 ///
 /// `direction` is the sign of the last scroll delta (`1.0` downward, `-1.0`
 /// upward) and `screens` how far ahead to look, both fixed by policy. The offset
-/// is resolved to the first row that starts at or after it, so a band landing
-/// inside a row still requests that row. An empty library, a resting or
-/// non-finite direction and a band starting past the last row yield `None`.
+/// is resolved to the row that contains it, so a band landing inside a row still
+/// requests that row. An empty library, a resting or non-finite direction and a
+/// band starting past the last row yield `None`.
 // The inputs are the exact geometry the row math already needs; grouping them
 // into a struct would only move the same list to another module.
 #[allow(clippy::too_many_arguments)]

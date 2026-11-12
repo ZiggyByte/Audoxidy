@@ -25,8 +25,10 @@ use std::sync::OnceLock;
 
 use iced::widget::image::Handle;
 
-use super::grid_metrics::GridMetrics;
+use super::grid_metrics::{self, GridMetrics};
 use super::state::LibraryManager;
+use super::types::LibraryViewMode;
+use crate::gui::dimensions::LIST_ROW_HEADER;
 use crate::utils::covers::{CoverBudget, cover_metrics, decode_cover_file};
 
 /// Job queue capacity: a scroll burst waits in the queue instead of allocating
@@ -175,6 +177,129 @@ impl CoverStore {
     pub fn order_mru_to_lru(&self) -> Vec<String> {
         self.budget.order_mru_to_lru()
     }
+
+    /// Sets the retained-byte target the next eviction enforces.
+    pub fn set_budget(&mut self, bytes: usize) {
+        self.budget.set_budget(bytes);
+        cover_metrics().set_cache_bytes(self.budget.bytes());
+    }
+
+    /// Retained-byte target currently enforced.
+    pub fn budget(&self) -> usize {
+        self.budget.budget()
+    }
+
+    /// Replaces the protected window with the keys the viewport needs.
+    ///
+    /// The ledger promotes the keys it already holds and only records the rest,
+    /// so a look-ahead request becomes protected as soon as its decode lands.
+    pub fn set_window(&mut self, keys: impl IntoIterator<Item = (String, u16)>) {
+        self.budget.set_window(keys);
+    }
+
+    /// Returns whether the current window needs a path and bucket.
+    pub fn is_window(&self, path: &str, bucket: u16) -> bool {
+        self.budget.is_window(path, bucket)
+    }
+
+    /// Drops least-recently-used handles outside the window until the retained
+    /// bytes fit the budget; returns how many handles were dropped.
+    pub fn evict_to_budget(&mut self) -> usize {
+        let removed = self.budget.evict_to_budget();
+        self.drop_handles(&removed);
+        removed.len()
+    }
+
+    /// Drops every handle outside the window; returns how many were dropped.
+    pub fn trim_outside_window(&mut self) -> usize {
+        let removed = self.budget.trim_outside_window();
+        self.drop_handles(&removed);
+        removed.len()
+    }
+
+    /// Removes the handles of keys the ledger already dropped and republishes
+    /// the retained bytes, so the gauge never lags behind an eviction.
+    fn drop_handles(&mut self, keys: &[(String, u16)]) {
+        for (path, bucket) in keys {
+            let emptied = match self.handles.get_mut(bucket) {
+                Some(by_path) => {
+                    by_path.remove(path.as_str());
+                    by_path.is_empty()
+                }
+                None => false,
+            };
+
+            if emptied {
+                self.handles.remove(bucket);
+            }
+
+            cover_metrics().record_eviction();
+        }
+
+        cover_metrics().set_cache_bytes(self.budget.bytes());
+    }
+}
+
+/// Milliseconds of scroll idle after which the look-ahead band is requested.
+///
+/// A burst of wheel or trackpad events never requests a decode: only a pause of
+/// this length does.
+pub const SCROLL_IDLE_MS: u64 = 250;
+
+/// Y offset of the look-ahead band one screen ahead in the scroll direction.
+///
+/// `direction` is the sign of the last scroll delta (`1.0` downward, `-1.0`
+/// upward) and `screens` how far ahead to look, both fixed by policy. The offset
+/// is resolved to the first row that starts at or after it, so a band landing
+/// inside a row still requests that row. An empty library, a resting or
+/// non-finite direction and a band starting past the last row yield `None`.
+pub fn prefetch_band(
+    metrics: &GridMetrics,
+    album_count: usize,
+    expanded_row: Option<usize>,
+    rendered_songs: usize,
+    viewport_y: f32,
+    viewport_h: f32,
+    direction: f32,
+    screens: f32,
+) -> Option<f32> {
+    if !viewport_y.is_finite()
+        || !viewport_h.is_finite()
+        || viewport_h <= 0.0
+        || !direction.is_finite()
+        || direction == 0.0
+        || !screens.is_finite()
+        || screens <= 0.0
+    {
+        return None;
+    }
+
+    let band_y = viewport_y
+        + if direction < 0.0 {
+            -viewport_h * screens
+        } else {
+            viewport_h * screens
+        };
+
+    let total = grid_metrics::total_content_height(
+        metrics,
+        album_count,
+        expanded_row,
+        rendered_songs,
+    );
+    if total <= 0.0 || band_y >= total {
+        return None;
+    }
+
+    let (_, top) = grid_metrics::row_at_offset(
+        metrics,
+        album_count,
+        expanded_row,
+        rendered_songs,
+        band_y,
+    );
+
+    Some(top)
 }
 
 /// One decode request handed to the worker queue.
@@ -417,16 +542,67 @@ impl LibraryManager {
     /// Requests the decode of every cover the current viewport shows.
     ///
     /// The visible rows already resolve to a handle; this only asks for the paths
-    /// whose handle is still missing. A full queue drops the request and leaves
-    /// the key retryable for the next scroll or decode completion.
+    /// whose handle is still missing. The retained-byte budget is recomputed from
+    /// the measured viewport, the window keys are protected against eviction, the
+    /// look-ahead band one screen ahead in the scroll direction is appended, and
+    /// the store is trimmed to the budget last. A full queue drops the request and
+    /// leaves the key retryable for the next scroll or decode completion.
     pub fn request_cover_window(&mut self) {
         let height = self
             .last_viewport
             .map(|viewport| viewport.height)
             .unwrap_or(800.0);
-        let jobs = self.window_jobs(self.scroll_offset.y, height);
+        let metrics = self.grid_metrics.get();
+        let bucket = crate::utils::covers::cover_bucket(
+            metrics.cover_size,
+            self.scale_factor,
+            crate::utils::covers::cover_native_size(),
+        );
+        let capacity = match self.view_mode {
+            LibraryViewMode::Grid => {
+                crate::utils::covers::viewport_capacity(metrics.columns, height, metrics.row_height)
+            }
+            _ => crate::utils::covers::viewport_capacity(1, height, LIST_ROW_HEADER),
+        };
+        self.cover_store
+            .set_budget(crate::utils::covers::cover_budget_bytes(capacity, bucket));
+
+        let mut jobs = self.window_jobs(self.scroll_offset.y, height);
+        let window_keys = jobs
+            .iter()
+            .map(|job| (job.key.path.to_string(), job.key.bucket))
+            .collect::<Vec<_>>();
+        self.cover_store.set_window(window_keys);
+
+        let screens = if crate::utils::is_low_resource() {
+            0.5
+        } else {
+            1.0
+        };
+        let albums = self
+            .filtered_albums
+            .as_ref()
+            .or(self.cached_albums.as_ref());
+        let album_count = albums.map_or(0, Vec::len);
+        let expanded_row =
+            albums.and_then(|albums| self.expanded_album_row(albums, metrics.columns));
+        let rendered_songs = self.rendered_expanded_song_count();
+
+        if let Some(band_y) = prefetch_band(
+            &metrics,
+            album_count,
+            expanded_row,
+            rendered_songs,
+            self.scroll_offset.y,
+            height,
+            self.scroll_direction.signum(),
+            screens,
+        ) {
+            jobs.extend(self.window_jobs(band_y, height));
+        }
 
         self.request_jobs_with(jobs, |job| request_cover_decode(job.clone()));
+        self.cover_store.evict_to_budget();
     }
 }
 

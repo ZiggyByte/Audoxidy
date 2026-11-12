@@ -121,6 +121,14 @@ pub struct LibraryManager {
     /// Scroll counter stamped on every decode request, so a stale result can be
     /// told apart from one belonging to the current scroll.
     pub scroll_generation: u64,
+    /// Sign of the last scroll delta: `1.0` downward, `-1.0` upward, `0.0` at rest.
+    ///
+    /// The look-ahead band is placed on this side of the viewport.
+    pub scroll_direction: f32,
+    /// Instant of the last scroll event; the look-ahead prefetch waits for it to age.
+    pub last_scroll_at: Option<std::time::Instant>,
+    /// Whether a delayed look-ahead prefetch is already scheduled.
+    pub prefetch_scheduled: bool,
     pub data_unloaded: bool,
     pub pending_reveal_path: Option<String>,
 }
@@ -207,6 +215,9 @@ impl Default for LibraryManager {
             cached_grid_rows: std::cell::RefCell::new(None),
             scale_factor: 1.0,
             scroll_generation: 0,
+            scroll_direction: 0.0,
+            last_scroll_at: None,
+            prefetch_scheduled: false,
             data_unloaded: false,
             pending_reveal_path: None,
         }

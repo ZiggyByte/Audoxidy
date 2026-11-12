@@ -56,8 +56,10 @@ impl crate::gui::app::AudoxidyApp {
                 // 3. Limpiar caché global de strings (Interner)
                 crate::utils::interner::clear_interner();
 
-                // 4. Purgar carátulas LRU (Purga suave de 16 elementos)
-                self.core.purge_old_covers(16);
+                // 4. Soltar las carátulas decodificadas que la ventana actual no
+                //    muestra (las visibles se conservan: una purga durante la
+                //    reproducción no debe dejar en blanco una carátula).
+                self.library_manager.cover_store.trim_outside_window();
 
                 // 5. Liberar la memoria de la pre-carga de audio (seguro durante la
                 //    reproducción: no reinicia el stream). NO se resetea

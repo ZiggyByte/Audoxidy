@@ -902,18 +902,123 @@ pub fn cover_budget_bytes(capacity: usize, bucket: u32) -> usize {
 /// Byte and recency ledger for the decoded-cover store.
 ///
 /// Entries are keyed by cover path and decode bucket, and `bytes` is the exact
-/// RGBA size retained for them. The ledger owns no lock and no front-end type,
-/// so the store holds it as a plain field and delegates accounting here.
-#[derive(Debug, Default)]
+/// RGBA size retained for them. `window` holds the keys the current viewport
+/// needs; they are never evicted, so a visible cover cannot blank. The ledger
+/// owns no lock and no front-end type, so the store holds it as a plain field
+/// and delegates accounting here.
+#[derive(Debug)]
 pub struct CoverBudget {
     /// Bucket → cover path → retained bytes.
     entries: HashMap<u16, HashMap<String, usize>>,
     /// Recency order, most recently used first.
     order: VecDeque<(String, u16)>,
+    /// Bytes the ledger is allowed to retain.
+    budget: usize,
+    /// Path → buckets the current viewport shows.
+    window: HashMap<String, HashSet<u16>>,
     bytes: usize,
 }
 
+impl Default for CoverBudget {
+    /// Starts at the ceiling, so a ledger that has not been given a viewport
+    /// budget yet retains everything it stores.
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            budget: COVER_BUDGET_MAX_BYTES,
+            window: HashMap::new(),
+            bytes: 0,
+        }
+    }
+}
+
 impl CoverBudget {
+    /// Sets the retained-byte target the next eviction enforces.
+    pub fn set_budget(&mut self, bytes: usize) {
+        self.budget = bytes;
+    }
+
+    /// Retained-byte target currently enforced.
+    pub fn budget(&self) -> usize {
+        self.budget
+    }
+
+    /// Replaces the protected window with `keys` and promotes the ones the
+    /// ledger already holds.
+    ///
+    /// It neither inserts nor evicts: a key the store does not hold yet is only
+    /// recorded as needed, and the promotion keeps a scroll inside the window
+    /// from making its own entries the next eviction candidates.
+    pub fn set_window(&mut self, keys: impl IntoIterator<Item = (String, u16)>) {
+        self.window.clear();
+
+        for (path, bucket) in keys {
+            self.window.entry(path.clone()).or_default().insert(bucket);
+            self.touch(&path, bucket);
+        }
+    }
+
+    /// Returns whether the window needs a path and bucket.
+    ///
+    /// The lookup is borrowed and does not promote, so the decode-result handler
+    /// can ask without changing the recency order.
+    pub fn is_window(&self, path: &str, bucket: u16) -> bool {
+        self.window
+            .get(path)
+            .is_some_and(|buckets| buckets.contains(&bucket))
+    }
+
+    /// Drops least-recently-used entries outside the window until the retained
+    /// bytes fit the budget.
+    ///
+    /// A window entry is never removed, so an eviction stops when only window
+    /// entries remain: the budget is a target for the retained entries, not an
+    /// invariant that may blank a visible cover. Returns the removed keys in
+    /// removal order.
+    pub fn evict_to_budget(&mut self) -> Vec<(String, u16)> {
+        let mut removed = Vec::new();
+
+        while self.bytes > self.budget {
+            let Some(index) = self
+                .order
+                .iter()
+                .rposition(|(path, bucket)| !self.is_window(path, *bucket))
+            else {
+                break;
+            };
+            let (path, bucket) = self.order[index].clone();
+
+            if self.remove(&path, bucket).is_some() {
+                removed.push((path, bucket));
+            }
+        }
+
+        removed
+    }
+
+    /// Drops every entry outside the window and returns the removed keys.
+    ///
+    /// The entries the window shows keep their bytes untouched, so a collection
+    /// during playback cannot blank a cover the user is looking at.
+    pub fn trim_outside_window(&mut self) -> Vec<(String, u16)> {
+        let outside: Vec<(String, u16)> = self
+            .order
+            .iter()
+            .filter(|(path, bucket)| !self.is_window(path, *bucket))
+            .cloned()
+            .collect();
+
+        let mut removed = Vec::with_capacity(outside.len());
+        for (path, bucket) in outside {
+            if self.remove(&path, bucket).is_some() {
+                removed.push((path, bucket));
+            }
+        }
+
+        removed
+    }
+
     /// Records the retained bytes for one path and bucket, promoting the entry to
     /// most recently used and replacing any previous accounting for it.
     pub fn insert(&mut self, path: &str, bucket: u16, bytes: usize) {

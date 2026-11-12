@@ -73,3 +73,6 @@ mod library_tests {
 
 #[cfg(test)]
 mod grid_metrics_tests;
+
+#[cfg(test)]
+mod cover_cache_tests;

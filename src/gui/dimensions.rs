@@ -93,6 +93,15 @@ pub const PRESET_LIST_WIDTH: f32 = 140.0;
 pub const PLAYLIST_PANEL_WIDTH: f32 = 400.0;
 /// Fixed width of the square player panel.
 pub const PLAYER_PANEL_SIZE: f32 = 400.0;
+/// Fixed width of the library filters panel.
+pub const FILTER_PANEL_WIDTH: f32 = 187.0;
+/// Left edge of the library content, derived from the player column, the filters
+/// panel and the content inset instead of restating the window-to-content offset.
+pub const LIBRARY_CONTENT_X_ORIGIN: f32 = PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH + SPACE_XS;
+/// Width of the visible rail of the shared vertical scrollbar. The transparent
+/// hit border around it is not subtracted: it only enlarges the pointer target
+/// and never covers a card.
+pub const ALBUM_SCROLLBAR_RAIL: f32 = 4.0;
 /// Fixed width of the VU meter numeric readout.
 pub const METER_NUMERIC_WIDTH: f32 = 110.0;
 /// Fixed width of the audio-center window.
@@ -142,6 +151,56 @@ pub const PANEL_SEPARATOR_COLUMN: f32 = 30.0;
 pub const EFFECT_SLIDER_HEIGHT: f32 = 18.0;
 /// Width of the numeric input attached to an effect slider.
 pub const EFFECT_INPUT_WIDTH: f32 = 40.0;
+
+// ── Album card ─────────────────────────────────────────────────────
+//
+// The card mixes a scaling cover with fixed internal chrome: the paddings, the
+// text block and the radii never follow the cover, so they are named here and
+// consumed by the geometry model instead of being repeated at the render sites.
+
+/// Reference outer width of an album card; it is the divisor of the column rule.
+pub const ALBUM_CARD_REFERENCE_WIDTH: f32 = 189.0;
+/// Reference side of the square album cover at the reference card width.
+pub const ALBUM_COVER_REFERENCE: f32 = 159.0;
+/// Smallest cover side: the reference cover at −30 %.
+///
+/// Kept as a literal instead of a product of the reference cover because the f32
+/// product lands one ulp away from the decimal value the design states.
+pub const ALBUM_COVER_MIN: f32 = 111.3;
+/// Largest cover side: the reference cover at +30 %.
+///
+/// Kept as a literal for the same reason as the lower bound.
+pub const ALBUM_COVER_MAX: f32 = 206.7;
+/// Fixed top padding of an album card.
+pub const ALBUM_CARD_PADDING_TOP: f32 = 15.0;
+/// Fixed left and right padding of an album card.
+pub const ALBUM_CARD_PADDING_SIDE: f32 = 15.0;
+/// Fixed bottom padding of an album card.
+pub const ALBUM_CARD_PADDING_BOTTOM: f32 = 12.0;
+/// Fixed gap between the cover and the text block.
+pub const ALBUM_CARD_COVER_TEXT_GAP: f32 = 5.0;
+/// Font size of the four card meta lines.
+pub const ALBUM_CARD_TEXT_SIZE: f32 = 12.0;
+/// Absolute line height of the four card meta lines.
+pub const ALBUM_CARD_LINE_HEIGHT: f32 = 14.0;
+/// Gap between two stacked card meta lines.
+pub const ALBUM_CARD_LINE_GAP: f32 = 2.0;
+/// Height of the four-line card text block, derived from its lines so a line
+/// height change cannot desynchronise the virtualized row height.
+pub const ALBUM_CARD_TEXT_BLOCK_HEIGHT: f32 =
+    4.0 * ALBUM_CARD_LINE_HEIGHT + 3.0 * ALBUM_CARD_LINE_GAP;
+/// Corner radius of the selection and expansion fill of an album card.
+pub const ALBUM_CARD_SELECTION_RADIUS: f32 = 10.0;
+/// Top and bottom padding of an expanded album song block.
+pub const ALBUM_EXPANDED_PADDING: f32 = SPACE_2XL;
+/// Bottom inset of the container that wraps an expanded album song block.
+pub const ALBUM_EXPANDED_BOTTOM_INSET: f32 = 5.0;
+/// Placeholder album icon side divided by the cover side.
+pub const ALBUM_PLACEHOLDER_ICON_RATIO: f32 = 96.0 / ALBUM_COVER_REFERENCE;
+/// Narrowest album card: the smallest cover plus both fixed side paddings.
+pub const ALBUM_CARD_MIN_WIDTH: f32 = ALBUM_COVER_MIN + 2.0 * ALBUM_CARD_PADDING_SIDE;
+/// Widest album card: the largest cover plus both fixed side paddings.
+pub const ALBUM_CARD_MAX_WIDTH: f32 = ALBUM_COVER_MAX + 2.0 * ALBUM_CARD_PADDING_SIDE;
 
 /// Height of the scroll area of the preset list in the load-preset dialog.
 pub const EQ_PRESET_SCROLL_HEIGHT: f32 = 287.0;
@@ -386,5 +445,43 @@ mod tests {
         assert_eq!(icon_button_box(IconSize::M), 28.0);
         assert_eq!(icon_button_box(IconSize::L), 36.0);
         assert_eq!(icon_button_box(IconSize::Xl), 44.0);
+    }
+
+    #[test]
+    fn test_album_card_tokens_are_fixed() {
+        assert_eq!(ALBUM_CARD_REFERENCE_WIDTH, 189.0);
+        assert_eq!(ALBUM_COVER_REFERENCE, 159.0);
+        assert_eq!(ALBUM_CARD_PADDING_TOP, 15.0);
+        assert_eq!(ALBUM_CARD_PADDING_SIDE, 15.0);
+        assert_eq!(ALBUM_CARD_PADDING_BOTTOM, 12.0);
+        assert_eq!(ALBUM_CARD_COVER_TEXT_GAP, 5.0);
+        assert_eq!(ALBUM_CARD_TEXT_SIZE, 12.0);
+        assert_eq!(ALBUM_CARD_LINE_HEIGHT, 14.0);
+        assert_eq!(ALBUM_CARD_LINE_GAP, 2.0);
+        assert_eq!(ALBUM_CARD_TEXT_BLOCK_HEIGHT, 62.0);
+        assert_eq!(ALBUM_CARD_SELECTION_RADIUS, 10.0);
+        assert_eq!(ALBUM_EXPANDED_PADDING, 32.0);
+        assert_eq!(ALBUM_EXPANDED_BOTTOM_INSET, 5.0);
+
+        // The cover bounds are literals: the reference cover times 0.7 and 1.3
+        // lands one f32 ulp away from the decimal value, so they are compared
+        // with a tolerance instead of bit equality.
+        assert!((ALBUM_COVER_MIN - ALBUM_COVER_REFERENCE * 0.7).abs() < 0.001);
+        assert!((ALBUM_COVER_MAX - ALBUM_COVER_REFERENCE * 1.3).abs() < 0.001);
+
+        // The card bounds derive from those literals and stay bit-exact.
+        assert_eq!(ALBUM_CARD_MIN_WIDTH, 141.3);
+        assert_eq!(ALBUM_CARD_MAX_WIDTH, 236.7);
+    }
+
+    #[test]
+    fn test_library_content_origin_derives_from_panels() {
+        assert_eq!(FILTER_PANEL_WIDTH, 187.0);
+        assert_eq!(ALBUM_SCROLLBAR_RAIL, 4.0);
+        assert_eq!(LIBRARY_CONTENT_X_ORIGIN, 591.0);
+        assert_eq!(
+            LIBRARY_CONTENT_X_ORIGIN,
+            PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH + SPACE_XS
+        );
     }
 }

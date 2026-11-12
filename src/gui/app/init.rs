@@ -135,7 +135,21 @@ impl AudoxidyApp {
         // Inicializar temporizadores de memoria (Ciclo de 2 minutos)
         crate::utils::memory_manager::MemoryManager::init();
 
-        let mut library_manager = LibraryManager::default();
+        // The saved view is read once, before the first data load, so the first
+        // layout already uses the chosen mode instead of the default.
+        // db-lock: a single short read — the guard is released before any other
+        // call.
+        let library_view_mode = match core.database().lock() {
+            Ok(db) => crate::gui::library::LibraryViewMode::from_setting_value(
+                db.get_setting("library_view_mode").as_deref(),
+            ),
+            Err(_) => crate::gui::library::LibraryViewMode::Grid,
+        };
+
+        let mut library_manager = LibraryManager {
+            view_mode: library_view_mode,
+            ..LibraryManager::default()
+        };
 
         let (total_songs, total_albums, total_duration, total_size, total_artists) =
             core.get_library_stats_raw();

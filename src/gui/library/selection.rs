@@ -131,7 +131,7 @@ impl LibraryManager {
 
         // Navegación en Grid vs Lista
         let next_idx = if self.view_mode == LibraryViewMode::Grid {
-            let per_row = self.albums_per_row.get().max(1);
+            let per_row = self.grid_metrics.get().columns;
             let is_current_song =
                 matches!(items.get(current_idx), Some((LibraryListItem::Song(_), _)));
 

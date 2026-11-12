@@ -4,6 +4,7 @@
 //! surface so existing `crate::gui::library::*` paths keep resolving.
 
 mod data;
+pub mod grid_metrics;
 pub(crate) mod lists;
 mod selection;
 mod state;
@@ -11,14 +12,14 @@ mod types;
 mod view;
 mod virtualization;
 
+pub use grid_metrics::{GridMetrics, RowSpan};
 pub use state::{
     GRID_ID_A, GRID_ID_B, LIBRARY_SCROLL_ID, LIBRARY_SEARCH_ID, LibraryManager,
     UNLOAD_SAFETY_LIMIT, get_library_redraw_count, library_redraw_count_log,
 };
 pub use types::{
-    AlbumEntry, ArtistGroup, LibraryAlbumGroup, LibraryGridElement, LibraryGridRowData,
-    LibraryListItem, LibraryNavDir, LibrarySource, LibraryStats, LibraryViewMode,
-    LibraryVirtualArtist, LibraryVirtualRow,
+    AlbumEntry, ArtistGroup, LibraryAlbumGroup, LibraryGridElement, LibraryListItem, LibraryNavDir,
+    LibrarySource, LibraryStats, LibraryViewMode, LibraryVirtualArtist, LibraryVirtualRow,
 };
 pub use view::view;
 
@@ -68,3 +69,6 @@ mod library_tests {
         assert_eq!(first[1].0, Some(0.0));
     }
 }
+
+#[cfg(test)]
+mod grid_metrics_tests;

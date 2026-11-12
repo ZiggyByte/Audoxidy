@@ -1,8 +1,8 @@
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
     BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, FILTER_DROPDOWN_ICON, FILTER_DROPDOWN_WIDTH,
-    FILTER_MENU_ICON, FILTER_OVERLAY_TOP, IconSize, LIST_ROW_HEADER, MARGIN_MD, RADIUS_M, SPACE_LG,
-    SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    FILTER_MENU_ICON, FILTER_OVERLAY_TOP, FILTER_PANEL_WIDTH, IconSize, LIST_ROW_HEADER, MARGIN_MD,
+    RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{chevron_btn_sized, standard_scrollable, standard_scrollbar};
@@ -834,14 +834,14 @@ pub fn view<'a>(
     let main_col = column![top_bar, base_middle, bottom_bar,];
 
     let base_view = container(main_col)
-        .width(Length::Fixed(187.0))
+        .width(Length::Fixed(FILTER_PANEL_WIDTH))
         .height(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
 
     let overlay = if let Some(menu) = menu_options_container {
         Some(
             container(mouse_area(menu).on_press(Message::NoOp))
-                .width(Length::Fixed(187.0))
+                .width(Length::Fixed(FILTER_PANEL_WIDTH))
                 .height(Length::Fill)
                 .padding(iced::Padding {
                     top: FILTER_OVERLAY_TOP,

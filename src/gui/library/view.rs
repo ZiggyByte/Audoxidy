@@ -3,8 +3,11 @@
 use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_LG, SPACE_MD,
-    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    ALBUM_CARD_COVER_TEXT_GAP, ALBUM_CARD_LINE_GAP, ALBUM_CARD_LINE_HEIGHT,
+    ALBUM_CARD_PADDING_BOTTOM, ALBUM_CARD_PADDING_SIDE, ALBUM_CARD_PADDING_TOP,
+    ALBUM_CARD_SELECTION_RADIUS, ALBUM_CARD_TEXT_SIZE, ALBUM_EXPANDED_BOTTOM_INSET,
+    ALBUM_EXPANDED_PADDING, BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD,
+    RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{
@@ -192,7 +195,7 @@ pub fn view<'a>(
     };
 
     let sort_bar_pad = match manager.view_mode {
-        LibraryViewMode::Grid => 19.0,
+        LibraryViewMode::Grid => SPACE_XS + ALBUM_CARD_PADDING_SIDE,
         LibraryViewMode::DetailedList => 29.0,
         LibraryViewMode::ThumbnailList => 31.0,
         LibraryViewMode::SimpleList => 29.0,
@@ -241,20 +244,8 @@ pub fn view<'a>(
                 .into()
             } else {
                 let res_grid = iced::widget::responsive(move |size| {
-                    let card_w = 189.0;
-                    let mut columns_count = (size.width / card_w).floor() as usize;
-                    if columns_count < 2 {
-                        columns_count = 2;
-                    }
-                    let max_cols = if crate::utils::is_low_resource() {
-                        5
-                    } else {
-                        10
-                    };
-                    if columns_count > max_cols {
-                        columns_count = max_cols;
-                    }
-                    manager.albums_per_row.set(columns_count);
+                    let metrics = crate::gui::library::grid_metrics::grid_metrics(size.width);
+                    manager.grid_metrics.set(metrics);
 
                     let view_h = manager
                         .last_viewport
@@ -262,7 +253,7 @@ pub fn view<'a>(
                         .map(|v| v.height)
                         .unwrap_or(1000.0);
                     let (top_space, bottom_space, visible_elements) = manager
-                        .get_visible_grid_elements(columns_count, manager.scroll_offset.y, view_h);
+                        .get_visible_grid_elements(&metrics, manager.scroll_offset.y, view_h);
 
                     let mut grid_col: iced::widget::Column<'_, Message> = column![].spacing(0);
 
@@ -297,39 +288,44 @@ pub fn view<'a>(
                                         cover_path.as_deref(),
                                         None,
                                         None,
-                                        crate::gui::library::lists::PlaceholderStyle::Large,
-                                        Length::Fixed(159.0),
-                                        8.0,
+                                        crate::gui::library::lists::PlaceholderStyle::Large {
+                                            icon_side:
+                                                crate::gui::library::grid_metrics::album_placeholder_icon_side(
+                                                    metrics.cover_size,
+                                                ),
+                                        },
+                                        Length::Fixed(metrics.cover_size),
+                                        RADIUS_M,
                                     );
 
                                     let info_col = column![
                                         crate::gui::widgets::smart_truncate_text(
                                             artist_name,
-                                            12.0,
+                                            ALBUM_CARD_TEXT_SIZE,
                                             FONT_INTER_SANS_MEDIUM,
                                             COLOR_TEXT_PRIMARY
                                         ),
                                         crate::gui::widgets::smart_truncate_text(
                                             album_title,
-                                            12.0,
+                                            ALBUM_CARD_TEXT_SIZE,
                                             FONT_INTER_SANS_MEDIUM,
                                             COLOR_TEXT_PRIMARY
                                         ),
                                         crate::gui::widgets::smart_truncate_text(
                                             genre_name,
-                                            12.0,
+                                            ALBUM_CARD_TEXT_SIZE,
                                             FONT_INTER_SANS_MEDIUM,
                                             COLOR_TEXT_PRIMARY
                                         ),
                                         text(year_str)
-                                            .size(12)
+                                            .size(ALBUM_CARD_TEXT_SIZE)
                                             .color(COLOR_TEXT_PRIMARY)
                                             .font(FONT_INTER_SANS_MEDIUM)
                                             .line_height(iced::widget::text::LineHeight::Absolute(
-                                                iced::Pixels(14.0)
+                                                iced::Pixels(ALBUM_CARD_LINE_HEIGHT)
                                             )),
                                     ]
-                                    .spacing(2)
+                                    .spacing(ALBUM_CARD_LINE_GAP)
                                     .width(Length::Fill);
 
                                     let chevron_svg = if is_expanded {
@@ -359,25 +355,26 @@ pub fn view<'a>(
                                         .align_y(Alignment::Center)
                                         .width(Length::Fill);
 
-                                    let item_col = column![album_art, card_bottom].spacing(5);
+                                    let item_col = column![album_art, card_bottom]
+                                        .spacing(ALBUM_CARD_COVER_TEXT_GAP);
                                     let card_wrapper = mouse_area(item_col)
                                         .on_press(Message::SelectAlbum(composite_id.clone()))
                                         .interaction(iced::mouse::Interaction::Pointer);
 
                                     let card_container = container(card_wrapper)
-                                        .width(Length::Fixed(189.0))
+                                        .width(Length::Fixed(metrics.card_width))
                                         .padding(iced::Padding {
-                                            top: 15.0,
-                                            bottom: 12.0,
-                                            left: 15.0,
-                                            right: 15.0,
+                                            top: ALBUM_CARD_PADDING_TOP,
+                                            bottom: ALBUM_CARD_PADDING_BOTTOM,
+                                            left: ALBUM_CARD_PADDING_SIDE,
+                                            right: ALBUM_CARD_PADDING_SIDE,
                                         })
                                         .style(move |_t: &Theme| {
                                             if is_expanded || is_selected {
                                                 container::Style::default()
                                                     .background(COLOR_CONTRAST)
                                                     .border(iced::Border {
-                                                        radius: 10.0.into(),
+                                                        radius: ALBUM_CARD_SELECTION_RADIUS.into(),
                                                         ..Default::default()
                                                     })
                                             } else {
@@ -395,7 +392,13 @@ pub fn view<'a>(
                                 top_space: s_top,
                                 bottom_space: s_bottom,
                             } => {
-                                let mut album_songs_col = column![].spacing(0).padding([32, 0]);
+                                let mut album_songs_col =
+                                    column![].spacing(0).padding(iced::Padding {
+                                        top: ALBUM_EXPANDED_PADDING,
+                                        right: 0.0,
+                                        bottom: ALBUM_EXPANDED_PADDING,
+                                        left: 0.0,
+                                    });
 
                                 if s_top > 0.0 {
                                     album_songs_col = album_songs_col
@@ -448,8 +451,8 @@ pub fn view<'a>(
                                         .width(Length::Fill)
                                         .padding(iced::Padding {
                                             top: 0.0,
-                                            right: 8.0,
-                                            bottom: 5.0,
+                                            right: SPACE_SM,
+                                            bottom: ALBUM_EXPANDED_BOTTOM_INSET,
                                             left: 0.0,
                                         })
                                         .style(|_t| {

@@ -1,7 +1,9 @@
 //! Library message handlers extracted from the update dispatcher.
 
 use crate::gui::app::{AppFocus, Message};
-use crate::gui::library::LIBRARY_SCROLL_ID;
+use crate::gui::dimensions::LIBRARY_CONTENT_X_ORIGIN;
+use crate::gui::library::grid_metrics::anchor_viewport_offset;
+use crate::gui::library::{GridMetrics, LIBRARY_SCROLL_ID};
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -241,8 +243,8 @@ impl crate::gui::app::AudoxidyApp {
 
                     // También iniciamos el marquee al hacer clic
                     let pos = self.last_mouse_pos;
-                    if pos.x >= 602.0 {
-                        let lib_x = (pos.x - 602.0).max(0.0);
+                    if pos.x >= LIBRARY_CONTENT_X_ORIGIN {
+                        let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                         let scroll_y = self.library_manager.scroll_offset.y;
                         let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
@@ -283,8 +285,8 @@ impl crate::gui::app::AudoxidyApp {
 
                     // También iniciamos el marquee al hacer clic
                     let pos = self.last_mouse_pos;
-                    if pos.x >= 602.0 {
-                        let lib_x = (pos.x - 602.0).max(0.0);
+                    if pos.x >= LIBRARY_CONTENT_X_ORIGIN {
+                        let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                         let scroll_y = self.library_manager.scroll_offset.y;
                         let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
@@ -342,8 +344,8 @@ impl crate::gui::app::AudoxidyApp {
 
                     // También iniciamos el marquee al hacer clic
                     let pos = self.last_mouse_pos;
-                    if pos.x >= 602.0 {
-                        let lib_x = (pos.x - 602.0).max(0.0);
+                    if pos.x >= LIBRARY_CONTENT_X_ORIGIN {
+                        let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                         let scroll_y = self.library_manager.scroll_offset.y;
                         let lib_y = pos.y - 72.0 + scroll_y;
                         self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
@@ -437,10 +439,10 @@ impl crate::gui::app::AudoxidyApp {
                     pos
                 };
 
-                // Determinamos si el mouse está sobre el área de la biblioteca
-                // Sidebar(400) + Filters(202) = 602
-                if actual_pos.x >= 602.0 {
-                    let lib_x = (actual_pos.x - 602.0).max(0.0);
+                // A marquee only starts inside the library content, whose left
+                // edge begins after the player column and the filters panel.
+                if actual_pos.x >= LIBRARY_CONTENT_X_ORIGIN {
+                    let lib_x = (actual_pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                     let scroll_y = self.library_manager.scroll_offset.y;
                     let lib_y = actual_pos.y - 72.0 + scroll_y;
 
@@ -464,7 +466,7 @@ impl crate::gui::app::AudoxidyApp {
 
                 // También iniciamos el marquee al hacer clic en el fondo
                 let pos = self.last_mouse_pos;
-                let lib_x = (pos.x - 602.0).max(0.0);
+                let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                 let scroll_y = self.library_manager.scroll_offset.y;
                 let lib_y = pos.y - 72.0 + scroll_y;
                 self.library_manager.marquee_start = Some(iced::Point::new(lib_x, lib_y));
@@ -479,6 +481,19 @@ impl crate::gui::app::AudoxidyApp {
                 crate::utils::covers::clear_negative_cover_cache();
 
                 self.library_manager.view_mode = mode;
+                // The grid anchor belongs to the grid geometry; a list view has
+                // fixed row heights and must never inherit a grid correction.
+                self.library_manager.anchored_metrics = None;
+
+                // The choice is stored before the reload path returns, so it
+                // survives a restart even when the library data had been
+                // unloaded. Only the mode persists.
+                crate::gui::app::persistence::log_persist(
+                    "library_view_mode",
+                    self.core
+                        .persist_audio_setting("library_view_mode", mode.as_setting_value()),
+                );
+
                 self.library_manager.view_menu_open = false;
 
                 if self.library_manager.data_unloaded {
@@ -1008,10 +1023,17 @@ impl crate::gui::app::AudoxidyApp {
                 // Si estamos arrastrando, actualizamos el punto final del marquee basado en la nueva posición de scroll
                 if self.library_manager.is_dragging {
                     if let Some(pos) = self.player_ui_state.mouse_pos {
-                        let lib_x = (pos.x - 602.0).max(0.0);
+                        let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                         let lib_y = pos.y - 72.0 + offset.absolute_offset().y;
                         self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
                     }
+                }
+
+                // A geometry change (resize or column change) moves the content
+                // under a fixed pixel offset; re-anchor before the normal cache
+                // refresh so the visible albums keep their viewport position.
+                if let Some(task) = self.apply_grid_anchor(abs_offset.y) {
+                    return task;
                 }
 
                 self.library_manager.invalidate_visible_cache();
@@ -1039,6 +1061,82 @@ impl crate::gui::app::AudoxidyApp {
 
     pub(in crate::gui::app) fn update_selection_stats(&mut self) {
         self.library_manager.update_selection_stats();
+    }
+
+    /// Re-anchors the library scroll offset after a geometry change.
+    ///
+    /// The anchor is always the first album of the first visible row, with or
+    /// without an expanded album: the expansion only contributes its height to
+    /// the rows above the viewport. Applying the corrected offset in the same
+    /// update that predicts the new geometry keeps the layout from rendering a
+    /// frame with the old offset and the new row heights.
+    pub(in crate::gui::app) fn apply_grid_anchor_to(
+        &mut self,
+        next: GridMetrics,
+        offset_y: f32,
+    ) -> Option<Task<Message>> {
+        let previous = self.library_manager.anchored_metrics?;
+        if previous.columns == next.columns
+            && (previous.card_height - next.card_height).abs() <= 0.01
+        {
+            return None;
+        }
+
+        self.library_manager.anchored_metrics = Some(next);
+        self.library_manager.grid_metrics.set(next);
+        self.library_manager.invalidate_cache();
+
+        let target = self.anchored_grid_offset(previous, next, offset_y)?;
+        self.library_manager.scroll_offset = iced::Vector::new(0.0, target);
+        Some(scroll_to(
+            LIBRARY_SCROLL_ID.clone(),
+            AbsoluteOffset { x: 0.0, y: target },
+        ))
+    }
+
+    /// Fallback path for a geometry change observed from a scroll notification.
+    ///
+    /// The resize path predicts the geometry and applies the anchor before the
+    /// layout, so it usually sees an unchanged generation and does nothing.
+    fn apply_grid_anchor(&mut self, offset_y: f32) -> Option<Task<Message>> {
+        if self.library_manager.view_mode != crate::gui::library::LibraryViewMode::Grid {
+            return None;
+        }
+        let metrics = self.library_manager.grid_metrics.get();
+        if self.library_manager.anchored_metrics.is_none() {
+            self.library_manager.anchored_metrics = Some(metrics);
+            return None;
+        }
+        self.apply_grid_anchor_to(metrics, offset_y)
+    }
+
+    fn anchored_grid_offset(
+        &self,
+        previous: GridMetrics,
+        metrics: GridMetrics,
+        offset_y: f32,
+    ) -> Option<f32> {
+        let viewport = self.library_manager.last_viewport?;
+        let album_count = self
+            .library_manager
+            .filtered_albums
+            .as_ref()
+            .or(self.library_manager.cached_albums.as_ref())
+            .map_or(0, Vec::len);
+        let (expanded_index, rendered_songs) = match self.library_manager.expanded_album_anchor() {
+            Some((index, songs)) => (Some(index), songs),
+            None => (None, 0),
+        };
+
+        Some(anchor_viewport_offset(
+            &previous,
+            &metrics,
+            offset_y,
+            album_count,
+            expanded_index,
+            rendered_songs,
+            viewport.height,
+        ))
     }
 
     pub(in crate::gui::app) fn handle_library_reveal(
@@ -1106,11 +1204,12 @@ impl crate::gui::app::AudoxidyApp {
                                 .or(self.library_manager.cached_albums.as_ref());
 
                             if let Some(albums) = albums_list {
-                                if let Some(album_info) = albums
+                                let album_index = albums
                                     .iter()
-                                    .find(|a| a.title == album_name && a.artist == artist_name)
-                                {
-                                    let hash_id = album_info.id.clone();
+                                    .position(|a| a.title == album_name && a.artist == artist_name);
+
+                                if let Some(album_index) = album_index {
+                                    let hash_id = albums[album_index].id.clone();
                                     let composite_id = format!("{}|{}", artist_name, hash_id);
 
                                     if self.library_manager.expanded_album.as_deref()
@@ -1128,100 +1227,66 @@ impl crate::gui::app::AudoxidyApp {
                                         self.library_manager.expanded_album_songs = Some(songs);
                                     }
 
-                                    let cols = self.library_manager.albums_per_row.get().max(2);
-                                    let mut current_y = 0.0;
-                                    let mut found_y = None;
-                                    let search_query = self.library_manager.search_query.trim();
+                                    // The scroll hint is the expression the virtualizer
+                                    // uses for the song rectangle: the expanded row's top
+                                    // plus the card height, one expanded padding and the
+                                    // rendered song index. The rendered index counts only
+                                    // the songs the renderer keeps, so a filtered-out song
+                                    // never shifts the target.
+                                    let metrics = self.library_manager.grid_metrics.get();
+                                    let row = album_index / metrics.columns;
+                                    let row_top = crate::gui::library::grid_metrics::row_top_of(
+                                        &metrics,
+                                        albums.len(),
+                                        Some(row),
+                                        self.library_manager.rendered_expanded_song_count(),
+                                        row,
+                                    );
 
-                                    for chunk in albums.chunks(cols) {
-                                        let mut row_h = 253.0;
-                                        let mut _has_expanded_here = false;
-                                        for a in chunk {
-                                            let comp = format!("{}|{}", a.artist, a.id);
-                                            if self.library_manager.expanded_album.as_deref()
-                                                == Some(&comp)
+                                    let mut reveal = None;
+                                    let mut rendered_index = 0;
+
+                                    if let Some(expanded) =
+                                        self.library_manager.expanded_album_songs.as_ref()
+                                    {
+                                        let query = self.library_manager.search_query.trim();
+
+                                        for (idx, song) in expanded.iter().enumerate() {
+                                            if !query.is_empty()
+                                                && !crate::utils::song_matches_search(song, query)
                                             {
-                                                let s_count = if let Some(songs) =
-                                                    &self.library_manager.expanded_album_songs
-                                                {
-                                                    if search_query.is_empty() {
-                                                        songs.len()
-                                                    } else {
-                                                        songs
-                                                            .iter()
-                                                            .filter(|s| {
-                                                                crate::utils::song_matches_search(
-                                                                    s,
-                                                                    search_query,
-                                                                )
-                                                            })
-                                                            .count()
-                                                    }
-                                                } else {
-                                                    0
-                                                };
-                                                row_h += 60.0 + (s_count.max(1) as f32 * 32.0);
-                                                _has_expanded_here = true;
+                                                continue;
+                                            }
+
+                                            if song.full_file_path.as_ref() == path {
+                                                reveal = Some((idx, rendered_index, song.id));
                                                 break;
                                             }
+
+                                            rendered_index += 1;
                                         }
+                                    }
 
-                                        if chunk
-                                            .iter()
-                                            .any(|a| a.id == hash_id && a.artist == artist_name)
-                                        {
-                                            if let Some(expanded) =
-                                                &self.library_manager.expanded_album_songs
-                                            {
-                                                let mut rendered_idx = 0;
-                                                let mut found_match = false;
-                                                for (idx, s) in expanded.iter().enumerate() {
-                                                    let matches = search_query.is_empty()
-                                                        || crate::utils::song_matches_search(
-                                                            s,
-                                                            search_query,
-                                                        );
-                                                    if matches {
-                                                        if s.full_file_path.as_ref() == path {
-                                                            self.library_manager
-                                                                .selected_song_idx = Some(idx);
-                                                            self.library_manager.selected_album =
-                                                                Some(composite_id.clone());
+                                    if let Some((song_index, rendered_index, song_id)) = reveal {
+                                        self.library_manager.selected_song_idx = Some(song_index);
+                                        self.library_manager.selected_album =
+                                            Some(composite_id.clone());
 
-                                                            let item = crate::gui::library::LibraryListItem::Song(s.id);
-                                                            self.library_manager
-                                                                .selected_items
-                                                                .clear();
-                                                            self.library_manager
-                                                                .selected_items
-                                                                .insert(item.clone());
-                                                            self.library_manager.focused_item =
-                                                                Some(item.clone());
-                                                            self.library_manager.selection_pivot =
-                                                                Some(item);
+                                        let item =
+                                            crate::gui::library::LibraryListItem::Song(song_id);
+                                        self.library_manager.selected_items.clear();
+                                        self.library_manager.selected_items.insert(item.clone());
+                                        self.library_manager.focused_item = Some(item.clone());
+                                        self.library_manager.selection_pivot = Some(item);
 
-                                                            found_y = Some(
-                                                                current_y
-                                                                    + 253.0
-                                                                    + 30.0
-                                                                    + (rendered_idx as f32 * 32.0),
-                                                            );
-                                                            found_match = true;
-                                                            break;
-                                                        }
-                                                        rendered_idx += 1;
-                                                    }
-                                                }
-                                                if found_match {
-                                                    if let Some(y) = found_y {
-                                                        self.library_manager.selected_item_hint =
-                                                            Some((y, 32.0));
-                                                    }
-                                                    break;
-                                                }
-                                            }
-                                        }
-                                        current_y += row_h;
+                                        let song_y =
+                                            crate::gui::library::grid_metrics::song_y_in_row(
+                                                &metrics,
+                                                row_top,
+                                                rendered_index,
+                                            );
+                                        self.library_manager.selected_item_hint =
+                                            Some((song_y, crate::gui::dimensions::LIST_ROW_HEADER));
                                     }
                                 }
                             }

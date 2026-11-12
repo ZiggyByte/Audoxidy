@@ -1,7 +1,8 @@
 //! Window message handlers extracted from the update dispatcher.
 
 use crate::gui::app::persistence::log_persist;
-use crate::gui::app::{AppFocus, Message};
+use crate::gui::app::{AppFocus, AudoxidyApp, Message};
+use crate::gui::dimensions::{ALBUM_SCROLLBAR_RAIL, LIBRARY_CONTENT_X_ORIGIN};
 use iced::Task;
 
 /// Squared distance (in px²) the pointer must travel while pressed on a bar
@@ -138,10 +139,18 @@ impl crate::gui::app::AudoxidyApp {
                 }
             }
             Message::WindowResized(w, h) => {
+                let previous_width = self.window_size.0 as f32;
                 self.window_size = (w, h);
                 let sidebar_w = 722.0_f32;
                 self.library_manager.library_area_width = (w as f32 - sidebar_w).max(202.0);
                 self.geometry_dirty_at = Some(std::time::Instant::now());
+
+                // The card geometry follows the window width one-to-one (the
+                // panels and insets are fixed), so the next layout can be
+                // predicted here and the scroll offset corrected in the same
+                // update. Applying it before the layout removes the frame of
+                // lag that a deferred correction would show as a jump.
+                let anchor = self.reanchor_viewport(w as f32 - previous_width);
 
                 // El runtime no emite un evento de maximizado y la propiedad
                 // `_NET_WM_STATE` puede actualizarse después del cambio de
@@ -149,14 +158,18 @@ impl crate::gui::app::AudoxidyApp {
                 // evita apilar consultas durante un arrastre de redimensionado.
                 if !self.maximized_query_pending {
                     self.maximized_query_pending = true;
-                    return Task::perform(
+                    let maximize_query = Task::perform(
                         async {
                             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         },
                         |_| Message::QueryMaximized,
                     );
+                    return match anchor {
+                        Some(anchor) => Task::batch(vec![anchor, maximize_query]),
+                        None => maximize_query,
+                    };
                 }
-                Task::none()
+                anchor.unwrap_or_else(Task::none)
             }
             Message::QueryMaximized => {
                 if let Some(id) = self.window_id {
@@ -345,7 +358,7 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 if self.library_manager.is_dragging {
-                    let lib_x = (pos.x - 602.0).max(0.0);
+                    let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                     let scroll_y = self.library_manager.scroll_offset.y;
                     let lib_y = pos.y - 72.0 + scroll_y;
                     self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
@@ -396,7 +409,7 @@ impl crate::gui::app::AudoxidyApp {
                 if self.library_manager.is_dragging {
                     if let Some(start) = self.library_manager.marquee_start {
                         if let Some(pos) = self.player_ui_state.mouse_pos {
-                            let lib_x = (pos.x - 602.0).max(0.0);
+                            let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
                             let scroll_y = self.library_manager.scroll_offset.y;
                             let lib_y = pos.y - 72.0 + scroll_y;
                             let end = iced::Point::new(lib_x, lib_y);
@@ -610,5 +623,23 @@ mod window_shell_tests {
         assert!(!window_fully_off_screen(point(0.0, 1079.0), size, monitor));
         assert!(!window_fully_off_screen(point(0.0, -599.0), size, monitor));
         assert!(!window_fully_off_screen(point(100.0, 100.0), size, monitor));
+    }
+}
+
+impl AudoxidyApp {
+    /// Re-anchors the library viewport for a window width delta.
+    ///
+    /// The card geometry follows the window width one-to-one because the panels
+    /// and insets are fixed, so the next metrics can be predicted before the
+    /// layout runs and the scroll offset corrected without a deferred frame.
+    fn reanchor_viewport(&mut self, width_delta: f32) -> Option<Task<Message>> {
+        if self.library_manager.view_mode != crate::gui::library::LibraryViewMode::Grid {
+            return None;
+        }
+        let current = self.library_manager.grid_metrics.get();
+        let reported_width = current.columns as f32 * current.card_width + ALBUM_SCROLLBAR_RAIL;
+        let next = crate::gui::library::grid_metrics::grid_metrics(reported_width + width_delta);
+
+        self.apply_grid_anchor_to(next, self.library_manager.scroll_offset.y)
     }
 }

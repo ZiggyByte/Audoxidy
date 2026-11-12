@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::utils::SortColumn;
 
+use super::grid_metrics::GridMetrics;
 use super::types::{
     AlbumEntry, ArtistGroup, LibraryListItem, LibrarySource, LibraryStats, LibraryViewMode,
     LibraryVirtualArtist, LibraryVirtualRow,
@@ -75,7 +76,10 @@ pub struct LibraryManager {
     pub selected_header: Option<String>,
     pub selected_album: Option<String>,
     pub selected_song_idx: Option<usize>,
-    pub albums_per_row: std::cell::Cell<usize>,
+    pub grid_metrics: std::cell::Cell<GridMetrics>,
+    /// The snapshot the current scroll offset was measured against; a different
+    /// snapshot means the offset belongs to geometry that no longer exists.
+    pub anchored_metrics: Option<GridMetrics>,
     pub library_area_width: f32,
     pub last_selected_album: Option<String>,
     pub last_selected_song_idx: Option<usize>,
@@ -166,7 +170,8 @@ impl Default for LibraryManager {
             selected_header: None,
             selected_album: None,
             selected_song_idx: None,
-            albums_per_row: std::cell::Cell::new(5),
+            grid_metrics: std::cell::Cell::new(GridMetrics::minimum()),
+            anchored_metrics: None,
             library_area_width: 800.0,
             last_selected_album: None,
             last_selected_song_idx: None,

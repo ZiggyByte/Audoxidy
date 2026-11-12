@@ -8,6 +8,31 @@ pub enum LibraryViewMode {
     SimpleList,
 }
 
+impl LibraryViewMode {
+    /// Returns the stable settings value persisted for this view mode.
+    pub fn as_setting_value(self) -> &'static str {
+        match self {
+            Self::Grid => "grid",
+            Self::DetailedList => "detailed_list",
+            Self::ThumbnailList => "thumbnail_list",
+            Self::SimpleList => "simple_list",
+        }
+    }
+
+    /// Resolves a stored settings value back to its view mode.
+    ///
+    /// A missing, empty or unrecognised value resolves to the grid, which is
+    /// the first-launch default.
+    pub fn from_setting_value(value: Option<&str>) -> Self {
+        match value {
+            Some("detailed_list") => Self::DetailedList,
+            Some("thumbnail_list") => Self::ThumbnailList,
+            Some("simple_list") => Self::SimpleList,
+            _ => Self::Grid,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum LibraryListItem {
     Artist(String),
@@ -82,15 +107,6 @@ pub struct LibraryVirtualArtist {
     pub top_y: f32,
     pub height: f32,
     pub albums: Vec<LibraryAlbumGroup>,
-}
-
-/// Datos de una fila calculada en la cuadrícula
-#[derive(Debug, Clone)]
-pub struct LibraryGridRowData {
-    pub top_y: f32,
-    pub height: f32,
-    pub albums: Vec<AlbumEntry>,
-    pub expanded_id: Option<String>,
 }
 
 /// Elementos visibles en la cuadrícula virtualizada

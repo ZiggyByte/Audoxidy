@@ -33,8 +33,11 @@ pub(crate) fn cover_to_iced(
 /// Estilos de Placeholder para el widget de carátulas
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlaceholderStyle {
-    /// Versión grande (Grid, Lista Detallada): Icono 96px + Texto "AuDoxiDY"
-    Large,
+    /// Versión grande (Grid, Lista Detallada): Icono + Texto "AuDoxiDY".
+    ///
+    /// `icon_side` is the album-icon box in logical pixels; the brand wordmark
+    /// keeps its fixed size.
+    Large { icon_side: f32 },
     /// Versión pequeña (Thumbnail List): Solo icono
     Small,
     /// Versión específica del reproductor (Solo texto)
@@ -89,13 +92,13 @@ pub fn album_art_widget<'a, Message: 'a>(
     } else {
         // 4. Fallback: Placeholder Automático basado en el estilo solicitado
         match style {
-            PlaceholderStyle::Large => container(
+            PlaceholderStyle::Large { icon_side } => container(
                 column![
                     svg(svg::Handle::from_path(
                         crate::gui::widgets::icon_asset_path("album.svg")
                     ))
-                    .width(Length::Fixed(96.0))
-                    .height(Length::Fixed(96.0))
+                    .width(Length::Fixed(icon_side))
+                    .height(Length::Fixed(icon_side))
                     .style(|_t: &Theme, _s| svg::Style {
                         color: Some(Color::from(COLOR_TEXT_SECONDARY))
                     }),
@@ -664,7 +667,11 @@ where
                     cover_path.as_deref(),
                     None,
                     None,
-                    PlaceholderStyle::Large,
+                    PlaceholderStyle::Large {
+                        icon_side: crate::gui::library::grid_metrics::album_placeholder_icon_side(
+                            crate::gui::dimensions::ALBUM_COVER_REFERENCE,
+                        ),
+                    },
                     Length::Fixed(card_w - 30.0),
                     8.0,
                 );

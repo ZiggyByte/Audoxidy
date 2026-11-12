@@ -4,7 +4,7 @@
 
 Audoxidy is a desktop audio player powered by a custom audio engine and a modern interface built with [Iced](https://iced.rs/). Designed for listeners who care about sound quality, it delivers advanced DSP processing, seamless transitions, and a responsive, native experience across Linux, Windows, and macOS.
 
-![](assets/screenshot.png)
+![](screenshot.png)
 
 ## Features
 

@@ -2,12 +2,13 @@
 
 use iced::Task;
 
+use super::grid_metrics::{GridMetrics, grid_rows, song_y_in_row};
 use super::state::{LIBRARY_SCROLL_ID, LibraryManager};
 use super::types::{
-    LibraryAlbumGroup, LibraryGridElement, LibraryGridRowData, LibraryListItem, LibraryViewMode,
+    AlbumEntry, LibraryAlbumGroup, LibraryGridElement, LibraryListItem, LibraryViewMode,
     LibraryVirtualArtist, LibraryVirtualRow,
 };
-use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER, SPACE_XS};
+use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER};
 
 impl LibraryManager {
     /// Descarga los datos pesados de la RAM por inactividad, conservando un margen de seguridad
@@ -407,11 +408,64 @@ impl LibraryManager {
         )
     }
 
+    /// Rendered song count of the expanded album.
+    ///
+    /// Counts only the songs that pass the active search, which is exactly the
+    /// list the renderer receives, and returns zero while the song list is still
+    /// loading so no space is reserved for a row that does not exist.
+    pub fn rendered_expanded_song_count(&self) -> usize {
+        let Some(songs) = self.expanded_album_songs.as_ref() else {
+            return 0;
+        };
+
+        let query = self.search_query.trim();
+        if query.is_empty() {
+            songs.len()
+        } else {
+            songs
+                .iter()
+                .filter(|song| crate::utils::song_matches_search(song, query))
+                .count()
+        }
+    }
+
+    /// Row index that hosts the expanded album inside `albums`.
+    pub fn expanded_album_row(&self, albums: &[AlbumEntry], columns: usize) -> Option<usize> {
+        let expanded = self.expanded_album.as_deref()?;
+        let (artist, album_id) = expanded.split_once('|')?;
+        let album_index = albums
+            .iter()
+            .position(|album| album.artist == artist && album.id == album_id)?;
+
+        Some(album_index / columns)
+    }
+
+    /// Index of the expanded album in the rendered album list and its rendered
+    /// song count.
+    ///
+    /// The identity is the composite id the expansion stores, so the anchor
+    /// survives a geometry change untouched. Both halves come from the
+    /// filtered-or-cached list and the search-filtered song list, which are the
+    /// ones the renderer projects from; the album scan allocates nothing.
+    pub fn expanded_album_anchor(&self) -> Option<(usize, usize)> {
+        let expanded = self.expanded_album.as_deref()?;
+        let (artist, album_id) = expanded.split_once('|')?;
+        let albums = self
+            .filtered_albums
+            .as_ref()
+            .or(self.cached_albums.as_ref())?;
+        let album_index = albums
+            .iter()
+            .position(|album| album.artist == artist && album.id == album_id)?;
+
+        Some((album_index, self.rendered_expanded_song_count()))
+    }
+
     /// Calcula los elementos visibles en la cuadrícula para el modo Grid, con virtualización avanzada.
     #[tracing::instrument(skip(self))]
     pub fn get_visible_grid_elements(
         &self,
-        columns: usize,
+        metrics: &GridMetrics,
         viewport_y: f32,
         viewport_h: f32,
     ) -> (f32, f32, Vec<LibraryGridElement>) {
@@ -426,57 +480,9 @@ impl LibraryManager {
             return (0.0, 0.0, Vec::new());
         };
 
-        let mut total_height = 0.0;
-        let mut rows_data = Vec::with_capacity(albums.len() / columns + 1);
-
-        // Optimización: Desglosar el ID expandido para evitar format! en el bucle
-        let (exp_art, exp_alb) = if let Some(exp) = self.expanded_album.as_deref() {
-            if let Some(pos) = exp.find('|') {
-                (Some(&exp[..pos]), Some(&exp[pos + 1..]))
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
-        };
-
-        // 1. Calcular estructura completa (Altura de cada fila)
-        for chunk in albums.chunks(columns) {
-            let mut row_h = 253.0;
-            let mut expanded_id = None;
-
-            for album_entry in chunk {
-                if exp_art == Some(album_entry.artist.as_str())
-                    && exp_alb == Some(album_entry.id.as_str())
-                {
-                    let composite_id = self.expanded_album.clone().unwrap();
-                    expanded_id = Some(composite_id);
-                    let songs_count = if let Some(songs) = self.expanded_album_songs.as_ref() {
-                        let query = self.search_query.trim();
-                        if query.is_empty() {
-                            songs.len()
-                        } else {
-                            songs
-                                .iter()
-                                .filter(|s| crate::utils::song_matches_search(s, query))
-                                .count()
-                        }
-                    } else {
-                        1 // "Cargando..."
-                    };
-                    // 60px de padding/headers + canciones (32px cada una)
-                    row_h += 60.0 + (songs_count.max(1) as f32 * LIST_ROW_HEADER);
-                    break;
-                }
-            }
-            rows_data.push(LibraryGridRowData {
-                top_y: total_height,
-                height: row_h,
-                albums: chunk.to_vec(),
-                expanded_id: expanded_id,
-            });
-            total_height += row_h;
-        }
+        let expanded_row = self.expanded_album_row(albums, metrics.columns);
+        let rendered_songs = self.rendered_expanded_song_count();
+        let spans = grid_rows(metrics, albums.len(), expanded_row, rendered_songs);
 
         // Margen dinámico en grid = 50% del viewport (25% en low-resource)
         let grid_margin_ratio: f32 = if crate::utils::is_low_resource() {
@@ -492,60 +498,63 @@ impl LibraryManager {
         let mut bottom_space = 0.0;
         let mut visible_elements = Vec::new();
 
-        for row in rows_data {
-            let row_end = row.top_y + row.height;
+        for (row_index, span) in spans.iter().enumerate() {
+            let row_end = span.top + span.height;
             if row_end < render_min {
-                top_space += row.height;
-            } else if row.top_y > render_max {
-                bottom_space += row.height;
-            } else {
-                // Fila de álbumes
-                visible_elements.push(LibraryGridElement::AlbumRow {
-                    albums: row.albums,
-                    active_expansion_id: row.expanded_id.clone(),
-                });
+                top_space += span.height;
+                continue;
+            }
+            if span.top > render_max {
+                bottom_space += span.height;
+                continue;
+            }
 
-                // Si esta fila tiene un álbum expandido, virtualizar las canciones dentro del bloque
-                if let Some(exp_id) = row.expanded_id {
-                    if let Some(songs) = self.expanded_album_songs.as_ref() {
-                        let query = self.search_query.trim();
+            // Only the rows inside the render window are materialised; the rows
+            // above and below are represented by their accumulated height.
+            let row_start = row_index * metrics.columns;
+            let row_limit = (row_start + metrics.columns).min(albums.len());
 
-                        // El bloque de canciones empieza después de las tarjetas (253px) + header (32px)
-                        let songs_block_start_y = row.top_y + 253.0 + LIST_ROW_HEADER;
+            visible_elements.push(LibraryGridElement::AlbumRow {
+                albums: albums[row_start..row_limit].to_vec(),
+                active_expansion_id: if span.expanded {
+                    self.expanded_album.clone()
+                } else {
+                    None
+                },
+            });
 
-                        let mut v_songs = Vec::new();
-                        let mut songs_top_space = 0.0;
-                        let mut songs_bottom_space = 0.0;
+            if span.expanded
+                && let Some(songs) = self.expanded_album_songs.as_ref()
+            {
+                let query = self.search_query.trim();
+                let mut v_songs = Vec::new();
+                let mut songs_top_space = 0.0;
+                let mut songs_bottom_space = 0.0;
+                let mut rendered_index = 0;
 
-                        let mut current_song_y = songs_block_start_y;
-                        for (idx, song) in songs.iter().enumerate() {
-                            if !query.is_empty() && !crate::utils::song_matches_search(song, query)
-                            {
-                                continue;
-                            }
-
-                            if current_song_y + LIST_ROW_HEADER >= render_min
-                                && current_song_y <= render_max
-                            {
-                                v_songs.push((song.clone(), idx));
-                            } else if current_song_y + LIST_ROW_HEADER < render_min {
-                                songs_top_space += LIST_ROW_HEADER;
-                            } else {
-                                songs_bottom_space += LIST_ROW_HEADER;
-                            }
-                            current_song_y += LIST_ROW_HEADER;
-                        }
-
-                        if !v_songs.is_empty() || songs_top_space > 0.0 || songs_bottom_space > 0.0
-                        {
-                            visible_elements.push(LibraryGridElement::ExpandedSongs {
-                                album_id: exp_id,
-                                songs: v_songs,
-                                top_space: songs_top_space,
-                                bottom_space: songs_bottom_space,
-                            });
-                        }
+                for (idx, song) in songs.iter().enumerate() {
+                    if !query.is_empty() && !crate::utils::song_matches_search(song, query) {
+                        continue;
                     }
+
+                    let song_y = song_y_in_row(metrics, span.top, rendered_index);
+                    if song_y + LIST_ROW_HEADER >= render_min && song_y <= render_max {
+                        v_songs.push((song.clone(), idx));
+                    } else if song_y + LIST_ROW_HEADER < render_min {
+                        songs_top_space += LIST_ROW_HEADER;
+                    } else {
+                        songs_bottom_space += LIST_ROW_HEADER;
+                    }
+                    rendered_index += 1;
+                }
+
+                if !v_songs.is_empty() || songs_top_space > 0.0 || songs_bottom_space > 0.0 {
+                    visible_elements.push(LibraryGridElement::ExpandedSongs {
+                        album_id: self.expanded_album.clone().unwrap_or_default(),
+                        songs: v_songs,
+                        top_space: songs_top_space,
+                        bottom_space: songs_bottom_space,
+                    });
                 }
             }
         }
@@ -688,7 +697,6 @@ impl LibraryManager {
 
     pub fn get_visible_items(&self) -> Vec<(LibraryListItem, iced::Rectangle)> {
         let mut items = Vec::new();
-        let mut current_y = 0.0;
         let header_h: f32 = if self.view_mode == LibraryViewMode::ThumbnailList {
             LIST_ROW
         } else {
@@ -774,63 +782,58 @@ impl LibraryManager {
                 .or(self.cached_albums.as_ref());
 
             if let Some(albums) = albums_to_show {
-                let per_row = self.albums_per_row.get().max(1);
-                let card_inner_width = 189.0;
-                // La fila del grid no tiene separacion entre tarjetas y el contenedor
-                // interno no aplica padding lateral, de modo que la primera tarjeta
-                // arranca en el padding izquierdo del contenedor externo.
-                let spacing = 0.0;
-                let x_start = SPACE_XS;
+                let metrics = self.grid_metrics.get();
+                let expanded_row = self.expanded_album_row(albums, metrics.columns);
+                let rendered_songs = self.rendered_expanded_song_count();
+                let row_width = metrics.card_width * metrics.columns as f32;
 
-                for chunk in albums.chunks(per_row) {
-                    let mut row_h = 253.0;
-                    let mut expanded_id = None;
+                for (row_index, span) in
+                    grid_rows(&metrics, albums.len(), expanded_row, rendered_songs)
+                        .into_iter()
+                        .enumerate()
+                {
+                    let row_start = row_index * metrics.columns;
 
-                    for (col, album_entry) in chunk.iter().enumerate() {
+                    for column in 0..metrics.columns {
+                        let Some(album_entry) = albums.get(row_start + column) else {
+                            break;
+                        };
                         let composite_id = format!("{}|{}", album_entry.artist, album_entry.id);
-                        let x = x_start + col as f32 * (card_inner_width + spacing);
-                        // Usamos el ancho exacto de la tarjeta (189) para una selección precisa
+
                         items.push((
-                            LibraryListItem::Album(composite_id.clone()),
+                            LibraryListItem::Album(composite_id),
                             iced::Rectangle::new(
-                                iced::Point::new(x, current_y),
-                                iced::Size::new(card_inner_width, 253.0),
+                                iced::Point::new(column as f32 * metrics.card_width, span.top),
+                                iced::Size::new(metrics.card_width, metrics.card_height),
                             ),
                         ));
-
-                        if self.expanded_album.as_deref() == Some(composite_id.as_str()) {
-                            expanded_id = Some(composite_id);
-                        }
                     }
 
-                    if let Some(_exp_id) = expanded_id {
-                        if let Some(songs) = self.expanded_album_songs.as_ref() {
-                            let query = self.search_query.trim();
-                            let filtered = if query.is_empty() {
-                                songs.clone()
-                            } else {
-                                songs
-                                    .iter()
-                                    .filter(|s| crate::utils::song_matches_search(s, query))
-                                    .cloned()
-                                    .collect()
-                            };
+                    if span.expanded
+                        && let Some(songs) = self.expanded_album_songs.as_ref()
+                    {
+                        let query = self.search_query.trim();
+                        let mut rendered_index = 0;
 
-                            let mut song_y = current_y + 253.0 + LIST_ROW_HEADER; // aprox padding
-                            for song in filtered {
-                                items.push((
-                                    LibraryListItem::Song(song.id),
-                                    iced::Rectangle::new(
-                                        iced::Point::new(0.0, song_y),
-                                        iced::Size::new(lib_width, LIST_ROW_HEADER),
-                                    ),
-                                ));
-                                song_y += LIST_ROW_HEADER;
+                        for song in songs {
+                            if !query.is_empty() && !crate::utils::song_matches_search(song, query)
+                            {
+                                continue;
                             }
-                            row_h += 60.0 + (songs.len() as f32 * LIST_ROW_HEADER); // Ajuste de altura de fila para navegación
+
+                            items.push((
+                                LibraryListItem::Song(song.id),
+                                iced::Rectangle::new(
+                                    iced::Point::new(
+                                        0.0,
+                                        song_y_in_row(&metrics, span.top, rendered_index),
+                                    ),
+                                    iced::Size::new(row_width, LIST_ROW_HEADER),
+                                ),
+                            ));
+                            rendered_index += 1;
                         }
                     }
-                    current_y += row_h;
                 }
             }
         }

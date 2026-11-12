@@ -161,10 +161,10 @@ impl crate::gui::app::AudoxidyApp {
                     tasks.push(anchor);
                 }
 
-                // Arrastrar la ventana entre monitores con escalas distintas no
-                // entrega siempre un evento de reescalado, así que la proporción
-                // se vuelve a consultar aquí: sin ella el bucket de decodificación
-                // se quedaría en el tamaño del monitor anterior.
+                // Dragging the window between monitors with different scales does
+                // not always deliver a rescale event, so the ratio is re-queried
+                // here: without it the decode bucket would stay at the previous
+                // monitor's size.
                 if let Some(id) = self.window_id {
                     tasks.push(iced::window::scale_factor(id).map(Message::WindowRescaled));
                 }
@@ -184,9 +184,10 @@ impl crate::gui::app::AudoxidyApp {
             Message::WindowRescaled(scale) => {
                 if scale.is_finite() && scale > 0.0 {
                     self.library_manager.scale_factor = scale;
-                    // Las filas memoizadas llevan los handles del bucket anterior,
-                    // así que se invalidan y se vuelve a pedir la ventana; el
-                    // snapshot de álbumes no cambia y no se relee de la base.
+                    // The memoized rows carry the handles of the previous bucket,
+                    // so they are invalidated and the window re-requested; the
+                    // album snapshot does not change and is not re-read from the
+                    // database.
                     self.library_manager.cached_grid_rows.replace(None);
                     self.library_manager.request_cover_window();
                 }
@@ -227,9 +228,9 @@ impl crate::gui::app::AudoxidyApp {
             Message::SetWindowId(id) => {
                 self.window_id = Some(id);
 
-                // La proporción de píxeles se consulta al abrir la ventana: es el
-                // valor con el que se elige el bucket de decodificación de cada
-                // carátula antes del primer reescalado.
+                // The pixel ratio is queried when the window opens: it is the
+                // value that picks the decode bucket of every cover before the
+                // first rescale.
                 let scale_query = iced::window::scale_factor(id).map(Message::WindowRescaled);
 
                 // El flag `maximized` de `window::Settings` se envía antes de

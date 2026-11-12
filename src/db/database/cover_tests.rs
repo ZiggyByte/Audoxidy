@@ -1,0 +1,265 @@
+//! Area tests for cover identity: owner-scoped file names and per-song overrides.
+//!
+//! Every test runs against an in-memory database and writes its files into a
+//! private temporary directory, so no test touches the process-global cover cache
+//! or the application database.
+
+use super::*;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::utils::covers::{effective_cover_path, process_and_save_cover_in};
+
+/// Unique temporary directory for one test; the caller removes it at the end.
+fn temp_cover_dir() -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!(
+        "audoxidy-db-cover-test-{}-{sequence}",
+        std::process::id()
+    ));
+    std::fs::create_dir_all(&dir).expect("no se pudo crear el directorio temporal de prueba");
+    dir
+}
+
+/// Encodes a solid PNG in memory so the writer reads a real image.
+fn png_bytes(width: u32, height: u32) -> Vec<u8> {
+    let image = image::RgbaImage::from_pixel(width, height, image::Rgba([200, 30, 30, 255]));
+    let mut bytes = Vec::new();
+    image::DynamicImage::ImageRgba8(image)
+        .write_to(
+            &mut std::io::Cursor::new(&mut bytes),
+            image::ImageFormat::Png,
+        )
+        .expect("no se pudo codificar el PNG de prueba");
+    bytes
+}
+
+/// Inserts one song and returns the cover file name the insert reported.
+fn insert_song(
+    db: &mut Database,
+    path: &str,
+    album: &str,
+    picture_hash: Option<&str>,
+) -> (String, bool) {
+    let song = SongData {
+        full_file_path: Arc::from(path.to_string().into_boxed_str()),
+        title: Some(Arc::from("Track".to_string().into_boxed_str())),
+        artist: Some(Arc::from("The Artist".to_string().into_boxed_str())),
+        album: Some(Arc::from(album.to_string().into_boxed_str())),
+        ..Default::default()
+    };
+
+    db.insert_song_full(
+        &song,
+        &SongMetadataExtended::default(),
+        picture_hash.map(str::to_owned),
+        Vec::new(),
+        false,
+    )
+    .expect("la canción de prueba debe insertarse")
+}
+
+/// Identity hash of one album row.
+fn album_hash_id(db: &Database, album: &str) -> String {
+    db.get_all_albums()
+        .expect("se deben leer los álbumes")
+        .into_iter()
+        .find(|row| row.1 == album)
+        .map(|row| row.0)
+        .expect("el álbum insertado debe existir")
+}
+
+/// Stored cover path of one album row.
+fn album_cover_path(db: &Database, album: &str) -> Option<String> {
+    db.get_all_albums()
+        .expect("se deben leer los álbumes")
+        .into_iter()
+        .find(|row| row.1 == album)
+        .and_then(|row| row.5)
+}
+
+/// Stored cover path of one album row, reduced to its file name.
+fn album_cover_file_name(db: &Database, album: &str) -> String {
+    album_cover_path(db, album)
+        .as_deref()
+        .and_then(|path| Path::new(path).file_name())
+        .and_then(|name| name.to_str())
+        .map(str::to_owned)
+        .expect("el álbum debe tener una carátula almacenada")
+}
+
+#[test]
+fn test_identical_images_produce_two_album_files() {
+    let dir = temp_cover_dir();
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+    let shared_picture = "ab12cd34";
+
+    let (alpha_name, alpha_processing) = insert_song(
+        &mut db,
+        "/music/alpha/track.flac",
+        "Album Alpha",
+        Some(shared_picture),
+    );
+    let (beta_name, beta_processing) = insert_song(
+        &mut db,
+        "/music/beta/track.flac",
+        "Album Beta",
+        Some(shared_picture),
+    );
+
+    assert!(
+        alpha_processing && beta_processing,
+        "cada álbum escribe su propia carátula"
+    );
+    assert_ne!(
+        alpha_name, beta_name,
+        "dos álbumes con la misma imagen no pueden compartir archivo"
+    );
+    assert_eq!(
+        alpha_name,
+        format!(
+            "{}-{shared_picture}.avif",
+            album_hash_id(&db, "Album Alpha")
+        ),
+        "el nombre de álbum lleva su propio hash y el del contenido"
+    );
+    assert_eq!(
+        beta_name,
+        format!("{}-{shared_picture}.avif", album_hash_id(&db, "Album Beta"))
+    );
+    assert_eq!(album_cover_file_name(&db, "Album Alpha"), alpha_name);
+    assert_eq!(album_cover_file_name(&db, "Album Beta"), beta_name);
+
+    let picture = png_bytes(4, 4);
+    for file_name in [&alpha_name, &beta_name] {
+        let written = process_and_save_cover_in(&dir, &picture, file_name)
+            .expect("la carátula de prueba debe escribirse");
+        assert_eq!(
+            written.file_name().and_then(|name| name.to_str()),
+            Some(file_name.as_str()),
+            "el nombre escrito es exactamente el nombre almacenado"
+        );
+        assert!(
+            dir.join(file_name).exists(),
+            "cada nombre produce su propio archivo"
+        );
+    }
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_written_cover_name_matches_the_stored_path() {
+    let dir = temp_cover_dir();
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    let (file_name, needs_processing) = insert_song(
+        &mut db,
+        "/music/solo/track.flac",
+        "Solo Album",
+        Some("00ff00ff"),
+    );
+    assert!(needs_processing, "la primera carátula del álbum se escribe");
+
+    let stored = album_cover_file_name(&db, "Solo Album");
+    assert_eq!(
+        stored, file_name,
+        "la ruta almacenada y el nombre devuelto al escáner son el mismo valor"
+    );
+    assert_eq!(
+        stored.matches(".avif").count(),
+        1,
+        "la extensión aparece una sola vez: una capa que la añadiera otra vez dejaría un archivo ausente"
+    );
+
+    let written = process_and_save_cover_in(&dir, &png_bytes(4, 4), &stored)
+        .expect("la carátula de prueba debe escribirse");
+    assert_eq!(
+        written.file_name().and_then(|name| name.to_str()),
+        Some(stored.as_str())
+    );
+    assert!(
+        dir.join(&stored).exists(),
+        "unir el nombre devuelto encuentra el archivo escrito: una extensión duplicada dejaría un archivo ausente"
+    );
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn test_override_only_when_image_differs() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+    let album_picture = "1111aaaa";
+    let other_picture = "2222bbbb";
+
+    let (_, processing) = insert_song(
+        &mut db,
+        "/music/merged/one.flac",
+        "Merged Album",
+        Some(album_picture),
+    );
+    assert!(processing, "la carátula del álbum se escribe una vez");
+
+    let (_, same_processing) = insert_song(
+        &mut db,
+        "/music/merged/two.flac",
+        "Merged Album",
+        Some(album_picture),
+    );
+    assert!(
+        !same_processing,
+        "la misma imagen que la del álbum no produce archivo propio"
+    );
+
+    let (_, different_processing) = insert_song(
+        &mut db,
+        "/music/merged/three.flac",
+        "Merged Album",
+        Some(other_picture),
+    );
+    assert!(
+        different_processing,
+        "una imagen distinta del álbum sí produce carátula propia"
+    );
+
+    let songs = db.get_all_songs().expect("se deben leer las canciones");
+
+    let inherited = songs
+        .iter()
+        .find(|song| song.full_file_path.as_ref() == "/music/merged/two.flac")
+        .expect("la segunda canción debe existir");
+    assert!(
+        inherited.cover_override.is_none(),
+        "heredar la carátula del álbum no deja override"
+    );
+
+    let overridden = songs
+        .iter()
+        .find(|song| song.full_file_path.as_ref() == "/music/merged/three.flac")
+        .expect("la tercera canción debe existir");
+    let stored_hash = overridden
+        .cover_override
+        .as_deref()
+        .expect("la carátula distinta se guarda como override");
+    assert_eq!(
+        stored_hash,
+        Database::generate_hash(&format!("{}{}", "/music/merged/three.flac", other_picture)),
+        "el override guarda el hash puro del contenido"
+    );
+
+    let album_path =
+        album_cover_path(&db, "Merged Album").expect("el álbum debe tener una carátula almacenada");
+    let effective = effective_cover_path(Some(&album_path), Some(stored_hash), overridden.id)
+        .expect("un override siempre resuelve una ruta");
+    let effective_file_name = Path::new(&effective)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .expect("la ruta efectiva debe tener un nombre de archivo");
+    assert_eq!(
+        effective_file_name,
+        format!("song-{}-{stored_hash}.avif", overridden.id),
+        "el archivo propio se nombra por el id de la canción y el hash del contenido"
+    );
+}

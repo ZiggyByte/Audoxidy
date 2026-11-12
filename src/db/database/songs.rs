@@ -80,7 +80,9 @@ impl Database {
 
     /// Inserta una canción con todos sus metadatos, carátula y tags RAW.
     ///
-    /// Retorna (hash_de_carátula, necesita_procesamiento).
+    /// Retorna (nombre_de_archivo_de_carátula, necesita_procesamiento). El nombre
+    /// es el nombre completo que el escritor guarda y el escáner comprueba, e
+    /// incluye la extensión; llega vacío cuando la inserción no produce archivo.
     pub fn insert_song_full(
         &mut self,
         song: &SongData,
@@ -139,7 +141,9 @@ impl Database {
 
         let mut final_song_cover_override = None;
         let mut needs_processing = false;
-        let mut target_hash_for_processing = album_hash_id.clone();
+        // Complete file name the writer stores and the scanner joins; stays empty
+        // when this insert produces no cover file.
+        let mut target_file_name_for_processing = String::new();
 
         if let Some(current_pic_hash) = pic_bytes_hash {
             // Verificar si el álbum ya tiene carátula
@@ -150,18 +154,30 @@ impl Database {
 
             if !album_has_cover {
                 // Es la primera carátula del álbum, la asignamos como principal
-                let path = crate::utils::paths::get()
-                    .cover_cache_dir
-                    .join(format!("{}.avif", album_hash_id))
-                    .to_string_lossy()
-                    .into_owned();
+                match crate::utils::covers::album_cover_file_name(&album_hash_id, &current_pic_hash)
+                {
+                    Ok(file_name) => {
+                        let path = crate::utils::paths::get()
+                            .cover_cache_dir
+                            .join(&file_name)
+                            .to_string_lossy()
+                            .into_owned();
 
-                self.conn
-                    .prepare_cached(
-                        "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3",
-                    )?
-                    .execute(params![current_pic_hash, path, album_hash_id])?;
-                needs_processing = true;
+                        self.conn
+                            .prepare_cached(
+                                "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3",
+                            )?
+                            .execute(params![current_pic_hash, path, album_hash_id])?;
+                        target_file_name_for_processing = file_name;
+                        needs_processing = true;
+                    }
+                    Err(error) => tracing::warn!(
+                        target: "audoxidy::persistence",
+                        album = %album_hash_id,
+                        error = %error,
+                        "No se pudo componer el nombre de la carátula del álbum"
+                    ),
+                }
             } else {
                 let album_cover_hash: Option<String> = self
                     .conn
@@ -169,13 +185,14 @@ impl Database {
                     .query_row([&album_hash_id], |row| row.get(0))?;
 
                 if album_cover_hash.as_ref() != Some(&current_pic_hash) {
-                    // Es una carátula diferente a la del álbum (Override)
+                    // Es una carátula diferente a la del álbum (Override). El hash
+                    // se guarda puro: el nombre del archivo lo compone el id de la
+                    // canción, que todavía no existe.
                     let song_cover_hash = Self::generate_hash(&format!(
                         "{}{}",
                         song.full_file_path, current_pic_hash
                     ));
-                    final_song_cover_override = Some(song_cover_hash.clone());
-                    target_hash_for_processing = song_cover_hash;
+                    final_song_cover_override = Some(song_cover_hash);
                     needs_processing = true;
                 }
             }
@@ -206,6 +223,22 @@ impl Database {
             .prepare_cached("SELECT id FROM SONGS WHERE file_path = ?1")?
             .query_row([&song.full_file_path], |row| row.get(0))?;
 
+        // El nombre propio incluye el id de la canción, que solo existe tras el INSERT.
+        if let Some(cover_hash) = final_song_cover_override.as_deref() {
+            match crate::utils::covers::song_cover_file_name(song_id, cover_hash) {
+                Ok(file_name) => target_file_name_for_processing = file_name,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "audoxidy::persistence",
+                        song_id,
+                        error = %error,
+                        "No se pudo componer el nombre de la carátula propia de una canción"
+                    );
+                    needs_processing = false;
+                }
+            }
+        }
+
         // 3. Guardar metadatos técnicos crudos de todos los formatos presentes
         self.conn
             .prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?
@@ -234,7 +267,7 @@ impl Database {
             ],
         )?;
 
-        Ok((target_hash_for_processing, needs_processing))
+        Ok((target_file_name_for_processing, needs_processing))
     }
 
     /// Obtiene el ID de una canción por su ruta de archivo.

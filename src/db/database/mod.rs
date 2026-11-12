@@ -280,3 +280,6 @@ mod db_round_trip_tests {
         remove_db_files(&path);
     }
 }
+
+#[cfg(test)]
+mod cover_tests;

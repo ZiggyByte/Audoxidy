@@ -287,10 +287,11 @@ fn forced_cpu_extension() -> Option<fast_image_resize::CpuExtensions> {
 
 /// Extracts from a raw image buffer, crops/scales to 400x400, and saves as .avif at 90% quality.
 ///
-/// `safe_album_name` is a stem without extension; this variant appends `.avif`.
-pub fn process_and_save_cover(data: &[u8], safe_album_name: &str) -> std::io::Result<PathBuf> {
+/// `file_name` is the complete name the naming helpers composed; it is joined
+/// verbatim, so no layer appends a second extension.
+pub fn process_and_save_cover(data: &[u8], file_name: &str) -> std::io::Result<PathBuf> {
     let cache_dir = &crate::utils::paths::get().cover_cache_dir;
-    process_and_save_cover_in(cache_dir, data, &format!("{}.avif", safe_album_name))
+    process_and_save_cover_in(cache_dir, data, file_name)
 }
 
 /// Writes a cover into `dir` under its complete file name.
@@ -537,25 +538,34 @@ fn validate_cover_hash(hash: &str) -> Result<(), CoverNameError> {
     Ok(())
 }
 
-/// Complete file name for an album's own cover.
+/// Owner-scoped stem for an album's own cover.
 ///
-/// The album owner and the image content both appear in the name, so two albums
+/// The album owner and the image content both appear in the stem, so two albums
 /// holding byte-identical pictures never share a file and deleting one album can
-/// never remove the other's cover. The result includes the `.avif` extension.
-pub fn album_cover_file_name(album_hash: &str, cover_hash: &str) -> Result<String, CoverNameError> {
+/// never remove the other's cover.
+pub fn album_cover_stem(album_hash: &str, cover_hash: &str) -> Result<String, CoverNameError> {
     validate_cover_hash(album_hash)?;
     validate_cover_hash(cover_hash)?;
-    Ok(format!("{album_hash}-{cover_hash}.avif"))
+    Ok(format!("{album_hash}-{cover_hash}"))
 }
 
-/// Complete file name for a song's own cover.
+/// Complete file name for an album's own cover, `.avif` included.
+pub fn album_cover_file_name(album_hash: &str, cover_hash: &str) -> Result<String, CoverNameError> {
+    album_cover_stem(album_hash, cover_hash).map(|stem| format!("{stem}.avif"))
+}
+
+/// Owner-scoped stem for a song's own cover.
 ///
-/// The song id in the name scopes the file to the song that owns the override,
-/// so two songs with different art never share a file. The result includes the
-/// `.avif` extension.
-pub fn song_cover_file_name(song_id: i64, cover_hash: &str) -> Result<String, CoverNameError> {
+/// The song id scopes the stem to the song that owns the override, so two songs
+/// with different art never share a file.
+pub fn song_cover_stem(song_id: i64, cover_hash: &str) -> Result<String, CoverNameError> {
     validate_cover_hash(cover_hash)?;
-    Ok(format!("song-{song_id}-{cover_hash}.avif"))
+    Ok(format!("song-{song_id}-{cover_hash}"))
+}
+
+/// Complete file name for a song's own cover, `.avif` included.
+pub fn song_cover_file_name(song_id: i64, cover_hash: &str) -> Result<String, CoverNameError> {
+    song_cover_stem(song_id, cover_hash).map(|stem| format!("{stem}.avif"))
 }
 
 /// Resolves the one cover path a song row shows.
@@ -1631,7 +1641,7 @@ mod tests {
             )
             .expect("no se pudo codificar el PNG de prueba");
 
-        let path = process_and_save_cover(&bytes, "audoxidy_smoke_test_cover")
+        let path = process_and_save_cover(&bytes, "audoxidy_smoke_test_cover.avif")
             .expect("process_and_save_cover falló en el smoke test");
 
         assert!(path.exists(), "la carátula AVIF no se creó en disco");

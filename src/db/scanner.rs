@@ -305,18 +305,20 @@ impl Scanner {
             .map(|b| Database::generate_hash(&hex::encode(b)));
 
         if let Ok(mut db) = db_m.lock() {
-            if let Ok((target_hash, needs_processing)) =
+            if let Ok((target_file_name, needs_processing)) =
                 db.insert_song_full(&song, &extended, pic_hash, raw_tag_items, is_external)
             {
-                if needs_processing && !enqueued_covers.contains(&target_hash) {
+                if needs_processing && !enqueued_covers.contains(&target_file_name) {
                     if let Some(data) = pic_bytes {
-                        // Solo encolamos si es un archivo AVIF que no existe
+                        // Solo encolamos si el archivo AVIF todavía no existe. El
+                        // nombre viene completo del insert, así que la comprobación
+                        // y la escritura no pueden discrepar.
                         let expected_path = crate::utils::paths::get()
                             .cover_cache_dir
-                            .join(format!("{}.avif", target_hash));
+                            .join(&target_file_name);
                         if !expected_path.exists() {
-                            crate::utils::covers::enqueue_cover_job(data, target_hash.clone());
-                            enqueued_covers.insert(target_hash);
+                            crate::utils::covers::enqueue_cover_job(data, target_file_name.clone());
+                            enqueued_covers.insert(target_file_name);
                         }
                     }
                 }

@@ -42,10 +42,17 @@ impl Database {
             let title_val: Option<String> = r.get(4)?;
             let artist_val: Option<String> = r.get(5)?;
             let album_val: Option<String> = r.get(6)?;
+            let override_hash = r.get::<_, Option<String>>(14)?;
+            let song_id: i64 = r.get(1)?;
+            let cover_path = crate::utils::covers::effective_cover_path(
+                r.get::<_, Option<String>>(13)?.as_deref(),
+                override_hash.as_deref(),
+                song_id,
+            );
 
             Ok(PlaylistSongRef {
                 item_id: r.get(0)?,
-                song_id: r.get(1)?,
+                song_id,
                 sequence_order: r.get(2)?,
                 enabled: r.get(3)?,
                 title: crate::utils::interner::intern_string(
@@ -72,11 +79,9 @@ impl Database {
                 ),
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
-                cover_path: crate::utils::interner::intern_string_opt(
-                    r.get::<_, Option<String>>(13)?.as_deref(),
-                ),
+                cover_path: crate::utils::interner::intern_string_opt(cover_path.as_deref()),
                 cover_override: crate::utils::interner::intern_string_opt(
-                    r.get::<_, Option<String>>(14)?.as_deref(),
+                    override_hash.as_deref(),
                 ),
                 folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),

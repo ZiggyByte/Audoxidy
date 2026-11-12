@@ -46,8 +46,15 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
+            let album_cover = row.get::<_, Option<String>>(5)?;
+            let override_hash = row.get::<_, Option<String>>(14)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(5)?.as_deref(),
+                crate::utils::covers::effective_cover_path(
+                    album_cover.as_deref(),
+                    override_hash.as_deref(),
+                    song.id,
+                )
+                .as_deref(),
             );
             song.duration_secs = row.get(6)?;
             song.format = crate::utils::interner::intern_string_opt(
@@ -61,9 +68,8 @@ impl Database {
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
+            song.cover_override =
+                crate::utils::interner::intern_string_opt(override_hash.as_deref());
             song.import_order = row.get(15)?;
             song.genre = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(16)?.as_deref(),
@@ -115,8 +121,15 @@ impl Database {
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
             song.album_id = 0; // Se puede añadir al SELECT si es crítico, por ahora 0 es seguro
+            let album_cover = row.get::<_, Option<String>>(5)?;
+            let override_hash = row.get::<_, Option<String>>(14)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(5)?.as_deref(),
+                crate::utils::covers::effective_cover_path(
+                    album_cover.as_deref(),
+                    override_hash.as_deref(),
+                    song.id,
+                )
+                .as_deref(),
             );
             song.duration_secs = row.get(6)?;
             song.format = crate::utils::interner::intern_string_opt(
@@ -130,9 +143,8 @@ impl Database {
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
+            song.cover_override =
+                crate::utils::interner::intern_string_opt(override_hash.as_deref());
             song.import_order = row.get(15)?;
             song.genre = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(16)?.as_deref(),
@@ -314,8 +326,15 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
+            let album_cover = row.get::<_, Option<String>>(5)?;
+            let override_hash = row.get::<_, Option<String>>(14)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(5)?.as_deref(),
+                crate::utils::covers::effective_cover_path(
+                    album_cover.as_deref(),
+                    override_hash.as_deref(),
+                    song.id,
+                )
+                .as_deref(),
             );
             song.duration_secs = row.get(6)?;
             song.format = crate::utils::interner::intern_string_opt(
@@ -329,9 +348,8 @@ impl Database {
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
+            song.cover_override =
+                crate::utils::interner::intern_string_opt(override_hash.as_deref());
             song.import_order = row.get(15)?;
             song.genre = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(16)?.as_deref(),
@@ -386,8 +404,15 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
+            let album_cover = row.get::<_, Option<String>>(5)?;
+            let override_hash = row.get::<_, Option<String>>(14)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(5)?.as_deref(),
+                crate::utils::covers::effective_cover_path(
+                    album_cover.as_deref(),
+                    override_hash.as_deref(),
+                    song.id,
+                )
+                .as_deref(),
             );
             song.duration_secs = row.get(6)?;
             song.format = crate::utils::interner::intern_string_opt(
@@ -401,9 +426,8 @@ impl Database {
             song.sample_rate = row.get(11)?;
             song.channels = row.get(12)?;
             song.embedded_cover = row.get(13)?;
-            song.cover_override = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
+            song.cover_override =
+                crate::utils::interner::intern_string_opt(override_hash.as_deref());
             song.import_order = row.get(15)?;
             song.genre = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(16)?.as_deref(),
@@ -688,8 +712,17 @@ impl Database {
             sql_params.iter().map(|p| p.as_ref()).collect();
 
         let rows = stmt.query_map(query_params.as_slice(), |r| {
+            let song_id: i64 = r.get(0)?;
+            let override_hash = r.get::<_, Option<String>>(18)?;
+            let album_cover = r.get::<_, Option<String>>(20)?;
+            let cover_path = crate::utils::covers::effective_cover_path(
+                album_cover.as_deref(),
+                override_hash.as_deref(),
+                song_id,
+            );
+
             Ok(Arc::new(SongData {
-                id: r.get(0)?,
+                id: song_id,
                 folder_id: r.get(1)?,
                 artist_id: r.get(2)?,
                 album_id: r.get(3)?,
@@ -722,11 +755,11 @@ impl Database {
                 channels: r.get(16)?,
                 embedded_cover: r.get(17)?,
                 cover_override: crate::utils::interner::intern_string_opt(
-                    r.get::<_, Option<String>>(18)?.as_deref(),
+                    override_hash.as_deref(),
                 ),
                 import_order: r.get(19)?,
                 compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
-                    r.get::<_, Option<String>>(20)?.as_deref(),
+                    cover_path.as_deref(),
                 ),
                 album_artist: crate::utils::interner::intern_string_opt(
                     r.get::<_, Option<String>>(21)?.as_deref(),

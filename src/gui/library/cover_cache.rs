@@ -253,6 +253,9 @@ pub const SCROLL_IDLE_MS: u64 = 250;
 /// is resolved to the first row that starts at or after it, so a band landing
 /// inside a row still requests that row. An empty library, a resting or
 /// non-finite direction and a band starting past the last row yield `None`.
+// The inputs are the exact geometry the row math already needs; grouping them
+// into a struct would only move the same list to another module.
+#[allow(clippy::too_many_arguments)]
 pub fn prefetch_band(
     metrics: &GridMetrics,
     album_count: usize,

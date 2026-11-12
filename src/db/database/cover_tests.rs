@@ -323,7 +323,7 @@ fn test_song_cover_file_name_embeds_owner_and_content_hash() {
     assert_ne!(file_name, other);
 
     // The resolved path the read layer hands out ends in this same file name.
-    let album_path = "cache/covers/album-hash-cover-hash.avif";
+    let album_path = "album-hash-cover-hash.avif";
     let resolved = effective_cover_path(Some(album_path), Some(cover_hash), 42)
         .expect("un override siempre resuelve una ruta");
     assert_eq!(
@@ -331,5 +331,95 @@ fn test_song_cover_file_name_embeds_owner_and_content_hash() {
             .file_name()
             .and_then(|name| name.to_str()),
         Some(file_name.as_str())
+    );
+}
+
+#[test]
+fn test_referenced_cover_file_names_includes_album_and_override_files() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    // The first song gives the album its cover; the second brings different art,
+    // so it owns a file of its own.
+    insert_song(
+        &mut db,
+        "/music/refs/one.flac",
+        "Refs Album",
+        Some("aaaa1111"),
+    );
+    insert_song(
+        &mut db,
+        "/music/refs/two.flac",
+        "Refs Album",
+        Some("bbbb2222"),
+    );
+
+    let album_name = album_cover_file_name(&db, "Refs Album");
+    let songs = db.get_all_songs().expect("se deben leer las canciones");
+    let overridden = songs
+        .iter()
+        .find(|song| song.full_file_path.as_ref() == "/music/refs/two.flac")
+        .expect("la segunda canción debe existir");
+    let override_hash = overridden
+        .cover_override
+        .as_deref()
+        .expect("la imagen distinta del álbum produce un override");
+    let override_name = format!("song-{}-{override_hash}.avif", overridden.id);
+
+    let referenced = db
+        .referenced_cover_file_names()
+        .expect("el conjunto de referencias debe leerse");
+
+    assert_eq!(
+        referenced.len(),
+        2,
+        "una carátula de álbum y una carátula propia, sin entradas inventadas"
+    );
+    assert!(
+        referenced.contains(std::ffi::OsStr::new(&album_name)),
+        "la ruta almacenada del álbum aporta su nombre de archivo"
+    );
+    assert!(
+        referenced.contains(std::ffi::OsStr::new(&override_name)),
+        "el override aporta el nombre que compone con su id de canción"
+    );
+    for entry in &referenced {
+        assert_eq!(
+            Path::new(entry).components().count(),
+            1,
+            "el conjunto guarda nombres de archivo, nunca rutas completas"
+        );
+    }
+}
+
+#[test]
+fn test_referenced_cover_file_names_skips_null_overrides() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    insert_song(
+        &mut db,
+        "/music/refs/one.flac",
+        "Inherit Album",
+        Some("cccc3333"),
+    );
+    // No embedded picture: the song inherits the album cover and must not add a
+    // name of its own.
+    insert_song(&mut db, "/music/refs/two.flac", "Inherit Album", None);
+
+    let album_name = album_cover_file_name(&db, "Inherit Album");
+    let referenced = db
+        .referenced_cover_file_names()
+        .expect("el conjunto de referencias debe leerse");
+
+    assert_eq!(
+        referenced.len(),
+        1,
+        "solo la carátula del álbum está referenciada"
+    );
+    assert!(referenced.contains(std::ffi::OsStr::new(&album_name)));
+    assert!(
+        !referenced
+            .iter()
+            .any(|name| name.to_string_lossy().starts_with("song-")),
+        "una canción sin override no inventa un nombre propio"
     );
 }

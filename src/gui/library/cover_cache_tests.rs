@@ -11,14 +11,16 @@ use std::sync::Arc;
 
 use iced::widget::image::Handle;
 
-use super::cover_cache::{CoverKey, CoverStore, GridCoverElement, prefetch_band};
+use super::cover_cache::{
+    CoverDecodeOutcome, CoverKey, CoverStore, GridCoverElement, prefetch_band,
+};
 use super::grid_metrics::{grid_metrics, row_count, total_content_height};
 use super::state::LibraryManager;
 use super::types::AlbumEntry;
 use crate::db::database::SongData;
 use crate::utils::covers::{
-    COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, GLOBAL_STATE_TEST_LOCK, clear_negative_cover_cache,
-    cover_budget_bytes, cover_io_counters, viewport_capacity,
+    COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, GLOBAL_STATE_TEST_LOCK,
+    clear_negative_cover_cache, cover_budget_bytes, cover_io_counters, viewport_capacity,
 };
 
 /// Handle stand-in: the store never inspects pixels, only handle identity.
@@ -340,7 +342,10 @@ fn test_cover_prefetch_band_targets_one_screen_in_scroll_direction() {
         (up - row_height * 6.0).abs() < 0.01,
         "una pantalla hacia arriba cae en la fila 6"
     );
-    assert!(up < row_height * 8.0, "la banda queda por encima del viewport");
+    assert!(
+        up < row_height * 8.0,
+        "la banda queda por encima del viewport"
+    );
 
     let half = prefetch_band(&metrics, album_count, None, 0, 0.0, viewport_h, 1.0, 0.5)
         .expect("media pantalla también produce banda");
@@ -402,4 +407,89 @@ fn test_cover_prefetch_band_clamps_at_the_last_row() {
         None,
         "una biblioteca vacía no tiene banda"
     );
+}
+
+#[test]
+fn test_cover_prefetch_dedups_in_flight() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let metrics = grid_metrics(1200.0);
+    let mut manager = manager_with_albums(12);
+    manager.grid_metrics.set(metrics);
+
+    // A viewport shorter than one row places the look-ahead band on the row that
+    // is already visible, so the prefetch asks for keys the window requested.
+    let viewport_h = metrics.row_height * 0.25;
+    let band_y = prefetch_band(&metrics, 12, None, 0, 0.0, viewport_h, 1.0, 1.0)
+        .expect("la banda debe existir");
+
+    let mut jobs = manager.window_jobs(0.0, viewport_h);
+    jobs.extend(manager.window_jobs(band_y, viewport_h));
+
+    let mut enqueued = 0;
+    let accepted = manager.request_jobs_with(jobs, |_| {
+        enqueued += 1;
+        true
+    });
+
+    let window_only = manager.window_jobs(0.0, viewport_h).len();
+    assert!(
+        window_only > 0,
+        "la ventana debe pedir al menos una tarjeta"
+    );
+    assert_eq!(
+        accepted, window_only,
+        "una clave en vuelo no se vuelve a encolar"
+    );
+    assert_eq!(enqueued, window_only);
+    assert_eq!(manager.cover_store.len(), 0);
+
+    // A second identical pass finds every key already queued.
+    let jobs = manager.window_jobs(0.0, viewport_h);
+    assert_eq!(
+        manager.request_jobs_with(jobs, |_| {
+            enqueued += 1;
+            true
+        }),
+        0
+    );
+    assert_eq!(enqueued, window_only);
+}
+
+#[test]
+fn test_cover_prefetch_discards_stale_generation() {
+    let _guard = global_guard();
+
+    let mut manager = LibraryManager::default();
+    manager.scroll_generation = 4;
+    manager
+        .cover_store
+        .set_window(vec![("covers/window.avif".to_string(), 160)]);
+
+    let outcome = |path: &str, generation: u64| CoverDecodeOutcome {
+        key: key(path, 160),
+        generation,
+        handle: Some(fake_handle(2, 2)),
+        bytes: 16,
+        error: None,
+    };
+
+    // The current generation is kept even outside the window.
+    assert!(manager.apply_cover_decoded(outcome("covers/current.avif", 4)));
+    assert!(manager.cover_store.contains("covers/current.avif", 160));
+
+    // One generation older and outside the window is superseded and dropped.
+    assert!(!manager.apply_cover_decoded(outcome("covers/stale.avif", 3)));
+    assert!(!manager.cover_store.contains("covers/stale.avif", 160));
+    assert!(
+        !manager
+            .cover_store
+            .is_in_flight(&key("covers/stale.avif", 160)),
+        "una clave descartada no queda en vuelo"
+    );
+
+    // One generation older but still needed by the window is kept.
+    assert!(manager.apply_cover_decoded(outcome("covers/window.avif", 3)));
+    assert!(manager.cover_store.contains("covers/window.avif", 160));
 }

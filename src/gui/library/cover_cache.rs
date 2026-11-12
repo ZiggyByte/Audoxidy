@@ -281,23 +281,14 @@ pub fn prefetch_band(
             viewport_h * screens
         };
 
-    let total = grid_metrics::total_content_height(
-        metrics,
-        album_count,
-        expanded_row,
-        rendered_songs,
-    );
+    let total =
+        grid_metrics::total_content_height(metrics, album_count, expanded_row, rendered_songs);
     if total <= 0.0 || band_y >= total {
         return None;
     }
 
-    let (_, top) = grid_metrics::row_at_offset(
-        metrics,
-        album_count,
-        expanded_row,
-        rendered_songs,
-        band_y,
-    );
+    let (_, top) =
+        grid_metrics::row_at_offset(metrics, album_count, expanded_row, rendered_songs, band_y);
 
     Some(top)
 }
@@ -537,6 +528,45 @@ impl LibraryManager {
         }
 
         accepted
+    }
+
+    /// Stores a decode outcome and returns whether its handle was kept.
+    ///
+    /// The in-flight mark is always released, so a failed key stays retryable for
+    /// the next request. A successful handle is kept only when it belongs to the
+    /// current scroll generation or the window still needs its key; an outcome
+    /// one generation older is superseded and dropped, so a fast scroll cannot
+    /// churn the store with entries nothing shows.
+    pub fn apply_cover_decoded(&mut self, outcome: CoverDecodeOutcome) -> bool {
+        self.cover_store.clear_in_flight(&outcome.key);
+
+        let Some(handle) = outcome.handle else {
+            if let Some(error) = outcome.error.as_deref() {
+                tracing::debug!(
+                    path = %outcome.key.path,
+                    error,
+                    "No se pudo decodificar una carátula"
+                );
+            }
+            return false;
+        };
+
+        if outcome.generation != self.scroll_generation
+            && !self
+                .cover_store
+                .is_window(&outcome.key.path, outcome.key.bucket)
+        {
+            return false;
+        }
+
+        self.cover_store
+            .insert_handle(outcome.key, handle, outcome.bytes);
+        // The grid rows carry the resolved handles, so a new one changes the
+        // rows the next layout pass receives.
+        self.cached_grid_rows.replace(None);
+        self.cover_store.evict_to_budget();
+
+        true
     }
 
     /// Requests the decode of every cover the current viewport shows.

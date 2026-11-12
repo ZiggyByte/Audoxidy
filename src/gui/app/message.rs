@@ -92,6 +92,8 @@ pub enum Message {
     /// The payload owns the one handle minted for its entry, so cloning the
     /// message only bumps a reference count.
     CoverDecoded(crate::gui::library::cover_cache::CoverDecodeOutcome),
+    /// The scroll has been idle long enough to request the look-ahead band.
+    CoverPrefetchDue,
     ChangeLibraryViewMode(crate::gui::library::LibraryViewMode),
     ToggleLibraryViewDropdown,
     LibraryShowPlaying,

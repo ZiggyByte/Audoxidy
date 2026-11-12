@@ -2,10 +2,21 @@
 
 use crate::gui::app::{AppFocus, Message};
 use crate::gui::dimensions::LIBRARY_CONTENT_X_ORIGIN;
+use crate::gui::library::cover_cache::SCROLL_IDLE_MS;
 use crate::gui::library::grid_metrics::anchor_viewport_offset;
 use crate::gui::library::{GridMetrics, LIBRARY_SCROLL_ID};
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
+
+/// Delayed message that requests the look-ahead band once the scroll is idle.
+fn scroll_idle_task() -> Task<Message> {
+    Task::perform(
+        async {
+            tokio::time::sleep(std::time::Duration::from_millis(SCROLL_IDLE_MS)).await;
+        },
+        |_| Message::CoverPrefetchDue,
+    )
+}
 
 impl crate::gui::app::AudoxidyApp {
     pub(in crate::gui::app) fn handle_library(&mut self, message: Message) -> Task<Message> {
@@ -760,29 +771,28 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::CoverDecoded(outcome) => {
-                if let Some(handle) = outcome.handle {
-                    self.library_manager.cover_store.insert_handle(
-                        outcome.key.clone(),
-                        handle,
-                        outcome.bytes,
-                    );
-                    // The grid rows carry the resolved handles, so a new one
-                    // changes the rows the next layout pass receives.
-                    self.library_manager.cached_grid_rows.replace(None);
-                } else if let Some(error) = outcome.error.as_deref() {
-                    tracing::debug!(
-                        path = %outcome.key.path,
-                        error,
-                        "No se pudo decodificar una carátula"
-                    );
-                }
-
-                // A failure releases its key too, so the next request retries it.
-                self.library_manager
-                    .cover_store
-                    .clear_in_flight(&outcome.key);
+                // The store decides whether the outcome still belongs to the
+                // current scroll; a failed decode only releases its key.
+                self.library_manager.apply_cover_decoded(outcome);
                 self.library_manager.request_cover_window();
 
+                Task::none()
+            }
+            Message::CoverPrefetchDue => {
+                self.library_manager.prefetch_scheduled = false;
+
+                // A scroll that arrived while this timer was pending could not
+                // schedule its own delayed message, so the request is rescheduled
+                // instead of dropped: otherwise that gesture would never
+                // prefetch at all.
+                if let Some(last_scroll_at) = self.library_manager.last_scroll_at
+                    && last_scroll_at.elapsed() < std::time::Duration::from_millis(SCROLL_IDLE_MS)
+                {
+                    self.library_manager.prefetch_scheduled = true;
+                    return scroll_idle_task();
+                }
+
+                self.library_manager.request_cover_window();
                 Task::none()
             }
             Message::LibraryShowPlaying => {
@@ -992,6 +1002,7 @@ impl crate::gui::app::AudoxidyApp {
                     return self.update(Message::LibraryRefresh);
                 }
 
+                let previous_y = self.library_manager.scroll_offset.y;
                 let abs_offset = offset.absolute_offset();
                 self.library_manager.scroll_offset = iced::Vector::new(abs_offset.x, abs_offset.y);
                 self.library_manager.last_viewport = Some(iced::Rectangle {
@@ -1017,9 +1028,28 @@ impl crate::gui::app::AudoxidyApp {
                     return task;
                 }
 
+                // Direction and generation describe the gesture, not the frame:
+                // the look-ahead band reads the sign, and every decode it
+                // requests is stamped with the generation so a superseded
+                // result can be told apart from a current one.
+                let new_y = abs_offset.y;
+                self.library_manager.scroll_direction = (new_y - previous_y).signum();
+                self.library_manager.scroll_generation =
+                    self.library_manager.scroll_generation.wrapping_add(1);
+                self.library_manager.last_scroll_at = Some(std::time::Instant::now());
+
                 self.library_manager.invalidate_visible_cache();
                 self.library_manager.request_cover_window();
-                Task::none()
+
+                // A wheel or trackpad burst must not request decodes: only the
+                // first event of the gesture schedules the delayed look-ahead,
+                // which fires once the scroll has actually stopped.
+                if self.library_manager.prefetch_scheduled {
+                    return Task::none();
+                }
+
+                self.library_manager.prefetch_scheduled = true;
+                scroll_idle_task()
             }
             Message::FilterScroll(viewport) => {
                 let abs_offset = viewport.absolute_offset();

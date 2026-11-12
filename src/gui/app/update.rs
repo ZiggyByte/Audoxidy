@@ -129,6 +129,7 @@ impl crate::gui::app::AudoxidyApp {
             | Message::LibraryFilteredLoaded(..)
             | Message::InternalLibraryRefreshed(..)
             | Message::CoverDecoded(..)
+            | Message::CoverPrefetchDue
             | Message::LibraryShowPlaying
             | Message::ToggleFilterMenu
             | Message::ChangeGeneralFilter(..)

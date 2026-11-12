@@ -80,9 +80,7 @@ impl Database {
                 duration: r.get::<_, Option<f64>>(11)?.unwrap_or(0.0),
                 file_path: crate::utils::interner::intern_string(&r.get::<_, String>(12)?),
                 cover_path: crate::utils::interner::intern_string_opt(cover_path.as_deref()),
-                cover_override: crate::utils::interner::intern_string_opt(
-                    override_hash.as_deref(),
-                ),
+                cover_override: crate::utils::interner::intern_string_opt(override_hash.as_deref()),
                 folder_path: crate::utils::interner::intern_string(&r.get::<_, String>(15)?),
                 folder_name: crate::utils::interner::intern_string(&r.get::<_, String>(16)?),
             })

@@ -754,9 +754,7 @@ impl Database {
                 size: r.get(15)?,
                 channels: r.get(16)?,
                 embedded_cover: r.get(17)?,
-                cover_override: crate::utils::interner::intern_string_opt(
-                    override_hash.as_deref(),
-                ),
+                cover_override: crate::utils::interner::intern_string_opt(override_hash.as_deref()),
                 import_order: r.get(19)?,
                 compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
                     cover_path.as_deref(),

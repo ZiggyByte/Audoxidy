@@ -1,82 +1,34 @@
-//! Cover art cache and image processing.
+//! Cover art naming, image processing and the front-end-free cover policy.
 //!
-//! Scales images to 400x400, compresses them as AVIF at 90% quality,
-//! and caches them on disk under `cache/covers/`. An in-memory LRU
-//! cache retains cover handles  for the GUI without importing any
-// !front-end types.
+//! The write path scales an embedded picture to a square of the native cover
+//! edge, encodes it as AVIF at 90% quality and stores it under `cache/covers/`
+//! under the name its owner composes: `{album_hash}-{cover_hash}.avif` for an
+//! album and `song-{song_id}-{cover_hash}.avif` for a per-song override. The
+//! owner and the content hash both appear in the name, so no two owners share a
+//! file and a deletion can only ever reach the file of the row it removes.
 //!
-//! The [`CoverHandle`] type replaces iced handles in this module so
-//! that `utils/` has zero front-end imports. The GUI adapter wraps a
-//! `CoverHandle` into an iced handle at render time.
+//! The read path is the decode funnel: [`decode_cover_file`] turns one stored
+//! file into RGBA pixels exactly once, on a cover worker. The GUI store holds the
+//! resulting handles and delegates its accounting to [`CoverBudget`], the
+//! byte-and-recency ledger that bounds retained pixels and protects the keys the
+//! viewport shows. [`cover_bucket`], [`viewport_capacity`] and
+//! [`cover_budget_bytes`] decide the decode size and the retained-byte target.
 //!
-//! The module also owns the front-end-free decode funnel and the pure cover
-//! policy: [`decode_cover_file`] turns a stored cover file into RGBA pixels once,
-//! while [`cover_bucket`] and [`cover_budget_bytes`] decide the decode size and
-//! the retained-byte target. Keeping both here lets `utils/` stay free of iced
-//! types while the GUI store only holds the handles they produce.
+//! `utils/` stays free of front-end types: this module names, decodes, measures
+//! and accounts for covers, while the layer that knows what a screen shows owns
+//! the iced handles.
 
 use fast_image_resize::images::Image;
 use fast_image_resize::{FilterType, ResizeAlg, ResizeOptions, Resizer};
 use image::codecs::avif::AvifEncoder;
 use image::{ExtendedColorType, ImageEncoder};
-use lru::LruCache;
 use parking_lot::Mutex;
 use rayon::ThreadPoolBuilder;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-
-/// Front-end-agnostic handle to a cover art image.
-///
-/// Stores either a file path (AVIF on disk) or raw image bytes
-/// (embedded fallback). The `stable_id` is a SHA-256 digest used
-/// as the LRU cache key for identity comparison.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum CoverHandle {
-    /// File-backed cover: path to the AVIF on disk.
-    File { path: PathBuf, stable_id: [u8; 32] },
-    /// Byte-backed cover: raw image data held in memory.
-    Bytes { data: Vec<u8>, stable_id: [u8; 32] },
-}
-
-impl CoverHandle {
-    /// Computes the SHA-256 stable ID from a byte slice.
-    pub fn stable_id_from_bytes(data: &[u8]) -> [u8; 32] {
-        let mut hasher = Sha256::new();
-        hasher.update(data);
-        let result = hasher.finalize();
-        let mut id = [0u8; 32];
-        id.copy_from_slice(&result);
-        id
-    }
-
-    /// Returns the stable ID for cache keying.
-    pub fn stable_id(&self) -> [u8; 32] {
-        match self {
-            CoverHandle::File { stable_id, .. } => *stable_id,
-            CoverHandle::Bytes { stable_id, .. } => *stable_id,
-        }
-    }
-
-    /// Returns the file path if this is a file-backed handle.
-    pub fn path(&self) -> Option<&Path> {
-        match self {
-            CoverHandle::File { path, .. } => Some(path),
-            CoverHandle::Bytes { .. } => None,
-        }
-    }
-
-    /// Returns the raw bytes if this is a byte-backed handle.
-    pub fn bytes(&self) -> Option<&[u8]> {
-        match self {
-            CoverHandle::File { .. } => None,
-            CoverHandle::Bytes { data, .. } => Some(data),
-        }
-    }
-}
 
 /// Static instance of the thread pool for background cover processing.
 pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
@@ -84,89 +36,8 @@ pub static COVER_POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
 /// Bounded channel to control memory pressure during scanning.
 static COVER_GATEWAY: OnceLock<crossbeam::channel::Sender<(Vec<u8>, String)>> = OnceLock::new();
 
-/// Stores file paths that previously failed to load (avoids retries).
+/// Stores file paths a decode already found undecodable (avoids retries).
 pub static NEGATIVE_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
-
-/// LRU cache for cover handles, preventing excessive memory use.
-pub struct CoverCache {
-    /// Entries ordered by recency (most recent at the front).
-    entries: LruCache<String, CoverHandle>,
-}
-
-impl CoverCache {
-    /// Crea la caché con la capacidad indicada. La capacidad debe ser > 0.
-    fn new(cap: usize) -> Self {
-        Self {
-            entries: LruCache::new(
-                NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"),
-            ),
-        }
-    }
-
-    /// Returns the handle and promotes the entry to most-recent position.
-    fn get(&mut self, key: &str) -> Option<CoverHandle> {
-        self.entries.get(key).cloned()
-    }
-
-    /// Peeks at an entry without altering recency order.
-    #[cfg(test)]
-    fn peek(&self, key: &str) -> Option<CoverHandle> {
-        self.entries.peek(key).cloned()
-    }
-
-    /// Inserts or updates an entry, promoting it to most-recent position.
-    fn put(&mut self, key: String, value: CoverHandle) {
-        self.entries.put(key, value);
-    }
-
-    /// Promueve una clave existente sin insertarla si no está presente.
-    fn promote(&mut self, key: &str) -> bool {
-        self.entries.promote(key)
-    }
-
-    /// Ajusta la capacidad; al reducir desaloja primero las menos recientes.
-    fn resize(&mut self, cap: usize) {
-        if self.entries.cap().get() != cap {
-            self.entries
-                .resize(NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"));
-        }
-    }
-
-    /// Number of entries retained.
-    #[cfg(test)]
-    fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    /// Checks whether the key is in the cache without altering recency.
-    fn contains(&self, key: &str) -> bool {
-        self.entries.contains(key)
-    }
-
-    /// Most-recent to least-recent order.
-    #[cfg(test)]
-    fn order_mru_to_lru(&self) -> Vec<String> {
-        self.entries.iter().map(|(key, _)| key.clone()).collect()
-    }
-}
-
-/// Dynamic cover cache limit based on mode:
-/// - Normal: 64 (standard, sufficient for large displays)
-/// - Low-resource: 16 (aggressive eviction to save RAM)
-fn get_max_covers() -> usize {
-    if crate::utils::is_low_resource() {
-        16
-    } else {
-        64
-    }
-}
-
-pub static LRU_COVER_CACHE: OnceLock<Mutex<CoverCache>> = OnceLock::new();
-
-/// Returns or initializes the global LRU cover cache.
-pub fn get_lru_cache() -> &'static Mutex<CoverCache> {
-    LRU_COVER_CACHE.get_or_init(|| Mutex::new(CoverCache::new(get_max_covers())))
-}
 
 /// Returns or initializes the global thread pool for cover processing.
 ///
@@ -250,18 +121,11 @@ fn clear_negative_cache(set: &mut HashSet<String>) {
     set.clear();
 }
 
-/// Clears the negative cache (failed file paths) only. Useful after a re-scan.
+/// Clears the negative cache (undecodable cover files) only. Useful after a re-scan.
 pub fn clear_negative_cover_cache() {
     if let Some(neg_cache_mtx) = NEGATIVE_CACHE.get() {
         clear_negative_cache(&mut neg_cache_mtx.lock());
     }
-}
-
-/// Clears both the negative cache and the LRU cover cache. Use when a full
-/// reset is needed (e.g. after deleting cover files on disk).
-pub fn clear_all_cover_cache() {
-    clear_negative_cover_cache();
-    clear_raw_cache();
 }
 
 /// Generates a unique hash for an image from raw bytes.
@@ -382,118 +246,7 @@ pub fn process_and_save_cover_in(
     Ok(dst_path)
 }
 
-/// Loads a cover art handle from a file path on disk.
-///
-/// Checks the negative cache first, then the LRU cache, and finally
-/// constructs a new file-backed handle. The AVIF decoding is deferred
-/// to the GUI adapter that wraps the handle into an iced type.
-pub fn load_cover_handle(path: &str) -> Option<CoverHandle> {
-    let neg_cache_mtx = NEGATIVE_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
-
-    // 1. Check if this path previously failed to load.
-    if neg_cache_mtx.lock().contains(path) {
-        return None;
-    }
-
-    // 2. Check the in-memory LRU cache.
-    let cache_mtx = get_lru_cache();
-    let mut cache = cache_mtx.lock();
-
-    // Recalculate dynamic limit on each load (mode may have changed);
-    // reducing evicts least-recent entries first.
-    cache.resize(get_max_covers());
-
-    if let Some(handle) = cache.get(path) {
-        return Some(handle);
-    }
-
-    // 3. Create a new file-backed handle and store in the cache;
-    // `put` evicts if capacity is exceeded.
-    let stable_id = CoverHandle::stable_id_from_bytes(path.as_bytes());
-    let handle = CoverHandle::File {
-        path: PathBuf::from(path),
-        stable_id,
-    };
-    cache.put(path.to_string(), handle.clone());
-
-    Some(handle)
-}
-
-/// Evicts the least-recent entries from the cache.
-/// In low-resource mode the effective eviction count is doubled.
-fn purge_oldest_covers(cache: &mut CoverCache, count: usize, low_resource: bool) {
-    let effective_count = if low_resource { count * 2 } else { count };
-    let to_remove = effective_count.min(cache.entries.len());
-
-    for _ in 0..to_remove {
-        cache.entries.pop_lru();
-    }
-}
-
-/// Purges the oldest entries from the cover cache.
-/// Called by the Garbage Collector when the app is inactive.
-/// In low-resource mode, purges double the entries per cycle.
-pub fn purge_old_covers(count: usize) {
-    let cache_mtx = get_lru_cache();
-    let mut cache = cache_mtx.lock();
-    purge_oldest_covers(&mut cache, count, crate::utils::is_low_resource());
-}
-
-/// Preloads cover art for a list of visible album paths.
-///
-/// Useful to avoid blank frames when scrolling through the library:
-/// covers are loaded into the LRU cache before the user sees them.
-pub fn preload_visible_covers(paths: &[String]) {
-    if paths.is_empty() {
-        return;
-    }
-    let cache_mtx = get_lru_cache();
-    let mut cache = cache_mtx.lock();
-    for path in paths {
-        if cache.contains(path) {
-            // Already cached: promote to MRU without reinserting.
-            cache.promote(path);
-        } else {
-            // Not cached: load from disk and store in LRU.
-            let stable_id = CoverHandle::stable_id_from_bytes(path.as_bytes());
-            let handle = CoverHandle::File {
-                path: PathBuf::from(path),
-                stable_id,
-            };
-            cache.put(path.clone(), handle);
-        }
-    }
-}
-
-/// Loads a cover from raw image bytes (fallback for embedded album art).
-///
-/// Returns a byte-backed [`CoverHandle`]. The GUI adapter wraps the
-/// bytes into an iced handle at render time.
-pub fn load_cover_from_bytes(data: &[u8]) -> Option<CoverHandle> {
-    if data.is_empty() {
-        return None;
-    }
-    let stable_id = CoverHandle::stable_id_from_bytes(data);
-    Some(CoverHandle::Bytes {
-        data: data.to_vec(),
-        stable_id,
-    })
-}
-
-/// Vacía por completo la caché LRU de carátulas.
-fn clear_cover_cache(cache: &mut CoverCache) {
-    cache.entries.clear();
-}
-
-/// Clears the entire in-memory LRU cover cache (called on song change).
-pub fn clear_raw_cache() {
-    // Clear the full LRU on cleanup.
-    let cache_mtx = get_lru_cache();
-    let mut cache = cache_mtx.lock();
-    clear_cover_cache(&mut cache);
-}
-
-/// Returns whether a cover path is known to fail loading.
+/// Returns whether a cover path is already known to be undecodable.
 ///
 /// Consulted while decode requests are built, never while rows are rendered, so
 /// the negative set stays off the layout path.
@@ -501,6 +254,34 @@ pub fn is_cover_negative(path: &str) -> bool {
     NEGATIVE_CACHE
         .get()
         .is_some_and(|negative| negative.lock().contains(path))
+}
+
+/// Records a cover file the decode funnel could not turn into an image.
+///
+/// Only a file that is present and still undecodable is recorded. `NotFound`, and
+/// a read that failed for any other I/O reason, stay retryable: the write path is
+/// fire-and-forget, so a decode can legitimately race a file that has not landed
+/// yet, and recording it would pin the cover blank for the session. A recorded
+/// path is skipped when the request window is built, so it is never decoded twice.
+pub fn record_negative_cover(path: &Path, reason: &CoverDecodeError) {
+    let undecodable = matches!(
+        reason,
+        CoverDecodeError::Decode(_)
+            | CoverDecodeError::Resize(..)
+            | CoverDecodeError::PixelLength { .. }
+    );
+
+    if !undecodable {
+        tracing::debug!(
+            path = %path.display(),
+            error = %reason,
+            "The cover file may still appear; leaving it retryable"
+        );
+        return;
+    }
+
+    let negative = NEGATIVE_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+    negative.lock().insert(path.to_string_lossy().into_owned());
 }
 
 /// Failure to compose a cover file name.
@@ -1218,402 +999,274 @@ pub(crate) static GLOBAL_STATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mute
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::{HashMap, VecDeque};
 
-    /// Deterministic file-backed cover handle for testing.
-    fn test_handle(i: usize) -> CoverHandle {
-        let path = PathBuf::from(format!("cache/covers/{i}.avif"));
-        let stable_id = CoverHandle::stable_id_from_bytes(path.to_str().unwrap().as_bytes());
-        CoverHandle::File { path, stable_id }
-    }
+    /// Bytes one ledger entry retains in these tests, so an assertion reads as a
+    /// multiple of a single entry.
+    const ENTRY_BYTES: usize = 100;
 
-    /// Minimal operations the parity harness needs from each implementation.
-    trait ParityCache {
-        fn get(&mut self, key: &str) -> Option<CoverHandle>;
-        fn peek(&self, key: &str) -> Option<CoverHandle>;
-        fn insert(&mut self, key: String, value: CoverHandle);
-        fn clear(&mut self);
-        fn purge_oldest(&mut self, count: usize, low_resource: bool);
-        fn resize(&mut self, cap: usize);
-        fn len(&self) -> usize;
-        fn contains(&self, key: &str) -> bool;
-        /// Orden de más reciente a menos reciente.
-        fn order_mru_to_lru(&self) -> Vec<String>;
-    }
+    /// Bucket every ledger entry in these tests is recorded under.
+    const BUCKET: u16 = 160;
 
-    /// Adaptador de paridad sobre la caché de producción (respaldada por `lru`).
-    struct ProductionCache {
-        cache: CoverCache,
-    }
-
-    impl ProductionCache {
-        fn new(cap: usize) -> Self {
-            Self {
-                cache: CoverCache::new(cap),
-            }
+    /// Inserts `count` entries `k0..k{count-1}` into the ledger, oldest first.
+    fn fill_ledger(budget: &mut CoverBudget, count: usize) {
+        for index in 0..count {
+            budget.insert(&format!("k{index}"), BUCKET, ENTRY_BYTES);
         }
     }
 
-    impl ParityCache for ProductionCache {
-        fn get(&mut self, key: &str) -> Option<CoverHandle> {
-            self.cache.get(key)
-        }
-
-        fn peek(&self, key: &str) -> Option<CoverHandle> {
-            self.cache.peek(key)
-        }
-
-        fn insert(&mut self, key: String, value: CoverHandle) {
-            self.cache.put(key, value);
-        }
-
-        fn clear(&mut self) {
-            clear_cover_cache(&mut self.cache);
-        }
-
-        fn purge_oldest(&mut self, count: usize, low_resource: bool) {
-            purge_oldest_covers(&mut self.cache, count, low_resource);
-        }
-
-        fn resize(&mut self, cap: usize) {
-            self.cache.resize(cap);
-        }
-
-        fn len(&self) -> usize {
-            self.cache.len()
-        }
-
-        fn contains(&self, key: &str) -> bool {
-            self.cache.contains(key)
-        }
-
-        fn order_mru_to_lru(&self) -> Vec<String> {
-            self.cache.order_mru_to_lru()
-        }
+    /// Keys the ledger holds, most recently used first.
+    fn held_keys(budget: &CoverBudget) -> Vec<String> {
+        budget.order_mru_to_lru()
     }
 
-    /// Freezes the semantics of the manual cache that preceded the
-    /// adoption of `lru`. Independent reference: a real divergence in
-    /// capacity, recency, eviction, purge, or resize will fail the test.
-    struct ReferenceCache {
-        map: HashMap<String, CoverHandle>,
-        order: VecDeque<String>,
-        cap: usize,
-    }
-
-    impl ReferenceCache {
-        fn new(cap: usize) -> Self {
-            Self {
-                map: HashMap::with_capacity(cap),
-                order: VecDeque::with_capacity(cap),
-                cap,
-            }
-        }
-    }
-
-    impl ParityCache for ReferenceCache {
-        fn get(&mut self, key: &str) -> Option<CoverHandle> {
-            let handle = self.map.get(key).cloned()?;
-            // A hit promotes: the key moves to the tail of the queue.
-            if let Some(idx) = self.order.iter().position(|x| x == key) {
-                self.order.remove(idx);
-                self.order.push_back(key.to_string());
-            }
-            Some(handle)
-        }
-
-        fn peek(&self, key: &str) -> Option<CoverHandle> {
-            self.map.get(key).cloned()
-        }
-
-        fn insert(&mut self, key: String, value: CoverHandle) {
-            if self.map.insert(key.clone(), value).is_some() {
-                // Reinsertar una clave existente también la promueve.
-                if let Some(idx) = self.order.iter().position(|x| x == &key) {
-                    self.order.remove(idx);
-                }
-            }
-            self.order.push_back(key);
-            while self.order.len() > self.cap {
-                if let Some(oldest) = self.order.pop_front() {
-                    self.map.remove(&oldest);
-                }
-            }
-        }
-
-        fn clear(&mut self) {
-            self.map.clear();
-            self.order.clear();
-        }
-
-        fn purge_oldest(&mut self, count: usize, low_resource: bool) {
-            let effective_count = if low_resource { count * 2 } else { count };
-            let to_remove = effective_count.min(self.order.len());
-            for _ in 0..to_remove {
-                if let Some(oldest) = self.order.pop_front() {
-                    self.map.remove(&oldest);
-                }
-            }
-        }
-
-        fn resize(&mut self, cap: usize) {
-            self.cap = cap;
-            while self.order.len() > self.cap {
-                if let Some(oldest) = self.order.pop_front() {
-                    self.map.remove(&oldest);
-                }
-            }
-        }
-
-        fn len(&self) -> usize {
-            self.order.len()
-        }
-
-        fn contains(&self, key: &str) -> bool {
-            self.map.contains_key(key)
-        }
-
-        fn order_mru_to_lru(&self) -> Vec<String> {
-            self.order.iter().rev().cloned().collect()
-        }
-    }
-
-    /// Runs the same scenario against the production cache and the
-    /// independent reference, and asserts that the observable trace and
-    /// final order match. The reference does not use `lru`, so a real
-    /// divergence in the production implementation will fail the test.
-    fn assert_parity(cap: usize, scenario: impl Fn(&mut dyn ParityCache) -> Vec<String>) {
-        let mut production = ProductionCache::new(cap);
-        let mut reference = ReferenceCache::new(cap);
-
-        let production_trace = scenario(&mut production);
-        let reference_trace = scenario(&mut reference);
-
-        assert_eq!(
-            production_trace, reference_trace,
-            "rastro divergente en cap={cap}"
-        );
-        assert_eq!(
-            production.order_mru_to_lru(),
-            reference.order_mru_to_lru(),
-            "orden divergente en cap={cap}"
-        );
-    }
-
-    /// Explicit contract for recency, hit promotion, and eviction without
-    /// comparing against another implementation: fixes the expected
-    /// MRU-to-LRU order.
+    /// Explicit contract for the ledger's recency: insertion promotes, a peek does
+    /// not, and eviction takes the least recently used entry.
     #[test]
     fn covercache_golden_lru_order() {
-        let mut cache = CoverCache::new(3);
-        cache.put("a".into(), test_handle(0));
-        cache.put("b".into(), test_handle(1));
-        cache.put("c".into(), test_handle(2));
-        assert_eq!(cache.order_mru_to_lru().join(","), "c,b,a");
+        let mut budget = CoverBudget::default();
+        budget.insert("a", BUCKET, ENTRY_BYTES);
+        budget.insert("b", BUCKET, ENTRY_BYTES);
+        budget.insert("c", BUCKET, ENTRY_BYTES);
+        assert_eq!(held_keys(&budget).join(","), "c@160,b@160,a@160");
 
-        let _ = cache.get("a");
-        assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
+        assert!(budget.touch("a", BUCKET));
+        assert_eq!(held_keys(&budget).join(","), "a@160,c@160,b@160");
 
-        // `peek` does not alter recency order.
-        assert!(cache.peek("b").is_some());
-        assert_eq!(cache.order_mru_to_lru().join(","), "a,c,b");
+        // A peek reports the retained bytes without altering recency.
+        assert_eq!(budget.get("b", BUCKET), Some(ENTRY_BYTES));
+        assert_eq!(held_keys(&budget).join(","), "a@160,c@160,b@160");
 
-        // Inserting evicts the least-recent ("b"), not the just-read entry.
-        cache.put("d".into(), test_handle(3));
-        assert_eq!(cache.order_mru_to_lru().join(","), "d,a,c");
-        assert!(!cache.contains("b"));
-    }
-
-    /// Inserts `cap` numbered keys and returns their names in insertion order.
-    fn fill(cache: &mut dyn ParityCache, cap: usize) -> Vec<String> {
-        let keys: Vec<String> = (0..cap).map(|i| format!("k{i}")).collect();
-        for (i, key) in keys.iter().enumerate() {
-            cache.insert(key.clone(), test_handle(i));
-        }
-        keys
+        // One entry short of the retained bytes: the least recent one goes, not
+        // the one just read.
+        budget.set_budget(2 * ENTRY_BYTES);
+        assert_eq!(
+            budget.evict_to_budget(),
+            vec![("b".to_string(), BUCKET)],
+            "el desalojo toma la entrada menos reciente"
+        );
+        assert_eq!(held_keys(&budget).join(","), "a@160,c@160");
+        assert_eq!(budget.get("b", BUCKET), None);
+        assert_eq!(budget.bytes(), 2 * ENTRY_BYTES);
     }
 
     #[test]
     fn covercache_capacity_bound_parity() {
-        for cap in [4usize, 16, 64] {
-            assert_parity(cap, |cache| {
-                for i in 0..cap + 5 {
-                    cache.insert(format!("k{i}"), test_handle(i));
-                }
-                vec![format!("len={}", cache.len())]
-            });
+        for target in [4 * ENTRY_BYTES, 16 * ENTRY_BYTES, 64 * ENTRY_BYTES] {
+            let mut budget = CoverBudget::default();
+            fill_ledger(&mut budget, target / ENTRY_BYTES + 5);
+
+            assert!(
+                budget.bytes() > target,
+                "el escenario debe empezar por encima del presupuesto"
+            );
+
+            budget.set_budget(target);
+            let removed = budget.evict_to_budget();
+
+            assert!(
+                !removed.is_empty(),
+                "un presupuesto excedido debe desalojar"
+            );
+            assert!(
+                budget.bytes() <= budget.budget(),
+                "los bytes retenidos no pueden superar el presupuesto"
+            );
         }
     }
 
     #[test]
     fn covercache_recency_eviction_order_parity() {
-        for cap in [3usize, 4, 16, 64] {
-            assert_parity(cap, |cache| {
-                let keys = fill(cache, cap);
-                let first = keys[0].clone();
-                let second = keys[1].clone();
-                // Reading the oldest entry promotes it; inserting a new entry
-                // evicts the next-oldest, not the just-read one.
-                let _ = cache.get(&first);
-                cache.insert("nueva".into(), test_handle(999));
-                vec![
-                    format!("len={}", cache.len()),
-                    format!("first_present={}", cache.contains(&first)),
-                    format!("second_present={}", cache.contains(&second)),
-                    format!("order={:?}", cache.order_mru_to_lru()),
-                ]
-            });
+        for count in [3usize, 4, 16, 64] {
+            let mut budget = CoverBudget::default();
+            fill_ledger(&mut budget, count);
+            let oldest = "k0".to_string();
+            let next_oldest = "k1".to_string();
+
+            // Touching the oldest entry promotes it; the next-oldest is then the
+            // one an insert has to evict.
+            assert!(budget.touch(&oldest, BUCKET));
+            budget.insert("nueva", BUCKET, ENTRY_BYTES);
+
+            budget.set_budget(count * ENTRY_BYTES);
+            let removed = budget.evict_to_budget();
+
+            assert_eq!(
+                removed,
+                vec![(next_oldest.clone(), BUCKET)],
+                "la entrada recién tocada no es la candidata al desalojo"
+            );
+            assert!(budget.get(&oldest, BUCKET).is_some());
+            assert!(budget.get(&next_oldest, BUCKET).is_none());
+            assert!(budget.get("nueva", BUCKET).is_some());
         }
     }
 
     #[test]
     fn covercache_get_promotes_but_peek_does_not() {
-        for cap in [4usize, 16, 64] {
-            assert_parity(cap, |cache| {
-                let keys = fill(cache, cap.min(3));
-                let before = cache.order_mru_to_lru();
+        let mut budget = CoverBudget::default();
+        fill_ledger(&mut budget, 3);
+        let oldest = "k0".to_string();
+        let before = held_keys(&budget);
 
-                let _ = cache.peek(&keys[0]);
-                let after_peek = cache.order_mru_to_lru();
+        // The read path peeks: it reports the retained bytes and keeps the order.
+        assert_eq!(budget.get(&oldest, BUCKET), Some(ENTRY_BYTES));
+        assert_eq!(held_keys(&budget), before, "una consulta no promueve");
 
-                let _ = cache.get(&keys[0]);
-                let after_get = cache.order_mru_to_lru();
-
-                vec![
-                    format!("peek_preserves_order={}", before == after_peek),
-                    format!(
-                        "get_promotes_to_mru={}",
-                        after_get.first() == Some(&keys[0])
-                    ),
-                ]
-            });
-        }
+        // An explicit touch moves the entry to most recently used.
+        assert!(budget.touch(&oldest, BUCKET));
+        assert_eq!(
+            held_keys(&budget).first(),
+            Some(&format!("{oldest}@{BUCKET}")),
+            "un toque promueve la entrada"
+        );
+        assert_ne!(held_keys(&budget), before);
     }
 
-    /// Concurrency stress test under a single `Mutex`: no thread may leave
-    /// the cache above capacity or trigger a panic.
-    fn concurrency_stress<C: ParityCache + Send>(mutex: &Mutex<C>, cap: usize) {
+    /// Concurrency stress test under a single `Mutex`: eight threads insert,
+    /// touch and evict, and the ledger never exceeds its budget or panics.
+    fn concurrency_stress(ledger: &Mutex<CoverBudget>, budget_bytes: usize) {
         std::thread::scope(|scope| {
             for thread in 0..8usize {
                 scope.spawn(move || {
-                    for i in 0..200usize {
-                        let key = format!("/music/album/{thread}/{i}");
-                        let mut guard = mutex.lock();
-                        guard.insert(key.clone(), test_handle(i));
-                        let _ = guard.get(&key);
-                        let _ = guard.get("/music/album/ausente");
-                        assert!(guard.len() <= cap, "la caché excedió su capacidad");
+                    for index in 0..200usize {
+                        let path = format!("/music/album/{thread}/{index}");
+                        let mut guard = ledger.lock();
+                        guard.insert(&path, BUCKET, ENTRY_BYTES);
+                        guard.touch(&path, BUCKET);
+                        let _ = guard.get("/music/album/ausente", BUCKET);
+                        guard.evict_to_budget();
+                        assert!(
+                            guard.bytes() <= budget_bytes,
+                            "el registro excedió su presupuesto"
+                        );
                     }
                 });
             }
         });
-        assert!(mutex.lock().len() <= cap);
+
+        assert!(ledger.lock().bytes() <= budget_bytes);
     }
 
     #[test]
     fn covercache_concurrency_parity() {
-        let cap = 8;
-        concurrency_stress(&Mutex::new(ProductionCache::new(cap)), cap);
-        concurrency_stress(&Mutex::new(ReferenceCache::new(cap)), cap);
+        let budget_bytes = 8 * ENTRY_BYTES;
+        let mut ledger = CoverBudget::default();
+        ledger.set_budget(budget_bytes);
+
+        concurrency_stress(&Mutex::new(ledger), budget_bytes);
     }
 
     #[test]
     fn covercache_clear_parity() {
-        for cap in [4usize, 16, 64] {
-            assert_parity(cap, |cache| {
-                fill(cache, cap);
-                cache.clear();
-                vec![
-                    format!("len={}", cache.len()),
-                    format!("order={:?}", cache.order_mru_to_lru()),
-                ]
-            });
-        }
+        let mut budget = CoverBudget::default();
+        fill_ledger(&mut budget, 5);
+        assert!(!budget.is_empty());
+        assert_eq!(budget.bytes(), 5 * ENTRY_BYTES);
+
+        budget.clear();
+
+        assert!(budget.is_empty());
+        assert_eq!(budget.len(), 0);
+        assert_eq!(budget.bytes(), 0);
+        assert!(held_keys(&budget).is_empty());
     }
 
     #[test]
     fn covercache_negative_cache_clear_is_isolated() {
-        let mut negative: HashSet<String> = HashSet::new();
-        for i in 0..3 {
-            negative.insert(format!("missing-{i}"));
-        }
+        let _guard = global_guard();
+        clear_negative_cover_cache();
 
-        // Both implementations start with entries that must not be affected.
-        let mut production = ProductionCache::new(4);
-        production.insert("keep".into(), test_handle(1));
-        let mut reference = ReferenceCache::new(4);
-        reference.insert("keep".into(), test_handle(1));
+        let corrupt = "cache/covers/undecodable.avif";
+        record_negative_cover(
+            Path::new(corrupt),
+            &CoverDecodeError::Decode(PathBuf::from(corrupt)),
+        );
+        assert!(
+            is_cover_negative(corrupt),
+            "el archivo indescodificable debe quedar registrado"
+        );
 
-        clear_negative_cache(&mut negative);
+        let mut budget = CoverBudget::default();
+        fill_ledger(&mut budget, 3);
+        let bytes_before = budget.bytes();
+        let keys_before = held_keys(&budget);
+
+        clear_negative_cover_cache();
 
         assert!(
-            negative.is_empty(),
+            !is_cover_negative(corrupt),
             "el conjunto negativo debe quedar vacío"
         );
-        // Limpiar el conjunto negativo es independiente de la caché LRU en ambos casos.
-        assert_eq!(production.len(), 1);
-        assert_eq!(reference.len(), 1);
+        // Clearing the negative set is independent of the byte ledger.
+        assert_eq!(budget.bytes(), bytes_before);
+        assert_eq!(held_keys(&budget), keys_before);
+
+        clear_negative_cover_cache();
     }
 
     #[test]
     fn covercache_purge_parity() {
-        for cap in [4usize, 16] {
-            for (count, low_resource) in [(1usize, false), (2usize, true)] {
-                assert_parity(cap, |cache| {
-                    fill(cache, cap);
-                    let newest = format!("k{}", cap - 1);
-                    cache.purge_oldest(count, low_resource);
+        for protected in [0usize, 2] {
+            let mut budget = CoverBudget::default();
+            fill_ledger(&mut budget, 6);
 
-                    let removed = if low_resource { count * 2 } else { count }.min(cap);
-                    // La purga quita las menos recientes; la más nueva sobrevive
-                    // mientras no se haya purgado la caché entera.
-                    assert_eq!(cache.len(), cap - removed);
-                    if removed < cap {
-                        assert!(cache.contains(&newest));
-                        assert!(!cache.contains("k0"));
-                    } else {
-                        assert!(cache.order_mru_to_lru().is_empty());
-                    }
+            let window: Vec<(String, u16)> = (0..protected)
+                .map(|index| (format!("k{index}"), BUCKET))
+                .collect();
+            budget.set_window(window);
 
-                    vec![
-                        format!("len={}", cache.len()),
-                        format!("order={:?}", cache.order_mru_to_lru()),
-                    ]
-                });
+            let removed = budget.trim_outside_window();
+
+            assert_eq!(
+                removed.len(),
+                6 - protected,
+                "se descarta toda entrada fuera de la ventana"
+            );
+            for index in 0..protected {
+                assert!(
+                    budget.get(&format!("k{index}"), BUCKET).is_some(),
+                    "una entrada de la ventana se conserva"
+                );
             }
+            for index in protected..6 {
+                assert!(
+                    budget.get(&format!("k{index}"), BUCKET).is_none(),
+                    "una entrada fuera de la ventana no sobrevive"
+                );
+            }
+            assert_eq!(budget.bytes(), protected * ENTRY_BYTES);
         }
     }
 
     #[test]
     fn covercache_resize_parity() {
         for start in [16usize, 64] {
-            for target in [4usize, 8] {
-                assert_parity(start, |cache| {
-                    fill(cache, start);
-                    let newest = format!("k{}", start - 1);
+            let mut budget = CoverBudget::default();
+            fill_ledger(&mut budget, start);
+            let newest = format!("k{}", start - 1);
 
-                    // Reducir la capacidad desaloja primero las menos recientes.
-                    cache.resize(target);
-                    assert_eq!(
-                        cache.len(),
-                        target,
-                        "reducir debe respetar la nueva capacidad"
-                    );
-                    assert!(cache.contains(&newest), "la más reciente debe sobrevivir");
-                    assert!(!cache.contains("k0"), "la menos reciente debe desalojarse");
-                    let shrink_order = cache.order_mru_to_lru();
+            // Shrinking the budget evicts the least recently used entries first.
+            let target = start / 4;
+            budget.set_budget(target * ENTRY_BYTES);
+            let removed = budget.evict_to_budget();
 
-                    // Ampliar la capacidad no desaloja ninguna entrada.
-                    cache.resize(start + 16);
-                    assert_eq!(cache.len(), target, "ampliar no debe desalojar");
+            assert_eq!(removed.len(), start - target);
+            assert!(
+                budget.get(&newest, BUCKET).is_some(),
+                "la entrada más reciente sobrevive"
+            );
+            assert!(
+                budget.get("k0", BUCKET).is_none(),
+                "la entrada menos reciente se desaloja primero"
+            );
+            assert_eq!(budget.bytes(), target * ENTRY_BYTES);
+            let retained = budget.len();
 
-                    vec![
-                        format!("shrink_len={target}"),
-                        format!("order={shrink_order:?}"),
-                        format!("grow_len={}", cache.len()),
-                    ]
-                });
-            }
+            // Growing it evicts nothing.
+            budget.set_budget(start * ENTRY_BYTES * 2);
+            assert!(budget.evict_to_budget().is_empty(), "ampliar no desaloja");
+            assert_eq!(budget.len(), retained);
+            assert_eq!(budget.bytes(), target * ENTRY_BYTES);
         }
     }
 
@@ -1788,6 +1441,54 @@ mod tests {
         GLOBAL_STATE_TEST_LOCK
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+    }
+
+    #[test]
+    fn test_negative_cache_only_records_undecodable_files() {
+        let _guard = global_guard();
+        clear_negative_cover_cache();
+
+        // A file that is not there yet may still be written: it stays retryable.
+        let absent = "cache/covers/absent.avif";
+        record_negative_cover(
+            Path::new(absent),
+            &CoverDecodeError::NotFound(PathBuf::from(absent)),
+        );
+        assert!(
+            !is_cover_negative(absent),
+            "an absent cover must not be recorded"
+        );
+
+        // A read error is not a decode failure either.
+        let unreadable = "cache/covers/unreadable.avif";
+        record_negative_cover(
+            Path::new(unreadable),
+            &CoverDecodeError::Io(
+                PathBuf::from(unreadable),
+                std::io::Error::new(std::io::ErrorKind::PermissionDenied, "denied"),
+            ),
+        );
+        assert!(
+            !is_cover_negative(unreadable),
+            "an unreadable cover must not be recorded"
+        );
+
+        // A present file that cannot be decoded is the only recorded case.
+        let corrupt = "cache/covers/corrupt.avif";
+        record_negative_cover(
+            Path::new(corrupt),
+            &CoverDecodeError::Decode(PathBuf::from(corrupt)),
+        );
+        assert!(
+            is_cover_negative(corrupt),
+            "an undecodable cover must be recorded"
+        );
+        assert!(
+            !is_cover_negative(absent),
+            "only the corrupt path was recorded"
+        );
+
+        clear_negative_cover_cache();
     }
 
     #[test]

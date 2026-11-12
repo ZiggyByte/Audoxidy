@@ -59,8 +59,6 @@ impl crate::gui::app::AudoxidyApp {
                 self.wake_up_controls(false)
             }
             Message::NextTrack => {
-                crate::utils::covers::clear_raw_cache();
-
                 // Crossfade manual: si el grupo Crossfade está activo y su sub-función
                 // manual está habilitada, se dispara la mezcla con la duración configurada
                 // (el decoder mezcla la pista actual con la siguiente pre-cargada).
@@ -121,7 +119,6 @@ impl crate::gui::app::AudoxidyApp {
                 wake_task
             }
             Message::PreviousTrack => {
-                crate::utils::covers::clear_raw_cache();
                 self.playlist_manager.play_prev(self.core.audio_manager());
                 self.persist_playlist_state();
 
@@ -339,13 +336,11 @@ impl crate::gui::app::AudoxidyApp {
 
         // 5. Load from disk (Handle::from_path — no RAM cache)
         if !new_cover_path.is_empty() {
-            if let Some(ch) = crate::utils::covers::load_cover_handle(&new_cover_path) {
-                self.player_ui_state.cached_art_handle =
-                    Some(crate::gui::library::lists::cover_to_iced(ch));
-                self.player_ui_state.current_art_id = audio_state.path.clone();
-                self.player_ui_state.current_cover_path = new_cover_path;
-                return;
-            }
+            self.player_ui_state.cached_art_handle =
+                Some(iced::widget::image::Handle::from_path(&new_cover_path));
+            self.player_ui_state.current_art_id = audio_state.path.clone();
+            self.player_ui_state.current_cover_path = new_cover_path;
+            return;
         }
 
         // 6. Fallback final (Sin carátula)

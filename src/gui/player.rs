@@ -206,8 +206,6 @@ pub fn view<'a>(
     let bounds = Length::Fixed(PLAYER_PANEL_SIZE);
 
     let background_layer = crate::gui::library::lists::album_art_widget(
-        None, // No pasamos el path aquí ya que el player gestiona su propio handle precargado
-        None, // No pasamos los bytes aquí ya que el player gestiona su propio handle precargado
         ui_state.cached_art_handle.clone(),
         crate::gui::library::lists::PlaceholderStyle::Player,
         bounds,

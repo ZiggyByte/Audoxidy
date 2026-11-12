@@ -284,8 +284,6 @@ pub fn view<'a>(
                                         .contains(&LibraryListItem::Album(composite_id.clone()));
 
                                     let album_art = crate::gui::library::lists::album_art_widget(
-                                        None,
-                                        None,
                                         handles.get(index).cloned().flatten(),
                                         crate::gui::library::lists::PlaceholderStyle::Large {
                                             icon_side:

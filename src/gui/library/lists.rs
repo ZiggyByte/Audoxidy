@@ -15,21 +15,6 @@ use crate::gui::widgets::{
 use crate::utils::{SortColumn, format_metadata, truncate_text};
 use std::collections::HashMap;
 
-/// Converts a front-end-agnostic `CoverHandle` into an iced image handle.
-///
-/// File-backed covers become `Handle::from_path`; byte-backed covers
-/// become `Handle::from_bytes`. The conversion happens at the GUI
-/// boundary so that `utils/` has no iced dependency.
-pub(crate) fn cover_to_iced(
-    handle: crate::utils::covers::CoverHandle,
-) -> iced::widget::image::Handle {
-    use crate::utils::covers::CoverHandle;
-    match handle {
-        CoverHandle::File { path, .. } => iced::widget::image::Handle::from_path(path),
-        CoverHandle::Bytes { data, .. } => iced::widget::image::Handle::from_bytes(data),
-    }
-}
-
 /// Estilos de Placeholder para el widget de carátulas
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PlaceholderStyle {
@@ -45,33 +30,18 @@ pub enum PlaceholderStyle {
 }
 
 /// Global widget for displaying album cover art efficiently and consistently.
-/// Supports: AVIF cache (Priority 1) -> raw binary data (Priority 2) -> auto placeholder.
+///
+/// It renders the handle the caller already resolved and falls back to the
+/// placeholder when there is none. It never opens a file, decodes an image or
+/// builds a handle: those happen off the layout pass, so a layout pass cannot
+/// stall on cover IO.
 pub fn album_art_widget<'a, Message: 'a>(
-    avif_path: Option<&str>,
-    raw_data: Option<&Vec<u8>>,
-    preloaded_handle: Option<iced::widget::image::Handle>,
+    handle: Option<iced::widget::image::Handle>,
     style: PlaceholderStyle,
     bounds: Length,
     radius: f32,
 ) -> Element<'a, Message> {
-    // 1. Use preloaded handle if available (Priority 0 - Maximum performance)
-    let mut handle_opt = preloaded_handle;
-
-    // 2. Try loading from AVIF file on disk (Priority 1) — no RAM cache
-    if handle_opt.is_none() {
-        handle_opt = avif_path
-            .and_then(crate::utils::covers::load_cover_handle)
-            .map(cover_to_iced);
-    }
-
-    // 3. Fallback: load from raw bytes (Priority 2)
-    if handle_opt.is_none()
-        && let Some(data) = raw_data
-    {
-        handle_opt = crate::utils::covers::load_cover_from_bytes(data).map(cover_to_iced);
-    }
-
-    if let Some(handle) = handle_opt {
+    if let Some(handle) = handle {
         container(
             iced::widget::image(handle)
                 .width(bounds)
@@ -90,7 +60,7 @@ pub fn album_art_widget<'a, Message: 'a>(
         .clip(true)
         .into()
     } else {
-        // 4. Fallback: Placeholder Automático basado en el estilo solicitado
+        // Placeholder automático basado en el estilo solicitado.
         match style {
             PlaceholderStyle::Large { icon_side } => container(
                 column![
@@ -175,7 +145,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     playing_path: &str,
     row_height: f32,
     show_thumbnail: bool,
-    cover_handle: Option<iced::widget::image::Handle>,
+    thumbnail_handle: Option<iced::widget::image::Handle>,
 ) -> Element<'a, Message> {
     let txt_color = if is_selected {
         COLOR_TEXT_PRIMARY
@@ -251,9 +221,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     // 1. Agregar Miniatura si se solicita
     if show_thumbnail {
         let thumb_img = album_art_widget(
-            None,
-            None,
-            cover_handle,
+            thumbnail_handle,
             PlaceholderStyle::Small,
             Length::Fixed(32.0),
             4.0,
@@ -323,7 +291,6 @@ pub fn library_song_row_widget<'a, Message: Clone + 'a>(
 }
 
 /// Renderiza una fila de canción en modo ThumbnailList (42px) con thumbnail 32x32 redondeado al inicio.
-/// Renderiza una fila de canción en modo ThumbnailList (42px) con thumbnail 32x32 redondeado al inicio.
 // The arguments are the columns and widths the shared row widget already needs plus
 // the prebuilt thumbnail handle; grouping them would only add a wrapper type.
 #[allow(clippy::too_many_arguments)]
@@ -335,7 +302,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
     column_widths: &HashMap<SortColumn, u16>,
     on_select: Message,
     playing_path: &str,
-    cover_handle: Option<iced::widget::image::Handle>,
+    thumbnail_handle: Option<iced::widget::image::Handle>,
 ) -> Element<'a, Message> {
     universal_song_row_widget(
         song,
@@ -347,7 +314,7 @@ pub fn thumbnail_song_row_widget<'a, Message: Clone + 'a>(
         playing_path,
         LIST_ROW,
         true,
-        cover_handle,
+        thumbnail_handle,
     )
 }
 
@@ -663,8 +630,6 @@ where
                 duration_secs,
             } => {
                 let card_wrapper = album_art_widget(
-                    None,
-                    None,
                     manager.cover_handle(cover_path.as_deref(), 220.0),
                     PlaceholderStyle::Large {
                         icon_side: crate::gui::library::grid_metrics::album_placeholder_icon_side(

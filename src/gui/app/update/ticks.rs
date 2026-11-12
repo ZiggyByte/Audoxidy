@@ -175,9 +175,9 @@ impl crate::gui::app::AudoxidyApp {
                             if self.player_ui_state.prefetched_next_handle.is_none()
                                 && self.player_ui_state.current_cover_path != cover_path.as_ref()
                             {
-                                self.player_ui_state.prefetched_next_handle =
-                                    crate::utils::covers::load_cover_handle(cover_path)
-                                        .map(crate::gui::library::lists::cover_to_iced);
+                                self.player_ui_state.prefetched_next_handle = Some(
+                                    iced::widget::image::Handle::from_path(cover_path.as_ref()),
+                                );
                             }
                         }
                         // The preload decision (15s window and per-track
@@ -356,6 +356,25 @@ impl crate::gui::app::AudoxidyApp {
             target: "audoxidy::metrics",
             metric = "ram_usage_bytes",
             ram_usage_bytes = ram_bytes
+        );
+
+        // The cover counters describe the library read path: how many files the
+        // decode funnel opened, how many were decoded, how many lookups hit the
+        // decoded store and how many bytes it retains. Counters only, so the line
+        // never discloses which covers the library holds.
+        let cover_io = crate::utils::covers::cover_io_counters();
+        tracing::info!(
+            target: "audoxidy::metrics",
+            metric = "cover_io",
+            cover_file_opens = cover_io.file_opens,
+            cover_decodes = cover_io.decodes,
+            cover_cache_hits = cover_io.cache_hits,
+            cover_cache_misses = cover_io.cache_misses,
+            cover_key_lookups = cover_io.key_lookups,
+            cover_evictions = cover_io.evictions,
+            cover_cache_bytes = cover_io.cache_bytes,
+            cover_work_in_flight = cover_io.in_flight,
+            "cover io"
         );
 
         let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);

@@ -156,20 +156,41 @@ impl crate::gui::app::AudoxidyApp {
                 // `_NET_WM_STATE` puede actualizarse después del cambio de
                 // tamaño, así que se consulta con un pequeño retardo. El flag
                 // evita apilar consultas durante un arrastre de redimensionado.
+                let mut tasks = Vec::new();
+                if let Some(anchor) = anchor {
+                    tasks.push(anchor);
+                }
+
+                // Arrastrar la ventana entre monitores con escalas distintas no
+                // entrega siempre un evento de reescalado, así que la proporción
+                // se vuelve a consultar aquí: sin ella el bucket de decodificación
+                // se quedaría en el tamaño del monitor anterior.
+                if let Some(id) = self.window_id {
+                    tasks.push(iced::window::scale_factor(id).map(Message::WindowRescaled));
+                }
+
                 if !self.maximized_query_pending {
                     self.maximized_query_pending = true;
-                    let maximize_query = Task::perform(
+                    tasks.push(Task::perform(
                         async {
                             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         },
                         |_| Message::QueryMaximized,
-                    );
-                    return match anchor {
-                        Some(anchor) => Task::batch(vec![anchor, maximize_query]),
-                        None => maximize_query,
-                    };
+                    ));
                 }
-                anchor.unwrap_or_else(Task::none)
+
+                Task::batch(tasks)
+            }
+            Message::WindowRescaled(scale) => {
+                if scale.is_finite() && scale > 0.0 {
+                    self.library_manager.scale_factor = scale;
+                    // Las filas memoizadas llevan los handles del bucket anterior,
+                    // así que se invalidan y se vuelve a pedir la ventana; el
+                    // snapshot de álbumes no cambia y no se relee de la base.
+                    self.library_manager.cached_grid_rows.replace(None);
+                    self.library_manager.request_cover_window();
+                }
+                Task::none()
             }
             Message::QueryMaximized => {
                 if let Some(id) = self.window_id {
@@ -206,6 +227,11 @@ impl crate::gui::app::AudoxidyApp {
             Message::SetWindowId(id) => {
                 self.window_id = Some(id);
 
+                // La proporción de píxeles se consulta al abrir la ventana: es el
+                // valor con el que se elige el bucket de decodificación de cada
+                // carátula antes del primer reescalado.
+                let scale_query = iced::window::scale_factor(id).map(Message::WindowRescaled);
+
                 // El flag `maximized` de `window::Settings` se envía antes de
                 // mapear la ventana y algunos gestores de ventanas lo ignoran.
                 // Con la ventana ya creada la petición sí se aplica, y ocurre
@@ -213,9 +239,12 @@ impl crate::gui::app::AudoxidyApp {
                 let cfg = crate::utils::config::load_config();
                 if !cfg.ui.window_geometry_initialized || cfg.ui.window_maximized {
                     self.window_maximized = true;
-                    return iced::window::maximize(id, true).map(|_: ()| Message::NoOp);
+                    return Task::batch(vec![
+                        iced::window::maximize(id, true).map(|_: ()| Message::NoOp),
+                        scale_query,
+                    ]);
                 }
-                Task::none()
+                scale_query
             }
             Message::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers;

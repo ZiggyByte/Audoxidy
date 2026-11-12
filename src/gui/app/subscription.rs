@@ -204,6 +204,8 @@ impl AudoxidyApp {
             )) = event
             {
                 Some(Message::ModifiersChanged(modifiers))
+            } else if let iced::Event::Window(iced::window::Event::Rescaled(scale)) = event {
+                Some(Message::WindowRescaled(scale))
             } else if let iced::Event::Window(iced::window::Event::Resized(new_size)) = event {
                 Some(Message::WindowResized(
                     new_size.width as u32,

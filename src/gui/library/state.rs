@@ -113,6 +113,10 @@ pub struct LibraryManager {
     /// Memoized grid window: its geometry key, the spacers and the row elements.
     pub cached_grid_rows: std::cell::RefCell<Option<super::cover_cache::GridRowsMemo>>,
     /// Display scale factor used to pick the decode bucket for a rendered cover.
+    ///
+    /// It is the window's device pixel ratio, initialised at window-id time and
+    /// refreshed on every rescale and resize, and the bucket multiplies the
+    /// rendered cover size by it before rounding up.
     pub scale_factor: f32,
     /// Scroll counter stamped on every decode request, so a stale result can be
     /// told apart from one belonging to the current scroll.

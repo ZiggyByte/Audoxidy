@@ -142,6 +142,7 @@ impl crate::gui::app::AudoxidyApp {
 
             Message::GlobalKeyDown(..)
             | Message::WindowResized(..)
+            | Message::WindowRescaled(..)
             | Message::WindowMoved(..)
             | Message::WindowMaximizedState(..)
             | Message::QueryMaximized

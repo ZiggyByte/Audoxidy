@@ -142,6 +142,8 @@ pub enum Message {
     GlobalMouseRelease,
     GlobalClick,
     WindowResized(u32, u32),
+    /// Device pixel ratio of the window, reported on open and on a monitor change.
+    WindowRescaled(f32),
     WindowMoved(iced::Point),
     WindowMaximizedState(bool),
     /// Consulta diferida del estado maximizado tras un cambio de tamaño.

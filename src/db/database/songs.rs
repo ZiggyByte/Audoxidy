@@ -358,12 +358,73 @@ impl Database {
         Ok(())
     }
 
-    /// Verifica si un hash de carátula está siendo usado por algún álbum o canción.
-    pub fn is_cover_hash_in_use(&self, hash: &str) -> Result<bool> {
+    /// Returns the cover references of the given songs.
+    ///
+    /// Each returned tuple is `(album cover path, raw override hash, song id)`.
+    /// Reading it before a delete transaction commits is what lets the caller
+    /// know which files the disappearing rows still contributed.
+    pub fn cover_refs_for_songs(
+        &self,
+        ids: &[i64],
+    ) -> Result<Vec<(Option<String>, Option<String>, i64)>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT al.cover_path, s.cover_override, s.id
+             FROM SONGS s
+             JOIN ALBUMS al ON al.id = s.album_id
+             WHERE s.id = ?1",
+        )?;
+
+        let mut references = Vec::with_capacity(ids.len());
+        for id in ids {
+            let reference = stmt
+                .query_row([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .optional()?;
+            if let Some(reference) = reference {
+                references.push(reference);
+            }
+        }
+
+        Ok(references)
+    }
+
+    /// Returns whether any album row still stores a cover path with this file name.
+    ///
+    /// The stored path can move with the working directory or the configured
+    /// cache, so the comparison is by file name: the rows are selected and their
+    /// `file_name()` compared in Rust. A count cannot be compared against a name.
+    pub fn is_cover_path_referenced(&self, file_name: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT cover_path FROM ALBUMS WHERE cover_path IS NOT NULL")?;
+        let mut rows = stmt.query([])?;
+
+        while let Some(row) = rows.next()? {
+            let cover_path: String = row.get(0)?;
+            if std::path::Path::new(&cover_path)
+                .file_name()
+                .and_then(|name| name.to_str())
+                == Some(file_name)
+            {
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
+    }
+
+    /// Returns whether a song still holds this override hash.
+    ///
+    /// Override file names embed the song id, so the owner is part of the
+    /// predicate: a surviving row with a different owner cannot reference it.
+    pub fn is_cover_override_referenced(&self, song_id: i64, cover_hash: &str) -> Result<bool> {
         let count: i64 = self.conn.query_row(
-            "SELECT (SELECT COUNT(*) FROM ALBUMS WHERE hash_id = ? OR cover_hash = ?) + (SELECT COUNT(*) FROM SONGS WHERE cover_override = ?)",
-            [hash, hash, hash],
-            |row: &rusqlite::Row| row.get::<_, i64>(0),
+            "SELECT COUNT(*) FROM SONGS WHERE id = ?1 AND cover_override = ?2",
+            params![song_id, cover_hash],
+            |row| row.get(0),
         )?;
         Ok(count > 0)
     }

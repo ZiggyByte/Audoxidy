@@ -682,57 +682,10 @@ impl crate::gui::app::AudoxidyApp {
                 let ids_to_delete: Vec<_> = ids_to_delete_set.into_iter().collect();
 
                 let core = self.core.clone();
-                let filtered_songs_clone = self
-                    .library_manager
-                    .filtered_songs
-                    .clone()
-                    .unwrap_or_default();
-                let cached_albums_clone = self
-                    .library_manager
-                    .cached_albums
-                    .clone()
-                    .unwrap_or_default();
 
                 return Task::perform(
                     async move {
-                        let mut covers_to_check = Vec::new();
-
-                        {
-                            let mut album_map = std::collections::HashMap::new();
-                            for alb in &cached_albums_clone {
-                                album_map.insert(
-                                    (alb.artist.clone(), alb.title.clone()),
-                                    alb.id.clone(),
-                                );
-                            }
-
-                            let mut song_map = std::collections::HashMap::new();
-                            for song in &filtered_songs_clone {
-                                song_map.insert(song.id, song);
-                            }
-
-                            for id in &ids_to_delete {
-                                if let Some(song) = song_map.get(id) {
-                                    let art = crate::utils::get_effective_artist(song);
-                                    let alb_name = song.album.as_deref().unwrap_or("Desconocido");
-
-                                    if let Some(album_id) =
-                                        album_map.get(&(art.to_string(), alb_name.to_string()))
-                                    {
-                                        covers_to_check.push(album_id.clone());
-                                    }
-                                    if let Some(ovr) = &song.cover_override {
-                                        covers_to_check.push(ovr.to_string());
-                                    }
-                                }
-                            }
-                        }
-                        covers_to_check.sort();
-                        covers_to_check.dedup();
-
-                        if let Err(e) =
-                            core.delete_songs_with_transaction(&ids_to_delete, &covers_to_check)
-                        {
+                        if let Err(e) = core.delete_songs_with_transaction(&ids_to_delete) {
                             tracing::warn!(
                                 target: "audoxidy::persistence",
                                 error = %e,

@@ -466,6 +466,62 @@ pub fn is_cover_negative(path: &str) -> bool {
         .is_some_and(|negative| negative.lock().contains(path))
 }
 
+/// Failure to compose a cover file name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverNameError {
+    /// One of the hash arguments was empty.
+    EmptyHash,
+    /// One of the hash arguments contains a character that is not ASCII hex.
+    NonHexHash,
+}
+
+impl std::fmt::Display for CoverNameError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::EmptyHash => write!(formatter, "a cover hash cannot be empty"),
+            Self::NonHexHash => write!(formatter, "a cover hash must contain only hex digits"),
+        }
+    }
+}
+
+impl std::error::Error for CoverNameError {}
+
+/// Rejects a hash that would escape or distort a cover file name.
+///
+/// Every hash reaching a name is a SHA-256 hex digest, so anything else — an
+/// empty string, a path separator, a traversal segment — is refused before it
+/// becomes a file name.
+fn validate_cover_hash(hash: &str) -> Result<(), CoverNameError> {
+    if hash.is_empty() {
+        return Err(CoverNameError::EmptyHash);
+    }
+    if !hash.chars().all(|character| character.is_ascii_hexdigit()) {
+        return Err(CoverNameError::NonHexHash);
+    }
+    Ok(())
+}
+
+/// Complete file name for an album's own cover.
+///
+/// The album owner and the image content both appear in the name, so two albums
+/// holding byte-identical pictures never share a file and deleting one album can
+/// never remove the other's cover. The result includes the `.avif` extension.
+pub fn album_cover_file_name(album_hash: &str, cover_hash: &str) -> Result<String, CoverNameError> {
+    validate_cover_hash(album_hash)?;
+    validate_cover_hash(cover_hash)?;
+    Ok(format!("{album_hash}-{cover_hash}.avif"))
+}
+
+/// Complete file name for a song's own cover.
+///
+/// The song id in the name scopes the file to the song that owns the override,
+/// so two songs with different art never share a file. The result includes the
+/// `.avif` extension.
+pub fn song_cover_file_name(song_id: i64, cover_hash: &str) -> Result<String, CoverNameError> {
+    validate_cover_hash(cover_hash)?;
+    Ok(format!("song-{song_id}-{cover_hash}.avif"))
+}
+
 /// Decoded RGBA8 pixels ready to become a front-end image handle.
 ///
 /// `pixels` is always `width * height * 4` bytes. [`decode_cover_file`] refuses

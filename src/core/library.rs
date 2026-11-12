@@ -216,15 +216,61 @@ impl Core {
 
     /// Deletes songs in a transaction and removes cover files that became unused.
     ///
-    /// The database transaction and the cover-usage checks run under the lock;
-    /// the cover files are removed after the lock is released.
-    pub fn delete_songs_with_transaction(
-        &self,
-        ids: &[i64],
-        cover_hashes: &[String],
-    ) -> Result<(), CoreError> {
-        let removable = {
+    /// The cover references of the rows being deleted are read **before** the
+    /// transaction commits, so a file reachable only through a disappearing row
+    /// is still a candidate. After the commit the database lock is released,
+    /// every candidate is checked against the surviving rows, and only the
+    /// unclaimed files are removed — from the injected cover cache directory,
+    /// by file name, never from a stored path.
+    pub fn delete_songs_with_transaction(&self, ids: &[i64]) -> Result<(), CoreError> {
+        /// One cover file a deleted row may have left without a reference.
+        enum CoverCandidate {
+            /// An album cover named by the stored `ALBUMS.cover_path`.
+            AlbumPath { file_name: String },
+            /// A per-song override named from its owner id and content hash.
+            SongOverride {
+                song_id: i64,
+                cover_hash: String,
+                file_name: String,
+            },
+        }
+
+        let candidates = {
             let db = self.lock_db()?;
+
+            let mut candidates = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for (album_path, override_hash, song_id) in db.cover_refs_for_songs(ids)? {
+                if let Some(file_name) = album_path
+                    .as_deref()
+                    .and_then(|path| std::path::Path::new(path).file_name())
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+                    && seen.insert(file_name.clone())
+                {
+                    candidates.push(CoverCandidate::AlbumPath { file_name });
+                }
+
+                if let Some(cover_hash) = override_hash {
+                    match crate::utils::covers::song_cover_file_name(song_id, &cover_hash) {
+                        Ok(file_name) => {
+                            if seen.insert(file_name.clone()) {
+                                candidates.push(CoverCandidate::SongOverride {
+                                    song_id,
+                                    cover_hash,
+                                    file_name,
+                                });
+                            }
+                        }
+                        Err(error) => tracing::warn!(
+                            target: "audoxidy::persistence",
+                            song_id,
+                            error = %error,
+                            "No se pudo componer el nombre de la carátula propia de una canción"
+                        ),
+                    }
+                }
+            }
 
             if let Err(e) = db.begin_transaction() {
                 tracing::warn!(
@@ -256,19 +302,59 @@ impl Core {
                 );
             }
 
-            let mut removable = Vec::new();
-            for hash in cover_hashes {
-                if let Ok(false) = db.is_cover_hash_in_use(hash) {
-                    removable.push(hash.clone());
-                }
-            }
-            removable
+            candidates
         };
 
-        for hash in removable {
-            let path = self.paths.cover_cache_dir.join(format!("{}.avif", hash));
-            let _ = std::fs::remove_file(path);
+        let unreferenced = {
+            let db = self.lock_db()?;
+            let mut unreferenced = Vec::new();
+
+            for candidate in candidates {
+                match candidate {
+                    CoverCandidate::AlbumPath { file_name } => {
+                        match db.is_cover_path_referenced(&file_name) {
+                            Ok(false) => unreferenced.push(file_name),
+                            Ok(true) => {}
+                            Err(error) => tracing::warn!(
+                                target: "audoxidy::persistence",
+                                file = %file_name,
+                                error = %error,
+                                "No se pudo comprobar si una carátula de álbum sigue referenciada"
+                            ),
+                        }
+                    }
+                    CoverCandidate::SongOverride {
+                        song_id,
+                        cover_hash,
+                        file_name,
+                    } => match db.is_cover_override_referenced(song_id, &cover_hash) {
+                        Ok(false) => unreferenced.push(file_name),
+                        Ok(true) => {}
+                        Err(error) => tracing::warn!(
+                            target: "audoxidy::persistence",
+                            song_id,
+                            error = %error,
+                            "No se pudo comprobar si una carátula propia sigue referenciada"
+                        ),
+                    },
+                }
+            }
+
+            unreferenced
+        };
+
+        for file_name in unreferenced {
+            let path = self.paths.cover_cache_dir.join(&file_name);
+            if let Err(error) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    target: "audoxidy::persistence",
+                    file = %path.display(),
+                    error = %error,
+                    "No se pudo eliminar una carátula que ya no está referenciada"
+                );
+            }
         }
+
         Ok(())
     }
 }

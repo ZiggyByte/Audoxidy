@@ -377,6 +377,31 @@ impl crate::gui::app::AudoxidyApp {
             "cover io"
         );
 
+        // The metrics layer owns the structured event above and the log layers
+        // filter that target out, so the manual memory measurement would have no
+        // readable counters. Mirror them at a slow cadence under a target the
+        // file layer keeps.
+        static LAST_COVER_COUNTER_LOG_SEC: std::sync::atomic::AtomicU64 =
+            std::sync::atomic::AtomicU64::new(0);
+        if autosave_now
+            .saturating_sub(LAST_COVER_COUNTER_LOG_SEC.load(std::sync::atomic::Ordering::Relaxed))
+            >= 10
+        {
+            LAST_COVER_COUNTER_LOG_SEC.store(autosave_now, std::sync::atomic::Ordering::Relaxed);
+            tracing::info!(
+                target: "audoxidy::covers",
+                cover_file_opens = cover_io.file_opens,
+                cover_decodes = cover_io.decodes,
+                cover_cache_hits = cover_io.cache_hits,
+                cover_cache_misses = cover_io.cache_misses,
+                cover_key_lookups = cover_io.key_lookups,
+                cover_evictions = cover_io.evictions,
+                cover_cache_bytes = cover_io.cache_bytes,
+                cover_work_in_flight = cover_io.in_flight,
+                "cover cache counters"
+            );
+        }
+
         let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);
         if underruns > 0 {
             tracing::warn!(

@@ -1060,9 +1060,18 @@ impl CoverBudget {
     }
 
     /// Drops an entry and returns the bytes it retained.
+    ///
+    /// The recency entry is dropped even when the byte accounting was already
+    /// gone, so a caller that walks the order always makes progress.
     pub fn remove(&mut self, path: &str, bucket: u16) -> Option<usize> {
-        let removed = self.entries.get_mut(&bucket)?.remove(path)?;
-        self.bytes = self.bytes.saturating_sub(removed);
+        let removed = self
+            .entries
+            .get_mut(&bucket)
+            .and_then(|by_path| by_path.remove(path));
+
+        if let Some(bytes) = removed {
+            self.bytes = self.bytes.saturating_sub(bytes);
+        }
 
         if let Some(index) = self.position(path, bucket) {
             self.order.remove(index);
@@ -1076,7 +1085,7 @@ impl CoverBudget {
             self.entries.remove(&bucket);
         }
 
-        Some(removed)
+        removed
     }
 
     /// Drops every entry.

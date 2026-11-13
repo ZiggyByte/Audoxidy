@@ -322,25 +322,39 @@ impl LibraryManager {
             if let Some(all_albums) = &self.cached_albums {
                 for group in &self.artist_groups {
                     for song in &group.songs {
-                        if let Some(alb_title) = &song.album {
-                            let key = (group.name.to_lowercase(), alb_title.trim().to_lowercase());
-                            if !seen_albums.contains(&key) {
-                                seen_albums.insert(key);
+                        let Some(alb_title) = &song.album else {
+                            continue;
+                        };
 
-                                if let Some(entry) = all_albums
-                                    .iter()
-                                    .find(|a| {
-                                        a.title.as_str() == &**alb_title && a.artist == group.name
-                                    })
-                                    .or_else(|| {
-                                        all_albums.iter().find(|a| a.title.as_str() == &**alb_title)
-                                    })
-                                {
-                                    let mut unified_entry = entry.clone();
-                                    unified_entry.artist = group.name.clone();
-                                    grid_filtered.push(unified_entry);
-                                }
-                            }
+                        // The album hash separates two versions that share a title
+                        // and an artist; a snapshot that predates the field falls
+                        // back to the display title.
+                        let identity = song
+                            .album_hash
+                            .as_deref()
+                            .map(str::to_owned)
+                            .unwrap_or_else(|| alb_title.trim().to_lowercase());
+                        if !seen_albums.insert((group.name.to_lowercase(), identity)) {
+                            continue;
+                        }
+
+                        let entry = song
+                            .album_hash
+                            .as_deref()
+                            .and_then(|hash| all_albums.iter().find(|a| a.id == hash))
+                            .or_else(|| {
+                                all_albums.iter().find(|a| {
+                                    a.title.as_str() == &**alb_title && a.artist == group.name
+                                })
+                            })
+                            .or_else(|| {
+                                all_albums.iter().find(|a| a.title.as_str() == &**alb_title)
+                            });
+
+                        if let Some(entry) = entry {
+                            let mut unified_entry = entry.clone();
+                            unified_entry.artist = group.name.clone();
+                            grid_filtered.push(unified_entry);
                         }
                     }
                 }

@@ -1812,4 +1812,29 @@ fn test_same_title_versions_stay_separate() {
         covers[0], covers[1],
         "cada tarjeta dibuja la portada de su propia versión"
     );
+
+    // The filtered grid resolves its album entries with the same identity, so an
+    // active search cannot collapse the two versions back into one card.
+    let filtered_songs: Vec<Arc<SongData>> = manager
+        .artist_groups
+        .first()
+        .map(|group| group.songs.clone())
+        .unwrap_or_default();
+    manager.search_query = "Song".to_string();
+    manager.update_processed_data(filtered_songs);
+
+    let filtered = manager
+        .filtered_albums
+        .as_ref()
+        .expect("un filtro activo construye la lista de álbumes de la cuadrícula");
+
+    assert_eq!(
+        filtered.len(),
+        2,
+        "la cuadrícula filtrada tampoco fusiona las versiones"
+    );
+    assert_ne!(
+        filtered[0].cover_path, filtered[1].cover_path,
+        "cada versión conserva su portada en la cuadrícula filtrada"
+    );
 }

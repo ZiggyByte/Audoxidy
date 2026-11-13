@@ -106,6 +106,222 @@ fn pragma_text(db: &Database, name: &str) -> String {
         .unwrap_or_else(|error| panic!("read the {name} pragma: {error}"))
 }
 
+/// Tables the schema declares, in the order the catalog sorts them.
+///
+/// The list is exact: a table added to or removed from `create_schema` must be
+/// reflected here in the same change, which is what makes a retired table
+/// impossible to reintroduce unnoticed.
+const EXPECTED_TABLES: [&str; 10] = [
+    "ALBUMS",
+    "APP_SETTINGS",
+    "ARTISTS",
+    "FOLDERS",
+    "PLAYLISTS",
+    "PLAYLIST_ITEMS",
+    "PLAYLIST_SHUFFLE_HISTORY",
+    "SONGS",
+    "SONG_METADATA",
+    "eq_presets",
+];
+
+/// Columns of one song row, in the order `create_schema` declares them.
+const EXPECTED_SONG_COLUMNS: [&str; 16] = [
+    "id",
+    "album_id",
+    "artist_id",
+    "folder_id",
+    "file_path",
+    "title",
+    "track_num",
+    "duration",
+    "format",
+    "bit_depth",
+    "sample_rate",
+    "channels",
+    "size",
+    "cover_override",
+    "import_order",
+    "is_external",
+];
+
+/// Columns of the extended metadata row: the twelve text fields the metadata
+/// editor will read and write, plus both ReplayGain values.
+const EXPECTED_SONG_METADATA_COLUMNS: [&str; 15] = [
+    "song_id",
+    "lyrics",
+    "comments",
+    "composer",
+    "lyricist",
+    "publisher",
+    "url",
+    "copyright",
+    "encoded_by",
+    "catalog",
+    "isrc",
+    "key",
+    "bpm",
+    "track_gain",
+    "album_gain",
+];
+
+/// Ordinary tables the schema declares, read from SQLite's own catalog.
+///
+/// The full-text virtual table and the shadow tables it creates come back with
+/// their own `type`, so they never reach this list; the two tables SQLite adds
+/// by itself are dropped by their reserved prefix.
+fn user_table_names(db: &Database) -> Vec<String> {
+    let mut stmt = db
+        .conn
+        .prepare(
+            "SELECT name FROM pragma_table_list
+             WHERE schema = 'main' AND type = 'table'
+             ORDER BY name",
+        )
+        .expect("prepare the table list query");
+    let mut names = stmt
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("query the table list")
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .expect("read the table names");
+    names.retain(|name| !name.starts_with("sqlite_"));
+    names
+}
+
+/// Column names of one table, in declaration order.
+fn column_names(db: &Database, table: &str) -> Vec<String> {
+    let mut stmt = db
+        .conn
+        .prepare(&format!("PRAGMA table_info({table})"))
+        .unwrap_or_else(|error| panic!("prepare the {table} column list: {error}"));
+    stmt.query_map([], |row| row.get::<_, String>(1))
+        .unwrap_or_else(|error| panic!("query the {table} column list: {error}"))
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .unwrap_or_else(|error| panic!("read the {table} column names: {error}"))
+}
+
+#[test]
+fn test_scan_artifact_table_and_column_are_absent() {
+    let db = Database::new_memory().expect("create the in-memory database");
+
+    assert_eq!(
+        user_table_names(&db),
+        EXPECTED_TABLES,
+        "the schema must declare exactly these tables"
+    );
+    assert_eq!(
+        column_names(&db, "SONGS"),
+        EXPECTED_SONG_COLUMNS,
+        "a song row must carry exactly these columns"
+    );
+}
+
+#[test]
+fn test_song_metadata_keeps_its_columns() {
+    let db = Database::new_memory().expect("create the in-memory database");
+
+    assert_eq!(
+        column_names(&db, "SONG_METADATA"),
+        EXPECTED_SONG_METADATA_COLUMNS,
+        "the extended metadata table is the metadata editor's storage, so every column stays"
+    );
+}
+
+#[test]
+fn test_both_artist_columns_remain() {
+    let db = Database::new_memory().expect("create the in-memory database");
+
+    assert!(
+        column_names(&db, "SONGS")
+            .iter()
+            .any(|column| column == "artist_id"),
+        "the song row keeps the track artist"
+    );
+    assert!(
+        column_names(&db, "ALBUMS")
+            .iter()
+            .any(|column| column == "artist_id"),
+        "the album row keeps the album artist"
+    );
+}
+
+#[test]
+fn test_rescan_updates_one_row_and_keeps_the_metadata() {
+    let mut db = Database::new_memory().expect("create the in-memory database");
+    let path = "/music/schema_rescan.flac";
+    let song = SongData {
+        full_file_path: Arc::from(path.to_string().into_boxed_str()),
+        title: Some(Arc::from("Rescan Title".to_string().into_boxed_str())),
+        artist: Some(Arc::from("Rescan Artist".to_string().into_boxed_str())),
+        album: Some(Arc::from("Rescan Album".to_string().into_boxed_str())),
+        track_number: Some(Arc::from("4".to_string().into_boxed_str())),
+        duration_secs: Some(214.5),
+        size: Some(31_457_280),
+        ..Default::default()
+    };
+    let extended = SongMetadataExtended {
+        composer: Some("Rescan Composer".to_string()),
+        isrc: Some("US-AAA-00-00004".to_string()),
+        lyrics: Some("Rescan lyrics".to_string()),
+        track_gain: Some(-6.5),
+        album_gain: Some(-5.25),
+        ..Default::default()
+    };
+
+    db.insert_song_full(&song, &extended, None, false)
+        .expect("insert the song");
+    db.insert_song_full(&song, &extended, None, false)
+        .expect("re-insert the same path");
+
+    assert_eq!(
+        row_count(&db, "SONGS"),
+        1,
+        "a second scan of the same path updates the row instead of adding one"
+    );
+    assert_eq!(
+        row_count(&db, "SONG_METADATA"),
+        1,
+        "the metadata row follows its song"
+    );
+
+    let gains = db
+        .get_replay_gain_by_path(path)
+        .expect("read the replay gain of the inserted song");
+    assert_eq!(
+        gains,
+        (Some(-6.5), Some(-5.25)),
+        "both gains survive the re-scan"
+    );
+
+    let (composer, isrc, lyrics): (Option<String>, Option<String>, Option<String>) = db
+        .conn
+        .query_row(
+            "SELECT m.composer, m.isrc, m.lyrics
+             FROM SONG_METADATA m
+             JOIN SONGS s ON s.id = m.song_id
+             WHERE s.file_path = ?1",
+            [path],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .expect("read the extended metadata columns");
+    assert_eq!(composer.as_deref(), Some("Rescan Composer"));
+    assert_eq!(isrc.as_deref(), Some("US-AAA-00-00004"));
+    assert_eq!(lyrics.as_deref(), Some("Rescan lyrics"));
+
+    let songs = db.get_all_songs().expect("read the library rows");
+    assert_eq!(songs.len(), 1);
+    let stored = &songs[0];
+    assert_eq!(stored.title.as_deref(), Some("Rescan Title"));
+    assert_eq!(stored.artist.as_deref(), Some("Rescan Artist"));
+    assert_eq!(stored.album.as_deref(), Some("Rescan Album"));
+    assert_eq!(stored.track_number.as_deref(), Some("4"));
+    assert_eq!(stored.duration_secs, Some(214.5));
+    assert_eq!(stored.size, Some(31_457_280));
+    assert!(
+        stored.album_hash.is_some(),
+        "the album identity travels through the renumbered mapper"
+    );
+}
+
 #[test]
 fn test_new_file_is_created_at_the_current_version() {
     let temp = TempDbDir::new();

@@ -716,6 +716,64 @@ fn test_cover_cache_retains_scroll_back_cushion() {
 }
 
 #[test]
+fn test_memo_not_invalidated_by_off_window_decode() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(4);
+    manager.grid_metrics.set(metrics);
+
+    // The grid rows are built once for the viewport and memoized.
+    let (_, _, rows) = manager.get_visible_grid_rows(&metrics, 0.0, 800.0);
+    assert!(manager.cached_grid_rows.borrow().is_some());
+
+    let jobs = manager.window_jobs(0.0, 800.0);
+    assert!(!jobs.is_empty(), "la ventana pide una carátula por tarjeta");
+    manager.cover_store.set_window(
+        jobs.iter()
+            .map(|job| (job.key.path.to_string(), job.key.bucket))
+            .collect::<Vec<_>>(),
+    );
+
+    // A decode that lands for a cover no visible row draws: the handle is kept
+    // and the memoized rows are untouched, because they never drew it.
+    let off_window = CoverDecodeOutcome {
+        key: key("covers/off-window.avif", 160),
+        generation: manager.scroll_generation,
+        handle: Some(fake_handle(2, 2)),
+        bytes: 2 * 2 * 4,
+        error: None,
+    };
+    assert!(manager.apply_cover_decoded(off_window));
+    assert!(manager.cover_store.contains("covers/off-window.avif", 160));
+    assert!(
+        manager.cached_grid_rows.borrow().is_some(),
+        "una carátula fuera de la ventana no cambia las filas dibujadas"
+    );
+
+    let (_, _, again) = manager.get_visible_grid_rows(&metrics, 0.0, 800.0);
+    assert!(
+        Rc::ptr_eq(&rows, &again),
+        "el memo sigue sirviendo las mismas filas"
+    );
+
+    // A handle the window does draw does change them.
+    let drawn = CoverDecodeOutcome {
+        key: jobs[0].key.clone(),
+        generation: manager.scroll_generation,
+        handle: Some(fake_handle(2, 2)),
+        bytes: 2 * 2 * 4,
+        error: None,
+    };
+    assert!(manager.apply_cover_decoded(drawn));
+    assert!(
+        manager.cached_grid_rows.borrow().is_none(),
+        "una carátula de la ventana invalida las filas"
+    );
+}
+
+#[test]
 fn test_request_window_emits_list_mode_buckets() {
     let _guard = global_guard();
     clear_negative_cover_cache();

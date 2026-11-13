@@ -553,8 +553,10 @@ impl LibraryManager {
     /// force the same cover to be decoded again. The generation stamped on the
     /// request therefore gates requests, never retention.
     ///
-    /// The memoized grid rows carry the handles the layout pass resolved, so a
-    /// new one changes the rows the next layout pass receives.
+    /// The memoized grid rows are invalidated only when the stored key belongs to
+    /// the window the rows were built from: an entry the window does not draw
+    /// cannot change a single card, and invalidating for it would rebuild every
+    /// row once per finished decode.
     pub fn apply_cover_decoded(&mut self, outcome: CoverDecodeOutcome) -> bool {
         self.cover_store.clear_in_flight(&outcome.key);
 
@@ -569,10 +571,16 @@ impl LibraryManager {
             return false;
         };
 
+        let in_window = self
+            .cover_store
+            .is_window(&outcome.key.path, outcome.key.bucket);
+
         self.cover_store
             .insert_handle(outcome.key, handle, outcome.bytes);
 
-        self.cached_grid_rows.replace(None);
+        if in_window {
+            self.cached_grid_rows.replace(None);
+        }
 
         self.cover_store.evict_to_budget();
 

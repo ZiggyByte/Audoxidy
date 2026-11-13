@@ -10,7 +10,7 @@ use super::Database;
 /// never takes effect on a file that already holds the old shape. Bumping this
 /// constant in the same change that alters the DDL is what tells the connection
 /// to replace a stale file instead of silently running on the old schema.
-pub(in crate::db::database) const SCHEMA_VERSION: i64 = 2;
+pub(in crate::db::database) const SCHEMA_VERSION: i64 = 3;
 
 impl Database {
     pub(in crate::db::database) fn create_schema(conn: &Connection) -> Result<()> {
@@ -181,23 +181,40 @@ impl Database {
             [],
         )?;
 
-        // 10. FTS5 - Búsqueda de texto completo
-        // Nota: Solo indexamos lo que el usuario busca activamente.
+        // 10. FTS5 - Búsqueda de texto completo.
+        // The text FTS5 indexes lives in an ordinary content table, so `count`,
+        // `rebuild` and the integrity check read real columns instead of a
+        // declaration whose columns belong to another table.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS SONGS_FTS_CONTENT (
+                song_id     INTEGER PRIMARY KEY,
+                title       TEXT,
+                artist_name TEXT,
+                album_title TEXT
+            )",
+            [],
+        )?;
+
+        // `content_rowid` maps each index rowid to the content table's
+        // `song_id`, which the triggers keep equal to `SONGS.id`.
         conn.execute(
             "CREATE VIRTUAL TABLE IF NOT EXISTS SONGS_FTS USING fts5(
                 title,
                 artist_name,
                 album_title,
-                content='SONGS',
-                content_rowid='id'
+                content='SONGS_FTS_CONTENT',
+                content_rowid='song_id'
             )",
             [],
         )?;
 
-        // Triggers para mantener FTS5 sincronizado automáticamente
+        // First trigger layer: the source rows keep the content table current.
+        // The value comparisons are load-bearing: SQLite fires `UPDATE OF` when a
+        // column appears in the SET list, so an unchanged re-scan would otherwise
+        // delete and reinsert every index row.
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS songs_ai AFTER INSERT ON SONGS BEGIN
-            INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
+            INSERT INTO SONGS_FTS_CONTENT(song_id, title, artist_name, album_title)
             VALUES (new.id, new.title,
                    (SELECT name FROM ARTISTS WHERE id = new.artist_id),
                    (SELECT title FROM ALBUMS WHERE id = new.album_id));
@@ -207,24 +224,77 @@ impl Database {
 
         conn.execute(
             "CREATE TRIGGER IF NOT EXISTS songs_ad AFTER DELETE ON SONGS BEGIN
-            INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
-            VALUES('delete', old.id, old.title,
-                   (SELECT name FROM ARTISTS WHERE id = old.artist_id),
-                   (SELECT title FROM ALBUMS WHERE id = old.album_id));
+            DELETE FROM SONGS_FTS_CONTENT WHERE song_id = old.id;
         END;",
             [],
         )?;
 
         conn.execute(
-            "CREATE TRIGGER IF NOT EXISTS songs_au AFTER UPDATE ON SONGS BEGIN
-            INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
-            VALUES('delete', old.id, old.title,
-                   (SELECT name FROM ARTISTS WHERE id = old.artist_id),
-                   (SELECT title FROM ALBUMS WHERE id = old.album_id));
+            "CREATE TRIGGER IF NOT EXISTS songs_au
+            AFTER UPDATE OF title, album_id, artist_id ON SONGS
+            WHEN old.title IS NOT new.title
+              OR old.album_id IS NOT new.album_id
+              OR old.artist_id IS NOT new.artist_id
+            BEGIN
+            UPDATE SONGS_FTS_CONTENT
+               SET title       = new.title,
+                   artist_name = (SELECT name FROM ARTISTS WHERE id = new.artist_id),
+                   album_title = (SELECT title FROM ALBUMS WHERE id = new.album_id)
+             WHERE song_id = new.id;
+            END;",
+            [],
+        )?;
+
+        // An album rename must reach the rows of every song it owns; without it
+        // the index keeps the old title and nothing can match the new one.
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS albums_au
+            AFTER UPDATE OF title ON ALBUMS
+            WHEN old.title IS NOT new.title
+            BEGIN
+            UPDATE SONGS_FTS_CONTENT SET album_title = new.title
+             WHERE song_id IN (SELECT id FROM SONGS WHERE album_id = new.id);
+            END;",
+            [],
+        )?;
+
+        // An artist rename follows the same route for the track artist.
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS artists_au
+            AFTER UPDATE OF name ON ARTISTS
+            WHEN old.name IS NOT new.name
+            BEGIN
+            UPDATE SONGS_FTS_CONTENT SET artist_name = new.name
+             WHERE song_id IN (SELECT id FROM SONGS WHERE artist_id = new.id);
+            END;",
+            [],
+        )?;
+
+        // Second trigger layer: the content table owns the index. The FTS
+        // `'delete'` command needs the old values, which the content row still
+        // holds at the moment its own DELETE/UPDATE trigger runs.
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_fts_content_ai AFTER INSERT ON SONGS_FTS_CONTENT BEGIN
             INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
-            VALUES (new.id, new.title,
-                   (SELECT name FROM ARTISTS WHERE id = new.artist_id),
-                   (SELECT title FROM ALBUMS WHERE id = new.album_id));
+            VALUES (new.song_id, new.title, new.artist_name, new.album_title);
+        END;",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_fts_content_ad AFTER DELETE ON SONGS_FTS_CONTENT BEGIN
+            INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
+            VALUES ('delete', old.song_id, old.title, old.artist_name, old.album_title);
+        END;",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TRIGGER IF NOT EXISTS songs_fts_content_au AFTER UPDATE ON SONGS_FTS_CONTENT BEGIN
+            INSERT INTO SONGS_FTS(SONGS_FTS, rowid, title, artist_name, album_title)
+            VALUES ('delete', old.song_id, old.title, old.artist_name, old.album_title);
+            INSERT INTO SONGS_FTS(rowid, title, artist_name, album_title)
+            VALUES (new.song_id, new.title, new.artist_name, new.album_title);
         END;",
             [],
         )?;

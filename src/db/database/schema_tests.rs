@@ -111,7 +111,7 @@ fn pragma_text(db: &Database, name: &str) -> String {
 /// The list is exact: a table added to or removed from `create_schema` must be
 /// reflected here in the same change, which is what makes a retired table
 /// impossible to reintroduce unnoticed.
-const EXPECTED_TABLES: [&str; 10] = [
+const EXPECTED_TABLES: [&str; 11] = [
     "ALBUMS",
     "APP_SETTINGS",
     "ARTISTS",
@@ -120,6 +120,7 @@ const EXPECTED_TABLES: [&str; 10] = [
     "PLAYLIST_ITEMS",
     "PLAYLIST_SHUFFLE_HISTORY",
     "SONGS",
+    "SONGS_FTS_CONTENT",
     "SONG_METADATA",
     "eq_presets",
 ];
@@ -167,14 +168,18 @@ const EXPECTED_SONG_METADATA_COLUMNS: [&str; 15] = [
 /// Ordinary tables the schema declares, read from SQLite's own catalog.
 ///
 /// The full-text virtual table and the shadow tables it creates come back with
-/// their own `type`, so they never reach this list; the two tables SQLite adds
-/// by itself are dropped by their reserved prefix.
+/// their own `type`, so they never reach this list. The searchable content table
+/// shares the index name prefix and its suffix matches the name FTS5 reserves for
+/// its own content shadow table, so the catalog reports it as a shadow table too;
+/// it is admitted by name, and the index internals stay excluded by their type.
+/// The two tables SQLite adds by itself are dropped by their reserved prefix.
 fn user_table_names(db: &Database) -> Vec<String> {
     let mut stmt = db
         .conn
         .prepare(
             "SELECT name FROM pragma_table_list
-             WHERE schema = 'main' AND type = 'table'
+             WHERE schema = 'main'
+               AND (type = 'table' OR name = 'SONGS_FTS_CONTENT')
              ORDER BY name",
         )
         .expect("prepare the table list query");

@@ -4,6 +4,7 @@
 //! creation, song and playlist persistence, settings, presets, and search.
 
 mod connection;
+mod fts;
 mod library;
 mod models;
 mod playlists;
@@ -319,6 +320,9 @@ mod db_round_trip_tests {
 
 #[cfg(test)]
 mod cover_tests;
+
+#[cfg(test)]
+mod fts_consistency_tests;
 
 #[cfg(test)]
 mod schema_tests;

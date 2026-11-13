@@ -655,7 +655,7 @@ impl LibraryManager {
         viewport_y: f32,
         viewport_h: f32,
     ) -> (f32, f32, std::rc::Rc<[GridCoverElement]>) {
-        let bucket = crate::utils::covers::cover_bucket(
+        let bucket = crate::utils::covers::library_cover_bucket(
             metrics.cover_size,
             self.scale_factor,
             crate::utils::covers::cover_native_size(),
@@ -742,37 +742,72 @@ impl LibraryManager {
     ///
     /// The bucket is derived here from the display scale so a read cannot pick a
     /// different bucket from the request that filled the entry. The lookup is
-    /// borrowed: no key allocation and no lock.
+    /// borrowed: no key allocation and no lock. A thumbnail row reads through
+    /// this rule; an album card goes through [`Self::album_cover_handle`], which
+    /// applies the library minimum.
     pub fn cover_handle(
         &self,
         path: Option<&str>,
         logical_px: f32,
     ) -> Option<iced::widget::image::Handle> {
-        let path = path.filter(|path| !path.is_empty())?;
         let bucket = crate::utils::covers::cover_bucket(
             logical_px,
             self.scale_factor,
             crate::utils::covers::cover_native_size(),
         );
 
+        self.stored_cover_handle(path, bucket)
+    }
+
+    /// Returns the handle stored for an album card's cover path.
+    ///
+    /// Album covers decode at no less than
+    /// [`MIN_LIBRARY_COVER_BUCKET`](crate::utils::covers::MIN_LIBRARY_COVER_BUCKET)
+    /// pixels, so a card on a 1x display is drawn from a sharp texture instead of
+    /// the smallest bucket that fits it. The request path resolves the same
+    /// bucket, so this read cannot miss an entry the window just filled.
+    pub fn album_cover_handle(
+        &self,
+        path: Option<&str>,
+        logical_px: f32,
+    ) -> Option<iced::widget::image::Handle> {
+        let bucket = crate::utils::covers::library_cover_bucket(
+            logical_px,
+            self.scale_factor,
+            crate::utils::covers::cover_native_size(),
+        );
+
+        self.stored_cover_handle(path, bucket)
+    }
+
+    /// Borrowed handle lookup shared by the two bucket rules.
+    fn stored_cover_handle(
+        &self,
+        path: Option<&str>,
+        bucket: u32,
+    ) -> Option<iced::widget::image::Handle> {
+        let path = path.filter(|path| !path.is_empty())?;
+
         self.cover_store.get_path(path, bucket as u16)
     }
 
     /// Decode bucket the current view mode renders its covers at.
     ///
-    /// The grid follows the measured card edge, the detailed list its 220 px card
-    /// (`250 - 30`) and the thumbnail list its 32 px thumbnail; every value is
-    /// resolved through the same scale-aware bucket rule the rows read with.
+    /// The album modes resolve through
+    /// [`library_cover_bucket`](crate::utils::covers::library_cover_bucket): the
+    /// grid follows the measured card edge raised to the album minimum and the
+    /// detailed list its 220 px card (`250 - 30`). The thumbnail list keeps its
+    /// 32 px display bucket, because that is the edge its rows draw at.
     pub fn window_bucket(&self) -> u32 {
         let native = crate::utils::covers::cover_native_size();
         match self.view_mode {
             LibraryViewMode::DetailedList => {
-                crate::utils::covers::cover_bucket(220.0, self.scale_factor, native)
+                crate::utils::covers::library_cover_bucket(220.0, self.scale_factor, native)
             }
             LibraryViewMode::ThumbnailList => {
                 crate::utils::covers::cover_bucket(32.0, self.scale_factor, native)
             }
-            _ => crate::utils::covers::cover_bucket(
+            _ => crate::utils::covers::library_cover_bucket(
                 self.grid_metrics.get().cover_size,
                 self.scale_factor,
                 native,
@@ -783,10 +818,11 @@ impl LibraryManager {
     /// Decode jobs for the cover paths the current viewport shows.
     ///
     /// The job set follows the view mode, so no mode requests a bucket its rows do
-    /// not read: the grid asks for its card edge, the detailed list for the album
-    /// card paths and the thumbnail list for the per-song thumbnails. A path the
-    /// negative set already knows to fail is skipped, and every job carries the
-    /// current scroll generation so a result can be identified as stale.
+    /// not read: the grid asks for its card edge raised to the album minimum, the
+    /// detailed list for the album card paths and the thumbnail list for the
+    /// per-song thumbnails at their 32 px edge. A path the negative set already
+    /// knows to fail is skipped, and every job carries the current scroll
+    /// generation so a result can be identified as stale.
     pub fn window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
         match self.view_mode {
             LibraryViewMode::Grid => self.grid_window_jobs(viewport_y, viewport_h),
@@ -797,10 +833,10 @@ impl LibraryManager {
         }
     }
 
-    /// Jobs for one grid viewport at the grid's card bucket.
+    /// Jobs for one grid viewport at the album bucket the grid cards read.
     fn grid_window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
         let metrics = self.grid_metrics.get();
-        let bucket = crate::utils::covers::cover_bucket(
+        let bucket = crate::utils::covers::library_cover_bucket(
             metrics.cover_size,
             self.scale_factor,
             crate::utils::covers::cover_native_size(),

@@ -630,7 +630,7 @@ where
                 duration_secs,
             } => {
                 let card_wrapper = album_art_widget(
-                    manager.cover_handle(cover_path.as_deref(), 220.0),
+                    manager.album_cover_handle(cover_path.as_deref(), 220.0),
                     PlaceholderStyle::Large {
                         icon_side: crate::gui::library::grid_metrics::album_placeholder_icon_side(
                             crate::gui::dimensions::ALBUM_COVER_REFERENCE,

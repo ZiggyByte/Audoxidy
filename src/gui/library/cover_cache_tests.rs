@@ -22,7 +22,7 @@ use crate::db::database::SongData;
 use crate::utils::covers::{
     COVER_BUDGET_MAX_BYTES, COVER_BUDGET_MIN_BYTES, CoverDecodeError, GLOBAL_STATE_TEST_LOCK,
     clear_negative_cover_cache, cover_bucket, cover_budget_bytes, cover_io_counters,
-    cover_native_size, record_negative_cover, viewport_capacity,
+    cover_native_size, library_cover_bucket, record_negative_cover, viewport_capacity,
 };
 
 /// Whole-cache flush entry points a track change must never call again.
@@ -783,7 +783,7 @@ fn test_request_window_emits_list_mode_buckets() {
     // The detailed list draws the album card's cover at 220 logical pixels.
     let mut manager = manager_with_one_album("covers/detailed.avif", 2);
     manager.view_mode = LibraryViewMode::DetailedList;
-    let detailed_bucket = cover_bucket(220.0, manager.scale_factor, native);
+    let detailed_bucket = library_cover_bucket(220.0, manager.scale_factor, native);
     let jobs = manager.window_jobs(0.0, 800.0);
     assert!(
         !jobs.is_empty(),
@@ -814,17 +814,55 @@ fn test_request_window_emits_list_mode_buckets() {
         "los dos modos de lista no comparten bucket"
     );
 
-    // The grid keeps requesting the bucket its measured card reads.
+    // The grid keeps requesting the album bucket its measured card reads.
     let metrics = grid_metrics(800.0);
     let mut manager = manager_with_albums(4);
     manager.view_mode = LibraryViewMode::Grid;
     manager.grid_metrics.set(metrics);
-    let grid_bucket = cover_bucket(metrics.cover_size, manager.scale_factor, native);
+    let grid_bucket = library_cover_bucket(metrics.cover_size, manager.scale_factor, native);
     let jobs = manager.window_jobs(0.0, 800.0);
     assert_eq!(jobs.len(), 4);
     assert!(
         jobs.iter().all(|job| job.key.bucket == grid_bucket as u16),
-        "cada trabajo de la cuadrícula usa el bucket de su tarjeta"
+        "cada trabajo de la cuadrícula usa el bucket de álbum de su tarjeta"
+    );
+}
+
+#[test]
+fn test_grid_window_requests_the_library_minimum_bucket() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    // A 1080p window at 1x measures seven columns, and the library viewport fits
+    // four rows, so the retained budget covers two viewport capacities at 220 px.
+    let metrics = grid_metrics(1300.0);
+    assert_eq!(metrics.columns, 7, "el ancho medido da siete columnas");
+    let capacity = viewport_capacity(metrics.columns, 800.0, metrics.row_height);
+    assert_eq!(
+        capacity, 28,
+        "cuatro filas de siete tarjetas llenan la ventana"
+    );
+    assert_eq!(
+        cover_budget_bytes(capacity, 220),
+        10_841_600,
+        "el presupuesto de 1080p a 1x son dos ventanas de 220 px"
+    );
+
+    let mut manager = manager_with_albums(28);
+    manager.grid_metrics.set(metrics);
+    manager.scale_factor = 1.0;
+
+    assert_eq!(
+        manager.window_bucket(),
+        220,
+        "la cuadrícula nunca decodifica por debajo del mínimo de álbum"
+    );
+
+    let jobs = manager.window_jobs(0.0, 800.0);
+    assert!(!jobs.is_empty(), "la ventana pide una carátula por tarjeta");
+    assert!(
+        jobs.iter().all(|job| job.bucket == 220),
+        "cada tarjeta pide el mínimo de 220 px a 1x"
     );
 }
 

@@ -11,8 +11,10 @@
 //! file into RGBA pixels exactly once, on a cover worker. The GUI store holds the
 //! resulting handles and delegates its accounting to [`CoverBudget`], the
 //! byte-and-recency ledger that bounds retained pixels and protects the keys the
-//! viewport shows. [`cover_bucket`], [`viewport_capacity`] and
-//! [`cover_budget_bytes`] decide the decode size and the retained-byte target.
+//! viewport shows. [`cover_bucket`], [`library_cover_bucket`],
+//! [`viewport_capacity`] and [`cover_budget_bytes`] decide the decode size and the
+//! retained-byte target; the library rule raises an album cover to its minimum
+//! edge while a thumbnail keeps the bucket its row draws at.
 //!
 //! `utils/` stays free of front-end types: this module names, decodes, measures
 //! and accounts for covers, while the layer that knows what a screen shows owns
@@ -702,6 +704,14 @@ pub fn cover_io_counters() -> CoverIoCounters {
 /// never upscales.
 pub const COVER_BUCKETS: [u32; 10] = [32, 64, 96, 128, 160, 192, 220, 256, 320, 400];
 
+/// Smallest decode edge an album cover in the library may use.
+///
+/// The album cards are narrow enough that their display bucket alone looks soft
+/// on a 1x display, so a library album cover always decodes at least this large.
+/// The thumbnail rows are excluded: they draw at their own small edge, and
+/// raising them would multiply their pixels for no visible gain.
+pub const MIN_LIBRARY_COVER_BUCKET: u32 = 220;
+
 /// Picks the smallest decode bucket that covers a rendered cover.
 ///
 /// `logical_px` is the cover edge the layout asks for and `scale` the display
@@ -722,6 +732,19 @@ pub fn cover_bucket(logical_px: f32, scale: f32, native_px: u32) -> u32 {
         .unwrap_or(COVER_BUCKETS[COVER_BUCKETS.len() - 1]);
 
     bucket.min(native_px)
+}
+
+/// Picks the decode bucket of an album cover the library draws.
+///
+/// The display bucket is a floor only for the album cards: the result is raised
+/// to [`MIN_LIBRARY_COVER_BUCKET`] and then clamped to `native_px`, so a library
+/// cover is never decoded below that edge and never upscaled past the image the
+/// writer produced. A thumbnail keeps [`cover_bucket`] untouched, because it
+/// draws at its own small edge.
+pub fn library_cover_bucket(logical_px: f32, scale: f32, native_px: u32) -> u32 {
+    cover_bucket(logical_px, scale, native_px)
+        .max(MIN_LIBRARY_COVER_BUCKET)
+        .min(native_px)
 }
 
 /// Number of covers a viewport shows, used to size the decoded-cover budget.
@@ -1342,6 +1365,26 @@ mod tests {
     fn test_cover_bucket_includes_the_detailed_list_size() {
         assert!(COVER_BUCKETS.contains(&220));
         assert_eq!(cover_bucket(220.0, 1.0, 400), 220);
+    }
+
+    #[test]
+    fn test_library_cover_bucket_never_below_220() {
+        // The album cards measure well under 220 px at 1x; the library floor
+        // wins so a card is not drawn from a soft 160 px texture.
+        assert_eq!(library_cover_bucket(111.3, 1.0, 400), 220);
+        assert_eq!(library_cover_bucket(159.0, 1.0, 400), 220);
+        assert_eq!(library_cover_bucket(206.7, 1.0, 400), 220);
+        assert_eq!(library_cover_bucket(32.0, 1.0, 400), 220);
+
+        // Above the floor the display bucket is kept, and the native writer
+        // edge still caps it.
+        assert_eq!(library_cover_bucket(300.0, 1.0, 400), 320);
+        assert_eq!(library_cover_bucket(500.0, 1.0, 400), 400);
+        assert_eq!(library_cover_bucket(500.0, 1.0, 200), 200);
+
+        // The general rule is unchanged, and it is what a thumbnail uses.
+        assert_eq!(cover_bucket(159.0, 1.0, 400), 160);
+        assert_eq!(cover_bucket(32.0, 1.0, 400), 32);
     }
 
     #[test]

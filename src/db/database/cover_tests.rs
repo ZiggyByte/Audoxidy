@@ -70,7 +70,7 @@ fn album_hash_id(db: &Database, album: &str) -> String {
         .expect("el álbum insertado debe existir")
 }
 
-/// Stored cover path of one album row.
+/// Derived cover path of one album row.
 fn album_cover_path(db: &Database, album: &str) -> Option<String> {
     db.get_all_albums()
         .expect("se deben leer los álbumes")
@@ -79,7 +79,7 @@ fn album_cover_path(db: &Database, album: &str) -> Option<String> {
         .and_then(|row| row.5)
 }
 
-/// Stored cover path of one album row, reduced to its file name.
+/// Derived cover path of one album row, reduced to its file name.
 fn album_cover_file_name(db: &Database, album: &str) -> String {
     album_cover_path(db, album)
         .as_deref()
@@ -174,7 +174,7 @@ fn test_written_cover_name_matches_the_stored_path() {
     let stored = album_cover_file_name(&db, "Solo Album");
     assert_eq!(
         stored, file_name,
-        "la ruta almacenada y el nombre devuelto al escáner son el mismo valor"
+        "la ruta derivada y el nombre devuelto al escáner son el mismo valor"
     );
     assert_eq!(
         stored.matches(".avif").count(),
@@ -382,7 +382,7 @@ fn test_referenced_cover_file_names_includes_album_and_override_files() {
     );
     assert!(
         referenced.contains(std::ffi::OsStr::new(&album_name)),
-        "la ruta almacenada del álbum aporta su nombre de archivo"
+        "la ruta derivada del álbum aporta su nombre de archivo"
     );
     assert!(
         referenced.contains(std::ffi::OsStr::new(&override_name)),
@@ -427,5 +427,237 @@ fn test_referenced_cover_file_names_skips_null_overrides() {
             .iter()
             .any(|name| name.to_string_lossy().starts_with("song-")),
         "una canción sin override no inventa un nombre propio"
+    );
+}
+
+#[test]
+fn test_album_read_paths_derive_the_cover_path() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    insert_song(
+        &mut db,
+        "/music/derive/alpha.flac",
+        "Derive Alpha",
+        Some("aaaa1111"),
+    );
+    insert_song(
+        &mut db,
+        "/music/derive/beta.flac",
+        "Derive Beta",
+        Some("bbbb2222"),
+    );
+
+    let albums = db.get_all_albums().expect("se deben leer los álbumes");
+    let grid = db
+        .get_grid_items_by_artist()
+        .expect("se debe leer la rejilla de álbumes");
+    assert_eq!(albums.len(), 2);
+    assert_eq!(grid.len(), 2);
+
+    for (album, cover_hash) in [("Derive Alpha", "aaaa1111"), ("Derive Beta", "bbbb2222")] {
+        let album_hash = album_hash_id(&db, album);
+        let expected = crate::utils::covers::album_cover_file_name(&album_hash, cover_hash)
+            .expect("los dos hashes del álbum componen su nombre");
+
+        for rows in [&albums, &grid] {
+            let row = rows
+                .iter()
+                .find(|row| row.1 == album)
+                .expect("el álbum debe aparecer en la lectura");
+            let path = row.5.as_deref().expect("el álbum debe derivar una ruta");
+            assert_eq!(
+                Path::new(path).file_name().and_then(|name| name.to_str()),
+                Some(expected.as_str()),
+                "la ruta derivada de {album} lleva el nombre compuesto de sus hashes"
+            );
+            assert_eq!(row.0, album_hash, "la fila lleva el hash del álbum");
+        }
+    }
+}
+
+#[test]
+fn test_song_rows_resolve_the_override_over_the_album_cover() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    insert_song(
+        &mut db,
+        "/music/resolve/base.flac",
+        "Resolve Album",
+        Some("aaaa1111"),
+    );
+    insert_song(
+        &mut db,
+        "/music/resolve/alt.flac",
+        "Resolve Album",
+        Some("bbbb2222"),
+    );
+
+    let album_hash = album_hash_id(&db, "Resolve Album");
+    let album_name = crate::utils::covers::album_cover_file_name(&album_hash, "aaaa1111")
+        .expect("los hashes del álbum componen su nombre");
+    let base_id = db
+        .get_song_id_by_path("/music/resolve/base.flac")
+        .expect("se debe leer el id de la canción base")
+        .expect("la canción base existe");
+    let override_id = db
+        .get_song_id_by_path("/music/resolve/alt.flac")
+        .expect("se debe leer el id de la canción con override")
+        .expect("la canción con override existe");
+    let override_hash = song_cover_override(&db, override_id)
+        .expect("la imagen distinta del álbum produce un override");
+    let override_name = crate::utils::covers::song_cover_file_name(override_id, &override_hash)
+        .expect("el hash del override compone un nombre");
+
+    let playlist_id = db
+        .create_playlist("Resolve Playlist", false)
+        .expect("se debe crear la playlist");
+    db.add_song_to_playlist(playlist_id, base_id)
+        .expect("la canción base entra en la playlist");
+    db.add_song_to_playlist(playlist_id, override_id)
+        .expect("la canción con override entra en la playlist");
+
+    let file_name_of = |path: Option<&str>| -> String {
+        path.and_then(|path| Path::new(path).file_name())
+            .and_then(|name| name.to_str())
+            .map(str::to_owned)
+            .expect("la ruta resuelta debe tener un nombre de archivo")
+    };
+
+    let all_songs = db.get_all_songs().expect("se deben leer las canciones");
+    let filtered = db
+        .get_library_songs_filtered(&LibrarySearchParams::default())
+        .expect("se debe leer la biblioteca filtrada");
+    let by_album = db
+        .get_songs_by_album(&album_hash)
+        .expect("se deben leer las canciones del álbum");
+    let playlist = db
+        .get_playlist_songs(playlist_id)
+        .expect("se deben leer las canciones de la playlist");
+
+    for songs in [&all_songs, &filtered, &by_album] {
+        let base = songs
+            .iter()
+            .find(|song| song.id == base_id)
+            .expect("la canción base aparece en cada lectura");
+        assert_eq!(
+            file_name_of(base.compressed_cached_cover_root.as_deref()),
+            album_name,
+            "sin override la fila resuelve la carátula del álbum"
+        );
+
+        let overridden = songs
+            .iter()
+            .find(|song| song.id == override_id)
+            .expect("la canción con override aparece en cada lectura");
+        assert_eq!(
+            file_name_of(overridden.compressed_cached_cover_root.as_deref()),
+            override_name,
+            "el override gana sobre la carátula del álbum"
+        );
+    }
+
+    for song in &playlist {
+        let expected = if song.song_id == override_id {
+            &override_name
+        } else {
+            assert_eq!(song.song_id, base_id);
+            &album_name
+        };
+        assert_eq!(
+            file_name_of(song.cover_path.as_deref()),
+            expected.as_str(),
+            "la lectura de playlist resuelve el mismo nombre que la biblioteca"
+        );
+    }
+}
+
+#[test]
+fn test_sweep_set_contains_composed_album_names() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    insert_song(
+        &mut db,
+        "/music/sweepset/one.flac",
+        "Sweep Set Album",
+        Some("aaaa1111"),
+    );
+    insert_song(
+        &mut db,
+        "/music/sweepset/two.flac",
+        "Sweep Set Album",
+        Some("bbbb2222"),
+    );
+
+    let album_hash = album_hash_id(&db, "Sweep Set Album");
+    let album_name = crate::utils::covers::album_cover_file_name(&album_hash, "aaaa1111")
+        .expect("los hashes del álbum componen su nombre");
+    let override_id = db
+        .get_song_id_by_path("/music/sweepset/two.flac")
+        .expect("se debe leer el id de la canción")
+        .expect("la canción con override existe");
+    let override_hash = song_cover_override(&db, override_id)
+        .expect("la imagen distinta del álbum produce un override");
+    let override_name = crate::utils::covers::song_cover_file_name(override_id, &override_hash)
+        .expect("el hash del override compone un nombre");
+
+    let expected: std::collections::HashSet<std::ffi::OsString> = [album_name, override_name]
+        .into_iter()
+        .map(std::ffi::OsString::from)
+        .collect();
+
+    let referenced = db
+        .referenced_cover_file_names()
+        .expect("el conjunto de referencias debe leerse");
+    assert_eq!(
+        referenced, expected,
+        "el conjunto es exactamente los nombres compuestos de los hashes"
+    );
+    for entry in &referenced {
+        assert_eq!(
+            Path::new(entry).components().count(),
+            1,
+            "el conjunto guarda nombres de archivo, nunca rutas con separadores"
+        );
+    }
+}
+
+#[test]
+fn test_targeted_delete_checks_the_hash_not_a_path() {
+    let mut db = Database::new_memory().expect("se debe crear la base en memoria");
+
+    insert_song(
+        &mut db,
+        "/music/targeted/remove.flac",
+        "Targeted Album",
+        Some("aaaa1111"),
+    );
+    insert_song(
+        &mut db,
+        "/music/targeted/keep.flac",
+        "Kept Album",
+        Some("bbbb2222"),
+    );
+
+    let removed_hash = album_hash_id(&db, "Targeted Album");
+    let kept_hash = album_hash_id(&db, "Kept Album");
+
+    assert!(
+        db.is_cover_hash_referenced(&kept_hash, "bbbb2222")
+            .expect("la comprobación por hash debe responder"),
+        "el álbum que sobrevive sigue referenciando su carátula"
+    );
+    assert!(
+        !db.is_cover_hash_referenced(&removed_hash, "bbbb2222")
+            .expect("la comprobación por hash debe responder"),
+        "un hash de carátula ajeno no está referenciado por el álbum"
+    );
+
+    db.delete_album_group(&removed_hash)
+        .expect("el álbum debe borrarse");
+
+    assert!(
+        !db.is_cover_hash_referenced(&removed_hash, "aaaa1111")
+            .expect("la comprobación por hash debe responder"),
+        "el álbum borrado ya no referencia su carátula, sin consultar ninguna ruta"
     );
 }

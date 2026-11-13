@@ -79,9 +79,8 @@ impl Core {
     ///
     /// The reference set is read under one database lock, which is released
     /// before any directory work. Candidates come only from `read_dir` inside the
-    /// injected cache directory; a path stored in a row is never passed to
-    /// `remove_file`, so a crafted `cover_path` cannot direct a deletion outside
-    /// the cache.
+    /// injected cache directory, so a crafted row cannot direct a deletion
+    /// outside the cache.
     pub fn sweep_orphan_covers(
         &self,
         scanning: bool,
@@ -539,7 +538,7 @@ mod tests {
         assert_eq!(
             album_cover_file_name(&core, "Album Beta"),
             beta_name,
-            "la ruta almacenada del álbum que sobrevive no cambia"
+            "la ruta derivada del álbum que sobrevive no cambia"
         );
         assert!(
             album_cover_path(&core, "Album Alpha").is_none(),
@@ -591,7 +590,7 @@ mod tests {
         assert_eq!(
             album_cover_file_name(&core, "Album Beta"),
             beta_name,
-            "la ruta almacenada del álbum que sobrevive no cambia"
+            "la ruta derivada del álbum que sobrevive no cambia"
         );
         assert!(
             album_cover_path(&core, "Album Alpha").is_none(),
@@ -675,7 +674,7 @@ mod tests {
         assert_eq!(
             album_cover_path(&core, "Shared Album"),
             stored_path,
-            "la ruta almacenada del álbum que sobrevive no cambia"
+            "la ruta derivada del álbum que sobrevive no cambia"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

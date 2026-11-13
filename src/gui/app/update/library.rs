@@ -807,10 +807,14 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::CoverDecoded(outcome) => {
-                // The store decides whether the outcome still belongs to the
-                // current scroll; a failed decode only releases its key.
-                self.library_manager.apply_cover_decoded(outcome);
-                self.library_manager.request_cover_window();
+                // A failed decode releases its key without storing a handle, so
+                // asking for the window again would immediately re-enqueue the
+                // same file and reopen it until its write lands. Only a kept
+                // handle changes what the window draws; a failed key stays
+                // retryable for the next scroll, refresh or post-scan cleanup.
+                if self.library_manager.apply_cover_decoded(outcome) {
+                    self.library_manager.request_cover_window();
+                }
 
                 Task::none()
             }

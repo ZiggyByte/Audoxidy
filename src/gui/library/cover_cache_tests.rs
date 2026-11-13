@@ -933,6 +933,88 @@ fn test_negative_cover_is_not_requested_again() {
 }
 
 #[test]
+fn test_failed_decode_does_not_request_the_window_again() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(4);
+    manager.grid_metrics.set(metrics);
+
+    let requested = manager.window_jobs(0.0, 800.0);
+    assert_eq!(
+        requested.len(),
+        4,
+        "la ventana pide una carátula por tarjeta"
+    );
+    let failed_key = requested[0].key.clone();
+
+    let failed = CoverDecodeOutcome {
+        key: failed_key.clone(),
+        generation: manager.scroll_generation,
+        handle: None,
+        bytes: 0,
+        error: Some("the file has not been written yet".to_string()),
+    };
+
+    // A failure releases the key but keeps nothing, so the outcome handler must
+    // not ask for the window again in the same message: the released key would
+    // be re-enqueued at once and the missing file reopened until it lands.
+    assert!(
+        !manager.apply_cover_decoded(failed),
+        "una decodificación fallida no conserva ningún handle"
+    );
+    assert!(
+        !manager
+            .cover_store
+            .contains(&failed_key.path, failed_key.bucket),
+        "un fallo no deja una entrada en el almacén"
+    );
+    assert!(
+        !manager.cover_store.is_in_flight(&failed_key),
+        "la clave sigue reintentable en la siguiente pasada"
+    );
+    assert_eq!(
+        manager.window_jobs(0.0, 800.0).len(),
+        4,
+        "la siguiente pasada de la ventana vuelve a pedir las cuatro carátulas"
+    );
+
+    // The source half: the request sits inside the kept-handle branch, so a
+    // failed outcome can never reach it.
+    let source = include_str!("../app/update/library.rs");
+    let arm_start = source
+        .find("Message::CoverDecoded(outcome)")
+        .expect("el mensaje de decodificación terminada existe");
+    let rest = &source[arm_start..];
+    let arm_end = rest
+        .find("Message::CoverSweepFinished")
+        .expect("el brazo termina antes del siguiente mensaje");
+    let arm = &rest[..arm_end];
+
+    assert_eq!(
+        arm.matches("request_cover_window").count(),
+        1,
+        "el brazo pide la ventana una sola vez"
+    );
+    let branch = arm
+        .find("if self.library_manager.apply_cover_decoded(outcome) {")
+        .expect("la petición está condicionada al handle conservado");
+    let request = arm
+        .find("request_cover_window")
+        .expect("el brazo pide la ventana");
+
+    assert!(
+        branch < request,
+        "la petición de la ventana sigue a la comprobación del handle"
+    );
+    assert!(
+        !arm[branch..request].contains('}'),
+        "la petición está dentro del brazo que conserva el handle"
+    );
+}
+
+#[test]
 fn test_track_change_keeps_cover_cache() {
     let _guard = global_guard();
 

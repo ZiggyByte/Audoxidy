@@ -82,8 +82,20 @@ impl Default for Database {
 
 impl Database {
     /// Opens or creates the library database at the configured path.
+    ///
+    /// Tests must inject a path: the version gate rebuilds an incompatible file,
+    /// so opening the default path from a test would delete the real library.
     pub fn new() -> Result<Self> {
-        Self::open_at(&crate::utils::paths::get().db_path)
+        #[cfg(test)]
+        {
+            panic!(
+                "tests must not open the default library path: the schema version gate would rebuild and delete it; use new_at or new_memory"
+            );
+        }
+        #[cfg(not(test))]
+        {
+            Self::open_at(&crate::utils::paths::get().db_path)
+        }
     }
 
     /// Opens the database at `path`, replacing the file when it is incompatible.

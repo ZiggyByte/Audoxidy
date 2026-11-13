@@ -253,7 +253,7 @@ mod tests {
         let db = Database::new_memory().unwrap();
         let database = Arc::new(Mutex::new(db));
         let scanner = Arc::new(crate::db::scanner::Scanner::new(Arc::new(
-            std::sync::Mutex::new(Database::default()),
+            std::sync::Mutex::new(Database::new_memory().expect("in-memory db")),
         )));
         let audio_manager =
             Arc::new(crate::audio::AudioManager::new().expect("audio manager init"));

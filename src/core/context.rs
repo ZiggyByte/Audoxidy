@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn test_core_constructs_with_default_paths() {
         let paths = CorePaths::desktop_default();
-        let db = Arc::new(Mutex::new(Database::default()));
+        let db = Arc::new(Mutex::new(Database::new_memory().expect("in-memory db")));
         let scanner = Arc::new(Scanner::new(db.clone()));
         let audio_manager = Arc::new(AudioManager::new().expect("audio manager init"));
 

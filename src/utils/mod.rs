@@ -413,9 +413,6 @@ mod tests {
     fn make_test_song() -> SongData {
         SongData {
             id: 1,
-            folder_id: 1,
-            artist_id: 1,
-            album_id: 1,
             full_file_path: Arc::from("/music/test.flac"),
             title: Some(Arc::from("Test Title")),
             artist: Some(Arc::from("Test Artist")),

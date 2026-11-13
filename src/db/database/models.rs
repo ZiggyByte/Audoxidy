@@ -1,13 +1,13 @@
 //! Data types persisted by the music library database.
 
-/// Datos esenciales de la canción para visualización en listas, filtros y búsqueda.
-/// Optimizado para bajo consumo de RAM.
+/// The library-row projection the grid, the list modes and the player draw.
+///
+/// It carries only the columns those consumers read: a column no consumer renders
+/// or groups by is not part of the row. `import_order` stays because the scanner
+/// writes it as part of the insert payload, not because a read selects it.
 #[derive(Debug, Default, Clone)]
 pub struct SongData {
     pub id: i64,
-    pub folder_id: i64,
-    pub artist_id: i64,
-    pub album_id: i64,
     /// Identity of the album row (`ALBUMS.hash_id`), carried so a view groups
     /// two versions that share a title and artist as separate albums.
     pub album_hash: Option<std::sync::Arc<str>>,
@@ -26,7 +26,6 @@ pub struct SongData {
     pub size: Option<i64>,
     pub channels: Option<i64>,
     pub compressed_cached_cover_root: Option<std::sync::Arc<str>>,
-    pub cover_override: Option<std::sync::Arc<str>>, // Hash de carátula específica si difiere del álbum
     pub import_order: i64,
 }
 

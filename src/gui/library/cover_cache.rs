@@ -211,6 +211,10 @@ impl CoverStore {
     }
 
     /// Drops every handle outside the window; returns how many were dropped.
+    ///
+    /// The collection pass does not call this: retention is the byte budget's
+    /// job, so the covers just scrolled past stay available for a scroll back
+    /// until the budget evicts them. This is the hard trim, kept for tests.
     pub fn trim_outside_window(&mut self) -> usize {
         let removed = self.budget.trim_outside_window();
         self.drop_handles(&removed);

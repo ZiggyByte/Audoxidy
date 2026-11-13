@@ -56,27 +56,28 @@ impl crate::gui::app::AudoxidyApp {
                 // 3. Limpiar caché global de strings (Interner)
                 crate::utils::interner::clear_interner();
 
-                // 4. Release the decoded covers the current window does not show;
-                //    the visible ones are kept, so a purge during playback cannot
-                //    blank a cover.
-                self.library_manager.cover_store.trim_outside_window();
+                // The decoded-cover store is deliberately left alone: its byte
+                // budget retains the viewport plus the cushion behind the scroll
+                // and evicts the rest, so a purge here would wipe the covers a
+                // scroll back needs and force them to be decoded again.
+                // `trim_outside_window` stays available for tests only.
 
-                // 5. Liberar la memoria de la pre-carga de audio (seguro durante la
+                // 4. Liberar la memoria de la pre-carga de audio (seguro durante la
                 //    reproducción: no reinicia el stream). NO se resetea
                 //    preloaded_next_path: si se reseteara, la pre-carga se re-crearía
                 //    en el siguiente tick (a ~15s del final) y, con la RAM aún por
                 //    encima del umbral, el GC → pre-carga → GC entraría en bucle.
                 let _ = self.core.purge_preload();
 
-                // 6. Purga de buffers de audio solo si no hay música sonando
+                // 5. Purga de buffers de audio solo si no hay música sonando
                 if !is_playing {
                     let _ = self.core.purge_buffers();
                 }
 
-                // 7. FINAL: Reclamar memoria física al SO (Linux)
+                // 6. FINAL: Reclamar memoria física al SO (Linux)
                 crate::core::Core::execute_global_purge();
 
-                // 8. Sweep the cover files no row references any more. The task
+                // 7. Sweep the cover files no row references any more. The task
                 //    runs on a worker and reads both guards there, so a scan or
                 //    a cover write that starts after this dispatch still keeps
                 //    the sweep away.

@@ -628,6 +628,94 @@ fn test_stale_generation_outcome_is_retained() {
 }
 
 #[test]
+fn test_cover_cache_retains_scroll_back_cushion() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(64);
+    manager.grid_metrics.set(metrics);
+
+    // First viewport: every handle its cards ask for is decoded and stored.
+    let first_jobs = manager.window_jobs(0.0, 800.0);
+    assert!(!first_jobs.is_empty(), "la primera ventana pide carátulas");
+    let bucket = first_jobs[0].bucket;
+    let entry_bytes = (bucket as usize) * (bucket as usize) * 4;
+
+    let first_keys: Vec<(String, u16)> = first_jobs
+        .iter()
+        .map(|job| (job.key.path.to_string(), job.key.bucket))
+        .collect();
+    manager.cover_store.set_window(first_keys.clone());
+    for job in &first_jobs {
+        manager
+            .cover_store
+            .insert_handle(job.key.clone(), fake_handle(2, 2), entry_bytes);
+    }
+
+    // The window moves one viewport down: the rows below decode too, and the
+    // first viewport is no longer protected.
+    let second_jobs = manager.window_jobs(800.0, 800.0);
+    assert!(!second_jobs.is_empty(), "la segunda ventana pide carátulas");
+    let second_keys: Vec<(String, u16)> = second_jobs
+        .iter()
+        .map(|job| (job.key.path.to_string(), job.key.bucket))
+        .collect();
+    manager.cover_store.set_window(second_keys.clone());
+    for job in &second_jobs {
+        manager
+            .cover_store
+            .insert_handle(job.key.clone(), fake_handle(2, 2), entry_bytes);
+    }
+
+    // The budget covers both viewports, so moving the window discards nothing.
+    let two_viewports = manager.cover_store.bytes();
+    manager.cover_store.set_budget(two_viewports);
+
+    assert_eq!(
+        manager.cover_store.evict_to_budget(),
+        0,
+        "el cojín que el presupuesto retiene no se descarta"
+    );
+    for (path, bucket) in &first_keys {
+        assert!(
+            manager.cover_store.contains(path, *bucket),
+            "una carátula que el scroll acaba de dejar atrás sigue retenida"
+        );
+    }
+
+    // Only a budget below the two viewports evicts, and it starts with the
+    // oldest entry that left the window, never with a visible one.
+    let oldest_outside = first_keys
+        .iter()
+        .find(|key| !second_keys.contains(key))
+        .expect("las dos ventanas no cubren las mismas filas");
+    manager.cover_store.set_budget(two_viewports - entry_bytes);
+
+    assert_eq!(manager.cover_store.evict_to_budget(), 1);
+    assert!(
+        !manager
+            .cover_store
+            .contains(&oldest_outside.0, oldest_outside.1),
+        "solo un presupuesto por debajo del cojín lo descarta"
+    );
+    for (path, bucket) in &second_keys {
+        assert!(
+            manager.cover_store.contains(path, *bucket),
+            "la ventana visible nunca se descarta"
+        );
+    }
+
+    // The collection pass must not empty the cushion either: the byte budget is
+    // the only thing that decides what a scroll leaves behind.
+    let memory_source = include_str!("../app/update/memory.rs");
+    assert!(
+        !memory_source.contains(concat!(".trim_outside_", "window(")),
+        "la recolección no puede recortar la caché de carátulas"
+    );
+}
+
+#[test]
 fn test_request_window_emits_list_mode_buckets() {
     let _guard = global_guard();
     clear_negative_cover_cache();

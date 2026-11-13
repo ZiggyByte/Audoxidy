@@ -319,3 +319,6 @@ mod db_round_trip_tests {
 
 #[cfg(test)]
 mod cover_tests;
+
+#[cfg(test)]
+mod schema_tests;

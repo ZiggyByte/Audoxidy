@@ -181,6 +181,12 @@ impl crate::gui::app::AudoxidyApp {
                             crate::gui::audio_center::AudioCenterMessage::EqPresetSaveConfirm,
                         ));
                     }
+                    // The dialog is already closed at this point; the confirm
+                    // button only routes to the folder picker the "open folder"
+                    // action uses, so the rebuild never triggers its own scan.
+                    ActiveDialog::LibraryRebuilt => {
+                        return Task::done(Message::OpenFolderPicker);
+                    }
                     _ => {}
                 }
                 Task::none()

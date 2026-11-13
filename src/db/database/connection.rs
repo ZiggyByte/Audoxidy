@@ -1,14 +1,77 @@
 //! SQLite connection lifecycle for the library database.
 
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, ErrorCode, Result};
 
-/// Base de datos SQLite de la biblioteca musical de Audoxidy.
+use super::schema::SCHEMA_VERSION;
+
+/// Outcome of inspecting the schema version recorded in an existing file.
+enum VersionProbe {
+    /// Nothing exists at the path, so the schema is created from scratch.
+    Absent,
+    /// The file was written by the current schema and opens as it is.
+    Current,
+    /// The file holds another version, or its bytes are not a database.
+    Incompatible,
+    /// The file could not be inspected for a reason unrelated to its contents.
+    Failed(rusqlite::Error),
+}
+
+/// Builds the `-wal`/`-shm` sibling path of a database file.
+fn sibling_path(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(suffix);
+    std::path::PathBuf::from(name)
+}
+
+/// Classifies a failure raised while reading `user_version`.
 ///
-/// Gestiona el esquema relacional completo: carpetas, artistas, álbumes,
-/// canciones, metadatos extendidos, playlists y sesiones de shuffle.
-/// Usa WAL, FTS5 para búsqueda de texto completo y pragmas de rendimiento.
+/// Only a failure that says the file itself is unusable — it is not a database,
+/// or its header is corrupt — authorizes the destructive path. A busy, locked,
+/// permission-denied or I/O failure says nothing about the schema, so it is kept
+/// as a transient error.
+fn classify_probe_error(error: rusqlite::Error) -> VersionProbe {
+    let file_is_unusable = matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(code, _)
+            if matches!(code.code, ErrorCode::NotADatabase | ErrorCode::DatabaseCorrupt)
+    );
+    if file_is_unusable {
+        VersionProbe::Incompatible
+    } else {
+        VersionProbe::Failed(error)
+    }
+}
+
+/// Reads the schema version of an existing file through a throwaway connection.
+fn probe_user_version(path: &std::path::Path) -> VersionProbe {
+    if !path.exists() {
+        return VersionProbe::Absent;
+    }
+
+    // The connection is closed when this function returns, so no handle survives
+    // onto a file the caller may unlink.
+    let conn = match Connection::open(path) {
+        Ok(conn) => conn,
+        Err(error) => return classify_probe_error(error),
+    };
+
+    match conn.pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0)) {
+        Ok(version) if version == SCHEMA_VERSION => VersionProbe::Current,
+        Ok(_) => VersionProbe::Incompatible,
+        Err(error) => classify_probe_error(error),
+    }
+}
+
+/// SQLite database of the Audoxidy music library.
+///
+/// Holds the relational schema for folders, artists, albums, songs, extended
+/// metadata, playlists and shuffle sessions. It runs in WAL mode, keeps an FTS5
+/// index for full-text search and applies the connection pragmas the read paths
+/// depend on.
 pub struct Database {
     pub(in crate::db::database) conn: Connection,
+    /// Whether this open replaced a stale or unreadable file.
+    pub(in crate::db::database) rebuilt: bool,
 }
 
 impl Default for Database {
@@ -18,36 +81,71 @@ impl Default for Database {
 }
 
 impl Database {
-    /// Opens or creates the library database and initializes the schema.
+    /// Opens or creates the library database at the configured path.
     pub fn new() -> Result<Self> {
         Self::open_at(&crate::utils::paths::get().db_path)
     }
 
-    /// Abre una base de datos en la ruta indicada e inicializa el esquema.
-    /// Todas las variantes comparten los mismos pragmas y caché de sentencias.
+    /// Opens the database at `path`, replacing the file when it is incompatible.
+    ///
+    /// The version is probed before the writable connection exists: a matching
+    /// value is a pure open, a missing file is created, and a file from another
+    /// schema version — or one that cannot be read as a database — has its main
+    /// file and its `-wal`/`-shm` siblings removed so a fresh schema can be
+    /// built. A failure that says nothing about the file, such as a lock held by
+    /// another instance, is returned untouched.
+    ///
+    /// The version is stamped after the schema is created. A crash between the
+    /// two leaves version 0, which the next open rebuilds instead of trusting a
+    /// half-built file.
     fn open_at(path: &std::path::Path) -> Result<Self> {
+        let rebuilt = match probe_user_version(path) {
+            VersionProbe::Incompatible => {
+                let _ = std::fs::remove_file(path);
+                let _ = std::fs::remove_file(sibling_path(path, "-wal"));
+                let _ = std::fs::remove_file(sibling_path(path, "-shm"));
+                true
+            }
+            VersionProbe::Failed(error) => return Err(error),
+            VersionProbe::Absent | VersionProbe::Current => false,
+        };
+
         let conn = Connection::open(path)?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.set_prepared_statement_cache_capacity(32);
         Self::create_schema(&conn)?;
-        Ok(Self { conn })
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(Self { conn, rebuilt })
     }
 
     /// Creates an on-disk database at an arbitrary path.
     ///
-    /// Used by the entry point to inject the resolved library path, and by
-    /// tests that need a temporary file-backed database.
+    /// The entry point injects the resolved library path, and tests use it to get
+    /// their own file-backed database.
     pub fn new_at(path: &std::path::Path) -> Result<Self> {
         Self::open_at(path)
     }
 
-    /// Crea una base de datos en memoria para pruebas.
+    /// Reports whether opening this database replaced an incompatible file.
+    pub fn was_rebuilt(&self) -> bool {
+        self.rebuilt
+    }
+
+    /// Creates an in-memory database for tests.
+    ///
+    /// It never probes and never deletes: an in-memory database reports version 0
+    /// before the schema exists, so the file check would classify every
+    /// construction as a rebuild.
     #[cfg(test)]
     pub fn new_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))?;
         conn.set_prepared_statement_cache_capacity(32);
         Self::create_schema(&conn)?;
-        Ok(Self { conn })
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        Ok(Self {
+            conn,
+            rebuilt: false,
+        })
     }
 }

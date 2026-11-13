@@ -76,6 +76,17 @@ impl Core {
         &self.database
     }
 
+    /// Reports whether opening the library replaced an incompatible file.
+    ///
+    /// The flag is fixed when the database is opened. A poisoned lock reports no
+    /// rebuild, so the shell never announces one that cannot be confirmed.
+    pub fn library_rebuilt(&self) -> bool {
+        self.database
+            .lock()
+            .map(|database| database.was_rebuilt())
+            .unwrap_or(false)
+    }
+
     /// Acquires the database lock, mapping a poisoned lock to a typed error.
     ///
     /// Service methods use this helper so a poisoned lock surfaces as

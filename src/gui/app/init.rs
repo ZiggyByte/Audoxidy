@@ -135,6 +135,11 @@ impl AudoxidyApp {
         // Inicializar temporizadores de memoria (Ciclo de 2 minutos)
         crate::utils::memory_manager::MemoryManager::init();
 
+        // The rebuild flag is the last chance to tell the owner that the file was
+        // replaced, so it is read before any other database access and carried
+        // into the initial dialog.
+        let library_rebuilt = core.library_rebuilt();
+
         // The saved view is read once, before the first data load, so the first
         // layout already uses the chosen mode instead of the default.
         // db-lock: a single short read — the guard is released before any other
@@ -1084,7 +1089,11 @@ impl AudoxidyApp {
                 is_mouse_over_playlist: false,
                 low_resource_mode,
                 db_needs_refresh: false,
-                active_dialog: ActiveDialog::None,
+                active_dialog: if library_rebuilt {
+                    ActiveDialog::LibraryRebuilt
+                } else {
+                    ActiveDialog::None
+                },
                 last_mouse_pos: iced::Point::ORIGIN,
                 dialog_pos: None,
                 context_menu: None,

@@ -4,6 +4,14 @@ use rusqlite::{Connection, Result, params};
 
 use super::Database;
 
+/// Schema version stamped into the database header as `PRAGMA user_version`.
+///
+/// Every `CREATE` below is guarded by `IF NOT EXISTS`, so a changed statement
+/// never takes effect on a file that already holds the old shape. Bumping this
+/// constant in the same change that alters the DDL is what tells the connection
+/// to replace a stale file instead of silently running on the old schema.
+pub(in crate::db::database) const SCHEMA_VERSION: i64 = 1;
+
 impl Database {
     pub(in crate::db::database) fn create_schema(conn: &Connection) -> Result<()> {
         // Configuraciones de rendimiento

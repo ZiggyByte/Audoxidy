@@ -220,6 +220,7 @@ pub enum ExportMode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ActiveDialog {
     None,
+    LibraryRebuilt,
     CreatePlaylist {
         name: String,
         pending_add_songs: Vec<i64>,

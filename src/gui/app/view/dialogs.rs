@@ -130,6 +130,17 @@ impl AudoxidyApp {
                         "Eliminar".to_string(),
                     )
                 },
+                ActiveDialog::LibraryRebuilt => {
+                    crate::gui::widgets::standard_modal(
+                        "Biblioteca reconstruida".to_string(),
+                        crate::gui::widgets::modal_text(
+                            "El formato de la base de datos cambió,\nasí que la biblioteca empieza vacía.\nElige la carpeta que quieres escanear\npara volver a llenarla.".to_string(),
+                        ),
+                        Some(Message::CloseDialog),
+                        Some(Message::ConfirmDialogAction),
+                        "Elegir carpeta".to_string(),
+                    )
+                },
                 ActiveDialog::ExportConfirm { name, id: _, format, mode } => {
                     let format_choices = iced::widget::row![
                         export_choice_button("M3U", *format == ExportFormat::M3U, Message::SelectExportFormat(ExportFormat::M3U)),

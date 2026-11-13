@@ -1491,6 +1491,45 @@ mod tests {
         clear_negative_cover_cache();
     }
 
+    /// The negative set is cleared once before the walk and once after it.
+    ///
+    /// A clear inside the walk would re-enable a retry for every cover the grid
+    /// asked for before the scanner wrote it, once per committed batch. The walk
+    /// reads the filesystem and its batch boundaries are not injectable, so the
+    /// source is the seam and the placement of the two calls is asserted directly:
+    /// exactly two occurrences, one before the directory walk and one after the
+    /// transaction closes at the end of it.
+    #[test]
+    fn test_scan_clears_negative_cache_only_at_boundaries() {
+        let source = include_str!("../db/scanner.rs");
+        let clear = "clear_negative_cover_cache";
+
+        assert_eq!(
+            source.matches(clear).count(),
+            2,
+            "a full scan clears the negative set exactly at its two boundaries"
+        );
+
+        let walk = source
+            .find("WalkDir::new(root)")
+            .expect("the scan walks the folder it was given");
+        let finished = source
+            .find("db.flush_prepared_statements();")
+            .expect("the scan closes its transaction when the walk ends");
+
+        let first = source.find(clear).expect("start boundary");
+        let last = source.rfind(clear).expect("finish boundary");
+
+        assert!(
+            first < walk,
+            "the set is cleared before the directory walk starts"
+        );
+        assert!(
+            last > finished,
+            "the second clear follows the last committed batch, not the walk"
+        );
+    }
+
     #[test]
     fn test_decode_cover_file_opens_the_file_once() {
         let _guard = global_guard();

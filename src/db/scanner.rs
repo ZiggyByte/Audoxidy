@@ -82,6 +82,13 @@ impl Scanner {
             }
         }
 
+        // Start boundary of the negative cover set: an entry recorded by an
+        // earlier scan must not suppress a cover this walk is about to write.
+        // The clear belongs here, outside the walk, so a batch that commits new
+        // rows cannot re-enable a retry for every cover the grid asked for
+        // before the scanner had written it.
+        crate::utils::covers::clear_negative_cover_cache();
+
         for (count, entry) in WalkDir::new(root)
             .sort_by_file_name()
             .into_iter()
@@ -131,6 +138,9 @@ impl Scanner {
             db.flush_prepared_statements();
         }
 
+        // Finish boundary, the only other clear: the walk is over, so every path
+        // recorded while its file was still being written becomes retryable once
+        // now that the scan has finished.
         crate::utils::covers::clear_negative_cover_cache();
         dirty_flag.store(true, Ordering::Relaxed);
         (current_order - start_order).max(0) as usize

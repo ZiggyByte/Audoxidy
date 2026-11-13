@@ -116,6 +116,10 @@ impl crate::gui::app::AudoxidyApp {
                         self.library_manager.apply_filter();
                     }
                 }
+
+                // Sorting changes the first rows the viewport draws, so the decode
+                // window has to follow the new order.
+                self.library_manager.request_cover_window();
                 Task::none()
             }
             Message::StartColumnResize(col) => {
@@ -212,6 +216,9 @@ impl crate::gui::app::AudoxidyApp {
                 }
                 self.library_manager.invalidate_cache();
                 self.update_selection_stats();
+                // Expanding or collapsing an album changes the rows around it
+                // without a scroll, so the window follows the new set.
+                self.library_manager.request_cover_window();
                 Task::none()
             }
             Message::ToggleArtistExpansion(name) => {
@@ -220,6 +227,9 @@ impl crate::gui::app::AudoxidyApp {
                 self.library_manager
                     .set_artist_collapsed(name, !is_collapsed);
                 self.update_selection_stats();
+                // A collapsed artist hides every album below it, so the visible
+                // set shrinks without a scroll and the window must follow.
+                self.library_manager.request_cover_window();
                 Task::none()
             }
             Message::LibraryAllSongsLoaded(songs) => {
@@ -542,6 +552,12 @@ impl crate::gui::app::AudoxidyApp {
                     self.library_manager.apply_filter();
                 }
 
+                // Both branches replace the rows the viewport draws, and the mode
+                // also changes the decode bucket, so the window is requested for
+                // the view that is about to render. The search branch requests it
+                // again when its result arrives.
+                self.library_manager.request_cover_window();
+
                 // Liberar solo datos del Grid que no necesitamos en lista
                 self.library_manager.expanded_album = None;
                 self.library_manager.expanded_album_songs = None;
@@ -724,6 +740,12 @@ impl crate::gui::app::AudoxidyApp {
             Message::LibraryFilteredLoaded(songs) => {
                 self.library_manager.update_processed_data(songs);
                 self.update_selection_stats();
+
+                // A search, a filter or any other query changes which rows are
+                // drawn without a scroll, so the decode window follows the new
+                // snapshot. The pass is idempotent: with everything cached it
+                // accepts no job.
+                self.library_manager.request_cover_window();
 
                 // Si había una petición de revelado pendiente (esperando a que los filtros se limpiaran), continuar ahora.
                 if let Some(path) = self.library_manager.pending_reveal_path.clone() {

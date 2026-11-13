@@ -1519,3 +1519,153 @@ fn test_prefetch_request_adds_the_look_ahead_band() {
         "la precarga pide la ventana con banda"
     );
 }
+
+/// Every handler that changes the visible set requests the decode window.
+///
+/// A search, a sort, a view-mode switch and an expansion all replace which rows
+/// the viewport draws without a scroll. The scrollable only notifies when the
+/// content is taller than the viewport and its offset changed, so none of those
+/// flows can rely on it to ask for the covers they are about to draw.
+#[test]
+fn test_visible_set_handlers_request_the_cover_window() {
+    let library = include_str!("../app/update/library.rs");
+    let arms = [
+        (
+            "Message::LibraryFilteredLoaded(songs) =>",
+            "Message::InternalLibraryRefreshed(songs, albums, stats) =>",
+        ),
+        (
+            "Message::LibrarySortChanged(col) =>",
+            "Message::StartColumnResize(col) =>",
+        ),
+        (
+            "Message::ChangeLibraryViewMode(mode) =>",
+            "Message::ToggleLibraryViewDropdown =>",
+        ),
+        (
+            "Message::ToggleAlbumExpansion(album_id) =>",
+            "Message::ToggleArtistExpansion(name) =>",
+        ),
+        (
+            "Message::ToggleArtistExpansion(name) =>",
+            "Message::LibraryAllSongsLoaded(songs) =>",
+        ),
+    ];
+
+    for (start, end) in arms {
+        let from = library
+            .find(start)
+            .unwrap_or_else(|| panic!("no se encontró el brazo {start}"));
+        let to = library
+            .find(end)
+            .unwrap_or_else(|| panic!("no se encontró el cierre {end}"));
+        assert!(from < to, "el brazo {start} está antes de {end}");
+
+        assert!(
+            library[from..to].contains("self.library_manager.request_cover_window();"),
+            "el brazo {start} debe pedir la ventana de carátulas tras cambiar el conjunto visible"
+        );
+    }
+}
+
+/// A changed visible set asks for its own covers, and the pass converges.
+#[test]
+fn test_visible_set_change_requests_the_new_paths() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+
+    // First visible set: request it and land every handle the way the decode
+    // handler does, so a second pass has nothing left to ask for.
+    let first = manager.request_cover_window_with(|_| true, 0.0);
+    assert!(!first.is_empty(), "la primera ventana pide carátulas");
+    let bucket = manager.window_bucket() as usize;
+    let entry_bytes = bucket * bucket * 4;
+    for key in &first {
+        manager
+            .cover_store
+            .insert_handle(key.clone(), fake_handle(2, 2), entry_bytes);
+        manager.cover_store.clear_in_flight(key);
+    }
+
+    let mut repeated = 0;
+    let requested_again = manager.request_cover_window_with(
+        |_| {
+            repeated += 1;
+            true
+        },
+        0.0,
+    );
+    assert_eq!(
+        repeated, 0,
+        "una segunda pasada sobre el mismo conjunto no encola nada"
+    );
+    assert_eq!(
+        requested_again, first,
+        "la ventana pedida no cambia entre pasadas"
+    );
+
+    // The snapshot is replaced without a scroll: a filter or a search result.
+    manager.cached_albums = Some(
+        (0..200)
+            .map(|index| AlbumEntry {
+                id: format!("filtered-{index}"),
+                title: format!("Album {index}"),
+                artist: "Artist".to_string(),
+                genre: "Genre".to_string(),
+                year: "2024".to_string(),
+                cover_path: Some(format!("covers/filtered-{index}.avif")),
+            })
+            .collect(),
+    );
+
+    let mut new_paths = Vec::new();
+    let second = manager.request_cover_window_with(
+        |job| {
+            new_paths.push(job.key.path.to_string());
+            true
+        },
+        0.0,
+    );
+
+    assert!(!second.is_empty(), "el conjunto nuevo pide sus carátulas");
+    assert_eq!(
+        new_paths.len(),
+        second.len(),
+        "cada clave nueva se encola una vez"
+    );
+    assert!(
+        new_paths
+            .iter()
+            .all(|path| path.starts_with("covers/filtered-")),
+        "la petición sólo nombra las carátulas del conjunto nuevo"
+    );
+
+    // Landing the new handles converges the pass, exactly as it does for the
+    // first set: this is the idempotence the handler relies on.
+    for key in &second {
+        manager
+            .cover_store
+            .insert_handle(key.clone(), fake_handle(2, 2), entry_bytes);
+        manager.cover_store.clear_in_flight(key);
+    }
+
+    let mut again = 0;
+    let requested_again = manager.request_cover_window_with(
+        |_| {
+            again += 1;
+            true
+        },
+        0.0,
+    );
+    assert_eq!(
+        again, 0,
+        "con las carátulas nuevas retenidas la pasada no encola nada"
+    );
+    assert_eq!(
+        requested_again, second,
+        "el conjunto nuevo sigue siendo el mismo entre pasadas"
+    );
+}

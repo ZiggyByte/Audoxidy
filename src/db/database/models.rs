@@ -25,7 +25,6 @@ pub struct SongData {
     pub sample_rate: Option<i64>,
     pub size: Option<i64>,
     pub channels: Option<i64>,
-    pub embedded_cover: bool,
     pub compressed_cached_cover_root: Option<std::sync::Arc<str>>,
     pub cover_override: Option<std::sync::Arc<str>>, // Hash de carátula específica si difiere del álbum
     pub import_order: i64,

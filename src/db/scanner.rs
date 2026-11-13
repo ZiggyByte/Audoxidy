@@ -171,7 +171,6 @@ impl Scanner {
         }
 
         let mut pic_bytes = None;
-        let mut raw_tag_items = Vec::new(); // (tag_type, item_key, raw_value)
 
         // Mapa para la fusión (prioridad). Almacenamos el valor de mayor prioridad para cada clave técnica.
         // Prioridad: Id3v2 > VorbisComments > Mp4ilst > Ape > RiffInfo > Id3v1
@@ -192,7 +191,6 @@ impl Scanner {
                 // 1. Recolectar TODAS las etiquetas presentes
                 for tag in tagged_file.tags() {
                     let tag_type = tag.tag_type();
-                    let tag_type_str = format!("{:?}", tag_type);
 
                     // Nivel de prioridad dependiente del formato (Menor es más prioritario)
                     let file_type = tagged_file.file_type();
@@ -226,13 +224,6 @@ impl Scanner {
                     for item in tag.items() {
                         let key = item.key();
                         if let lofty::tag::ItemValue::Text(val) = item.value() {
-                            // Guardar para SONG_TAG_ITEMS (Crudo total)
-                            raw_tag_items.push((
-                                tag_type_str.clone(),
-                                format!("{:?}", key),
-                                val.clone(),
-                            ));
-
                             // Lógica de Fusión: Solo actualizamos si no existe o si el nuevo tag tiene más prioridad
                             let entry = fused_map
                                 .entry(key.clone())
@@ -246,7 +237,6 @@ impl Scanner {
                     // Intentar extraer carátula del tag más prioritario que la tenga
                     if pic_bytes.is_none() {
                         if let Some(pic) = tag.pictures().first() {
-                            song.embedded_cover = true;
                             pic_bytes = Some(pic.data().to_vec());
                         }
                     }
@@ -313,7 +303,7 @@ impl Scanner {
 
         if let Ok(mut db) = db_m.lock() {
             if let Ok((target_file_name, needs_processing)) =
-                db.insert_song_full(&song, &extended, pic_hash, raw_tag_items, is_external)
+                db.insert_song_full(&song, &extended, pic_hash, is_external)
             {
                 if needs_processing && !enqueued_covers.contains(&target_file_name) {
                     if let Some(data) = pic_bytes {

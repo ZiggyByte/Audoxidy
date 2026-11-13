@@ -55,7 +55,6 @@ fn insert_song(
         &song,
         &SongMetadataExtended::default(),
         picture_hash.map(str::to_owned),
-        Vec::new(),
         false,
     )
     .expect("la canción de prueba debe insertarse")

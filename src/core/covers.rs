@@ -250,7 +250,6 @@ mod tests {
             &song,
             &SongMetadataExtended::default(),
             picture_hash.map(str::to_owned),
-            Vec::new(),
             false,
         )
         .expect("no se pudo insertar la canción de prueba");

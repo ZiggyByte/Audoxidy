@@ -82,17 +82,16 @@ impl Database {
             .query_row([hash_id], |row| row.get(0))
     }
 
-    /// Inserta una canción con todos sus metadatos, carátula y tags RAW.
+    /// Inserts one song with its metadata and its cover decision.
     ///
-    /// Retorna (nombre_de_archivo_de_carátula, necesita_procesamiento). El nombre
-    /// es el nombre completo que el escritor guarda y el escáner comprueba, e
-    /// incluye la extensión; llega vacío cuando la inserción no produce archivo.
+    /// Returns (cover_file_name, needs_processing). The name is the complete file
+    /// name the writer stores and the scanner checks, and it includes the
+    /// extension; it arrives empty when the insert produces no file.
     pub fn insert_song_full(
         &mut self,
         song: &SongData,
         extended: &SongMetadataExtended,
         pic_bytes_hash: Option<String>,
-        raw_tags: Vec<(String, String, String)>, // (tag_type, item_key, raw_value)
         is_external: bool,
     ) -> Result<(String, bool)> {
         let folder_path = std::path::Path::new(song.full_file_path.as_ref())
@@ -206,9 +205,9 @@ impl Database {
         self.conn.prepare_cached(
             "INSERT INTO SONGS (
                 album_id, artist_id, folder_id, file_path, title, track_num, duration, format,
-                bit_depth, sample_rate, channels, size, embedded_cover, cover_override, import_order, is_external
+                bit_depth, sample_rate, channels, size, cover_override, import_order, is_external
             ) VALUES (
-                (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16
+                (SELECT id FROM ALBUMS WHERE hash_id = ?1), ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15
             ) ON CONFLICT(file_path) DO UPDATE SET
                 title = excluded.title, track_num = excluded.track_num, duration = excluded.duration,
                 artist_id = excluded.artist_id, cover_override = excluded.cover_override, is_external = excluded.is_external"
@@ -217,7 +216,7 @@ impl Database {
                 album_hash_id, track_artist_id, folder_id, song.full_file_path, song.title,
                 song.track_number,
                 song.duration_secs, song.format, song.bit_depth, song.sample_rate,
-                song.channels, song.size, song.embedded_cover, final_song_cover_override, song.import_order,
+                song.channels, song.size, final_song_cover_override, song.import_order,
                 if is_external { 1 } else { 0 }
             ],
         )?;
@@ -243,20 +242,7 @@ impl Database {
             }
         }
 
-        // 3. Guardar metadatos técnicos crudos de todos los formatos presentes
-        self.conn
-            .prepare_cached("DELETE FROM SONG_TAG_ITEMS WHERE song_id = ?1")?
-            .execute([song_id])?;
-        for (tag_type, key, value) in raw_tags {
-            self.conn
-                .prepare_cached(
-                    "INSERT OR REPLACE INTO SONG_TAG_ITEMS (song_id, tag_type, item_key, raw_value)
-                 VALUES (?1, ?2, ?3, ?4)",
-                )?
-                .execute(params![song_id, tag_type, key, value])?;
-        }
-
-        // 4. Metadatos extendidos (Vista unificada)
+        // 3. Metadatos extendidos (Vista unificada)
         self.conn.prepare_cached(
             "INSERT INTO SONG_METADATA (
                 song_id, lyrics, comments, composer, lyricist, publisher, url, copyright,

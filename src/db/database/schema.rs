@@ -10,7 +10,7 @@ use super::Database;
 /// never takes effect on a file that already holds the old shape. Bumping this
 /// constant in the same change that alters the DDL is what tells the connection
 /// to replace a stale file instead of silently running on the old schema.
-pub(in crate::db::database) const SCHEMA_VERSION: i64 = 1;
+pub(in crate::db::database) const SCHEMA_VERSION: i64 = 2;
 
 impl Database {
     pub(in crate::db::database) fn create_schema(conn: &Connection) -> Result<()> {
@@ -75,7 +75,6 @@ impl Database {
                 sample_rate INTEGER,
                 channels INTEGER,
                 size INTEGER,
-                embedded_cover BOOLEAN DEFAULT 0,
                 cover_override TEXT,
                 import_order INTEGER DEFAULT 0,
                 is_external INTEGER DEFAULT 0,
@@ -109,20 +108,7 @@ impl Database {
             [],
         )?;
 
-        // 6. METADATOS TÉCNICOS CRUDOS POR FORMATO (ID3, Vorbis, APE, etc.)
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS SONG_TAG_ITEMS (
-                song_id INTEGER NOT NULL,
-                tag_type TEXT NOT NULL,
-                item_key TEXT NOT NULL,
-                raw_value TEXT NOT NULL,
-                PRIMARY KEY (song_id, tag_type, item_key),
-                FOREIGN KEY(song_id) REFERENCES SONGS(id) ON DELETE CASCADE
-            )",
-            [],
-        )?;
-
-        // 7. LISTAS DE REPRODUCCIÓN
+        // 6. LISTAS DE REPRODUCCIÓN
         conn.execute(
             "CREATE TABLE IF NOT EXISTS PLAYLISTS (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -141,7 +127,7 @@ impl Database {
             [],
         )?;
 
-        // 8. ITEMS DE LISTA DE REPRODUCCIÓN
+        // 7. ITEMS DE LISTA DE REPRODUCCIÓN
         conn.execute(
             "CREATE TABLE IF NOT EXISTS PLAYLIST_ITEMS (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -157,7 +143,7 @@ impl Database {
             [],
         )?;
 
-        // 9. HISTORIAL DE SHUFFLE POR SESIÓN
+        // 8. HISTORIAL DE SHUFFLE POR SESIÓN
         conn.execute(
             "CREATE TABLE IF NOT EXISTS PLAYLIST_SHUFFLE_HISTORY (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,7 +158,7 @@ impl Database {
             [],
         )?;
 
-        // 11. AJUSTES APP (Configuración global)
+        // 9. AJUSTES APP (Configuración global)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS APP_SETTINGS (
                 key TEXT PRIMARY KEY,

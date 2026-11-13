@@ -64,14 +64,8 @@ fn insert_song(db: &mut Database) {
         album: Some(Arc::from("Schema Album".to_string().into_boxed_str())),
         ..Default::default()
     };
-    db.insert_song_full(
-        &song,
-        &SongMetadataExtended::default(),
-        None,
-        Vec::new(),
-        false,
-    )
-    .expect("insert the song");
+    db.insert_song_full(&song, &SongMetadataExtended::default(), None, false)
+        .expect("insert the song");
 }
 
 /// Reads the version stamped in the database header.

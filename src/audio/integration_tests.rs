@@ -146,13 +146,13 @@ mod integration_tests {
         song1.size = Some(50_000_000);
         song1.channels = Some(2);
 
-        db.insert_song_full(&song1, &make_extended(), None, vec![], false)
+        db.insert_song_full(&song1, &make_extended(), None, false)
             .unwrap();
 
         let mut song2 = make_song("/music/test_song2.mp3", "Another Title", "Another Artist");
         song2.format = Some(Arc::from("MP3".to_string().into_boxed_str()));
 
-        db.insert_song_full(&song2, &make_extended(), None, vec![], false)
+        db.insert_song_full(&song2, &make_extended(), None, false)
             .unwrap();
 
         let songs = db.get_all_songs().unwrap();

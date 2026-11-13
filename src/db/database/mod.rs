@@ -128,7 +128,7 @@ mod fts_tests {
 
     fn seed_song(db: &mut Database, path: &str, title: &str, artist: &str) {
         let song = make_song(path, title, artist);
-        db.insert_song_full(&song, &SongMetadataExtended::default(), None, vec![], false)
+        db.insert_song_full(&song, &SongMetadataExtended::default(), None, false)
             .unwrap();
     }
 
@@ -303,7 +303,7 @@ mod db_round_trip_tests {
                 artist: Some(Arc::from("Tester".to_string().into_boxed_str())),
                 ..Default::default()
             };
-            db.insert_song_full(&song, &SongMetadataExtended::default(), None, vec![], false)
+            db.insert_song_full(&song, &SongMetadataExtended::default(), None, false)
                 .expect("insertar la canción");
         } // La conexión se cierra antes de reabrir.
 

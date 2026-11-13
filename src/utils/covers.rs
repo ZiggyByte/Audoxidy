@@ -1534,42 +1534,57 @@ mod tests {
         clear_negative_cover_cache();
     }
 
-    /// The negative set is cleared once before the walk and once after it.
+    /// The negative set is cleared once before the walk and once when the scan
+    /// has settled, never per batch.
     ///
     /// A clear inside the walk would re-enable a retry for every cover the grid
     /// asked for before the scanner wrote it, once per committed batch. The walk
     /// reads the filesystem and its batch boundaries are not injectable, so the
-    /// source is the seam and the placement of the two calls is asserted directly:
-    /// exactly two occurrences, one before the directory walk and one after the
-    /// transaction closes at the end of it.
+    /// source is the seam: `scan_folder` holds exactly one clear, before the
+    /// directory walk, and the post-scan cleanup tick holds the other one. The
+    /// scan therefore has one start boundary and one finish boundary, and the
+    /// finish boundary is the moment the covers of a settled scan are retried.
     #[test]
     fn test_scan_clears_negative_cache_only_at_boundaries() {
-        let source = include_str!("../db/scanner.rs");
+        let scan = include_str!("../db/scanner.rs");
         let clear = "clear_negative_cover_cache";
 
         assert_eq!(
-            source.matches(clear).count(),
-            2,
-            "a full scan clears the negative set exactly at its two boundaries"
+            scan.matches(clear).count(),
+            1,
+            "el escaneo limpia el conjunto negativo una sola vez, al empezar"
         );
 
-        let walk = source
+        let walk = scan
             .find("WalkDir::new(root)")
             .expect("the scan walks the folder it was given");
-        let finished = source
-            .find("db.flush_prepared_statements();")
-            .expect("the scan closes its transaction when the walk ends");
-
-        let first = source.find(clear).expect("start boundary");
-        let last = source.rfind(clear).expect("finish boundary");
+        let start = scan.find(clear).expect("start boundary");
 
         assert!(
-            first < walk,
+            start < walk,
             "the set is cleared before the directory walk starts"
         );
+
+        // The finish boundary is the post-scan cleanup, which also re-requests
+        // the window so the covers the scan wrote stop looking absent.
+        let ticks = include_str!("../gui/app/update/ticks.rs");
+        let settled = ticks
+            .find("now.saturating_sub(finished_at) >= 40")
+            .expect("the post-scan cleanup runs once the scan has settled");
+        let finish = ticks
+            .find(clear)
+            .expect("the post-scan cleanup clears the negative set");
+        let retry = ticks
+            .find("request_cover_window")
+            .expect("the post-scan cleanup re-requests the window");
+
         assert!(
-            last > finished,
-            "the second clear follows the last committed batch, not the walk"
+            finish > settled,
+            "the finish boundary sits in the post-scan cleanup path"
+        );
+        assert!(
+            retry > settled,
+            "the settled scan retries the covers it may have written late"
         );
     }
 

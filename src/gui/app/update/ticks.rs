@@ -488,6 +488,13 @@ impl crate::gui::app::AudoxidyApp {
                 // Reiniciar el temporizador global para que no haga otra purga en 2 mins
                 crate::utils::memory_manager::MemoryManager::reset_global_purge_timer();
 
+                // The scan has settled, so the covers it wrote while the grid was
+                // already asking for them become retryable and the window asks
+                // for the ones still missing. The purge below runs the orphan
+                // sweep, which is the only sweep this path needs.
+                crate::utils::covers::clear_negative_cover_cache();
+                self.library_manager.request_cover_window();
+
                 return Task::done(Message::GlobalMemoryPurge);
             }
         }

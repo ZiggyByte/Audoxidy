@@ -386,6 +386,11 @@ impl LibraryManager {
                         songs
                             .iter()
                             .filter(|s| {
+                                // La identidad del álbum es su hash; el título y el
+                                // artista solo cubren instantáneas sin el campo.
+                                if s.album_hash.is_some() {
+                                    return s.album_hash.as_deref() == Some(album_id);
+                                }
                                 s.album.as_deref() == Some(&alb_entry.title)
                                     && crate::utils::get_effective_artist(s) == artist
                             })

@@ -408,6 +408,11 @@ impl LibraryManager {
                     let mut alb_songs: Vec<_> = songs
                         .iter()
                         .filter(|s| {
+                            // La identidad del álbum es su hash; el título solo se usa
+                            // como respaldo para instantáneas antiguas sin el campo.
+                            if s.album_hash.is_some() {
+                                return s.album_hash.as_deref() == Some(album_entry.id.as_str());
+                            }
                             let s_alb = s.album.as_deref().unwrap_or("Desconocido");
                             let s_art = crate::utils::get_effective_artist(s);
                             s_alb == album_entry.title && s_art == album_entry.artist

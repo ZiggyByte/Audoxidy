@@ -69,6 +69,54 @@ mod library_tests {
         assert_eq!(first[0].0, None);
         assert_eq!(first[1].0, Some(0.0));
     }
+
+    #[test]
+    fn test_refresh_expanded_album_songs_keeps_versions_separate() {
+        let mut manager = LibraryManager::default();
+        manager.view_mode = LibraryViewMode::Grid;
+
+        let mut first = SongData::default();
+        first.title = Some(Arc::from("Primera"));
+        first.album = Some(Arc::from("Greatest Hits"));
+        first.artist = Some(Arc::from("Artista"));
+        first.album_hash = Some(Arc::from("hash-a"));
+
+        let mut second = SongData::default();
+        second.title = Some(Arc::from("Segunda"));
+        second.album = Some(Arc::from("Greatest Hits"));
+        second.artist = Some(Arc::from("Artista"));
+        second.album_hash = Some(Arc::from("hash-b"));
+
+        manager.filtered_songs = Some(vec![Arc::new(first), Arc::new(second)]);
+        manager.cached_albums = Some(vec![
+            AlbumEntry {
+                id: "hash-a".into(),
+                title: "Greatest Hits".into(),
+                artist: "Artista".into(),
+                genre: String::new(),
+                year: String::new(),
+                cover_path: Some("a.avif".into()),
+            },
+            AlbumEntry {
+                id: "hash-b".into(),
+                title: "Greatest Hits".into(),
+                artist: "Artista".into(),
+                genre: String::new(),
+                year: String::new(),
+                cover_path: Some("b.avif".into()),
+            },
+        ]);
+        manager.expanded_album = Some("Artista|hash-a".into());
+
+        manager.refresh_expanded_album_songs();
+
+        let songs = manager
+            .expanded_album_songs
+            .as_ref()
+            .expect("el álbum expandido debe tener canciones");
+        assert_eq!(songs.len(), 1, "solo la versión expandida debe aparecer");
+        assert_eq!(songs[0].title.as_deref(), Some("Primera"));
+    }
 }
 
 #[cfg(test)]

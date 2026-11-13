@@ -325,4 +325,7 @@ mod cover_tests;
 mod fts_consistency_tests;
 
 #[cfg(test)]
+mod real_library_tests;
+
+#[cfg(test)]
 mod schema_tests;

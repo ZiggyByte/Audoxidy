@@ -821,8 +821,7 @@ impl LibraryManager {
     /// not read: the grid asks for its card edge raised to the album minimum, the
     /// detailed list for the album card paths and the thumbnail list for the
     /// per-song thumbnails at their 32 px edge. A path the negative set already
-    /// knows to fail is skipped, and every job carries the current scroll
-    /// generation so a result can be identified as stale.
+    /// knows to fail is skipped.
     pub fn window_jobs(&self, viewport_y: f32, viewport_h: f32) -> Vec<DecodeJob> {
         match self.view_mode {
             LibraryViewMode::Grid => self.grid_window_jobs(viewport_y, viewport_h),
@@ -864,7 +863,6 @@ impl LibraryManager {
                     },
                     path: std::path::PathBuf::from(path),
                     bucket,
-                    generation: self.scroll_generation,
                 });
             }
         }
@@ -906,7 +904,6 @@ impl LibraryManager {
                 },
                 path: std::path::PathBuf::from(path),
                 bucket,
-                generation: self.scroll_generation,
             });
         }
 

@@ -1109,19 +1109,15 @@ impl crate::gui::app::AudoxidyApp {
                     return task;
                 }
 
-                // Direction and generation describe the gesture, not the frame:
-                // the look-ahead band reads the sign, and every decode it
-                // requests is stamped with the generation so a superseded
-                // result can be told apart from a current one. A scroll event
-                // that did not move keeps the previous direction, because the
-                // sign of a zero delta would point the band the wrong way.
+                // Direction describes the gesture, not the frame: the look-ahead
+                // band reads the sign. A scroll event that did not move keeps the
+                // previous direction, because the sign of a zero delta would
+                // point the band the wrong way.
                 let new_y = abs_offset.y;
                 let delta = new_y - previous_y;
                 if delta != 0.0 {
                     self.library_manager.scroll_direction = delta.signum();
                 }
-                self.library_manager.scroll_generation =
-                    self.library_manager.scroll_generation.wrapping_add(1);
                 self.library_manager.last_scroll_at = Some(std::time::Instant::now());
 
                 self.library_manager.invalidate_visible_cache();

@@ -309,9 +309,6 @@ pub struct DecodeJob {
     pub path: PathBuf,
     /// Decode bucket, in pixels of the cover edge.
     pub bucket: u32,
-    /// Scroll generation that requested the decode; a result stamped with an
-    /// older generation is stale.
-    pub generation: u64,
 }
 
 /// Result of one decode job.
@@ -319,8 +316,6 @@ pub struct DecodeJob {
 pub struct CoverDecodeOutcome {
     /// Key the handle belongs to.
     pub key: CoverKey,
-    /// Scroll generation of the request, echoed for staleness checks.
-    pub generation: u64,
     /// Minted handle, or `None` when the decode failed.
     pub handle: Option<Handle>,
     /// Bytes the handle retains when present.
@@ -336,7 +331,6 @@ impl std::fmt::Debug for CoverDecodeOutcome {
         formatter
             .debug_struct("CoverDecodeOutcome")
             .field("key", &self.key)
-            .field("generation", &self.generation)
             .field("has_handle", &self.handle.is_some())
             .field("bytes", &self.bytes)
             .field("error", &self.error)
@@ -487,7 +481,6 @@ fn decode_worker_loop(
 
                 CoverDecodeOutcome {
                     key: job.key,
-                    generation: job.generation,
                     handle: Some(handle),
                     bytes,
                     error: None,
@@ -501,7 +494,6 @@ fn decode_worker_loop(
 
                 CoverDecodeOutcome {
                     key: job.key,
-                    generation: job.generation,
                     handle: None,
                     bytes: 0,
                     error: Some(error.to_string()),
@@ -509,7 +501,6 @@ fn decode_worker_loop(
             }
             Err(_) => CoverDecodeOutcome {
                 key: job.key,
-                generation: job.generation,
                 handle: None,
                 bytes: 0,
                 error: Some("the cover decode panicked".to_string()),
@@ -549,9 +540,9 @@ impl LibraryManager {
     /// The in-flight mark is always released, so a failed key stays retryable for
     /// the next request. A successful handle is always stored: the decode already
     /// paid for its file open and its pixels, and the retained-byte budget decides
-    /// how long the entry survives, so a scroll that outran the decoder can never
-    /// force the same cover to be decoded again. The generation stamped on the
-    /// request therefore gates requests, never retention.
+    /// how long the entry survives. Retention is the budget's decision, never the
+    /// request's, so a card that scrolled out of the window still lands its handle
+    /// and is not opened and decoded a second time.
     ///
     /// The memoized grid rows are invalidated only when the stored key belongs to
     /// the requested window: an entry outside it cannot change a single card, and
@@ -760,7 +751,6 @@ mod tests {
             key: key(path, bucket),
             path: PathBuf::from(path),
             bucket,
-            generation: 0,
         }
     }
 
@@ -935,7 +925,6 @@ mod tests {
             },
             path: missing,
             bucket: 160,
-            generation: 7,
         };
 
         assert!(request_cover_decode(request.clone()));
@@ -945,7 +934,6 @@ mod tests {
             .expect("el worker no devolvió un resultado");
 
         assert_eq!(outcome.key, request.key);
-        assert_eq!(outcome.generation, request.generation);
         assert!(outcome.handle.is_none());
         assert!(outcome.error.is_some());
         assert_eq!(outcome.bytes, 0);

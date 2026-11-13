@@ -118,9 +118,6 @@ pub struct LibraryManager {
     /// refreshed on every rescale and resize, and the bucket multiplies the
     /// rendered cover size by it before rounding up.
     pub scale_factor: f32,
-    /// Scroll counter stamped on every decode request, so a stale result can be
-    /// told apart from one belonging to the current scroll.
-    pub scroll_generation: u64,
     /// Sign of the last scroll delta: `1.0` downward, `-1.0` upward, `0.0` at rest.
     ///
     /// The look-ahead band is placed on this side of the viewport.
@@ -214,7 +211,6 @@ impl Default for LibraryManager {
             cover_store: super::cover_cache::CoverStore::default(),
             cached_grid_rows: std::cell::RefCell::new(None),
             scale_factor: 1.0,
-            scroll_generation: 0,
             scroll_direction: 0.0,
             last_scroll_at: None,
             prefetch_scheduled: false,

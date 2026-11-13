@@ -533,37 +533,33 @@ fn test_cover_prefetch_discards_stale_generation() {
     let metrics = grid_metrics(800.0);
     let mut manager = manager_with_albums(4);
     manager.grid_metrics.set(metrics);
-    manager.scroll_generation = 4;
 
-    // A request pass stamps every job with the generation current at that
-    // moment, so no request can go out carrying an outdated one.
-    let stale = manager.window_jobs(0.0, 800.0);
-    assert_eq!(stale.len(), 4, "la ventana pide una carátula por tarjeta");
-    assert!(stale.iter().all(|job| job.generation == 4));
+    // The first pass queues the covers the viewport draws. The request-side
+    // dedup is what replaced the per-request epoch: a key already queued is
+    // skipped, so a later pass over the same rows cannot open the same file
+    // twice.
+    let first = manager.window_jobs(0.0, 800.0);
+    assert_eq!(first.len(), 4, "la ventana pide una carátula por tarjeta");
 
     let mut enqueued = 0;
     assert_eq!(
-        manager.request_jobs_with(stale, |_| {
+        manager.request_jobs_with(first, |_| {
             enqueued += 1;
             true
         }),
         4
     );
 
-    // The scroll moves on before the workers answer. The keys are still in
-    // flight, so the newer pass discards them instead of requesting them under
-    // the new generation.
-    manager.scroll_generation = 5;
-    let fresh = manager.window_jobs(0.0, 800.0);
-    assert!(fresh.iter().all(|job| job.generation == 5));
-
+    // A pass that repeats the request while the decodes are still in flight
+    // discards every key: the cards are already on their way.
+    let again = manager.window_jobs(0.0, 800.0);
     assert_eq!(
-        manager.request_jobs_with(fresh, |_| {
+        manager.request_jobs_with(again, |_| {
             enqueued += 1;
             true
         }),
         0,
-        "una solicitud en vuelo no se repite con la generación nueva"
+        "una solicitud en vuelo no se repite"
     );
     assert_eq!(enqueued, 4);
 }
@@ -574,25 +570,27 @@ fn test_stale_generation_outcome_is_retained() {
     clear_negative_cover_cache();
 
     let metrics = grid_metrics(800.0);
-    let mut manager = manager_with_albums(4);
+    let mut manager = manager_with_albums(64);
     manager.grid_metrics.set(metrics);
 
     let requested = manager.window_jobs(0.0, 800.0);
-    assert_eq!(
-        requested.len(),
-        4,
+    assert!(
+        !requested.is_empty(),
         "la ventana pide una carátula por tarjeta"
     );
     let first = requested[0].clone();
-    let generation_at_request = manager.scroll_generation;
 
-    // The scroll keeps moving while the worker decodes, so the answer comes
-    // back stamped with a generation the manager has already left behind.
-    manager.scroll_generation += 3;
+    // The viewport moves on while the worker decodes, so the answer arrives for
+    // a card the visible window no longer draws.
+    manager.scroll_offset = iced::Vector::new(0.0, 800.0);
+    let moved = manager.window_jobs(800.0, 800.0);
+    assert!(
+        !moved.iter().any(|job| job.key == first.key),
+        "la tarjeta de la primera ventana ya no está en la segunda"
+    );
 
     let outcome = CoverDecodeOutcome {
         key: first.key.clone(),
-        generation: generation_at_request,
         handle: Some(fake_handle(2, 2)),
         bytes: 2 * 2 * 4,
         error: None,
@@ -600,7 +598,7 @@ fn test_stale_generation_outcome_is_retained() {
 
     assert!(
         manager.apply_cover_decoded(outcome),
-        "una decodificación terminada se conserva aunque la generación haya avanzado"
+        "una decodificación terminada se conserva aunque su tarjeta haya salido de la ventana"
     );
     assert!(
         manager
@@ -609,11 +607,13 @@ fn test_stale_generation_outcome_is_retained() {
         "el handle decodificado debe quedar en el almacén"
     );
 
-    // The retained handle answers every later pass for that card, so the file
-    // is never opened and decoded a second time.
+    // Back at the original viewport the retained handle answers its card, so the
+    // file is never opened and decoded a second time: only the covers that are
+    // still missing are queued.
+    manager.scroll_offset = iced::Vector::new(0.0, 0.0);
     let mut requested_again = 0;
-    let jobs = manager.window_jobs(0.0, 800.0);
-    let accepted = manager.request_jobs_with(jobs, |job| {
+    let job_count = manager.window_jobs(0.0, 800.0).len();
+    let accepted = manager.request_jobs_with(manager.window_jobs(0.0, 800.0), |job| {
         if job.key == first.key {
             requested_again += 1;
         }
@@ -624,7 +624,11 @@ fn test_stale_generation_outcome_is_retained() {
         requested_again, 0,
         "una carátula retenida no se vuelve a pedir"
     );
-    assert_eq!(accepted, 3, "solo las tres carátulas que faltan se encolan");
+    assert_eq!(
+        accepted,
+        job_count - 1,
+        "solo las carátulas que faltan se encolan"
+    );
 }
 
 #[test]
@@ -740,7 +744,6 @@ fn test_memo_not_invalidated_by_off_window_decode() {
     // and the memoized rows are untouched, because they never drew it.
     let off_window = CoverDecodeOutcome {
         key: key("covers/off-window.avif", 160),
-        generation: manager.scroll_generation,
         handle: Some(fake_handle(2, 2)),
         bytes: 2 * 2 * 4,
         error: None,
@@ -761,7 +764,6 @@ fn test_memo_not_invalidated_by_off_window_decode() {
     // A handle the window does draw does change them.
     let drawn = CoverDecodeOutcome {
         key: jobs[0].key.clone(),
-        generation: manager.scroll_generation,
         handle: Some(fake_handle(2, 2)),
         bytes: 2 * 2 * 4,
         error: None,
@@ -952,7 +954,6 @@ fn test_failed_decode_does_not_request_the_window_again() {
 
     let failed = CoverDecodeOutcome {
         key: failed_key.clone(),
-        generation: manager.scroll_generation,
         handle: None,
         bytes: 0,
         error: Some("the file has not been written yet".to_string()),

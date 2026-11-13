@@ -552,19 +552,21 @@ impl crate::gui::app::AudoxidyApp {
                     self.library_manager.apply_filter();
                 }
 
-                // Both branches replace the rows the viewport draws, and the mode
-                // also changes the decode bucket, so the window is requested for
-                // the view that is about to render. The search branch requests it
-                // again when its result arrives.
-                self.library_manager.request_cover_window();
-
                 // Liberar solo datos del Grid que no necesitamos en lista
                 self.library_manager.expanded_album = None;
                 self.library_manager.expanded_album_songs = None;
 
                 // Forzar scroll al inicio al cambiar de vista (a pedido del usuario)
-                self.library_manager.last_viewport = None;
                 self.library_manager.scroll_offset = iced::Vector::new(0.0, 0.0);
+
+                // Both branches replace the rows the viewport draws, and the mode
+                // also changes the decode bucket, so the window is requested for
+                // the top of the view that is about to render, at the height the
+                // current viewport reports. The search branch requests it again
+                // when its result arrives.
+                self.library_manager.request_cover_window();
+
+                self.library_manager.last_viewport = None;
 
                 tasks.push(scroll_to(
                     crate::gui::library::LIBRARY_SCROLL_ID.clone(),

@@ -8,6 +8,9 @@ pub struct SongData {
     pub folder_id: i64,
     pub artist_id: i64,
     pub album_id: i64,
+    /// Identity of the album row (`ALBUMS.hash_id`), carried so a view groups
+    /// two versions that share a title and artist as separate albums.
+    pub album_hash: Option<std::sync::Arc<str>>,
     pub full_file_path: std::sync::Arc<str>,
     pub title: Option<std::sync::Arc<str>>,
     pub artist: Option<std::sync::Arc<str>>,

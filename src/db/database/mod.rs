@@ -172,6 +172,42 @@ mod fts_tests {
         assert!(db.search_songs("   ").unwrap().is_empty());
     }
 
+    /// Every song read path carries the album row identity a view groups by.
+    #[test]
+    fn test_song_rows_carry_the_album_identity() {
+        let mut db = Database::new_memory().unwrap();
+        seed_song(&mut db, "/music/identity.flac", "Identity", "Artist");
+
+        let expected = db
+            .get_all_albums()
+            .unwrap()
+            .first()
+            .map(|album| album.0.clone())
+            .expect("la canción sembrada tiene un álbum");
+
+        for songs in [
+            db.get_all_songs().unwrap(),
+            db.search_songs("Ident").unwrap(),
+            db.get_library_songs_filtered(&LibrarySearchParams::default())
+                .unwrap(),
+            db.get_songs_by_album(&expected).unwrap(),
+            db.get_songs_by_album_and_artist(&expected, "Artist")
+                .unwrap(),
+        ] {
+            assert_eq!(songs.len(), 1, "cada consulta devuelve la canción sembrada");
+            assert_eq!(
+                songs[0].album_hash.as_deref(),
+                Some(expected.as_str()),
+                "la fila lleva el hash del álbum, no su título visible"
+            );
+            assert_ne!(
+                songs[0].album_hash.as_deref(),
+                songs[0].album.as_deref(),
+                "la identidad del álbum no es el título"
+            );
+        }
+    }
+
     #[test]
     fn test_filtered_search_operator_input_never_errors() {
         let mut db = Database::new_memory().unwrap();

@@ -91,18 +91,18 @@ impl LibraryManager {
         let mut total_content_h = 0.0;
         let mut global_song_idx = 0;
 
-        // Crear mapa de búsqueda de álbumes para evitar O(N^2)
-        let mut album_hash_map = std::collections::HashMap::new();
-        // Album cards need their cover path resolved once per snapshot; album ids
-        // are unique, so the map is keyed by id rather than by display title.
+        // Album cards need their cover path resolved once per snapshot. The album
+        // hash is the identity the rows group by, so the path map is keyed by it:
+        // two versions that share a title and an artist stay two albums.
         let mut album_path_map: std::collections::HashMap<String, Option<String>> =
             std::collections::HashMap::new();
-        // Identity list per (artist, title): more than one id is a title collision.
+        // Identity list per (artist, title), used only by a snapshot that predates
+        // `album_hash`: more than one id means the title alone cannot say which
+        // version a block belongs to.
         let mut album_key_ids: std::collections::HashMap<(String, String), Vec<String>> =
             std::collections::HashMap::new();
         if let Some(albums_cache) = &self.cached_albums {
             for alb in albums_cache {
-                album_hash_map.insert((alb.artist.clone(), alb.title.clone()), alb.id.clone());
                 album_path_map
                     .entry(alb.id.clone())
                     .or_insert_with(|| alb.cover_path.clone());
@@ -130,6 +130,10 @@ impl LibraryManager {
         for group in groups {
             let is_artist_collapsed = self.collapsed_artists.contains(&group.name);
             let mut albums_map: Vec<LibraryAlbumGroup> = Vec::new();
+            // Album index per identity, so a song appends to the group its album
+            // already opened even when two versions' rows interleave.
+            let mut group_index: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
 
             // Agrupar canciones por álbum conservando el orden O(N)
             for song in &group.songs {
@@ -139,27 +143,36 @@ impl LibraryManager {
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| "Desconocido".to_string());
 
-                if let Some(last_alb) = albums_map.last_mut() {
-                    if last_alb.album_name == alb_name {
-                        last_alb.duration_secs += song.duration_secs.unwrap_or(0.0);
-                        last_alb.songs.push((song.clone(), global_song_idx));
-                        global_song_idx += 1;
-                        continue;
-                    }
-                }
-
+                let song_album_hash = song.album_hash.as_deref();
                 let album_key = (group.name.clone(), alb_name.clone());
-                let album_hash = album_hash_map
-                    .get(&album_key)
-                    .cloned()
+
+                // The row's album hash is the identity the grid uses; a snapshot
+                // that predates the field falls back to the display title.
+                let identity = song_album_hash
+                    .map(str::to_owned)
+                    .or_else(|| {
+                        album_key_ids
+                            .get(&album_key)
+                            .and_then(|ids| ids.first())
+                            .cloned()
+                    })
                     .unwrap_or_else(|| alb_name.clone());
 
-                // Two albums with the same title and artist cannot be told apart by
-                // the grouping key, so the card uses the already-resolved path of
-                // its first song instead of guessing the album row's path.
-                let ambiguous_title = album_key_ids
-                    .get(&album_key)
-                    .is_some_and(|ids| ids.len() > 1);
+                if let Some(&index) = group_index.get(&identity) {
+                    let album = &mut albums_map[index];
+                    album.duration_secs += song.duration_secs.unwrap_or(0.0);
+                    album.songs.push((song.clone(), global_song_idx));
+                    global_song_idx += 1;
+                    continue;
+                }
+
+                // A snapshot without the hash cannot tell two albums with the same
+                // title and artist apart, so the card uses the already-resolved
+                // path of its first song instead of guessing the album row's path.
+                let ambiguous_title = song_album_hash.is_none()
+                    && album_key_ids
+                        .get(&album_key)
+                        .is_some_and(|ids| ids.len() > 1);
                 if ambiguous_title {
                     tracing::debug!(
                         artist = %group.name,
@@ -174,7 +187,7 @@ impl LibraryManager {
                         .map(str::to_owned)
                 } else {
                     album_path_map
-                        .get(&album_hash)
+                        .get(&identity)
                         .cloned()
                         .flatten()
                         .or_else(|| {
@@ -184,9 +197,10 @@ impl LibraryManager {
                         })
                 };
 
+                group_index.insert(identity.clone(), albums_map.len());
                 albums_map.push(LibraryAlbumGroup {
                     album_name: alb_name,
-                    album_hash,
+                    album_hash: identity,
                     cover_path,
                     songs: vec![(song.clone(), global_song_idx)],
                     duration_secs: song.duration_secs.unwrap_or(0.0),

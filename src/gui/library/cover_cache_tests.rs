@@ -1708,3 +1708,108 @@ fn test_sweep_guard_ignores_read_only_decodes() {
         "el contador de decodificaciones sigue disponible para las métricas"
     );
 }
+
+/// Two album versions that share a title and an artist stay two blocks.
+///
+/// The row's album hash is the identity, so a remaster in another folder keeps
+/// its own card and its own cover instead of merging into the first version's.
+#[test]
+fn test_same_title_versions_stay_separate() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let version_song = |index: i64, album_hash: &str, cover: &str| {
+        let mut song = SongData::default();
+        song.id = index;
+        song.title = Some(Arc::from(format!("Song {index}").into_boxed_str()));
+        song.artist = Some(Arc::from("Artist"));
+        song.album = Some(Arc::from("Album 0"));
+        song.album_hash = Some(Arc::from(album_hash));
+        song.compressed_cached_cover_root = Some(Arc::from(cover));
+        Arc::new(song)
+    };
+
+    // Both versions are "Album 0" by "Artist", and their rows interleave, which is
+    // the shape the title-only grouping merged into a single card.
+    let songs = vec![
+        version_song(1, "album-first", "covers/first.avif"),
+        version_song(2, "album-last", "covers/last.avif"),
+        version_song(3, "album-first", "covers/first.avif"),
+        version_song(4, "album-last", "covers/last.avif"),
+    ];
+
+    let mut manager = LibraryManager::default();
+    manager.artist_groups = vec![ArtistGroup {
+        name: "Artist".to_string(),
+        albums_count: 2,
+        songs_count: songs.len(),
+        songs,
+        duration_secs: 0.0,
+    }];
+    manager.cached_albums = Some(vec![
+        AlbumEntry {
+            id: "album-first".to_string(),
+            title: "Album 0".to_string(),
+            artist: "Artist".to_string(),
+            genre: "Genre".to_string(),
+            year: "2024".to_string(),
+            cover_path: Some("covers/first.avif".to_string()),
+        },
+        AlbumEntry {
+            id: "album-last".to_string(),
+            title: "Album 0".to_string(),
+            artist: "Artist".to_string(),
+            genre: "Genre".to_string(),
+            year: "2025".to_string(),
+            cover_path: Some("covers/last.avif".to_string()),
+        },
+    ]);
+    manager.view_mode = LibraryViewMode::DetailedList;
+
+    let (_, structure) = manager.get_view_structure();
+    let albums = &structure
+        .first()
+        .expect("el artista de las dos versiones existe")
+        .albums;
+
+    assert_eq!(
+        albums.len(),
+        2,
+        "dos versiones con el mismo título y artista son dos álbumes"
+    );
+    assert_eq!(
+        albums
+            .iter()
+            .map(|album| album.album_hash.as_str())
+            .collect::<Vec<_>>(),
+        vec!["album-first", "album-last"],
+        "cada bloque usa el hash de su propia versión"
+    );
+    assert_eq!(
+        albums[0].cover_path.as_deref(),
+        Some("covers/first.avif"),
+        "la primera versión conserva su portada"
+    );
+    assert_eq!(
+        albums[1].cover_path.as_deref(),
+        Some("covers/last.avif"),
+        "la segunda versión conserva la suya"
+    );
+    assert_eq!(albums[0].songs.len(), 2);
+    assert_eq!(albums[1].songs.len(), 2);
+
+    let (_, _, _, rows, _) = manager.visible_rows_at(0.0, 800.0);
+    let covers: Vec<Option<String>> = rows
+        .iter()
+        .filter_map(|row| match row {
+            LibraryVirtualRow::AlbumBlock { cover_path, .. } => Some(cover_path.clone()),
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(covers.len(), 2, "el detalle pinta una tarjeta por versión");
+    assert_ne!(
+        covers[0], covers[1],
+        "cada tarjeta dibuja la portada de su propia versión"
+    );
+}

@@ -21,7 +21,7 @@ impl Database {
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
-                   al.genre, al.year, al_ar.name
+                   al.genre, al.year, al_ar.name, al.hash_id
             FROM SONGS_FTS f
             JOIN SONGS s ON f.rowid = s.id
             JOIN ARTISTS ar ON s.artist_id = ar.id
@@ -80,6 +80,9 @@ impl Database {
             song.album_artist = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(18)?.as_deref(),
             );
+            song.album_hash = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(19)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
@@ -98,7 +101,7 @@ impl Database {
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
-                   al.genre, al.year, al_ar.name
+                   al.genre, al.year, al_ar.name, al.hash_id
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
@@ -120,7 +123,9 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
-            song.album_id = 0; // Se puede añadir al SELECT si es crítico, por ahora 0 es seguro
+            // The row identity the views group by travels as `album_hash`; no
+            // reader consumes the integer album id, so it stays unset here.
+            song.album_id = 0;
             let album_cover = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(14)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
@@ -154,6 +159,9 @@ impl Database {
             );
             song.album_artist = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(18)?.as_deref(),
+            );
+            song.album_hash = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(19)?.as_deref(),
             );
             Ok(Arc::new(song))
         })?;
@@ -304,7 +312,7 @@ impl Database {
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
-                   al.genre, al.year, al_ar.name
+                   al.genre, al.year, al_ar.name, al.hash_id
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
@@ -360,6 +368,9 @@ impl Database {
             song.album_artist = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(18)?.as_deref(),
             );
+            song.album_hash = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(19)?.as_deref(),
+            );
             Ok(Arc::new(song))
         })?;
 
@@ -382,7 +393,7 @@ impl Database {
             SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.embedded_cover, s.cover_override, s.import_order,
-                   al.genre, al.year, al_ar.name
+                   al.genre, al.year, al_ar.name, al.hash_id
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
@@ -437,6 +448,9 @@ impl Database {
             );
             song.album_artist = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(18)?.as_deref(),
+            );
+            song.album_hash = crate::utils::interner::intern_string_opt(
+                row.get::<_, Option<String>>(19)?.as_deref(),
             );
             Ok(Arc::new(song))
         })?;
@@ -657,7 +671,7 @@ impl Database {
                    ar.name as artist_name, al.title as album_title, al.year, al.genre,
                    s.track_num, s.duration, s.format, s.bit_depth, s.sample_rate,
                    s.size, s.channels, s.embedded_cover, s.cover_override, s.import_order,
-                   al.cover_path, aar.name as album_artist_name
+                   al.cover_path, aar.name as album_artist_name, al.hash_id
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
@@ -726,6 +740,9 @@ impl Database {
                 folder_id: r.get(1)?,
                 artist_id: r.get(2)?,
                 album_id: r.get(3)?,
+                album_hash: crate::utils::interner::intern_string_opt(
+                    r.get::<_, Option<String>>(22)?.as_deref(),
+                ),
                 full_file_path: crate::utils::interner::intern_string(&r.get::<_, String>(4)?),
                 title: crate::utils::interner::intern_string_opt(
                     r.get::<_, Option<String>>(5)?.as_deref(),

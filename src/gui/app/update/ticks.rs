@@ -373,7 +373,7 @@ impl crate::gui::app::AudoxidyApp {
             cover_key_lookups = cover_io.key_lookups,
             cover_evictions = cover_io.evictions,
             cover_cache_bytes = cover_io.cache_bytes,
-            cover_work_in_flight = cover_io.in_flight,
+            cover_work_in_flight = crate::gui::library::cover_cache::cover_work_in_flight(),
             "cover io"
         );
 

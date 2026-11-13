@@ -248,10 +248,14 @@ fn test_override_only_when_image_differs() {
         "el override guarda el hash puro del contenido"
     );
 
-    let album_path =
-        album_cover_path(&db, "Merged Album").expect("el álbum debe tener una carátula almacenada");
-    let effective = effective_cover_path(Some(&album_path), Some(stored_hash), overridden.id)
-        .expect("un override siempre resuelve una ruta");
+    let album_hash = album_hash_id(&db, "Merged Album");
+    let effective = effective_cover_path(
+        Some(&album_hash),
+        Some(album_picture),
+        Some(stored_hash),
+        overridden.id,
+    )
+    .expect("un override siempre resuelve una ruta");
     let effective_file_name = Path::new(&effective)
         .file_name()
         .and_then(|name| name.to_str())
@@ -322,8 +326,7 @@ fn test_song_cover_file_name_embeds_owner_and_content_hash() {
     assert_ne!(file_name, other);
 
     // The resolved path the read layer hands out ends in this same file name.
-    let album_path = "album-hash-cover-hash.avif";
-    let resolved = effective_cover_path(Some(album_path), Some(cover_hash), 42)
+    let resolved = effective_cover_path(Some("aa11bb22"), Some("cc33dd44"), Some(cover_hash), 42)
         .expect("un override siempre resuelve una ruta");
     assert_eq!(
         Path::new(&resolved)

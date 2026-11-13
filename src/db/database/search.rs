@@ -20,8 +20,8 @@ impl Database {
             SELECT pi.id, pi.song_id, pi.sequence_order, pi.enabled = 1,
                    s.title, ar.name, al.title, al_ar.name,
                    al.year, al.genre, s.track_num, s.duration, s.file_path,
-                   al.cover_path, s.cover_override,
-                   f.path, f.name
+                   al.cover_hash, s.cover_override,
+                   f.path, f.name, al.hash_id
             FROM PLAYLIST_ITEMS pi
             JOIN SONGS s ON s.id = pi.song_id
             JOIN ALBUMS al ON al.id = s.album_id
@@ -43,9 +43,12 @@ impl Database {
             let artist_val: Option<String> = r.get(5)?;
             let album_val: Option<String> = r.get(6)?;
             let override_hash = r.get::<_, Option<String>>(14)?;
+            let album_cover_hash = r.get::<_, Option<String>>(13)?;
+            let album_hash = r.get::<_, Option<String>>(17)?;
             let song_id: i64 = r.get(1)?;
             let cover_path = crate::utils::covers::effective_cover_path(
-                r.get::<_, Option<String>>(13)?.as_deref(),
+                album_hash.as_deref(),
+                album_cover_hash.as_deref(),
                 override_hash.as_deref(),
                 song_id,
             );

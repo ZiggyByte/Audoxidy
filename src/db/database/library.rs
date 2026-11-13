@@ -18,7 +18,7 @@ impl Database {
 
         let mut stmt = self.conn.prepare(
             "
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_hash,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name, al.hash_id
@@ -46,11 +46,13 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
-            let album_cover = row.get::<_, Option<String>>(5)?;
+            let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
+            let album_hash = row.get::<_, Option<String>>(18)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
                 crate::utils::covers::effective_cover_path(
-                    album_cover.as_deref(),
+                    album_hash.as_deref(),
+                    album_cover_hash.as_deref(),
                     override_hash.as_deref(),
                     song.id,
                 )
@@ -97,7 +99,7 @@ impl Database {
     /// Obtiene todas las canciones de la biblioteca (no externas) ordenadas.
     pub fn get_all_songs(&self) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_hash,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name, al.hash_id
@@ -125,11 +127,13 @@ impl Database {
             // The row identity the views group by travels as `album_hash`; no
             // reader consumes the integer album id, so it stays unset here.
             song.album_id = 0;
-            let album_cover = row.get::<_, Option<String>>(5)?;
+            let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
+            let album_hash = row.get::<_, Option<String>>(18)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
                 crate::utils::covers::effective_cover_path(
-                    album_cover.as_deref(),
+                    album_hash.as_deref(),
+                    album_cover_hash.as_deref(),
                     override_hash.as_deref(),
                     song.id,
                 )
@@ -178,7 +182,7 @@ impl Database {
         &self,
     ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
-            SELECT DISTINCT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
+            SELECT DISTINCT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_hash
             FROM ALBUMS al
             JOIN ARTISTS ar ON al.artist_id = ar.id
             JOIN SONGS s ON s.album_id = al.id
@@ -187,13 +191,19 @@ impl Database {
         ")?;
 
         let rows = stmt.query_map([], |row| {
+            let album_hash: String = row.get(0)?;
+            let cover_hash: Option<String> = row.get(5)?;
+            let cover_path = crate::utils::covers::album_cover_path(
+                Some(album_hash.as_str()),
+                cover_hash.as_deref(),
+            );
             Ok((
-                row.get(0)?,
+                album_hash,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3).unwrap_or_default(),
                 row.get(4).unwrap_or_default(),
-                row.get(5)?,
+                cover_path,
             ))
         })?;
 
@@ -212,7 +222,7 @@ impl Database {
         &self,
     ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
         let mut stmt = self.conn.prepare("
-            SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_path
+            SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_hash
             FROM ALBUMS al
             JOIN ARTISTS ar ON al.artist_id = ar.id
             JOIN SONGS s ON s.album_id = al.id
@@ -222,13 +232,19 @@ impl Database {
         ")?;
 
         let rows = stmt.query_map([], |row| {
+            let album_hash: String = row.get(0)?;
+            let cover_hash: Option<String> = row.get(5)?;
+            let cover_path = crate::utils::covers::album_cover_path(
+                Some(album_hash.as_str()),
+                cover_hash.as_deref(),
+            );
             Ok((
-                row.get(0)?,
+                album_hash,
                 row.get(1)?,
                 row.get(2)?,
                 row.get(3).unwrap_or_default(),
                 row.get(4).unwrap_or_default(),
-                row.get(5)?,
+                cover_path,
             ))
         })?;
 
@@ -307,7 +323,7 @@ impl Database {
     /// Obtiene las canciones de un álbum específico por su hash.
     pub fn get_songs_by_album(&self, album_hash_id: &str) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_hash,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name, al.hash_id
@@ -332,11 +348,13 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
-            let album_cover = row.get::<_, Option<String>>(5)?;
+            let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
+            let album_hash = row.get::<_, Option<String>>(18)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
                 crate::utils::covers::effective_cover_path(
-                    album_cover.as_deref(),
+                    album_hash.as_deref(),
+                    album_cover_hash.as_deref(),
                     override_hash.as_deref(),
                     song.id,
                 )
@@ -387,7 +405,7 @@ impl Database {
         artist_name: &str,
     ) -> Result<Vec<Arc<SongData>>> {
         let mut stmt = self.conn.prepare("
-            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_path,
+            SELECT s.id, s.file_path, s.title, ar.name, al.title, al.cover_hash,
                    s.duration, s.format, s.size, s.track_num, s.bit_depth, s.sample_rate,
                    s.channels, s.cover_override, s.import_order,
                    al.genre, al.year, al_ar.name, al.hash_id
@@ -412,11 +430,13 @@ impl Database {
             song.album = crate::utils::interner::intern_string_opt(
                 row.get::<_, Option<String>>(4)?.as_deref(),
             );
-            let album_cover = row.get::<_, Option<String>>(5)?;
+            let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
+            let album_hash = row.get::<_, Option<String>>(18)?;
             song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
                 crate::utils::covers::effective_cover_path(
-                    album_cover.as_deref(),
+                    album_hash.as_deref(),
+                    album_cover_hash.as_deref(),
                     override_hash.as_deref(),
                     song.id,
                 )
@@ -667,7 +687,7 @@ impl Database {
                    ar.name as artist_name, al.title as album_title, al.year, al.genre,
                    s.track_num, s.duration, s.format, s.bit_depth, s.sample_rate,
                    s.size, s.channels, s.cover_override, s.import_order,
-                   al.cover_path, aar.name as album_artist_name, al.hash_id
+                   al.cover_hash, aar.name as album_artist_name, al.hash_id
             FROM SONGS s
             JOIN ARTISTS ar ON s.artist_id = ar.id
             JOIN ALBUMS al ON s.album_id = al.id
@@ -724,9 +744,11 @@ impl Database {
         let rows = stmt.query_map(query_params.as_slice(), |r| {
             let song_id: i64 = r.get(0)?;
             let override_hash = r.get::<_, Option<String>>(17)?;
-            let album_cover = r.get::<_, Option<String>>(19)?;
+            let album_cover_hash = r.get::<_, Option<String>>(19)?;
+            let album_hash = r.get::<_, Option<String>>(21)?;
             let cover_path = crate::utils::covers::effective_cover_path(
-                album_cover.as_deref(),
+                album_hash.as_deref(),
+                album_cover_hash.as_deref(),
                 override_hash.as_deref(),
                 song_id,
             );
@@ -736,9 +758,7 @@ impl Database {
                 folder_id: r.get(1)?,
                 artist_id: r.get(2)?,
                 album_id: r.get(3)?,
-                album_hash: crate::utils::interner::intern_string_opt(
-                    r.get::<_, Option<String>>(21)?.as_deref(),
-                ),
+                album_hash: crate::utils::interner::intern_string_opt(album_hash.as_deref()),
                 full_file_path: crate::utils::interner::intern_string(&r.get::<_, String>(4)?),
                 title: crate::utils::interner::intern_string_opt(
                     r.get::<_, Option<String>>(5)?.as_deref(),

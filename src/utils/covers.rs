@@ -351,22 +351,54 @@ pub fn song_cover_file_name(song_id: i64, cover_hash: &str) -> Result<String, Co
     song_cover_stem(song_id, cover_hash).map(|stem| format!("{stem}.avif"))
 }
 
+/// Complete cached path of an album's own cover, or `None` when it has none.
+///
+/// Both arguments are content hashes — the album identity and the picture digest
+/// — never paths. The file name is composed by [`album_cover_file_name`] and
+/// joined to the injected cache directory, so a row can only ever name a file
+/// inside that directory. An absent or empty hash yields `None`, and a hash the
+/// naming helper refuses yields `None` instead of a partial path.
+pub fn album_cover_path(album_hash: Option<&str>, cover_hash: Option<&str>) -> Option<String> {
+    let album_hash = album_hash.filter(|hash| !hash.is_empty())?;
+    let cover_hash = cover_hash.filter(|hash| !hash.is_empty())?;
+
+    match album_cover_file_name(album_hash, cover_hash) {
+        Ok(file_name) => Some(
+            crate::utils::paths::get()
+                .cover_cache_dir
+                .join(file_name)
+                .to_string_lossy()
+                .into_owned(),
+        ),
+        Err(error) => {
+            tracing::warn!(
+                album_hash,
+                error = %error,
+                "An album cover cannot compose a file name from its hashes"
+            );
+            None
+        }
+    }
+}
+
 /// Resolves the one cover path a song row shows.
 ///
 /// A per-song override wins over the album's cover; without one the album path is
-/// returned unchanged. `album_cover_path` is already the complete stored path and
-/// `override_hash` the raw hash kept in `SONGS.cover_override`, so the composed
-/// path is `cover_cache_dir/song-{song_id}-{hash}.avif`. A hash the naming helper
-/// refuses falls back to the album path instead of hiding the album's art.
+/// returned unchanged. Every argument is a content hash — the album identity, the
+/// album's picture digest and the raw hash kept in `SONGS.cover_override` — never
+/// a path, so the composed file is `cover_cache_dir/song-{song_id}-{hash}.avif`.
+/// A hash the naming helper refuses falls back to the album path instead of
+/// hiding the album's art.
 pub fn effective_cover_path(
-    album_cover_path: Option<&str>,
+    album_hash: Option<&str>,
+    album_cover_hash: Option<&str>,
     override_hash: Option<&str>,
     song_id: i64,
 ) -> Option<String> {
-    let album_cover_path = album_cover_path.filter(|path| !path.is_empty());
+    let album_path = album_cover_path(album_hash, album_cover_hash);
 
     let Some(override_hash) = override_hash.filter(|hash| !hash.is_empty()) else {
-        return album_cover_path.map(str::to_owned);
+        return album_path;
     };
 
     match song_cover_file_name(song_id, override_hash) {
@@ -383,7 +415,7 @@ pub fn effective_cover_path(
                 error = %error,
                 "A song cover override cannot compose a file name; using the album cover"
             );
-            album_cover_path.map(str::to_owned)
+            album_path
         }
     }
 }
@@ -1663,11 +1695,43 @@ mod tests {
     }
 
     #[test]
-    fn test_effective_cover_path_override_wins() {
-        let album_path = "cache/covers/album-hash-cover-hash.avif";
+    fn test_album_cover_path_composes_from_hashes() {
+        let album_hash = "aa11bb22";
+        let cover_hash = "cc33dd44";
 
-        let resolved = effective_cover_path(Some(album_path), Some("ab12cd34"), 42)
-            .expect("un override siempre resuelve una ruta");
+        let expected = crate::utils::paths::get()
+            .cover_cache_dir
+            .join(format!("{album_hash}-{cover_hash}.avif"))
+            .to_string_lossy()
+            .into_owned();
+        assert_eq!(
+            album_cover_path(Some(album_hash), Some(cover_hash)),
+            Some(expected),
+            "la ruta del álbum se compone del hash del álbum y el del contenido"
+        );
+
+        assert_eq!(album_cover_path(None, Some(cover_hash)), None);
+        assert_eq!(album_cover_path(Some(album_hash), None), None);
+        assert_eq!(
+            album_cover_path(Some(""), Some(cover_hash)),
+            None,
+            "un hash vacío no compone una ruta"
+        );
+        assert_eq!(
+            album_cover_path(Some(album_hash), Some("../evil")),
+            None,
+            "un hash no hexadecimal no puede escapar del directorio de carátulas"
+        );
+    }
+
+    #[test]
+    fn test_effective_cover_path_override_wins() {
+        let album_hash = "aa11bb22";
+        let cover_hash = "cc33dd44";
+
+        let resolved =
+            effective_cover_path(Some(album_hash), Some(cover_hash), Some("ab12cd34"), 42)
+                .expect("un override siempre resuelve una ruta");
 
         let file_name = Path::new(&resolved)
             .file_name()
@@ -1690,16 +1754,17 @@ mod tests {
 
     #[test]
     fn test_effective_cover_path_falls_back_to_album() {
-        let album_path = "cache/covers/album-hash-cover-hash.avif";
+        let album_path = album_cover_path(Some("aa11bb22"), Some("cc33dd44"))
+            .expect("dos hashes hexadecimales componen la ruta del álbum");
 
         assert_eq!(
-            effective_cover_path(Some(album_path), None, 7),
-            Some(album_path.to_string()),
+            effective_cover_path(Some("aa11bb22"), Some("cc33dd44"), None, 7),
+            Some(album_path.clone()),
             "sin override se muestra la carátula del álbum tal cual"
         );
         assert_eq!(
-            effective_cover_path(Some(album_path), Some(""), 7),
-            Some(album_path.to_string()),
+            effective_cover_path(Some("aa11bb22"), Some("cc33dd44"), Some(""), 7),
+            Some(album_path),
             "un override vacío no es una carátula propia"
         );
     }
@@ -1707,11 +1772,15 @@ mod tests {
     #[test]
     fn test_effective_cover_path_none_when_no_cover() {
         assert_eq!(
-            effective_cover_path(None, None, 1),
+            effective_cover_path(None, None, None, 1),
             None,
             "sin carátula de álbum ni override no hay ruta que mostrar"
         );
-        assert_eq!(effective_cover_path(Some(""), None, 1), None);
+        assert_eq!(effective_cover_path(Some(""), None, None, 1), None);
+        assert!(
+            effective_cover_path(None, None, Some("ab12cd34"), 1).is_some(),
+            "un override compone su ruta aunque el álbum no tenga carátula"
+        );
     }
 
     #[test]

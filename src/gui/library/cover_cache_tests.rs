@@ -1141,7 +1141,7 @@ fn test_requested_band_keys_are_window_protected() {
     manager.scroll_direction = 1.0;
 
     let window_only = manager.window_jobs(0.0, 800.0).len();
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
 
     assert!(
         window_only > 0,
@@ -1172,7 +1172,7 @@ fn test_requested_keys_fit_the_budget() {
     let mut manager = manager_at_1080p(200);
     manager.scroll_direction = 1.0;
 
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
     let bucket = manager.window_bucket() as usize;
     let bucket_bytes = bucket * bucket * 4;
     let requested_bytes = requested.len() * bucket_bytes;
@@ -1207,7 +1207,7 @@ fn test_second_window_request_after_inserts_requests_nothing() {
     // leaves the store in.
     manager.scroll_offset = iced::Vector::new(0.0, 1000.0);
 
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
     assert!(!requested.is_empty(), "la ventana pide carátulas");
 
     let bucket = manager.window_bucket() as usize;
@@ -1236,10 +1236,13 @@ fn test_second_window_request_after_inserts_requests_nothing() {
     );
 
     let mut enqueued = 0;
-    let again = manager.request_cover_window_with(|_| {
-        enqueued += 1;
-        true
-    });
+    let again = manager.request_cover_window_with(
+        |_| {
+            enqueued += 1;
+            true
+        },
+        1.0,
+    );
 
     assert_eq!(
         enqueued, 0,
@@ -1289,7 +1292,7 @@ fn test_band_is_truncated_at_the_budget_ceiling() {
         "el escenario debe exceder el techo: {window_only} + {band_only} > {ceiling_entries}"
     );
 
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
 
     assert!(
         requested.len() >= window_only,
@@ -1346,7 +1349,7 @@ fn test_budget_retains_one_screen_behind_the_window() {
 
     let bucket = manager.window_bucket() as usize;
     let bucket_bytes = bucket * bucket * 4;
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
     let budget_entries = manager.cover_store.budget() / bucket_bytes;
 
     assert_eq!(
@@ -1388,7 +1391,7 @@ fn test_band_is_capped_by_the_budget_not_the_ceiling() {
     );
 
     let window_only = manager.window_jobs(0.0, height).len();
-    let requested = manager.request_cover_window_with(|_| true);
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
     let budget_entries = manager.cover_store.budget() / bucket_bytes;
 
     assert_eq!(
@@ -1409,5 +1412,110 @@ fn test_band_is_capped_by_the_budget_not_the_ceiling() {
         requested.len() <= budget_entries,
         "ninguna clave pedida excede el presupuesto: {} > {budget_entries}",
         requested.len()
+    );
+}
+
+/// A scroll event requests exactly the cards the viewport draws.
+///
+/// The band is speculative work: it belongs to the idle prefetch, so a wheel or
+/// trackpad burst must never pay for rows the user has not reached yet.
+#[test]
+fn test_scroll_request_asks_for_the_visible_window_only() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    // A moving gesture has a direction, so a band would exist if the scroll
+    // request asked for one.
+    manager.scroll_direction = 1.0;
+    let metrics = manager.grid_metrics.get();
+    assert!(
+        prefetch_band(&metrics, 200, None, 0, 0.0, 800.0, 1.0, 1.0).is_some(),
+        "el escenario tiene una banda disponible si alguien la pidiera"
+    );
+
+    let window_only: Vec<CoverKey> = manager
+        .window_jobs(0.0, 800.0)
+        .iter()
+        .map(|job| job.key.clone())
+        .collect();
+    let requested = manager.request_cover_window_with(|_| true, 0.0);
+
+    assert!(!window_only.is_empty(), "la ventana pide carátulas");
+    assert_eq!(
+        requested, window_only,
+        "la petición del scroll pide la ventana visible y ninguna fila de más"
+    );
+
+    // The wrapper the scroll handler calls is the visible-only intent, and the
+    // handler uses it instead of the look-ahead one.
+    let source = include_str!("cover_cache.rs");
+    let wrapper_start = source
+        .find("pub fn request_cover_window(&mut self)")
+        .expect("la petición de la ventana visible existe");
+    let wrapper_end = source
+        .find("pub fn request_cover_window_ahead")
+        .expect("la petición con banda existe");
+    assert!(wrapper_start < wrapper_end);
+    assert!(
+        source[wrapper_start..wrapper_end].contains(", 0.0);"),
+        "la petición de la ventana visible no lleva banda"
+    );
+
+    let library = include_str!("../app/update/library.rs");
+    let scroll_arm = &library[library
+        .find("Message::LibraryScroll(offset) =>")
+        .expect("el brazo del scroll existe")
+        ..library
+            .find("Message::FilterScroll(viewport) =>")
+            .expect("el scroll de filtros cierra el brazo")];
+    assert!(
+        scroll_arm.contains("self.library_manager.request_cover_window();"),
+        "el scroll pide la ventana visible"
+    );
+    assert!(
+        !scroll_arm.contains("request_cover_window_ahead"),
+        "el scroll nunca pide la banda de precarga"
+    );
+}
+
+/// The idle prefetch requests the visible window plus the look-ahead band.
+#[test]
+fn test_prefetch_request_adds_the_look_ahead_band() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+
+    let window_only = manager.window_jobs(0.0, 800.0).len();
+    let requested = manager.request_cover_window_with(|_| true, 1.0);
+
+    assert!(window_only > 0, "la ventana pide carátulas");
+    assert!(
+        requested.len() > window_only,
+        "la precarga suma la banda de una pantalla: {} de {window_only}",
+        requested.len()
+    );
+    for key in &requested {
+        assert!(
+            manager.cover_store.is_window(&key.path, key.bucket),
+            "toda clave pedida, banda incluida, queda protegida: {}@{}",
+            key.path,
+            key.bucket
+        );
+    }
+
+    // The prefetch handler is the only caller that looks ahead.
+    let library = include_str!("../app/update/library.rs");
+    let prefetch_arm = &library[library
+        .find("Message::CoverPrefetchDue =>")
+        .expect("el brazo de la precarga existe")
+        ..library
+            .find("Message::LibraryShowPlaying =>")
+            .expect("el mensaje siguiente cierra el brazo")];
+    assert!(
+        prefetch_arm.contains("request_cover_window_ahead("),
+        "la precarga pide la ventana con banda"
     );
 }

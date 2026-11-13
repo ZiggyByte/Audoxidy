@@ -844,7 +844,16 @@ impl crate::gui::app::AudoxidyApp {
                     return scroll_idle_task();
                 }
 
-                self.library_manager.request_cover_window();
+                // Only the settled gesture looks ahead: one screen in the
+                // direction the last scroll moved, half of one in low-resource
+                // mode. The band is speculative work, so a scroll event itself
+                // never requests it.
+                let screens = if crate::utils::is_low_resource() {
+                    0.5
+                } else {
+                    1.0
+                };
+                self.library_manager.request_cover_window_ahead(screens);
                 Task::none()
             }
             Message::LibraryShowPlaying => {

@@ -592,19 +592,33 @@ impl LibraryManager {
     /// Requests the decode of every cover the current viewport shows.
     ///
     /// The visible rows already resolve to a handle; this only asks for the paths
-    /// whose handle is still missing. A full queue drops the request and leaves the
+    /// whose handle is still missing. No look-ahead band is requested: a scroll
+    /// event must not spend decodes on rows the viewport does not draw, and the
+    /// band belongs to [`Self::request_cover_window_ahead`], which only the
+    /// scroll-idle prefetch calls. A full queue drops the request and leaves the
     /// key retryable for the next scroll or decode completion.
     pub fn request_cover_window(&mut self) {
-        self.request_cover_window_with(|job| request_cover_decode(job.clone()));
+        self.request_cover_window_with(|job| request_cover_decode(job.clone()), 0.0);
+    }
+
+    /// Requests the visible window plus a look-ahead band `screens` viewports ahead.
+    ///
+    /// `screens` is the band size in viewports, and `0.0` requests no band at all.
+    /// Only the scroll-idle prefetch looks ahead, and it does so after the gesture
+    /// has stopped; the visible window always keeps its room, so the band can never
+    /// displace a card the viewport draws.
+    pub fn request_cover_window_ahead(&mut self, screens: f32) {
+        self.request_cover_window_with(|job| request_cover_decode(job.clone()), screens);
     }
 
     /// Requests the current window and its look-ahead band through `enqueue`.
     ///
-    /// The visible window is built first and always keeps its room: the band one
-    /// screen ahead in the scroll direction is capped to the entries the retained
-    /// budget can still hold, and skipped when the window fills it. A band key the
-    /// window already requests is left out, so the room is spent on rows the
-    /// viewport does not cover yet.
+    /// `screens` is the band policy: `0.0` requests the visible window only, and a
+    /// positive value places the band that many viewports ahead in the scroll
+    /// direction. The visible window is built first and always keeps its room: the
+    /// band is capped to the entries the retained budget can still hold, and
+    /// skipped when the window fills it. A band key the window already requests is
+    /// left out, so the room is spent on rows the viewport does not cover yet.
     ///
     /// The budget bounds the band, never the clamp alone: the ceiling is a hard cap
     /// on the budget, while the budget is the bytes the store may actually keep. A
@@ -618,9 +632,10 @@ impl LibraryManager {
     /// and decoding the same file forever. `enqueue` is the queue seam: production
     /// passes the global decode queue and a test a counting closure. Returns the
     /// keys the pass asked the store to retain, in request order.
-    pub fn request_cover_window_with(
+    pub(crate) fn request_cover_window_with(
         &mut self,
         enqueue: impl FnMut(&DecodeJob) -> bool,
+        screens: f32,
     ) -> Vec<CoverKey> {
         let height = self
             .last_viewport
@@ -648,11 +663,6 @@ impl LibraryManager {
         let mut jobs = self.window_jobs(self.scroll_offset.y, height);
         let window_len = jobs.len();
 
-        let screens = if crate::utils::is_low_resource() {
-            0.5
-        } else {
-            1.0
-        };
         let albums = self
             .filtered_albums
             .as_ref()

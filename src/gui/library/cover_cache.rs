@@ -601,10 +601,15 @@ impl LibraryManager {
     /// Requests the current window and its look-ahead band through `enqueue`.
     ///
     /// The visible window is built first and always keeps its room: the band one
-    /// screen ahead in the scroll direction is capped to the entries the byte
-    /// ceiling can still hold, and skipped when the window fills it. A band key the
+    /// screen ahead in the scroll direction is capped to the entries the retained
+    /// budget can still hold, and skipped when the window fills it. A band key the
     /// window already requests is left out, so the room is spent on rows the
     /// viewport does not cover yet.
+    ///
+    /// The budget bounds the band, never the clamp alone: the ceiling is a hard cap
+    /// on the budget, while the budget is the bytes the store may actually keep. A
+    /// band sized against the ceiling would protect more keys than the store can
+    /// retain, and the surplus would be evicted and requested again.
     ///
     /// The protected set is the final job set, band included, and the retained-byte
     /// budget is raised to the bytes that set occupies. Both are required for the
@@ -628,16 +633,17 @@ impl LibraryManager {
         let bucket_bytes = (bucket as usize)
             .saturating_mul(bucket as usize)
             .saturating_mul(4);
-        // Retained entries the hard ceiling can pay for at this bucket. The band is
-        // bounded by it, never by the measured capacity alone: the capacity budget
-        // is raised below to cover whatever the pass requests.
-        let ceiling_entries = crate::utils::covers::COVER_BUDGET_MAX_BYTES / bucket_bytes.max(1);
         let capacity = match self.view_mode {
             LibraryViewMode::Grid => {
                 crate::utils::covers::viewport_capacity(metrics.columns, height, metrics.row_height)
             }
             _ => crate::utils::covers::viewport_capacity(1, height, LIST_ROW_HEADER),
         };
+        // The budget is the retention this pass can protect, so it is computed before
+        // the jobs: the window and its band together must fit inside it. The hard
+        // ceiling only clamps the budget; it is not spare room the band may spend.
+        let budget_target = crate::utils::covers::cover_budget_bytes(capacity, bucket);
+        let budget_entries = budget_target / bucket_bytes.max(1);
 
         let mut jobs = self.window_jobs(self.scroll_offset.y, height);
         let window_len = jobs.len();
@@ -670,7 +676,7 @@ impl LibraryManager {
             // already reaches past the viewport. Those keys are already requested
             // and must not spend the band's room.
             let window_keys: HashSet<CoverKey> = jobs.iter().map(|job| job.key.clone()).collect();
-            let room = ceiling_entries.saturating_sub(window_len);
+            let room = budget_entries.saturating_sub(window_len);
 
             jobs.extend(
                 self.window_jobs(band_y, height)
@@ -695,7 +701,7 @@ impl LibraryManager {
         // ceiling so a huge viewport cannot retain an unbounded amount of host RGBA.
         // The visible window wins: the band is what gets truncated, so a set inside
         // the ceiling always fits its own budget.
-        let budget = crate::utils::covers::cover_budget_bytes(capacity, bucket)
+        let budget = budget_target
             .max(jobs.len().saturating_mul(bucket_bytes))
             .clamp(
                 crate::utils::covers::COVER_BUDGET_MIN_BYTES,

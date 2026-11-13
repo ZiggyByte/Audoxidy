@@ -772,16 +772,21 @@ pub const COVER_BUDGET_MIN_BYTES: usize = 8 * 1024 * 1024;
 /// Ceiling for the decoded-cover budget, in bytes.
 pub const COVER_BUDGET_MAX_BYTES: usize = 48 * 1024 * 1024;
 
-/// Budget for decoded covers: two viewports of one bucket, clamped.
+/// Budget for decoded covers: the window, its prefetch band and a scroll-back
+/// cushion of one viewport, clamped.
 ///
-/// The cushion is one extra viewport, so returning inside the retained window
-/// finds its covers still decoded. The clamp keeps a large window from retaining
-/// an unreasonable amount of host RGBA.
+/// The three viewports of one bucket are the visible window, the band the request
+/// pass looks ahead and a cushion behind the viewport that the band does not cover;
+/// without that third screen a short scroll back lands on entries the request pass
+/// already spent the budget on. The clamp keeps a large window from retaining an
+/// unreasonable amount of host RGBA, and it is a hard cap: the request pass reads
+/// the resulting byte count as the retention it may protect, so the ceiling can
+/// never be used as spare room.
 pub fn cover_budget_bytes(capacity: usize, bucket: u32) -> usize {
     let bucket_bytes = (bucket as usize)
         .saturating_mul(bucket as usize)
         .saturating_mul(4);
-    let target = capacity.saturating_mul(2).saturating_mul(bucket_bytes);
+    let target = capacity.saturating_mul(3).saturating_mul(bucket_bytes);
 
     target.clamp(COVER_BUDGET_MIN_BYTES, COVER_BUDGET_MAX_BYTES)
 }
@@ -1423,7 +1428,7 @@ mod tests {
     fn test_cover_budget_bytes_clamps_to_its_bounds() {
         assert_eq!(cover_budget_bytes(1, 32), COVER_BUDGET_MIN_BYTES);
         assert_eq!(cover_budget_bytes(10_000, 400), COVER_BUDGET_MAX_BYTES);
-        assert_eq!(cover_budget_bytes(50, 192), 14_745_600);
+        assert_eq!(cover_budget_bytes(50, 192), 22_118_400);
     }
 
     #[test]

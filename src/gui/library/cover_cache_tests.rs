@@ -283,8 +283,8 @@ fn test_cover_budget_matches_viewport_capacity() {
         "diez columnas de cinco filas llenan el viewport medido"
     );
 
-    assert_eq!(cover_budget_bytes(capacity, 192), 2 * 50 * 192 * 192 * 4);
-    assert_eq!(cover_budget_bytes(capacity, 192), 14_745_600);
+    assert_eq!(cover_budget_bytes(capacity, 192), 3 * 50 * 192 * 192 * 4);
+    assert_eq!(cover_budget_bytes(capacity, 192), 22_118_400);
 }
 
 #[test]
@@ -834,7 +834,8 @@ fn test_grid_window_requests_the_library_minimum_bucket() {
     clear_negative_cover_cache();
 
     // A 1080p window at 1x measures seven columns, and the library viewport fits
-    // four rows, so the retained budget covers two viewport capacities at 220 px.
+    // four rows, so the retained budget covers three viewport capacities at 220 px:
+    // the visible window, its prefetch band and one screen of scroll-back cushion.
     let metrics = grid_metrics(1300.0);
     assert_eq!(metrics.columns, 7, "el ancho medido da siete columnas");
     let capacity = viewport_capacity(metrics.columns, 800.0, metrics.row_height);
@@ -844,8 +845,8 @@ fn test_grid_window_requests_the_library_minimum_bucket() {
     );
     assert_eq!(
         cover_budget_bytes(capacity, 220),
-        10_841_600,
-        "el presupuesto de 1080p a 1x son dos ventanas de 220 px"
+        16_262_400,
+        "el presupuesto de 1080p a 1x son tres ventanas de 220 px"
     );
 
     let mut manager = manager_with_albums(28);
@@ -1323,5 +1324,90 @@ fn test_band_is_truncated_at_the_budget_ceiling() {
     assert!(
         manager.cover_store.budget() >= requested.len() * bucket_bytes,
         "el presupuesto cubre las claves que sí entraron"
+    );
+}
+
+#[test]
+fn test_budget_retains_one_screen_behind_the_window() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    // The window plus its band must not consume the whole budget: a short scroll
+    // back has to land on entries that are still retained.
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+
+    let metrics = manager.grid_metrics.get();
+    let capacity = viewport_capacity(metrics.columns, 800.0, metrics.row_height);
+    assert_eq!(
+        capacity, 28,
+        "cuatro filas de siete tarjetas llenan la ventana"
+    );
+
+    let bucket = manager.window_bucket() as usize;
+    let bucket_bytes = bucket * bucket * 4;
+    let requested = manager.request_cover_window_with(|_| true);
+    let budget_entries = manager.cover_store.budget() / bucket_bytes;
+
+    assert_eq!(
+        budget_entries, 84,
+        "el presupuesto de 1080p retiene tres ventanas a 220 px"
+    );
+    assert!(
+        requested.len() + capacity <= budget_entries,
+        "la ventana y su banda dejan una pantalla de colchón: {} + {capacity} > {budget_entries}",
+        requested.len()
+    );
+}
+
+#[test]
+fn test_band_is_capped_by_the_budget_not_the_ceiling() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    // A viewport tall enough that three screens of entries exceed the 48 MiB clamp at
+    // the album bucket, so the budget lands below three capacities and the band has to
+    // be capped by the budget rather than by the ceiling.
+    let height = 4300.0;
+    let mut manager = manager_at_1080p(600);
+    manager.last_viewport = Some(iced::Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 1300.0,
+        height,
+    });
+    manager.scroll_direction = 1.0;
+
+    let metrics = manager.grid_metrics.get();
+    let capacity = viewport_capacity(metrics.columns, height, metrics.row_height);
+    let bucket = manager.window_bucket() as usize;
+    let bucket_bytes = bucket * bucket * 4;
+    assert!(
+        3 * capacity * bucket_bytes > COVER_BUDGET_MAX_BYTES,
+        "el escenario debe recortar el presupuesto: {capacity} entradas no caben en tres pantallas"
+    );
+
+    let window_only = manager.window_jobs(0.0, height).len();
+    let requested = manager.request_cover_window_with(|_| true);
+    let budget_entries = manager.cover_store.budget() / bucket_bytes;
+
+    assert_eq!(
+        manager.cover_store.budget(),
+        COVER_BUDGET_MAX_BYTES,
+        "el techo es lo que recorta el presupuesto"
+    );
+    assert!(
+        budget_entries < 3 * capacity,
+        "el presupuesto queda por debajo de tres pantallas: {budget_entries} de {}",
+        3 * capacity
+    );
+    assert!(
+        requested.len() > window_only,
+        "la banda entra mientras quede sitio en el presupuesto"
+    );
+    assert!(
+        requested.len() <= budget_entries,
+        "ninguna clave pedida excede el presupuesto: {} > {budget_entries}",
+        requested.len()
     );
 }

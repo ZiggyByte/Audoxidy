@@ -543,10 +543,14 @@ impl LibraryManager {
     /// Stores a decode outcome and returns whether its handle was kept.
     ///
     /// The in-flight mark is always released, so a failed key stays retryable for
-    /// the next request. A successful handle is kept only when it belongs to the
-    /// current scroll generation or the window still needs its key; an outcome
-    /// one generation older is superseded and dropped, so a fast scroll cannot
-    /// churn the store with entries nothing shows.
+    /// the next request. A successful handle is always stored: the decode already
+    /// paid for its file open and its pixels, and the retained-byte budget decides
+    /// how long the entry survives, so a scroll that outran the decoder can never
+    /// force the same cover to be decoded again. The generation stamped on the
+    /// request therefore gates requests, never retention.
+    ///
+    /// The memoized grid rows carry the handles the layout pass resolved, so a
+    /// new one changes the rows the next layout pass receives.
     pub fn apply_cover_decoded(&mut self, outcome: CoverDecodeOutcome) -> bool {
         self.cover_store.clear_in_flight(&outcome.key);
 
@@ -561,19 +565,11 @@ impl LibraryManager {
             return false;
         };
 
-        if outcome.generation != self.scroll_generation
-            && !self
-                .cover_store
-                .is_window(&outcome.key.path, outcome.key.bucket)
-        {
-            return false;
-        }
-
         self.cover_store
             .insert_handle(outcome.key, handle, outcome.bytes);
-        // The grid rows carry the resolved handles, so a new one changes the
-        // rows the next layout pass receives.
+
         self.cached_grid_rows.replace(None);
+
         self.cover_store.evict_to_budget();
 
         true

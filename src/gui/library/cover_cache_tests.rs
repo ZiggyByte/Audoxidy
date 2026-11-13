@@ -528,38 +528,103 @@ fn test_cover_prefetch_dedups_in_flight() {
 #[test]
 fn test_cover_prefetch_discards_stale_generation() {
     let _guard = global_guard();
+    clear_negative_cover_cache();
 
-    let mut manager = LibraryManager::default();
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(4);
+    manager.grid_metrics.set(metrics);
     manager.scroll_generation = 4;
-    manager
-        .cover_store
-        .set_window(vec![("covers/window.avif".to_string(), 160)]);
 
-    let outcome = |path: &str, generation: u64| CoverDecodeOutcome {
-        key: key(path, 160),
-        generation,
+    // A request pass stamps every job with the generation current at that
+    // moment, so no request can go out carrying an outdated one.
+    let stale = manager.window_jobs(0.0, 800.0);
+    assert_eq!(stale.len(), 4, "la ventana pide una carátula por tarjeta");
+    assert!(stale.iter().all(|job| job.generation == 4));
+
+    let mut enqueued = 0;
+    assert_eq!(
+        manager.request_jobs_with(stale, |_| {
+            enqueued += 1;
+            true
+        }),
+        4
+    );
+
+    // The scroll moves on before the workers answer. The keys are still in
+    // flight, so the newer pass discards them instead of requesting them under
+    // the new generation.
+    manager.scroll_generation = 5;
+    let fresh = manager.window_jobs(0.0, 800.0);
+    assert!(fresh.iter().all(|job| job.generation == 5));
+
+    assert_eq!(
+        manager.request_jobs_with(fresh, |_| {
+            enqueued += 1;
+            true
+        }),
+        0,
+        "una solicitud en vuelo no se repite con la generación nueva"
+    );
+    assert_eq!(enqueued, 4);
+}
+
+#[test]
+fn test_stale_generation_outcome_is_retained() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let metrics = grid_metrics(800.0);
+    let mut manager = manager_with_albums(4);
+    manager.grid_metrics.set(metrics);
+
+    let requested = manager.window_jobs(0.0, 800.0);
+    assert_eq!(
+        requested.len(),
+        4,
+        "la ventana pide una carátula por tarjeta"
+    );
+    let first = requested[0].clone();
+    let generation_at_request = manager.scroll_generation;
+
+    // The scroll keeps moving while the worker decodes, so the answer comes
+    // back stamped with a generation the manager has already left behind.
+    manager.scroll_generation += 3;
+
+    let outcome = CoverDecodeOutcome {
+        key: first.key.clone(),
+        generation: generation_at_request,
         handle: Some(fake_handle(2, 2)),
-        bytes: 16,
+        bytes: 2 * 2 * 4,
         error: None,
     };
 
-    // The current generation is kept even outside the window.
-    assert!(manager.apply_cover_decoded(outcome("covers/current.avif", 4)));
-    assert!(manager.cover_store.contains("covers/current.avif", 160));
-
-    // One generation older and outside the window is superseded and dropped.
-    assert!(!manager.apply_cover_decoded(outcome("covers/stale.avif", 3)));
-    assert!(!manager.cover_store.contains("covers/stale.avif", 160));
     assert!(
-        !manager
+        manager.apply_cover_decoded(outcome),
+        "una decodificación terminada se conserva aunque la generación haya avanzado"
+    );
+    assert!(
+        manager
             .cover_store
-            .is_in_flight(&key("covers/stale.avif", 160)),
-        "una clave descartada no queda en vuelo"
+            .contains(&first.key.path, first.key.bucket),
+        "el handle decodificado debe quedar en el almacén"
     );
 
-    // One generation older but still needed by the window is kept.
-    assert!(manager.apply_cover_decoded(outcome("covers/window.avif", 3)));
-    assert!(manager.cover_store.contains("covers/window.avif", 160));
+    // The retained handle answers every later pass for that card, so the file
+    // is never opened and decoded a second time.
+    let mut requested_again = 0;
+    let jobs = manager.window_jobs(0.0, 800.0);
+    let accepted = manager.request_jobs_with(jobs, |job| {
+        if job.key == first.key {
+            requested_again += 1;
+        }
+        true
+    });
+
+    assert_eq!(
+        requested_again, 0,
+        "una carátula retenida no se vuelve a pedir"
+    );
+    assert_eq!(accepted, 3, "solo las tres carátulas que faltan se encolan");
 }
 
 #[test]

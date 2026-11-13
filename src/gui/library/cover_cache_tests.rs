@@ -1669,3 +1669,41 @@ fn test_visible_set_change_requests_the_new_paths() {
         "el conjunto nuevo sigue siendo el mismo entre pasadas"
     );
 }
+
+/// The orphan sweep is held back by scans and cover writes, never by decodes.
+///
+/// A decode only reads a file and cannot make an unreferenced file exist, so a
+/// running decode cannot turn a referenced cover into an apparent orphan. The
+/// gauge stays published for the cover counters.
+#[test]
+fn test_sweep_guard_ignores_read_only_decodes() {
+    for (file, source) in [
+        (
+            "src/gui/app/update/memory.rs",
+            include_str!("../app/update/memory.rs"),
+        ),
+        (
+            "src/gui/app/update/library.rs",
+            include_str!("../app/update/library.rs"),
+        ),
+    ] {
+        assert!(
+            source.contains("sweep_orphan_covers("),
+            "{file} debe barrer las carátulas huérfanas"
+        );
+        assert!(
+            source.contains("cover_writes_in_flight()"),
+            "{file} debe consultar las escrituras de carátulas en curso"
+        );
+        assert!(
+            !source.contains("cover_work_in_flight"),
+            "{file} no puede frenar el barrido por una decodificación de sólo lectura"
+        );
+    }
+
+    // The decode gauge still feeds the cover counters.
+    assert!(
+        include_str!("cover_cache.rs").contains("pub fn cover_work_in_flight()"),
+        "el contador de decodificaciones sigue disponible para las métricas"
+    );
+}

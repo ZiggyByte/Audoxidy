@@ -806,15 +806,13 @@ impl crate::gui::app::AudoxidyApp {
                     // Read both guards inside the worker: a scan can start, and a
                     // cover write can be enqueued, between this dispatch and the
                     // sweep itself, so a value captured here would guard the
-                    // wrong instant.
+                    // wrong instant. A decode is read-only, so it is not a guard.
                     let core = self.core.clone();
                     return Task::perform(
                         async move {
                             let scanning = core.is_scanning();
-                            let cover_work =
-                                crate::gui::library::cover_cache::cover_work_in_flight()
-                                    + crate::utils::covers::cover_writes_in_flight() as u64;
-                            core.sweep_orphan_covers(scanning, cover_work > 0)
+                            let cover_writes = crate::utils::covers::cover_writes_in_flight() > 0;
+                            core.sweep_orphan_covers(scanning, cover_writes)
                         },
                         |result| match result {
                             Ok(report) => Message::CoverSweepFinished {

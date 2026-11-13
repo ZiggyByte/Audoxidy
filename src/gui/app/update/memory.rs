@@ -80,14 +80,16 @@ impl crate::gui::app::AudoxidyApp {
                 // 7. Sweep the cover files no row references any more. The task
                 //    runs on a worker and reads both guards there, so a scan or
                 //    a cover write that starts after this dispatch still keeps
-                //    the sweep away.
+                //    the sweep away. A decode is read-only and cannot create an
+                //    unreferenced file, so it is not a guard: counting it here
+                //    would skip the sweep of a scan whose covers are still
+                //    decoding.
                 let core = self.core.clone();
                 Task::perform(
                     async move {
                         let scanning = core.is_scanning();
-                        let cover_work = crate::gui::library::cover_cache::cover_work_in_flight()
-                            + crate::utils::covers::cover_writes_in_flight() as u64;
-                        core.sweep_orphan_covers(scanning, cover_work > 0)
+                        let cover_writes = crate::utils::covers::cover_writes_in_flight() > 0;
+                        core.sweep_orphan_covers(scanning, cover_writes)
                     },
                     |result| match result {
                         Ok(report) => Message::CoverSweepFinished {

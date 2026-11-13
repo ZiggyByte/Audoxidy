@@ -442,6 +442,30 @@ mod tests {
     }
 
     #[test]
+    fn test_sweep_runs_while_decodes_are_active() {
+        let _guard = crate::utils::covers::GLOBAL_STATE_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let (core, dir) = make_core_with_temp_cover_dir();
+        let orphan = write_cover(&core, "eeee5555-ffff6666.avif");
+
+        // A decode only reads a cover file, so a running decode cannot make an
+        // unreferenced file exist. The gauge is raised here to prove the sweep is
+        // decided by the scan and the writes, not by the decode count.
+        crate::utils::covers::cover_metrics().increment_in_flight();
+        let report = core
+            .sweep_orphan_covers(false, false)
+            .expect("una decodificación en curso no impide el barrido");
+        crate::utils::covers::cover_metrics().decrement_in_flight();
+
+        assert_eq!(report.outcome, SweepOutcome::Completed);
+        assert_eq!(report.removed, 1, "el huérfano se elimina");
+        assert!(!orphan.exists(), "la carátula sin dueño desaparece");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_sweep_missing_directory_is_not_an_error() {
         let (core, dir) = make_core_with_temp_cover_dir();
         std::fs::remove_dir_all(core.paths().cover_cache_dir.clone())

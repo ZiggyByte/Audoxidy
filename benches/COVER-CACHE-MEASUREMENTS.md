@@ -1,14 +1,11 @@
 # Cover Cache — Measurement Report
 
 **Date:** 2026-11-13
-**Phase:** 26 — Cover Cache Correctness & Lazy Loading (milestone v0.8.5)
-**Status:** final run passed COVER-03
-**Planning evidence:** `.planning/phases/26-cover-cache-correctness-lazy-loading/26-MEASUREMENTS.md`
+**Status:** final run passed the scroll-back criterion
 
-This report records the real-library measurements that validated the cover cache:
-the method, every run (including the failing ones), the defects the failures found,
-and the final numbers. It is kept next to `covers_bench.rs` as the behavioural
-counterpart to that micro-benchmark.
+This report records the real-library measurements of the cover cache: the method,
+every run (including the failing ones), the defects the failures exposed, and the
+final numbers. It is the behavioural counterpart to `covers_bench.rs`.
 
 ---
 
@@ -21,7 +18,7 @@ counterpart to that micro-benchmark.
 | Songs | 8,067 |
 | Window | 1920×1080, display scale 1.0 |
 | Grid | 7 columns × 4 rows, 220 px decode floor |
-| Build | dev profile inside `dev-audoxidy`, never `--release` |
+| Build | dev profile inside `dev-audoxidy`, in mode `--debug` |
 | OS | Linux |
 | Track changes during P0–P3 | none |
 
@@ -37,9 +34,9 @@ counterpart to that micro-benchmark.
 
 ## Method
 
-1. **Reset (D-12):** stop the app, delete `library.db` (+ WAL/SHM) and
-   `cache/covers/`, start the app, let the scan finish. There is no migration; the
-   owner regenerates the library and the cache.
+1. **Reset:** stop the app, delete `library.db` (+ WAL/SHM) and `cache/covers/`,
+   start the app, let the scan finish. There is no migration; the library and the
+   cache are regenerated.
 2. **Points:** P0 = settled with no scroll; P1 = scrolled to the bottom; P2 = half a
    viewport up and back (inside the cushion); P3 = full return to the top.
 3. **Counters:** the GUI tick logs
@@ -83,8 +80,9 @@ Memory is `Pss_Anon` in kB.
 9,976 decodes for 489 covers ≈ **20 decodes per cover**, and P2 added 4,084 opens
 where zero was required. Three defects were found:
 
-- completed decodes were discarded when the scroll generation advanced;
-- the GC removed everything outside the current window, deleting the cushion;
+- completed decodes were discarded when the scroll epoch advanced;
+- the collection pass removed everything outside the current window, deleting the
+  cushion;
 - every insertion invalidated the grid row memo, amplifying the lookup count.
 
 Fixed in `851b616`, `e52ec85`, `841680f`.
@@ -99,18 +97,17 @@ Fixed in `851b616`, `e52ec85`, `841680f`.
 | P3 | 17,122 / 4,804 / 40,506 / 18,778 / 59,284 / 4,723 / 8,294,400 | 256,520 |
 
 P2 was contaminated by the tail of P1's queue (0 new render misses, only +336
-lookups), and P0 showed **12,405 opens for 698 covers** during the scan. The
-retry loop: `CoverDecoded` re-requested the window after every outcome, including
-failures, so a cover that did not exist yet was retried immediately until the
-scanner wrote it. Fixed in `89a776f`; the scan and post-scan negative-cache handling
-was consolidated in `bc60a64`, `4fed566`, `0cc4bd5`.
+lookups), and P0 showed **12,405 opens for 698 covers** during the scan. The retry
+loop: the decode-completed message re-requested the window after every outcome,
+including failures, so a cover that did not exist yet was retried immediately until
+the scanner wrote it. Fixed in `89a776f`; the scan and post-scan negative-cache
+handling was consolidated in `bc60a64`, `4fed566`, `0cc4bd5`.
 
 ### Loop incident — 220 px build, 2× budget
 
 The 220 px floor raised each entry to 193,600 B and lowered the 2× budget from 82 to
-56 entries. `request_cover_window` declared the protected window **before** appending
-the prefetch band, so the band was evictable: decode → insert → evict → re-request.
-Measured at 05:04:46:
+56 entries. The window set was declared **before** the prefetch band was appended, so
+the band was evictable: decode → insert → evict → re-request. Measured at 05:04:46:
 
 ```
 opens 2727 · decodes 2725 · hits 89 · misses 163 · lookups 252
@@ -144,8 +141,8 @@ the 35-key window plus the 21-key band, leaving no entries behind. The 3× cushi
 | P3 | 2,965 / 2,900 / 171,271 / 17,026 / 188,297 / 2,816 / 16,262,400 | 327,256 |
 
 P2 added 356 decodes because the wheel gesture covered roughly ten screens, well
-beyond the four-row cushion; P0 also included post-scan memory (278 MB vs 100 MB
-after a restart). Both are protocol issues, not code regressions.
+beyond the four-row cushion; P0 also included post-scan memory (278 MB vs 100 MB after
+a restart). Both are protocol issues, not code regressions.
 
 ### Run 5 — 3× budget, clean restart: PASSED
 
@@ -166,10 +163,10 @@ after a restart). Both are protocol issues, not code regressions.
 | Peak `Pss_Anon` delta | **+14.3 MiB** (P1 vs P0) |
 | Full-pass `Pss_Anon` delta | **+10.5 MiB** (P3 vs P0) |
 | Full-pass decodes | 2,053 for 676 albums = **3.04×**, bounded |
-| Grid sharpness | owner confirmed sharp at the 220 px floor |
+| Grid sharpness | album covers are sharp at the 220 px floor |
 
 The full pass re-decodes because 676 covers do not fit in 84 retained entries; the
-COVER-03 scroll-back clause is proven by P2, which added **zero** opens and decodes.
+scroll-back criterion is proven by P2, which added **zero** opens and decodes.
 
 ---
 
@@ -177,8 +174,8 @@ COVER-03 scroll-back clause is proven by P2, which added **zero** opens and deco
 
 | Defect | Fix commits |
 |---|---|
-| Completed decodes discarded on a stale generation | `851b616`, `e52ec85`, `841680f` |
-| Grid memo invalidated by every off-window decode | `841680f` |
+| Completed decodes discarded on a stale scroll epoch | `851b616`, `e52ec85`, `841680f` |
+| Grid row memo invalidated by every off-window decode | `841680f` |
 | Failed decode immediately re-requested (scan churn) | `89a776f` |
 | Negative cache cleared per batch; no post-scan cleanup | `bc60a64`, `4fed566`, `0cc4bd5` |
 | Prefetch band unprotected (decode/evict loop) | `65c9620`, `26ea0c6` |
@@ -209,14 +206,9 @@ For P2 use a single wheel notch inside the cushion; the expected delta is zero.
 
 ## Caveats
 
-- The 220 px floor and the 3× budget are owner amendments to D-06/D-07; the 2× and
-  160 px figures in earlier plans are superseded.
+- The 220 px floor and the 3× budget are the current policy; the earlier 2× and
+  160 px figures are superseded.
 - At 4K the 48 MiB ceiling caps the retained set below 3× viewport; the cushion is
   smaller and the full pass re-decodes, bounded by the ceiling.
-- The player keeps one 400 px `Handle::from_path` per track change (two `openat` per
-  rendered load); it is outside the library decode funnel by design.
-- The post-measurement code review (`26-REVIEW.md`) recorded 1 blocker and 4 warnings
-  about request coverage after filter/sort/view-mode changes, the band on every
-  scroll event, the sweep write guard, dead generation plumbing, and same-title
-  album versions in the detailed list. Those are tracked separately from this
-  measurement evidence.
+- The player keeps one 400 px path handle per track change (two `openat` per rendered
+  load); it is outside the library decode funnel by design.

@@ -5,7 +5,7 @@
 
 use super::schema::SCHEMA_VERSION;
 use super::*;
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +37,11 @@ impl TempDbDir {
     /// The database file this directory owns.
     fn db_path(&self) -> PathBuf {
         self.path.join("library.db")
+    }
+
+    /// The directory itself, for paths the test builds relative to it.
+    fn dir(&self) -> &Path {
+        &self.path
     }
 }
 
@@ -91,6 +96,20 @@ fn stamp_version(path: &Path, version: i64) {
     let conn = Connection::open(path).expect("open the database to stamp its version");
     conn.pragma_update(None, "user_version", version)
         .expect("write user_version");
+}
+
+/// Reads a numeric pragma from an open connection.
+fn pragma_i64(db: &Database, name: &str) -> i64 {
+    db.conn
+        .pragma_query_value(None, name, |row| row.get::<_, i64>(0))
+        .unwrap_or_else(|error| panic!("read the {name} pragma: {error}"))
+}
+
+/// Reads a text pragma from an open connection.
+fn pragma_text(db: &Database, name: &str) -> String {
+    db.conn
+        .pragma_query_value(None, name, |row| row.get::<_, String>(0))
+        .unwrap_or_else(|error| panic!("read the {name} pragma: {error}"))
 }
 
 #[test]
@@ -197,4 +216,99 @@ fn test_in_memory_database_sets_the_version_without_a_probe() {
         "an in-memory database has no file to rebuild"
     );
     assert_eq!(user_version(&db), SCHEMA_VERSION);
+}
+
+#[test]
+fn test_pragmas_are_applied_on_both_connection_kinds() {
+    let temp = TempDbDir::new();
+    let file_db = Database::new_at(&temp.db_path()).expect("create the database");
+    let memory_db = Database::new_memory().expect("create the in-memory database");
+
+    for db in [&file_db, &memory_db] {
+        assert_eq!(
+            pragma_i64(db, "synchronous"),
+            1,
+            "synchronous must stay NORMAL"
+        );
+        assert_eq!(
+            pragma_i64(db, "cache_size"),
+            -8000,
+            "the page cache must stay at 8 MiB"
+        );
+        assert_eq!(
+            pragma_i64(db, "foreign_keys"),
+            1,
+            "foreign keys must stay enforced"
+        );
+    }
+
+    assert_eq!(pragma_text(&file_db, "journal_mode"), "wal");
+    assert_eq!(pragma_i64(&file_db, "mmap_size"), 16_777_216);
+
+    // An in-memory database has no file to journal or map, so SQLite reports the
+    // journal as `memory` and answers the mapping pragma with no row at all.
+    assert_eq!(pragma_text(&memory_db, "journal_mode"), "memory");
+    assert_eq!(
+        memory_db
+            .conn
+            .query_row("PRAGMA mmap_size", [], |row| row.get::<_, i64>(0))
+            .optional()
+            .expect("query the in-memory mapping size"),
+        None,
+        "an in-memory database has no mapping size to report"
+    );
+}
+
+#[test]
+fn test_second_connection_on_a_rebuilt_file_does_not_rebuild_again() {
+    let temp = TempDbDir::new();
+    let path = temp.db_path();
+    std::fs::write(&path, b"a file written by another schema").expect("write the stale file");
+
+    drop(Database::new_at(&path).expect("rebuild the database"));
+    let second = Database::new_at(&path).expect("open the rebuilt database");
+
+    assert!(
+        !second.was_rebuilt(),
+        "the scanner connection must not rebuild the file the GUI keeps open"
+    );
+    assert_eq!(user_version(&second), SCHEMA_VERSION);
+}
+
+#[test]
+fn test_matching_version_deletes_nothing() {
+    let temp = TempDbDir::new();
+    let path = temp.db_path();
+
+    {
+        let mut db = Database::new_at(&path).expect("create the database");
+        insert_song(&mut db);
+    }
+    let length_before = std::fs::metadata(&path).expect("stat the database").len();
+
+    let db = Database::new_at(&path).expect("reopen the database");
+    let length_after = std::fs::metadata(&path)
+        .expect("stat the reopened database")
+        .len();
+
+    assert!(!db.was_rebuilt(), "a matching version is a pure open");
+    assert_eq!(row_count(&db, "SONGS"), 1, "the song survives the reopen");
+    assert!(
+        length_after >= length_before,
+        "the main file is never truncated: {length_after} < {length_before}"
+    );
+}
+
+#[test]
+fn test_absent_path_creates_the_parentless_file() {
+    let temp = TempDbDir::new();
+    let path = temp.dir().join("missing").join("library.db");
+
+    let result = Database::new_at(&path);
+
+    assert!(
+        result.is_err(),
+        "a path whose parent does not exist is a typed failure, not a panic"
+    );
+    assert!(!path.exists(), "no database is created somewhere else");
 }

@@ -82,6 +82,9 @@ pub enum Message {
     LibraryDeselect,
     LibraryDeleteSelection,
     LibraryRefresh,
+    /// The startup consistency check finished; the flag reports whether the
+    /// full-text index had to be rebuilt.
+    FtsRebuildFinished(bool),
     InternalLibraryRefreshed(
         Vec<std::sync::Arc<crate::db::database::SongData>>,
         Vec<(String, String, String, String, String, Option<String>)>,

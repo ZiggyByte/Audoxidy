@@ -1065,6 +1065,36 @@ impl AudoxidyApp {
             _ => None,
         };
 
+        // The consistency check and, on a mismatch, the rebuild run after the
+        // first frame on the executor's thread; neither blocks the update loop.
+        let fts_core = core.clone();
+        let fts_task = Task::perform(
+            async move {
+                match fts_core.fts_is_consistent() {
+                    Ok(true) => false,
+                    Ok(false) => match fts_core.rebuild_fts_index() {
+                        Ok(()) => true,
+                        Err(error) => {
+                            tracing::warn!(%error, "no se pudo reconstruir el índice de búsqueda");
+                            false
+                        }
+                    },
+                    Err(error) => {
+                        tracing::warn!(%error, "no se pudo verificar el índice de búsqueda");
+                        false
+                    }
+                }
+            },
+            Message::FtsRebuildFinished,
+        );
+
+        let startup_task = Task::perform(
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+            },
+            |_| Message::InitStartup,
+        );
+
         (
             Self {
                 core,
@@ -1111,12 +1141,7 @@ impl AudoxidyApp {
                 geometry_dirty_at: None,
                 geometry_last_saved: None,
             },
-            Task::perform(
-                async {
-                    tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
-                },
-                |_| Message::InitStartup,
-            ),
+            Task::batch([startup_task, fts_task]),
         )
     }
 }

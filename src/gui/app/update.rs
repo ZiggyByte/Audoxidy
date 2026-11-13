@@ -126,6 +126,7 @@ impl crate::gui::app::AudoxidyApp {
             | Message::PlayLibraryAll
             | Message::LibraryDeleteSelection
             | Message::LibraryRefresh
+            | Message::FtsRebuildFinished(..)
             | Message::LibraryFilteredLoaded(..)
             | Message::InternalLibraryRefreshed(..)
             | Message::CoverDecoded(..)

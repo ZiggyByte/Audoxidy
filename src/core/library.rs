@@ -97,6 +97,28 @@ impl Core {
         })
     }
 
+    /// Reports whether the full-text index still mirrors the song table.
+    ///
+    /// Acquires the database lock, compares the content-table row count with the
+    /// song count, and releases the lock. The comparison never walks the index,
+    /// so it is cheap enough to run once at startup; the deeper index check
+    /// belongs to the test suite.
+    pub fn fts_is_consistent(&self) -> Result<bool, CoreError> {
+        let db = self.lock_db()?;
+        Ok(db.is_fts_consistent()?)
+    }
+
+    /// Rebuilds the full-text index from its content table.
+    ///
+    /// Acquires the database lock for the rebuild and releases it before
+    /// returning, so a caller can schedule the repair on a background task
+    /// without holding the lock across the wait.
+    pub fn rebuild_fts_index(&self) -> Result<(), CoreError> {
+        let db = self.lock_db()?;
+        db.rebuild_fts_index()?;
+        Ok(())
+    }
+
     /// Returns album grid items grouped by artist.
     ///
     /// Acquires the DB lock, queries the grid view, releases the lock,

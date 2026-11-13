@@ -725,6 +725,20 @@ impl crate::gui::app::AudoxidyApp {
                     |_| Message::LibraryRefresh,
                 );
             }
+            Message::FtsRebuildFinished(rebuilt) => {
+                if rebuilt {
+                    tracing::info!(
+                        target: "audoxidy::persistence",
+                        "índice de búsqueda reconstruido al iniciar"
+                    );
+                } else {
+                    tracing::debug!(
+                        target: "audoxidy::persistence",
+                        "índice de búsqueda verificado al iniciar"
+                    );
+                }
+                Task::none()
+            }
             Message::LibraryRefresh => {
                 self.focus = AppFocus::Library;
                 self.library_manager.data_unloaded = false;

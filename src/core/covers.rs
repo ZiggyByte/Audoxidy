@@ -280,6 +280,16 @@ mod tests {
             .expect("el álbum debe tener una carátula almacenada")
     }
 
+    /// Per-song cover override hash stored for a song, when it has one.
+    fn song_cover_override(core: &Core, song_id: i64) -> Option<String> {
+        let db = core.database().lock().expect("database lock");
+        db.get_all_songs()
+            .expect("no se pudieron leer las canciones")
+            .into_iter()
+            .find(|song| song.id == song_id)
+            .and_then(|song| song.cover_override.as_deref().map(str::to_owned))
+    }
+
     /// Writes a stand-in cover file into the injected cache directory.
     fn write_cover(core: &Core, file_name: &str) -> PathBuf {
         let path = core.paths().cover_cache_dir.join(file_name);
@@ -587,6 +597,54 @@ mod tests {
         assert!(
             album_cover_path(&core, "Album Alpha").is_none(),
             "el álbum sin canciones no debe sobrevivir a la limpieza"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_delete_song_with_cover_override_removes_only_its_file() {
+        let (core, dir) = make_core_with_temp_cover_dir();
+
+        let album_song = insert_song(
+            &core,
+            "/music/override/base.flac",
+            "Album Override",
+            Some("aaaa1111"),
+        );
+        let override_song = insert_song(
+            &core,
+            "/music/override/alt.flac",
+            "Album Override",
+            Some("bbbb2222"),
+        );
+
+        let album_file = write_cover(&core, &album_cover_file_name(&core, "Album Override"));
+        let override_hash =
+            song_cover_override(&core, override_song).expect("la canción debe tener un override");
+        let override_name =
+            crate::utils::covers::song_cover_file_name(override_song, &override_hash)
+                .expect("el hash del override debe ser válido");
+        let override_file = write_cover(&core, &override_name);
+        assert_ne!(
+            album_file, override_file,
+            "la canción con arte propio no comparte el archivo del álbum"
+        );
+
+        core.delete_songs_with_transaction(&[override_song])
+            .expect("el borrado de la canción debe completarse");
+
+        assert!(
+            !override_file.exists(),
+            "la carátula propia de la canción borrada debe desaparecer"
+        );
+        assert!(
+            album_file.exists(),
+            "la carátula del álbum sigue referenciada por la otra canción"
+        );
+        assert!(
+            song_cover_override(&core, album_song).is_none(),
+            "la canción base conserva la carátula del álbum"
         );
 
         let _ = std::fs::remove_dir_all(&dir);

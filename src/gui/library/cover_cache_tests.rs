@@ -1110,3 +1110,218 @@ fn test_album_block_ambiguous_title_falls_back_to_the_row_path() {
         "la ruta adivinada por el mapa de álbumes nunca llega a la tarjeta"
     );
 }
+
+/// Manager measured like a 1080p window at 1x: seven columns, four rows of cards.
+///
+/// The viewport height is the one the request path reads from `last_viewport`, so a
+/// test drives the same capacity and the same render window a real window does.
+fn manager_at_1080p(albums: usize) -> LibraryManager {
+    let mut manager = manager_with_albums(albums);
+    manager.grid_metrics.set(grid_metrics(1300.0));
+    manager.scale_factor = 1.0;
+    manager.view_mode = LibraryViewMode::Grid;
+    manager.last_viewport = Some(iced::Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 1300.0,
+        height: 800.0,
+    });
+    manager.scroll_offset = iced::Vector::new(0.0, 0.0);
+
+    manager
+}
+
+#[test]
+fn test_requested_band_keys_are_window_protected() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+
+    let window_only = manager.window_jobs(0.0, 800.0).len();
+    let requested = manager.request_cover_window_with(|_| true);
+
+    assert!(
+        window_only > 0,
+        "la ventana debe pedir al menos una carátula"
+    );
+    assert!(
+        requested.len() > window_only,
+        "la banda de una pantalla hacia abajo suma claves a la ventana"
+    );
+
+    // A look-ahead key is requested exactly once: if the pass does not protect it,
+    // the decode that lands it is evicted at once and the next pass asks again.
+    for key in &requested {
+        assert!(
+            manager.cover_store.is_window(&key.path, key.bucket),
+            "toda clave pedida queda protegida: {}@{}",
+            key.path,
+            key.bucket
+        );
+    }
+}
+
+#[test]
+fn test_requested_keys_fit_the_budget() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+
+    let requested = manager.request_cover_window_with(|_| true);
+    let bucket = manager.window_bucket() as usize;
+    let bucket_bytes = bucket * bucket * 4;
+    let requested_bytes = requested.len() * bucket_bytes;
+
+    assert_eq!(bucket, 220, "la cuadrícula pide el mínimo de álbum a 1x");
+    assert!(!requested.is_empty(), "la ventana pide carátulas");
+    assert!(
+        requested_bytes <= manager.cover_store.budget(),
+        "el presupuesto cubre las {} claves pedidas: {requested_bytes} > {}",
+        requested.len(),
+        manager.cover_store.budget()
+    );
+    assert!(
+        manager.cover_store.budget() >= COVER_BUDGET_MIN_BYTES,
+        "el presupuesto nunca baja del piso"
+    );
+    assert!(
+        manager.cover_store.budget() <= COVER_BUDGET_MAX_BYTES,
+        "el presupuesto nunca supera el techo"
+    );
+}
+
+#[test]
+fn test_second_window_request_after_inserts_requests_nothing() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    let mut manager = manager_at_1080p(200);
+    manager.scroll_direction = 1.0;
+    // A scrolled position puts the window and its band on rows that together ask
+    // for more covers than the capacity budget pays for, which is the state a scroll
+    // leaves the store in.
+    manager.scroll_offset = iced::Vector::new(0.0, 1000.0);
+
+    let requested = manager.request_cover_window_with(|_| true);
+    assert!(!requested.is_empty(), "la ventana pide carátulas");
+
+    let bucket = manager.window_bucket() as usize;
+    let entry_bytes = bucket * bucket * 4;
+    for key in &requested {
+        manager
+            .cover_store
+            .insert_handle(key.clone(), fake_handle(2, 2), entry_bytes);
+        manager.cover_store.clear_in_flight(key);
+    }
+
+    // The decode handler trims after every stored handle. Trimming here is what
+    // exposes the loop: without the protection and the matching budget, the keys
+    // the pass just requested are dropped and the next pass asks for them again.
+    assert_eq!(
+        manager.cover_store.evict_to_budget(),
+        0,
+        "las claves pedidas caben en el presupuesto"
+    );
+
+    let unique: std::collections::HashSet<&CoverKey> = requested.iter().collect();
+    assert_eq!(
+        manager.cover_store.len(),
+        unique.len(),
+        "cada clave pedida queda retenida"
+    );
+
+    let mut enqueued = 0;
+    let again = manager.request_cover_window_with(|_| {
+        enqueued += 1;
+        true
+    });
+
+    assert_eq!(
+        enqueued, 0,
+        "una segunda pasada sobre las mismas claves no encola nada"
+    );
+    assert_eq!(
+        again.len(),
+        requested.len(),
+        "la ventana pedida no cambia entre pasadas"
+    );
+}
+
+#[test]
+fn test_band_is_truncated_at_the_budget_ceiling() {
+    let _guard = global_guard();
+    clear_negative_cover_cache();
+
+    // A viewport tall enough that the window and its band together exceed the hard
+    // ceiling at the album bucket: the 48 MiB clamp on a large screen.
+    let height = 4300.0;
+    let mut manager = manager_at_1080p(600);
+    manager.last_viewport = Some(iced::Rectangle {
+        x: 0.0,
+        y: 0.0,
+        width: 1300.0,
+        height,
+    });
+    manager.scroll_direction = 1.0;
+
+    let metrics = manager.grid_metrics.get();
+    let bucket = manager.window_bucket() as usize;
+    let bucket_bytes = bucket * bucket * 4;
+    let ceiling_entries = COVER_BUDGET_MAX_BYTES / bucket_bytes;
+
+    let window_only = manager.window_jobs(0.0, height).len();
+    let screens = if crate::utils::is_low_resource() {
+        0.5
+    } else {
+        1.0
+    };
+    let band_y = prefetch_band(&metrics, 600, None, 0, 0.0, height, 1.0, screens)
+        .expect("la banda de una pantalla hacia abajo debe existir");
+    let band_only = manager.window_jobs(band_y, height).len();
+
+    assert!(
+        window_only + band_only > ceiling_entries,
+        "el escenario debe exceder el techo: {window_only} + {band_only} > {ceiling_entries}"
+    );
+
+    let requested = manager.request_cover_window_with(|_| true);
+
+    assert!(
+        requested.len() >= window_only,
+        "la ventana visible siempre se pide completa"
+    );
+    assert!(
+        requested.len() <= ceiling_entries,
+        "ninguna clave pedida excede el techo: {} > {ceiling_entries}",
+        requested.len()
+    );
+    assert!(
+        requested.len() < window_only + band_only,
+        "la banda no entra completa: {} de {}",
+        requested.len(),
+        window_only + band_only
+    );
+    for key in &requested {
+        assert!(
+            manager.cover_store.is_window(&key.path, key.bucket),
+            "toda clave pedida queda protegida: {}@{}",
+            key.path,
+            key.bucket
+        );
+    }
+
+    // The published budget stays inside the hard bounds and pays for every key the
+    // pass kept, so the truncation is what made the set affordable.
+    assert!(
+        manager.cover_store.budget() <= COVER_BUDGET_MAX_BYTES,
+        "el presupuesto nunca supera el techo"
+    );
+    assert!(
+        manager.cover_store.budget() >= requested.len() * bucket_bytes,
+        "el presupuesto cubre las claves que sí entraron"
+    );
+}

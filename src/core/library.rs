@@ -247,8 +247,12 @@ impl Core {
     pub fn delete_songs_with_transaction(&self, ids: &[i64]) -> Result<(), CoreError> {
         /// One cover file a deleted row may have left without a reference.
         enum CoverCandidate {
-            /// An album cover named by the stored `ALBUMS.cover_path`.
-            AlbumPath { file_name: String },
+            /// An album cover named by the album and cover hashes.
+            AlbumCover {
+                album_hash: String,
+                cover_hash: String,
+                file_name: String,
+            },
             /// A per-song override named from its owner id and content hash.
             SongOverride {
                 song_id: i64,
@@ -262,15 +266,27 @@ impl Core {
 
             let mut candidates = Vec::new();
             let mut seen = std::collections::HashSet::new();
-            for (album_path, override_hash, song_id) in db.cover_refs_for_songs(ids)? {
-                if let Some(file_name) = album_path
-                    .as_deref()
-                    .and_then(|path| std::path::Path::new(path).file_name())
-                    .and_then(|name| name.to_str())
-                    .map(str::to_owned)
-                    && seen.insert(file_name.clone())
-                {
-                    candidates.push(CoverCandidate::AlbumPath { file_name });
+            for (album_hash, album_cover_hash, override_hash, song_id) in
+                db.cover_refs_for_songs(ids)?
+            {
+                if let (Some(album_hash), Some(cover_hash)) = (album_hash, album_cover_hash) {
+                    match crate::utils::covers::album_cover_file_name(&album_hash, &cover_hash) {
+                        Ok(file_name) => {
+                            if seen.insert(file_name.clone()) {
+                                candidates.push(CoverCandidate::AlbumCover {
+                                    album_hash,
+                                    cover_hash,
+                                    file_name,
+                                });
+                            }
+                        }
+                        Err(error) => tracing::warn!(
+                            target: "audoxidy::persistence",
+                            album_hash = %album_hash,
+                            error = %error,
+                            "No se pudo componer el nombre de la carátula del álbum"
+                        ),
+                    }
                 }
 
                 if let Some(cover_hash) = override_hash {
@@ -333,18 +349,20 @@ impl Core {
 
             for candidate in candidates {
                 match candidate {
-                    CoverCandidate::AlbumPath { file_name } => {
-                        match db.is_cover_path_referenced(&file_name) {
-                            Ok(false) => unreferenced.push(file_name),
-                            Ok(true) => {}
-                            Err(error) => tracing::warn!(
-                                target: "audoxidy::persistence",
-                                file = %file_name,
-                                error = %error,
-                                "No se pudo comprobar si una carátula de álbum sigue referenciada"
-                            ),
-                        }
-                    }
+                    CoverCandidate::AlbumCover {
+                        album_hash,
+                        cover_hash,
+                        file_name,
+                    } => match db.is_cover_hash_referenced(&album_hash, &cover_hash) {
+                        Ok(false) => unreferenced.push(file_name),
+                        Ok(true) => {}
+                        Err(error) => tracing::warn!(
+                            target: "audoxidy::persistence",
+                            file = %file_name,
+                            error = %error,
+                            "No se pudo comprobar si una carátula de álbum sigue referenciada"
+                        ),
+                    },
                     CoverCandidate::SongOverride {
                         song_id,
                         cover_hash,

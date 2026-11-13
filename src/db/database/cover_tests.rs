@@ -89,6 +89,15 @@ fn album_cover_file_name(db: &Database, album: &str) -> String {
         .expect("el álbum debe tener una carátula almacenada")
 }
 
+/// Per-song overridden cover hash of one song row, when it has one.
+fn song_cover_override(db: &Database, song_id: i64) -> Option<String> {
+    db.cover_refs_for_songs(&[song_id])
+        .expect("se deben leer las referencias de carátula")
+        .into_iter()
+        .next()
+        .and_then(|(_, _, override_hash, _)| override_hash)
+}
+
 #[test]
 fn test_identical_images_produce_two_album_files() {
     let dir = temp_cover_dir();
@@ -230,7 +239,7 @@ fn test_override_only_when_image_differs() {
         .find(|song| song.full_file_path.as_ref() == "/music/merged/two.flac")
         .expect("la segunda canción debe existir");
     assert!(
-        inherited.cover_override.is_none(),
+        song_cover_override(&db, inherited.id).is_none(),
         "heredar la carátula del álbum no deja override"
     );
 
@@ -238,9 +247,7 @@ fn test_override_only_when_image_differs() {
         .iter()
         .find(|song| song.full_file_path.as_ref() == "/music/merged/three.flac")
         .expect("la tercera canción debe existir");
-    let stored_hash = overridden
-        .cover_override
-        .as_deref()
+    let stored_hash = song_cover_override(&db, overridden.id)
         .expect("la carátula distinta se guarda como override");
     assert_eq!(
         stored_hash,
@@ -252,7 +259,7 @@ fn test_override_only_when_image_differs() {
     let effective = effective_cover_path(
         Some(&album_hash),
         Some(album_picture),
-        Some(stored_hash),
+        Some(stored_hash.as_str()),
         overridden.id,
     )
     .expect("un override siempre resuelve una ruta");
@@ -356,16 +363,13 @@ fn test_referenced_cover_file_names_includes_album_and_override_files() {
     );
 
     let album_name = album_cover_file_name(&db, "Refs Album");
-    let songs = db.get_all_songs().expect("se deben leer las canciones");
-    let overridden = songs
-        .iter()
-        .find(|song| song.full_file_path.as_ref() == "/music/refs/two.flac")
+    let overridden_id = db
+        .get_song_id_by_path("/music/refs/two.flac")
+        .expect("se debe leer el id de la canción")
         .expect("la segunda canción debe existir");
-    let override_hash = overridden
-        .cover_override
-        .as_deref()
+    let override_hash = song_cover_override(&db, overridden_id)
         .expect("la imagen distinta del álbum produce un override");
-    let override_name = format!("song-{}-{override_hash}.avif", overridden.id);
+    let override_name = format!("song-{overridden_id}-{override_hash}.avif");
 
     let referenced = db
         .referenced_cover_file_names()

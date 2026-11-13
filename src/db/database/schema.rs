@@ -10,7 +10,7 @@ use super::Database;
 /// never takes effect on a file that already holds the old shape. Bumping this
 /// constant in the same change that alters the DDL is what tells the connection
 /// to replace a stale file instead of silently running on the old schema.
-pub(in crate::db::database) const SCHEMA_VERSION: i64 = 3;
+pub(in crate::db::database) const SCHEMA_VERSION: i64 = 4;
 
 impl Database {
     pub(in crate::db::database) fn create_schema(conn: &Connection) -> Result<()> {
@@ -50,7 +50,6 @@ impl Database {
                 title TEXT NOT NULL,
                 year TEXT,
                 genre TEXT,
-                cover_path TEXT,
                 cover_hash TEXT,
                 hash_id TEXT UNIQUE NOT NULL,
                 FOREIGN KEY(artist_id) REFERENCES ARTISTS(id) ON DELETE CASCADE,

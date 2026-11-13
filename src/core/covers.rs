@@ -259,7 +259,7 @@ mod tests {
             .expect("la canción insertada debe existir")
     }
 
-    /// Stored cover path of the album, or `None` when the row is gone.
+    /// Derived cover path of the album, or `None` when the row is gone.
     fn album_cover_path(core: &Core, album: &str) -> Option<String> {
         let db = core.database().lock().expect("database lock");
         db.get_all_albums()
@@ -269,7 +269,7 @@ mod tests {
             .and_then(|row| row.5)
     }
 
-    /// File name the album row stores, without its directory.
+    /// File name of the album's derived cover path.
     fn album_cover_file_name(core: &Core, album: &str) -> String {
         album_cover_path(core, album)
             .as_deref()
@@ -282,11 +282,11 @@ mod tests {
     /// Per-song cover override hash stored for a song, when it has one.
     fn song_cover_override(core: &Core, song_id: i64) -> Option<String> {
         let db = core.database().lock().expect("database lock");
-        db.get_all_songs()
-            .expect("no se pudieron leer las canciones")
+        db.cover_refs_for_songs(&[song_id])
+            .expect("se deben leer las referencias de carátula")
             .into_iter()
-            .find(|song| song.id == song_id)
-            .and_then(|song| song.cover_override.as_deref().map(str::to_owned))
+            .next()
+            .and_then(|(_, _, override_hash, _)| override_hash)
     }
 
     /// Writes a stand-in cover file into the injected cache directory.

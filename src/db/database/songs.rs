@@ -2,7 +2,6 @@
 
 use std::collections::HashSet;
 use std::ffi::OsString;
-use std::path::Path;
 
 use hex;
 use rusqlite::{OptionalExtension, Result, params};
@@ -137,11 +136,6 @@ impl Database {
                 song.genre.as_deref()
             ])?;
 
-        let (_, _): (Option<String>, Option<String>) = self
-            .conn
-            .prepare_cached("SELECT cover_path, cover_hash FROM ALBUMS WHERE hash_id = ?1")?
-            .query_row([&album_hash_id], |row| Ok((row.get(0)?, row.get(1)?)))?;
-
         let mut final_song_cover_override = None;
         let mut needs_processing = false;
         // Complete file name the writer stores and the scanner joins; stays empty
@@ -160,17 +154,9 @@ impl Database {
                 match crate::utils::covers::album_cover_file_name(&album_hash_id, &current_pic_hash)
                 {
                     Ok(file_name) => {
-                        let path = crate::utils::paths::get()
-                            .cover_cache_dir
-                            .join(&file_name)
-                            .to_string_lossy()
-                            .into_owned();
-
                         self.conn
-                            .prepare_cached(
-                                "UPDATE ALBUMS SET cover_hash = ?1, cover_path = ?2 WHERE hash_id = ?3",
-                            )?
-                            .execute(params![current_pic_hash, path, album_hash_id])?;
+                            .prepare_cached("UPDATE ALBUMS SET cover_hash = ?1 WHERE hash_id = ?2")?
+                            .execute(params![current_pic_hash, album_hash_id])?;
                         target_file_name_for_processing = file_name;
                         needs_processing = true;
                     }
@@ -383,19 +369,21 @@ impl Database {
 
     /// Returns the cover references of the given songs.
     ///
-    /// Each returned tuple is `(album cover path, raw override hash, song id)`.
-    /// Reading it before a delete transaction commits is what lets the caller
-    /// know which files the disappearing rows still contributed.
+    /// Each returned tuple is `(album hash, album cover hash, raw override hash,
+    /// song id)`. Both cover values are content hashes, never paths, so the
+    /// caller composes the file names from them. Reading the references before a
+    /// delete transaction commits is what lets the caller know which files the
+    /// disappearing rows still contributed.
     pub fn cover_refs_for_songs(
         &self,
         ids: &[i64],
-    ) -> Result<Vec<(Option<String>, Option<String>, i64)>> {
+    ) -> Result<Vec<(Option<String>, Option<String>, Option<String>, i64)>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
 
         let mut stmt = self.conn.prepare_cached(
-            "SELECT al.cover_path, s.cover_override, s.id
+            "SELECT al.hash_id, al.cover_hash, s.cover_override, s.id
              FROM SONGS s
              JOIN ALBUMS al ON al.id = s.album_id
              WHERE s.id = ?1",
@@ -404,7 +392,9 @@ impl Database {
         let mut references = Vec::with_capacity(ids.len());
         for id in ids {
             let reference = stmt
-                .query_row([id], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+                .query_row([id], |row| {
+                    Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+                })
                 .optional()?;
             if let Some(reference) = reference {
                 references.push(reference);
@@ -414,29 +404,19 @@ impl Database {
         Ok(references)
     }
 
-    /// Returns whether any album row still stores a cover path with this file name.
+    /// Returns whether a surviving album row still owns this cover hash.
     ///
-    /// The stored path can move with the working directory or the configured
-    /// cache, so the comparison is by file name: the rows are selected and their
-    /// `file_name()` compared in Rust. A count cannot be compared against a name.
-    pub fn is_cover_path_referenced(&self, file_name: &str) -> Result<bool> {
-        let mut stmt = self
-            .conn
-            .prepare_cached("SELECT cover_path FROM ALBUMS WHERE cover_path IS NOT NULL")?;
-        let mut rows = stmt.query([])?;
-
-        while let Some(row) = rows.next()? {
-            let cover_path: String = row.get(0)?;
-            if std::path::Path::new(&cover_path)
-                .file_name()
-                .and_then(|name| name.to_str())
-                == Some(file_name)
-            {
-                return Ok(true);
-            }
-        }
-
-        Ok(false)
+    /// The album file name is composed from `ALBUMS.hash_id` and
+    /// `ALBUMS.cover_hash`, so the predicate is a hash comparison rather than a
+    /// scan over stored paths: a count answers it in one statement, and a value
+    /// that is not the album's own hash cannot claim the file.
+    pub fn is_cover_hash_referenced(&self, album_hash: &str, cover_hash: &str) -> Result<bool> {
+        let count: i64 = self.conn.query_row(
+            "SELECT COUNT(*) FROM ALBUMS WHERE hash_id = ?1 AND cover_hash = ?2",
+            params![album_hash, cover_hash],
+            |row| row.get(0),
+        )?;
+        Ok(count > 0)
     }
 
     /// Returns whether a song still holds this override hash.
@@ -454,11 +434,13 @@ impl Database {
 
     /// Returns every cover file name a surviving row references.
     ///
-    /// Two statements, one lock scope: every non-null `ALBUMS.cover_path` reduced
-    /// to its file name, and every non-null `SONGS.cover_override` composed into
-    /// the name owned by its song. The set holds file names, never full paths, so
-    /// a moved working directory or a differently configured cache directory
-    /// cannot make the comparison disagree with the files on disk.
+    /// Two statements, one lock scope: every non-null `ALBUMS.cover_hash` composed
+    /// with its album hash, and every non-null `SONGS.cover_override` composed into
+    /// the name owned by its song. The names come from the same helpers the read
+    /// and write paths use, so a composed name can never be mistaken for an
+    /// orphan. The set holds file names, never full paths, so a moved working
+    /// directory or a differently configured cache directory cannot make the
+    /// comparison disagree with the files on disk.
     ///
     /// A failed statement propagates: a partial set would look like a set of
     /// orphans, so the caller must refuse to delete anything rather than guess.
@@ -466,14 +448,23 @@ impl Database {
         let mut referenced = HashSet::new();
 
         {
-            let mut stmt = self
-                .conn
-                .prepare_cached("SELECT cover_path FROM ALBUMS WHERE cover_path IS NOT NULL")?;
+            let mut stmt = self.conn.prepare_cached(
+                "SELECT hash_id, cover_hash FROM ALBUMS WHERE cover_hash IS NOT NULL",
+            )?;
             let mut rows = stmt.query([])?;
             while let Some(row) = rows.next()? {
-                let cover_path: String = row.get(0)?;
-                if let Some(file_name) = Path::new(&cover_path).file_name() {
-                    referenced.insert(file_name.to_os_string());
+                let album_hash: String = row.get(0)?;
+                let cover_hash: String = row.get(1)?;
+                match crate::utils::covers::album_cover_file_name(&album_hash, &cover_hash) {
+                    Ok(file_name) => {
+                        referenced.insert(OsString::from(file_name));
+                    }
+                    Err(error) => tracing::warn!(
+                        target: "audoxidy::persistence",
+                        album_hash = %album_hash,
+                        error = %error,
+                        "No se pudo componer el nombre de la carátula del álbum"
+                    ),
                 }
             }
         }

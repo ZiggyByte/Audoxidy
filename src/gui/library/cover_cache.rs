@@ -554,9 +554,11 @@ impl LibraryManager {
     /// request therefore gates requests, never retention.
     ///
     /// The memoized grid rows are invalidated only when the stored key belongs to
-    /// the window the rows were built from: an entry the window does not draw
-    /// cannot change a single card, and invalidating for it would rebuild every
-    /// row once per finished decode.
+    /// the requested window: an entry outside it cannot change a single card, and
+    /// invalidating for it would rebuild every row once per finished decode. The
+    /// requested window includes the look-ahead band, so a band entry rebuilds the
+    /// rows once even when no card draws it; that is the price of keeping it
+    /// protected, and it ends with the band.
     pub fn apply_cover_decoded(&mut self, outcome: CoverDecodeOutcome) -> bool {
         self.cover_store.clear_in_flight(&outcome.key);
 
@@ -590,12 +592,31 @@ impl LibraryManager {
     /// Requests the decode of every cover the current viewport shows.
     ///
     /// The visible rows already resolve to a handle; this only asks for the paths
-    /// whose handle is still missing. The retained-byte budget is recomputed from
-    /// the measured viewport, the window keys are protected against eviction, the
-    /// look-ahead band one screen ahead in the scroll direction is appended, and
-    /// the store is trimmed to the budget last. A full queue drops the request and
-    /// leaves the key retryable for the next scroll or decode completion.
+    /// whose handle is still missing. A full queue drops the request and leaves the
+    /// key retryable for the next scroll or decode completion.
     pub fn request_cover_window(&mut self) {
+        self.request_cover_window_with(|job| request_cover_decode(job.clone()));
+    }
+
+    /// Requests the current window and its look-ahead band through `enqueue`.
+    ///
+    /// The visible window is built first and always keeps its room: the band one
+    /// screen ahead in the scroll direction is capped to the entries the byte
+    /// ceiling can still hold, and skipped when the window fills it. A band key the
+    /// window already requests is left out, so the room is spent on rows the
+    /// viewport does not cover yet.
+    ///
+    /// The protected set is the final job set, band included, and the retained-byte
+    /// budget is raised to the bytes that set occupies. Both are required for the
+    /// request to converge: a look-ahead key that is not protected is evicted by the
+    /// decode that just landed it, and the next request asks for it again, opening
+    /// and decoding the same file forever. `enqueue` is the queue seam: production
+    /// passes the global decode queue and a test a counting closure. Returns the
+    /// keys the pass asked the store to retain, in request order.
+    pub fn request_cover_window_with(
+        &mut self,
+        enqueue: impl FnMut(&DecodeJob) -> bool,
+    ) -> Vec<CoverKey> {
         let height = self
             .last_viewport
             .map(|viewport| viewport.height)
@@ -604,21 +625,22 @@ impl LibraryManager {
         // The budget follows the bucket the current mode renders, so a list mode
         // sizes its retained bytes by the covers its rows actually use.
         let bucket = self.window_bucket();
+        let bucket_bytes = (bucket as usize)
+            .saturating_mul(bucket as usize)
+            .saturating_mul(4);
+        // Retained entries the hard ceiling can pay for at this bucket. The band is
+        // bounded by it, never by the measured capacity alone: the capacity budget
+        // is raised below to cover whatever the pass requests.
+        let ceiling_entries = crate::utils::covers::COVER_BUDGET_MAX_BYTES / bucket_bytes.max(1);
         let capacity = match self.view_mode {
             LibraryViewMode::Grid => {
                 crate::utils::covers::viewport_capacity(metrics.columns, height, metrics.row_height)
             }
             _ => crate::utils::covers::viewport_capacity(1, height, LIST_ROW_HEADER),
         };
-        self.cover_store
-            .set_budget(crate::utils::covers::cover_budget_bytes(capacity, bucket));
 
         let mut jobs = self.window_jobs(self.scroll_offset.y, height);
-        let window_keys = jobs
-            .iter()
-            .map(|job| (job.key.path.to_string(), job.key.bucket))
-            .collect::<Vec<_>>();
-        self.cover_store.set_window(window_keys);
+        let window_len = jobs.len();
 
         let screens = if crate::utils::is_low_resource() {
             0.5
@@ -644,11 +666,55 @@ impl LibraryManager {
             self.scroll_direction.signum(),
             screens,
         ) {
-            jobs.extend(self.window_jobs(band_y, height));
+            // The band renders with its own margin, so it repeats rows the window
+            // already reaches past the viewport. Those keys are already requested
+            // and must not spend the band's room.
+            let window_keys: HashSet<CoverKey> = jobs.iter().map(|job| job.key.clone()).collect();
+            let room = ceiling_entries.saturating_sub(window_len);
+
+            jobs.extend(
+                self.window_jobs(band_y, height)
+                    .into_iter()
+                    .filter(|job| !window_keys.contains(&job.key))
+                    .take(room),
+            );
         }
 
-        self.request_jobs_with(jobs, |job| request_cover_decode(job.clone()));
+        let requested: Vec<CoverKey> = jobs.iter().map(|job| job.key.clone()).collect();
+
+        // Every key this pass requests is protected, band included: a requested
+        // entry must survive the decode that lands it, or the next pass asks for it
+        // again.
+        self.cover_store.set_window(
+            requested
+                .iter()
+                .map(|key| (key.path.to_string(), key.bucket)),
+        );
+
+        // The budget is at least the bytes the requested set retains, clamped to the
+        // ceiling so a huge viewport cannot retain an unbounded amount of host RGBA.
+        // The visible window wins: the band is what gets truncated, so a set inside
+        // the ceiling always fits its own budget.
+        let budget = crate::utils::covers::cover_budget_bytes(capacity, bucket)
+            .max(jobs.len().saturating_mul(bucket_bytes))
+            .clamp(
+                crate::utils::covers::COVER_BUDGET_MIN_BYTES,
+                crate::utils::covers::COVER_BUDGET_MAX_BYTES,
+            );
+        self.cover_store.set_budget(budget);
+
+        let accepted = self.request_jobs_with(jobs, enqueue);
         self.cover_store.evict_to_budget();
+
+        tracing::trace!(
+            target: "audoxidy::covers",
+            cover_requested_keys = requested.len(),
+            cover_accepted_jobs = accepted,
+            cover_retained_budget_bytes = budget,
+            "cover window request"
+        );
+
+        requested
     }
 }
 

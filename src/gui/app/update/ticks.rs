@@ -388,6 +388,9 @@ impl crate::gui::app::AudoxidyApp {
             >= 10
         {
             LAST_COVER_COUNTER_LOG_SEC.store(autosave_now, std::sync::atomic::Ordering::Relaxed);
+            // The scale and the bucket answer what the counters cannot: whether a
+            // soft-looking grid was requested for another device pixel ratio or
+            // simply for the bucket the current card edge maps to.
             tracing::info!(
                 target: "audoxidy::covers",
                 cover_file_opens = cover_io.file_opens,
@@ -398,6 +401,8 @@ impl crate::gui::app::AudoxidyApp {
                 cover_evictions = cover_io.evictions,
                 cover_cache_bytes = cover_io.cache_bytes,
                 cover_work_in_flight = cover_io.in_flight,
+                cover_scale = self.library_manager.scale_factor,
+                cover_bucket = self.library_manager.window_bucket(),
                 "cover cache counters"
             );
         }

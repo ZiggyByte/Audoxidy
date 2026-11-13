@@ -168,9 +168,13 @@ fn test_song_row_size_is_recorded() {
     let size = std::mem::size_of::<SongData>();
     println!("SongData struct size: {size} bytes");
 
+    // The row draws nothing from `folder_id`, `artist_id`, `album_id` or
+    // `cover_override`; their removal is 3 × i64 plus one Option<Arc<str>>.
+    // The ceiling is the measured row plus one pointer pair of margin, so a
+    // field that returns to the row is caught instead of absorbed.
     assert!(
-        size <= 320,
-        "the library row must stay under its recorded ceiling, got {size} bytes"
+        size <= 288,
+        "the library row must stay under its tightened ceiling, got {size} bytes"
     );
 }
 

@@ -667,7 +667,16 @@ impl AudoxidyApp {
             return None;
         }
         let current = self.library_manager.grid_metrics.get();
-        let reported_width = current.columns as f32 * current.card_width + ALBUM_SCROLLBAR_RAIL;
+        // The width the last layout reported is exact; only before the first
+        // layout does the snapshot have to be inverted, and then its value is the
+        // minimum one. Trusting the inversion after a layout was the defect: the
+        // predicted width could be ~1000 px when the real content was ~517 px.
+        let measured = self.library_manager.reported_width.get();
+        let reported_width = if measured > 0.0 {
+            measured
+        } else {
+            current.columns as f32 * current.card_width + ALBUM_SCROLLBAR_RAIL
+        };
         let next = crate::gui::library::grid_metrics::grid_metrics(reported_width + width_delta);
 
         self.apply_grid_anchor_to(next, self.library_manager.scroll_offset.y)

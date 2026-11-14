@@ -77,6 +77,9 @@ pub struct LibraryManager {
     pub selected_album: Option<String>,
     pub selected_song_idx: Option<usize>,
     pub grid_metrics: std::cell::Cell<GridMetrics>,
+    /// Width the last layout pass reported for the library content, including the
+    /// scrollbar rail. Zero until the first layout runs.
+    pub reported_width: std::cell::Cell<f32>,
     /// The snapshot the current scroll offset was measured against; a different
     /// snapshot means the offset belongs to geometry that no longer exists.
     pub anchored_metrics: Option<GridMetrics>,
@@ -192,6 +195,7 @@ impl Default for LibraryManager {
             selected_album: None,
             selected_song_idx: None,
             grid_metrics: std::cell::Cell::new(GridMetrics::minimum()),
+            reported_width: std::cell::Cell::new(0.0),
             anchored_metrics: None,
             library_area_width: 800.0,
             last_selected_album: None,

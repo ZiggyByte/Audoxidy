@@ -3,11 +3,12 @@
 use crate::db::Database;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    ALBUM_CARD_COVER_TEXT_GAP, ALBUM_CARD_LINE_GAP, ALBUM_CARD_LINE_HEIGHT,
-    ALBUM_CARD_PADDING_BOTTOM, ALBUM_CARD_PADDING_SIDE, ALBUM_CARD_PADDING_TOP,
-    ALBUM_CARD_SELECTION_RADIUS, ALBUM_CARD_TEXT_SIZE, ALBUM_EXPANDED_BOTTOM_INSET,
-    ALBUM_EXPANDED_PADDING, BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD,
-    RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    ALBUM_CARD_CHEVRON_INSET, ALBUM_CARD_COVER_TEXT_GAP, ALBUM_CARD_LINE_GAP,
+    ALBUM_CARD_LINE_HEIGHT, ALBUM_CARD_PADDING_BOTTOM, ALBUM_CARD_PADDING_SIDE,
+    ALBUM_CARD_PADDING_TOP, ALBUM_CARD_SELECTION_RADIUS, ALBUM_CARD_TEXT_SIZE,
+    ALBUM_EXPANDED_BOTTOM_INSET, ALBUM_EXPANDED_PADDING, BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW,
+    LIST_ROW_HEADER, MARGIN_MD, RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+    WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{
@@ -253,6 +254,7 @@ pub fn view<'a>(
                 let res_grid = iced::widget::responsive(move |size| {
                     let metrics = crate::gui::library::grid_metrics::grid_metrics(size.width);
                     manager.grid_metrics.set(metrics);
+                    manager.reported_width.set(size.width);
 
                     let view_h = manager
                         .last_viewport
@@ -384,7 +386,12 @@ pub fn view<'a>(
                                             top: ALBUM_CARD_PADDING_TOP,
                                             bottom: ALBUM_CARD_PADDING_BOTTOM,
                                             left: ALBUM_CARD_PADDING_SIDE,
-                                            right: ALBUM_CARD_PADDING_SIDE,
+                                            // The chevron's box is wider than its glyph;
+                                            // reclaiming this much on the right brings the
+                                            // glyph to the card's inner limit and hands the
+                                            // same width to the text block.
+                                            right: ALBUM_CARD_PADDING_SIDE
+                                                - ALBUM_CARD_CHEVRON_INSET,
                                         })
                                         .style(move |_t: &Theme| {
                                             if is_expanded || is_selected {

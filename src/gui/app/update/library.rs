@@ -97,8 +97,12 @@ impl crate::gui::app::AudoxidyApp {
                             .collect(),
                     );
                     if let Some(album_id) = &self.library_manager.expanded_album {
+                        let hash = album_id
+                            .split_once('|')
+                            .map(|(_, hash)| hash)
+                            .unwrap_or(album_id.as_str());
                         self.library_manager.expanded_album_songs =
-                            Some(self.core.get_songs_by_album(album_id));
+                            Some(self.core.get_songs_by_album(hash));
                     }
                 } else {
                     // Aplicar el sort en memoria a albums
@@ -188,11 +192,20 @@ impl crate::gui::app::AudoxidyApp {
                                 {
                                     alb_songs = all_songs
                                         .iter()
-                                        .filter(|s| {
-                                            let s_alb = s.album.as_deref().unwrap_or("Desconocido");
-                                            let s_art = crate::utils::get_effective_artist(s);
-                                            s_alb == album_entry.title
-                                                && s_art == album_entry.artist
+                                        .filter(|s| match s.album_hash.as_deref() {
+                                            // The album row's hash is unique per folder, so two
+                                            // versions that share a title and artist expand
+                                            // independently and never mix their songs.
+                                            Some(hash) => hash == album_entry.id,
+                                            // Rows without a hash fall back to the display
+                                            // identity.
+                                            None => {
+                                                let s_alb =
+                                                    s.album.as_deref().unwrap_or("Desconocido");
+                                                let s_art = crate::utils::get_effective_artist(s);
+                                                s_alb == album_entry.title
+                                                    && s_art == album_entry.artist
+                                            }
                                         })
                                         .cloned()
                                         .collect();
@@ -206,10 +219,13 @@ impl crate::gui::app::AudoxidyApp {
 
                         // Fallback a Base de Datos: Si no está en caché o el GC limpió la RAM
                         if !found_in_cache {
+                            // The hash identifies one album row on its own, so the
+                            // track artist is not part of the lookup: a compilation
+                            // whose tracks credit different artists still expands
+                            // complete.
                             if let Some(pos) = album_id.find('|') {
-                                let artist = &album_id[..pos];
                                 let hash = &album_id[pos + 1..];
-                                alb_songs = self.core.get_songs_by_album_and_artist(hash, artist);
+                                alb_songs = self.core.get_songs_by_album(hash);
                             } else {
                                 alb_songs = self.core.get_songs_by_album(album_id.as_str());
                             }
@@ -1319,13 +1335,21 @@ impl crate::gui::app::AudoxidyApp {
                                 .or(self.library_manager.cached_albums.as_ref());
 
                             if let Some(albums) = albums_list {
-                                let album_index = albums
-                                    .iter()
-                                    .position(|a| a.title == album_name && a.artist == artist_name);
+                                // The album row's hash is the identity the grid draws;
+                                // resolving by title and artist would pick the first
+                                // version and expand the wrong one.
+                                let album_total = albums.len();
+                                let album_hash = lib_song.album_hash.clone();
+                                let album_index =
+                                    albums.iter().position(|a| match album_hash.as_deref() {
+                                        Some(hash) => a.id == hash,
+                                        None => a.title == album_name && a.artist == artist_name,
+                                    });
 
                                 if let Some(album_index) = album_index {
+                                    let album_artist = albums[album_index].artist.clone();
                                     let hash_id = albums[album_index].id.clone();
-                                    let composite_id = format!("{}|{}", artist_name, hash_id);
+                                    let composite_id = format!("{}|{}", album_artist, hash_id);
 
                                     if self.library_manager.expanded_album.as_deref()
                                         != Some(&composite_id)
@@ -1333,13 +1357,16 @@ impl crate::gui::app::AudoxidyApp {
                                         self.library_manager.expanded_album =
                                             Some(composite_id.clone());
                                         // Poblar expanded_album_songs inmediatamente para el cálculo de scroll
-                                        let mut songs = self
-                                            .core
-                                            .get_songs_by_album_and_artist(&hash_id, artist_name);
+                                        let mut songs = self.core.get_songs_by_album(&hash_id);
                                         if self.library_manager.sort_column.is_some() {
                                             self.library_manager.sort_songs(&mut songs);
                                         }
                                         self.library_manager.expanded_album_songs = Some(songs);
+                                        // Expanding changes the rows around the album
+                                        // without a scroll, so the memoized rows must be
+                                        // rebuilt and the decode window must follow them.
+                                        self.library_manager.invalidate_cache();
+                                        self.library_manager.request_cover_window();
                                     }
 
                                     // The scroll hint is the expression the virtualizer
@@ -1352,7 +1379,7 @@ impl crate::gui::app::AudoxidyApp {
                                     let row = album_index / metrics.columns;
                                     let row_top = crate::gui::library::grid_metrics::row_top_of(
                                         &metrics,
-                                        albums.len(),
+                                        album_total,
                                         Some(row),
                                         self.library_manager.rendered_expanded_song_count(),
                                         row,

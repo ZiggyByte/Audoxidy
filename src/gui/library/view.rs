@@ -227,11 +227,19 @@ pub fn view<'a>(
             };
 
             if albums_to_show.is_empty() {
+                // A search or any active filter narrows the set, so an empty
+                // result does not mean the library is empty.
+                let narrowed = !manager.search_query.is_empty()
+                    || manager.filter_artist.is_some()
+                    || manager.filter_album.is_some()
+                    || manager.filter_genre.is_some()
+                    || manager.filter_year.is_some()
+                    || manager.filter_folder_id.is_some();
                 container(
-                    text(if manager.search_query.is_empty() {
-                        "La biblioteca está vacía."
-                    } else {
+                    text(if narrowed {
                         "No se encontraron álbumes."
+                    } else {
+                        "La biblioteca está vacía."
                     })
                     .color(COLOR_TEXT_SECONDARY)
                     .font(FONT_INTER_SANS_MEDIUM),
@@ -254,7 +262,8 @@ pub fn view<'a>(
                     let (top_space, bottom_space, visible_elements) =
                         manager.get_visible_grid_rows(&metrics, manager.scroll_offset.y, view_h);
 
-                    let mut grid_col: iced::widget::Column<'_, Message> = column![].spacing(0);
+                    let mut grid_col: iced::widget::Column<'_, Message> =
+                        column![].spacing(metrics.gap);
 
                     if top_space > 0.0 {
                         grid_col = grid_col.push(Space::new().height(Length::Fixed(top_space)));
@@ -267,7 +276,7 @@ pub fn view<'a>(
                                 handles,
                                 active_expansion_id,
                             } => {
-                                let mut current_row = row![].spacing(0);
+                                let mut current_row = row![].spacing(metrics.gap);
 
                                 for (index, album_entry) in albums.iter().enumerate() {
                                     let album_id = album_entry.id.clone();
@@ -347,6 +356,17 @@ pub fn view<'a>(
                                     .style(|_t, _s| {
                                         button::Style::default().with_background(Color::TRANSPARENT)
                                     });
+                                    // Icon-only and actionable, so the accessible name
+                                    // rides the tooltip, like every other icon button.
+                                    let chevron_btn = iced::widget::tooltip(
+                                        chevron_btn,
+                                        iced::widget::text(if is_expanded {
+                                            "Contraer álbum"
+                                        } else {
+                                            "Expandir álbum"
+                                        }),
+                                        iced::widget::tooltip::Position::FollowCursor,
+                                    );
 
                                     let card_bottom = row![info_col, chevron_btn]
                                         .align_y(Alignment::Center)

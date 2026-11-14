@@ -5,7 +5,7 @@
 
 pub(crate) mod cover_cache;
 mod data;
-pub mod grid_metrics;
+pub(crate) mod grid_metrics;
 pub(crate) mod lists;
 mod selection;
 mod state;

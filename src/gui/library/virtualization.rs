@@ -617,9 +617,14 @@ impl LibraryManager {
                 },
             });
 
-            if span.expanded
-                && let Some(songs) = self.expanded_album_songs.as_ref()
-            {
+            if span.expanded {
+                // The row span always reserves the expanded chrome (two fixed
+                // paddings plus the bottom inset), so the element is pushed even
+                // with zero songs: skipping it would paint everything below the
+                // collapsed height while the spans, hit rectangles and scroll
+                // anchors keep the expanded one.
+                let empty_songs = Vec::new();
+                let songs = self.expanded_album_songs.as_ref().unwrap_or(&empty_songs);
                 let query = self.search_query.trim();
                 let mut v_songs = Vec::new();
                 let mut songs_top_space = 0.0;
@@ -642,14 +647,12 @@ impl LibraryManager {
                     rendered_index += 1;
                 }
 
-                if !v_songs.is_empty() || songs_top_space > 0.0 || songs_bottom_space > 0.0 {
-                    visible_elements.push(LibraryGridElement::ExpandedSongs {
-                        album_id: self.expanded_album.clone().unwrap_or_default(),
-                        songs: v_songs,
-                        top_space: songs_top_space,
-                        bottom_space: songs_bottom_space,
-                    });
-                }
+                visible_elements.push(LibraryGridElement::ExpandedSongs {
+                    album_id: self.expanded_album.clone().unwrap_or_default(),
+                    songs: v_songs,
+                    top_space: songs_top_space,
+                    bottom_space: songs_bottom_space,
+                });
             }
         }
 

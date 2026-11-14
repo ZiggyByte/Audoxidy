@@ -8,8 +8,9 @@
 //!
 //! The width handed to [`grid_metrics`] is the one the layout pass reports for
 //! the library content, and it still includes the visible scrollbar rail: that
-//! rail is subtracted here so no caller can forget it. The transparent hit border
-//! around the rail is not subtracted because it never covers a card.
+//! rail is subtracted here so no caller can forget it. The scrollbar's pointer
+//! target is twice the rail, so its transparent half covers the last 4 px of the
+//! row; the reserve is the visible rail and is not widened for the hit border.
 
 use crate::gui::dimensions::{
     ALBUM_CARD_COVER_TEXT_GAP, ALBUM_CARD_MAX_WIDTH, ALBUM_CARD_MIN_WIDTH,
@@ -45,7 +46,7 @@ impl GridMetrics {
     /// bottom padding. Only the cover follows the card width. The two-column
     /// minimum is recorded as the column count; the width-driven column rule in
     /// [`grid_metrics`] overwrites it.
-    pub fn from_card_width(card_width: f32) -> Self {
+    pub(crate) fn from_card_width(card_width: f32) -> Self {
         let cover_size = card_width - 2.0 * ALBUM_CARD_PADDING_SIDE;
         let card_height = ALBUM_CARD_PADDING_TOP
             + cover_size

@@ -98,9 +98,10 @@ pub const FILTER_PANEL_WIDTH: f32 = 187.0;
 /// Left edge of the library content, derived from the player column, the filters
 /// panel and the content inset instead of restating the window-to-content offset.
 pub const LIBRARY_CONTENT_X_ORIGIN: f32 = PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH + SPACE_XS;
-/// Width of the visible rail of the shared vertical scrollbar. The transparent
-/// hit border around it is not subtracted: it only enlarges the pointer target
-/// and never covers a card.
+/// Width of the visible rail of the shared vertical scrollbar. This is the width
+/// the grid reserves: the scrollbar's pointer target is the full 8 px box, so its
+/// transparent left half overlays the last 4 px of the row and can capture clicks
+/// there. The geometry is owner-approved; do not widen the reserve.
 pub const ALBUM_SCROLLBAR_RAIL: f32 = 4.0;
 /// Fixed width of the VU meter numeric readout.
 pub const METER_NUMERIC_WIDTH: f32 = 110.0;

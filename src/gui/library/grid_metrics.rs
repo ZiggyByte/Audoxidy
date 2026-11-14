@@ -218,43 +218,6 @@ pub fn grid_rows(
     spans
 }
 
-/// Scroll offset that keeps a row at the same viewport position after a relayout.
-///
-/// `old_row_top` and `new_row_top` are the row's top edge before and after the
-/// geometry changed, so their difference is the height change of every row above
-/// it. The returned offset moves the old offset by that delta and clamps it to
-/// the scrollable range, so a correction can never land above the content or
-/// past its last page.
-pub fn anchor_offset(old_offset: f32, old_row_top: f32, new_row_top: f32, max_scroll: f32) -> f32 {
-    (old_offset + (new_row_top - old_row_top)).clamp(0.0, max_scroll.max(0.0))
-}
-
-/// Scroll offset that keeps the first visible album at the same viewport
-/// position after the grid geometry changes.
-///
-/// With no expanded album every row has the same height, so the row at the top
-/// of the viewport is the anchor: its first album is located in the new layout,
-/// the offset inside the row is scaled by the row-height ratio, and the result
-/// is clamped to the scrollable range. Callers invoke this only when the
-/// geometry generation actually changed.
-pub fn anchor_row_offset(
-    previous: &GridMetrics,
-    next: &GridMetrics,
-    offset_y: f32,
-    album_count: usize,
-    viewport_height: f32,
-) -> f32 {
-    anchor_viewport_offset(
-        previous,
-        next,
-        offset_y,
-        album_count,
-        None,
-        0,
-        viewport_height,
-    )
-}
-
 /// Row index and top edge of the row that contains `offset`.
 ///
 /// The expanded row, when present, contributes its own height; every other row
@@ -345,28 +308,6 @@ pub fn anchor_viewport_offset(
     .max(0.0);
 
     (new_top + scaled).clamp(0.0, max_scroll)
-}
-
-/// Scroll offset that shows `row_y..row_y + row_h` completely inside the viewport.
-///
-/// The offset must be at least the row's bottom edge minus the viewport height
-/// and at most the row's top edge. Both bounds are clamped to the scrollable
-/// range and then ordered, because a row taller than the viewport cannot satisfy
-/// them at once. The input offset is kept whenever it already lies inside that
-/// range, so a visible row never moves and a correction scrolls the minimum
-/// amount that makes the row visible.
-pub fn keep_row_visible(
-    offset: f32,
-    row_y: f32,
-    row_h: f32,
-    viewport_h: f32,
-    max_scroll: f32,
-) -> f32 {
-    let limit = max_scroll.max(0.0);
-    let lower = (row_y + row_h - viewport_h).clamp(0.0, limit);
-    let upper = row_y.clamp(0.0, limit);
-
-    offset.clamp(lower.min(upper), lower.max(upper))
 }
 
 /// Side of the placeholder album icon drawn inside a cover of `cover_size`.

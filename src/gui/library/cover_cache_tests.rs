@@ -900,6 +900,59 @@ fn test_album_block_rows_carry_cover_path() {
     assert_eq!(grid_path, block_path);
 }
 
+/// The render path receives resolved handles and never builds one from pixels.
+///
+/// A handle minted during layout would create a new texture on every frame,
+/// which is the flicker and the redundant decode the stored-handle cache
+/// exists to prevent.
+#[test]
+fn test_render_path_never_builds_a_cover_handle() {
+    for (file, source) in [
+        ("view.rs", include_str!("view.rs")),
+        ("lists.rs", include_str!("lists.rs")),
+    ] {
+        assert!(
+            !source.contains("Handle::from_bytes"),
+            "{file} cannot build a cover handle while laying out a frame"
+        );
+        assert!(
+            !source.contains("Handle::from_rgba"),
+            "{file} cannot build a cover handle while laying out a frame"
+        );
+    }
+}
+
+/// The grid render consumes the memoized rows without per-card album work.
+///
+/// The visible rows carry their cover path already, so the layout pass must not
+/// scan the album snapshot, resolve a path per card or reach into the decoded
+/// store while it draws.
+#[test]
+fn test_grid_render_path_reads_only_the_memoized_rows() {
+    let source = include_str!("view.rs");
+
+    assert!(
+        source.contains("manager.get_visible_grid_rows("),
+        "the grid render must consume the rows the manager memoizes"
+    );
+    assert!(
+        !source.contains("cover_store"),
+        "the grid render cannot reach the decoded store per frame"
+    );
+    assert!(
+        !source.contains("album_cover_handle"),
+        "the grid render cannot resolve a cover path per card"
+    );
+    assert!(
+        !source.contains(".iter().find("),
+        "the grid render cannot run a linear search per card"
+    );
+    assert!(
+        !source.contains("_database.lock"),
+        "the grid render cannot take the database lock per frame"
+    );
+}
+
 #[test]
 fn test_negative_cover_is_not_requested_again() {
     let _guard = global_guard();

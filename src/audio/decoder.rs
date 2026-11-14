@@ -707,11 +707,26 @@ fn preload_decode_batch(
         );
     }
 
-    let remaining = predecode_cap_frames.saturating_sub(predecode_buffer.len());
-    let to_append = batch_out.len().min(remaining);
-    predecode_buffer.extend(batch_out.drain(..to_append));
-    record_batch(&span, start, to_append / out_channels.max(1), out_channels);
+    let appended = append_preload_batch(predecode_buffer, &mut batch_out);
+    record_batch(&span, start, appended / out_channels.max(1), out_channels);
     true
+}
+
+/// Appends one decoded preload batch to the pre-decode head.
+///
+/// The batch is the unit the decoder and its resampler have already advanced
+/// past, so the whole batch is kept even when it makes the head slightly larger
+/// than the soft cap. Truncating it would drop the tail and leave a hole exactly
+/// where the live decode resumes — audible as a cut at the end of the head. The
+/// caller stops decoding once the head reaches the cap, so the overshoot is at
+/// most one batch.
+fn append_preload_batch(
+    predecode_buffer: &mut std::collections::VecDeque<f64>,
+    batch_out: &mut Vec<f64>,
+) -> usize {
+    let appended = batch_out.len();
+    predecode_buffer.extend(batch_out.drain(..));
+    appended
 }
 
 /// Indica si la mezcla cruzada automática debe dispararse: falta menos (o igual)
@@ -4383,5 +4398,43 @@ mod decoder_tests {
         );
 
         std::fs::remove_file(&path).ok();
+    }
+}
+
+#[cfg(test)]
+mod preload_handoff_tests {
+    use super::*;
+
+    #[test]
+    fn test_preload_batch_is_never_truncated_at_the_cap() {
+        let cap = 100_usize;
+        let mut head: std::collections::VecDeque<f64> =
+            (0..cap - 10).map(|value| value as f64).collect();
+        let mut batch: Vec<f64> = (1_000..1_100).map(|value| value as f64).collect();
+
+        let appended = append_preload_batch(&mut head, &mut batch);
+
+        assert_eq!(appended, 100);
+        assert!(
+            head.len() >= cap,
+            "the last batch may overshoot the soft cap"
+        );
+        assert_eq!(head.len(), cap - 10 + 100);
+        assert_eq!(head.back().copied(), Some(1_099.0));
+        assert!(
+            batch.is_empty(),
+            "the whole batch must be moved, never dropped"
+        );
+    }
+
+    #[test]
+    fn test_a_full_head_never_loses_the_batch_tail() {
+        let mut head: std::collections::VecDeque<f64> = (0..10).map(|value| value as f64).collect();
+        let mut batch: Vec<f64> = (10..20).map(|value| value as f64).collect();
+
+        assert_eq!(append_preload_batch(&mut head, &mut batch), 10);
+        assert_eq!(head.len(), 20);
+        assert_eq!(head.front().copied(), Some(0.0));
+        assert_eq!(head.back().copied(), Some(19.0));
     }
 }

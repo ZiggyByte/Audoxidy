@@ -123,6 +123,27 @@ fn table_exists(db: &Database, name: &str) -> bool {
         > 0
 }
 
+/// Names of the explicit indexes the schema source declares, in file order.
+fn declared_index_names(source: &str) -> Vec<String> {
+    const MARKER: &str = "CREATE INDEX IF NOT EXISTS";
+    source
+        .lines()
+        .filter_map(|line| {
+            let start = line.find(MARKER)? + MARKER.len();
+            line[start..].split_whitespace().next().map(str::to_string)
+        })
+        .collect()
+}
+
+/// The `CREATE INDEX` statements of the schema source, one per source line.
+fn index_statements(source: &str) -> Vec<&str> {
+    source
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("CREATE INDEX"))
+        .collect()
+}
+
 /// Tables the schema declares, in the order the catalog sorts them.
 ///
 /// The list is exact: a table added to or removed from `create_schema` must be
@@ -596,4 +617,95 @@ fn test_optimize_with_the_scanner_mask_succeeds() {
 
     db.optimize_query_planner(Some(0x10002))
         .expect("a later scan on the same connection still succeeds");
+}
+
+#[test]
+fn test_autoincrement_is_kept_on_every_identity_table() {
+    let source = include_str!("schema.rs");
+
+    assert_eq!(
+        source.matches("INTEGER PRIMARY KEY AUTOINCREMENT").count(),
+        7,
+        "every identity table declares AUTOINCREMENT; adding or dropping one is a deliberate decision"
+    );
+    assert!(
+        source.contains("reused rowid"),
+        "the declarations keep their reason beside them: a reused rowid could resume a playlist on a different song"
+    );
+}
+
+#[test]
+fn test_identity_tables_use_sqlite_sequence() {
+    let temp = TempDbDir::new();
+    let mut db = Database::new_at(&temp.db_path()).expect("create the database");
+    insert_song_at(&mut db, "/music/sqlite_sequence.flac");
+
+    assert!(
+        table_exists(&db, "sqlite_sequence"),
+        "the first insert makes SQLite create the sequence table"
+    );
+    let sequence: Option<i64> = db
+        .conn
+        .query_row(
+            "SELECT seq FROM sqlite_sequence WHERE name = 'SONGS'",
+            [],
+            |row| row.get(0),
+        )
+        .optional()
+        .expect("read the SONGS sequence");
+    assert!(
+        sequence.is_some_and(|seq| seq >= 1),
+        "the clause is load-bearing: it records the rowid the insert consumed, got {sequence:?}"
+    );
+}
+
+#[test]
+fn test_the_index_set_is_the_reviewed_eight() {
+    let source = include_str!("schema.rs");
+    let declared: std::collections::HashSet<String> =
+        declared_index_names(source).into_iter().collect();
+    let reviewed: std::collections::HashSet<String> = [
+        "idx_playlist_items_order",
+        "idx_playlist_items_song",
+        "idx_shuffle_session",
+        "idx_songs_folder",
+        "idx_songs_album",
+        "idx_songs_artist",
+        "idx_albums_year",
+        "idx_albums_genre",
+    ]
+    .into_iter()
+    .map(str::to_string)
+    .collect();
+
+    assert_eq!(
+        declared, reviewed,
+        "the index set is a review outcome: an addition needs its own query-plan evidence"
+    );
+    assert_eq!(
+        index_statements(source).len(),
+        8,
+        "the source declares exactly the eight reviewed indexes"
+    );
+}
+
+#[test]
+fn test_no_low_cardinality_column_is_indexed() {
+    let source = include_str!("schema.rs");
+    let statements = index_statements(source);
+    assert_eq!(
+        statements.len(),
+        8,
+        "the parse must see every index statement before it can clear them"
+    );
+
+    for statement in statements {
+        let lowered = statement.to_lowercase();
+        for column in ["channels", "bit_depth", "sample_rate"] {
+            assert!(
+                !lowered.contains(column),
+                "`{column}` is low-cardinality and stays unindexed: {statement}"
+            );
+        }
+    }
 }

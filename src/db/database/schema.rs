@@ -21,6 +21,11 @@ impl Database {
         conn.pragma_update(None, "mmap_size", 16777216)?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
 
+        // Every identity column keeps AUTOINCREMENT. Without the clause SQLite
+        // may hand the rowid of a deleted row to the next insert, and
+        // `PLAYLISTS.last_song_id` is a plain integer with no foreign key, so a
+        // reused rowid could resume a playlist on a different song. The
+        // insert-time saving is negligible next to that.
         // 1. CARPETAS (Identidad física)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS FOLDERS (

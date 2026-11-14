@@ -61,7 +61,7 @@ pub(super) fn view_audio_config<'a>(
                 BitDepth::Bits24 => "24 bits Int",
                 BitDepth::Bits32Float => "32 bits Float",
             };
-            OptionWrapper::new(label, b.clone())
+            OptionWrapper::new(label, *b)
         })
         .collect();
     let selected_bit_opt = {
@@ -70,10 +70,7 @@ pub(super) fn view_audio_config<'a>(
             BitDepth::Bits24 => "24 bits Int",
             BitDepth::Bits32Float => "32 bits Float",
         };
-        Some(OptionWrapper::new(
-            label,
-            manager.selected_bit_depth.clone(),
-        ))
+        Some(OptionWrapper::new(label, manager.selected_bit_depth))
     };
 
     let channels_options = vec![
@@ -320,7 +317,7 @@ pub(super) fn view_audio_config<'a>(
 
     // Estado del Audio Derecho - Sacamos las variables del Guard inmediatamente
     let (
-        sample_rate,
+        _sample_rate,
         channels,
         bit_depth_display,
         buffer_size,
@@ -355,24 +352,24 @@ pub(super) fn view_audio_config<'a>(
     let mut album_gain = None;
     let mut file_format = String::new();
 
-    if !current_path.is_empty() {
-        if let Some(ref db_arc) = db_opt {
-            // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-            if let Ok(db) = db_arc.try_lock() {
-                if let Ok(Some((sr, bd, ch))) = db.get_song_technical_meta_by_path(&current_path) {
-                    if sr > 0 {
-                        file_sample_rate = sr;
-                    }
-                    file_bit_depth = bd;
-                    file_channels = ch;
+    if !current_path.is_empty()
+        && let Some(ref db_arc) = db_opt
+    {
+        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
+        if let Ok(db) = db_arc.try_lock() {
+            if let Ok(Some((sr, bd, ch))) = db.get_song_technical_meta_by_path(&current_path) {
+                if sr > 0 {
+                    file_sample_rate = sr;
                 }
-                if let Ok(Some(fmt)) = db.get_song_format_by_path(&current_path) {
-                    file_format = fmt;
-                }
-                if let Ok((tg, ag)) = db.get_replay_gain_by_path(&current_path) {
-                    track_gain = tg;
-                    album_gain = ag;
-                }
+                file_bit_depth = bd;
+                file_channels = ch;
+            }
+            if let Ok(Some(fmt)) = db.get_song_format_by_path(&current_path) {
+                file_format = fmt;
+            }
+            if let Ok((tg, ag)) = db.get_replay_gain_by_path(&current_path) {
+                track_gain = tg;
+                album_gain = ag;
             }
         }
     }

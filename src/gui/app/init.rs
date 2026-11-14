@@ -364,10 +364,10 @@ impl AudoxidyApp {
             };
 
             // 1. Cargar última playlist activa
-            if let Some(last_id_str) = startup_settings.get("last_active_playlist_id") {
-                if let Ok(last_id) = last_id_str.parse::<i64>() {
-                    playlist_manager.active_playlist_id = last_id;
-                }
+            if let Some(last_id_str) = startup_settings.get("last_active_playlist_id")
+                && let Ok(last_id) = last_id_str.parse::<i64>()
+            {
+                playlist_manager.active_playlist_id = last_id;
             }
 
             let active_id = playlist_manager.active_playlist_id;
@@ -385,50 +385,48 @@ impl AudoxidyApp {
                 playlist_manager.shuffle_active = p_data.shuffle_active;
                 playlist_manager.repeat_mode = p_data.repeat_mode as u8;
 
-                if p_data.shuffle_active {
-                    if let Ok(Some(mut session)) = db_lock.load_shuffle_session(active_id) {
-                        // Sincronizar posición de sesión con la canción restaurada
-                        if let Some(song_id) = p_data.last_song_id {
-                            if let Some(pos) =
-                                session.shuffle_order.iter().position(|&id| id == song_id)
-                            {
-                                session.current_position = pos + 1; // Apuntar a la siguiente en la cola
-                                if !session.history.contains(&song_id) {
-                                    session.history.push(song_id);
-                                }
-                            }
+                if p_data.shuffle_active
+                    && let Ok(Some(mut session)) = db_lock.load_shuffle_session(active_id)
+                {
+                    // Sincronizar posición de sesión con la canción restaurada
+                    if let Some(song_id) = p_data.last_song_id
+                        && let Some(pos) =
+                            session.shuffle_order.iter().position(|&id| id == song_id)
+                    {
+                        session.current_position = pos + 1; // Apuntar a la siguiente en la cola
+                        if !session.history.contains(&song_id) {
+                            session.history.push(song_id);
                         }
-                        playlist_manager.shuffle_session = Some(session);
                     }
+                    playlist_manager.shuffle_session = Some(session);
                 }
 
                 // Restaurar canción y posición (esto se carga pero el 'play' lo haremos vía Task para mayor seguridad)
-                if let Some(song_id) = p_data.last_song_id {
-                    if let Some(l_idx) = playlist_manager.get_linear_index_by_song_id(song_id) {
-                        if let Some(song) = playlist_manager.get_song_at_linear_index(l_idx) {
-                            let path = song.file_path.clone();
-                            let title = song.title.clone();
-                            let artist = song.artist_name.to_string();
-                            let album = song.album_title.to_string();
-                            let cover_path = song.cover_path.as_deref().map(str::to_string);
+                if let Some(song_id) = p_data.last_song_id
+                    && let Some(l_idx) = playlist_manager.get_linear_index_by_song_id(song_id)
+                    && let Some(song) = playlist_manager.get_song_at_linear_index(l_idx)
+                {
+                    let path = song.file_path.clone();
+                    let title = song.title.clone();
+                    let artist = song.artist_name.to_string();
+                    let album = song.album_title.to_string();
+                    let cover_path = song.cover_path.as_deref().map(str::to_string);
 
-                            playlist_manager.playing_song_idx = Some(l_idx);
-                            let (track_gain, album_gain) = db_lock
-                                .get_replay_gain_by_path(&path)
-                                .unwrap_or((None, None));
-                            restore = Some(StartupPlaylistRestore {
-                                path: path.to_string(),
-                                title: title.to_string(),
-                                artist,
-                                album,
-                                cover_path,
-                                track_gain,
-                                album_gain,
-                                last_pos_sec: p_data.last_pos_sec,
-                                is_playing: p_data.is_playing,
-                            });
-                        }
-                    }
+                    playlist_manager.playing_song_idx = Some(l_idx);
+                    let (track_gain, album_gain) = db_lock
+                        .get_replay_gain_by_path(&path)
+                        .unwrap_or((None, None));
+                    restore = Some(StartupPlaylistRestore {
+                        path: path.to_string(),
+                        title: title.to_string(),
+                        artist,
+                        album,
+                        cover_path,
+                        track_gain,
+                        album_gain,
+                        last_pos_sec: p_data.last_pos_sec,
+                        is_playing: p_data.is_playing,
+                    });
                 }
             }
 
@@ -457,19 +455,20 @@ impl AudoxidyApp {
                 let apply_ok = core.audio_manager().apply_audio_settings(settings).is_ok();
                 // Backfill del id estable cuando solo había coincidencia por nombre
                 // heredado: así la próxima carga resuelve sin depender del nombre.
-                if apply_ok && had_device_id {
-                    if let Some(resolved) = core.audio_manager().get_state().device_id.clone() {
-                        // db-lock: scope de escritura; el guard no cubre ninguna
-                        // llamada al gestor de audio.
-                        if let Ok(db_lock) = core.database().lock() {
-                            match db_lock.set_setting("audio_device_id", &resolved) {
-                                Ok(()) => tracing::info!(
-                                    "Persistido el id estable del dispositivo de salida."
-                                ),
-                                Err(e) => tracing::warn!(
-                                    "No se pudo persistir el id estable del dispositivo: {e}"
-                                ),
-                            }
+                if apply_ok
+                    && had_device_id
+                    && let Some(resolved) = core.audio_manager().get_state().device_id.clone()
+                {
+                    // db-lock: scope de escritura; el guard no cubre ninguna
+                    // llamada al gestor de audio.
+                    if let Ok(db_lock) = core.database().lock() {
+                        match db_lock.set_setting("audio_device_id", &resolved) {
+                            Ok(()) => tracing::info!(
+                                "Persistido el id estable del dispositivo de salida."
+                            ),
+                            Err(e) => tracing::warn!(
+                                "No se pudo persistir el id estable del dispositivo: {e}"
+                            ),
                         }
                     }
                 }
@@ -707,8 +706,10 @@ impl AudoxidyApp {
                     }
                     Some(
                         bytes
-                            .chunks_exact(4)
-                            .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .map(|c| f32::from_le_bytes(*c))
                             .collect(),
                     )
                 })
@@ -761,20 +762,21 @@ impl AudoxidyApp {
             };
 
             // Cargar preset seleccionado
-            if let Some(preset_name) = eq.selected_preset_name {
-                if !preset_name.is_empty() && preset_name != "Default" {
-                    // Buscar primero en custom presets, luego en default_presets
-                    let custom = audio_center_manager
-                        .custom_presets
-                        .iter()
-                        .find(|p| p.name == preset_name)
-                        .cloned();
-                    let default = crate::audio::preset::EqPreset::default_presets()
-                        .into_iter()
-                        .find(|p| p.name == preset_name);
-                    if let Some(p) = custom.or(default) {
-                        audio_center_manager.selected_preset = Some(p);
-                    }
+            if let Some(preset_name) = eq.selected_preset_name
+                && !preset_name.is_empty()
+                && preset_name != "Default"
+            {
+                // Buscar primero en custom presets, luego en default_presets
+                let custom = audio_center_manager
+                    .custom_presets
+                    .iter()
+                    .find(|p| p.name == preset_name)
+                    .cloned();
+                let default = crate::audio::preset::EqPreset::default_presets()
+                    .into_iter()
+                    .find(|p| p.name == preset_name);
+                if let Some(p) = custom.or(default) {
+                    audio_center_manager.selected_preset = Some(p);
                 }
             }
         }

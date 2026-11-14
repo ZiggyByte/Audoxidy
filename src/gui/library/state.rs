@@ -17,14 +17,14 @@ pub fn get_library_redraw_count() -> u64 {
 }
 pub fn library_redraw_count_log() {
     let count = LIBRARY_VIEW_REDRAWS.fetch_add(1, Ordering::Relaxed) + 1;
-    if count % 100 == 0 {
+    if count.is_multiple_of(100) {
         tracing::info!("Library view redraws: {}", count);
     }
 }
 
 /// ID estático para el scrollable de la biblioteca — garantiza que view y update usan EXACTAMENTE el mismo ID
 pub static LIBRARY_SCROLL_ID: std::sync::LazyLock<iced::widget::Id> =
-    std::sync::LazyLock::new(|| iced::widget::Id::unique());
+    std::sync::LazyLock::new(iced::widget::Id::unique);
 pub static GRID_ID_A: std::sync::LazyLock<iced::widget::Id> =
     std::sync::LazyLock::new(|| iced::widget::Id::new("grid_view_a"));
 pub static GRID_ID_B: std::sync::LazyLock<iced::widget::Id> =

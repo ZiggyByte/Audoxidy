@@ -50,16 +50,16 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
     // recrea hasta reiniciar el proceso.
     let log_path = log_dir.join("audoxidy.log");
     let max_bytes = config.max_file_size_mb * 1024 * 1024;
-    if let Ok(meta) = std::fs::metadata(&log_path) {
-        if meta.len() > max_bytes {
-            let ts = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let rotated = log_dir.join(format!("audoxidy.{}.log", ts));
-            std::fs::rename(&log_path, &rotated).ok();
-            cleanup_old_logs(&log_dir, config.max_history_files);
-        }
+    if let Ok(meta) = std::fs::metadata(&log_path)
+        && meta.len() > max_bytes
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let rotated = log_dir.join(format!("audoxidy.{}.log", ts));
+        std::fs::rename(&log_path, &rotated).ok();
+        cleanup_old_logs(&log_dir, config.max_history_files);
     }
     let log_file = std::fs::OpenOptions::new()
         .create(true)
@@ -171,6 +171,12 @@ impl PerformanceMetrics {
             underrun_count: AtomicU64::new(0),
             ram_usage_bytes: AtomicU64::new(0),
         }
+    }
+}
+
+impl Default for PerformanceMetrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

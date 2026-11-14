@@ -90,10 +90,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(s) = row {
-                results.push(s);
-            }
+        for s in rows.flatten() {
+            results.push(s);
         }
         Ok(results)
     }

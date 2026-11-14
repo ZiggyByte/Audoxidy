@@ -103,14 +103,13 @@ impl crate::gui::app::AudoxidyApp {
                         if self.focus == AppFocus::Playlist {
                             // Reproducción inmediata para Enter en Playlist
                             // (reinicia la canción actual si ya se está reproduciendo).
-                            if let Some(idx) = self.playlist_manager.focused_idx {
-                                if self
+                            if let Some(idx) = self.playlist_manager.focused_idx
+                                && self
                                     .playlist_manager
                                     .get_song_at_linear_index(idx)
                                     .is_some()
-                                {
-                                    self.play_song_from_playlist(idx);
-                                }
+                            {
+                                self.play_song_from_playlist(idx);
                             }
                             Task::none()
                         } else {
@@ -128,10 +127,10 @@ impl crate::gui::app::AudoxidyApp {
                         }
                     }
                     Key::Named(Named::Space) => {
-                        if self.focus == AppFocus::Playlist {
-                            if let Some(sel) = self.playlist_manager.focused_idx {
-                                return self.update(Message::PlaylistToggleEnabled(sel));
-                            }
+                        if self.focus == AppFocus::Playlist
+                            && let Some(sel) = self.playlist_manager.focused_idx
+                        {
+                            return self.update(Message::PlaylistToggleEnabled(sel));
                         }
                         Task::none()
                     }
@@ -352,15 +351,14 @@ impl crate::gui::app::AudoxidyApp {
                 // Arrastre de ventana armado: el sistema empieza a mover (y a
                 // des-maximizar si procede) solo tras superar el umbral, para
                 // que un clic breve no arrastre la ventana.
-                if self.window_drag_armed {
-                    if let Some(origin) = self.window_drag_origin {
-                        if exceeds_drag_threshold(origin, pos) {
-                            self.window_drag_armed = false;
-                            self.window_drag_origin = None;
-                            if let Some(id) = self.window_id {
-                                return iced::window::drag(id).map(|_: ()| Message::NoOp);
-                            }
-                        }
+                if self.window_drag_armed
+                    && let Some(origin) = self.window_drag_origin
+                    && exceeds_drag_threshold(origin, pos)
+                {
+                    self.window_drag_armed = false;
+                    self.window_drag_origin = None;
+                    if let Some(id) = self.window_id {
+                        return iced::window::drag(id).map(|_: ()| Message::NoOp);
                     }
                 }
 
@@ -378,16 +376,15 @@ impl crate::gui::app::AudoxidyApp {
 
                 if self.library_manager.marquee_start_pos.is_some()
                     && !self.library_manager.is_dragging
+                    && let Some(start_pos) = self.library_manager.marquee_start_pos
                 {
-                    if let Some(start_pos) = self.library_manager.marquee_start_pos {
-                        let dx = pos.x - start_pos.x;
-                        let dy = pos.y - start_pos.y;
-                        let dist_sq = dx * dx + dy * dy;
+                    let dx = pos.x - start_pos.x;
+                    let dy = pos.y - start_pos.y;
+                    let dist_sq = dx * dx + dy * dy;
 
-                        if dist_sq > 9.0 {
-                            // Umbral de 3px (3*3=9)
-                            self.library_manager.is_dragging = true;
-                        }
+                    if dist_sq > 9.0 {
+                        // Umbral de 3px (3*3=9)
+                        self.library_manager.is_dragging = true;
                     }
                 }
 
@@ -398,28 +395,27 @@ impl crate::gui::app::AudoxidyApp {
                     self.library_manager.marquee_end = Some(iced::Point::new(lib_x, lib_y));
                 }
 
-                if self.audio_center_manager.is_dragging {
-                    if let Some(start_pos) = self.audio_center_manager.drag_start {
-                        let delta_x = pos.x - start_pos.x;
-                        let delta_y = pos.y - start_pos.y;
+                if self.audio_center_manager.is_dragging
+                    && let Some(start_pos) = self.audio_center_manager.drag_start
+                {
+                    let delta_x = pos.x - start_pos.x;
+                    let delta_y = pos.y - start_pos.y;
 
-                        let current_pos =
-                            self.audio_center_manager.window_pos.unwrap_or_else(|| {
-                                let win_w = 940.0;
-                                let win_h = 474.0;
-                                let x = (self.window_size.0 as f32 - win_w) / 2.0;
-                                let y = (self.window_size.1 as f32 - win_h) / 2.0;
-                                iced::Point::new(x.max(0.0), y.max(0.0))
-                            });
+                    let current_pos = self.audio_center_manager.window_pos.unwrap_or_else(|| {
+                        let win_w = 940.0;
+                        let win_h = 474.0;
+                        let x = (self.window_size.0 as f32 - win_w) / 2.0;
+                        let y = (self.window_size.1 as f32 - win_h) / 2.0;
+                        iced::Point::new(x.max(0.0), y.max(0.0))
+                    });
 
-                        let new_x = (current_pos.x + delta_x)
-                            .clamp(0.0, (self.window_size.0 as f32 - 100.0).max(0.0));
-                        let new_y = (current_pos.y + delta_y)
-                            .clamp(0.0, (self.window_size.1 as f32 - 40.0).max(0.0));
+                    let new_x = (current_pos.x + delta_x)
+                        .clamp(0.0, (self.window_size.0 as f32 - 100.0).max(0.0));
+                    let new_y = (current_pos.y + delta_y)
+                        .clamp(0.0, (self.window_size.1 as f32 - 40.0).max(0.0));
 
-                        self.audio_center_manager.window_pos = Some(iced::Point::new(new_x, new_y));
-                        self.audio_center_manager.drag_start = Some(pos);
-                    }
+                    self.audio_center_manager.window_pos = Some(iced::Point::new(new_x, new_y));
+                    self.audio_center_manager.drag_start = Some(pos);
                 }
 
                 self.player_ui_state.mouse_pos = Some(pos);
@@ -441,33 +437,33 @@ impl crate::gui::app::AudoxidyApp {
                 }
 
                 if self.library_manager.is_dragging {
-                    if let Some(start) = self.library_manager.marquee_start {
-                        if let Some(pos) = self.player_ui_state.mouse_pos {
-                            let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
-                            let scroll_y = self.library_manager.scroll_offset.y;
-                            let lib_y = pos.y - 72.0 + scroll_y;
-                            let end = iced::Point::new(lib_x, lib_y);
+                    if let Some(start) = self.library_manager.marquee_start
+                        && let Some(pos) = self.player_ui_state.mouse_pos
+                    {
+                        let lib_x = (pos.x - LIBRARY_CONTENT_X_ORIGIN).max(0.0);
+                        let scroll_y = self.library_manager.scroll_offset.y;
+                        let lib_y = pos.y - 72.0 + scroll_y;
+                        let end = iced::Point::new(lib_x, lib_y);
 
-                            let dx = start.x - end.x;
-                            let dy = start.y - end.y;
-                            let dist_sq = dx * dx + dy * dy;
+                        let dx = start.x - end.x;
+                        let dy = start.y - end.y;
+                        let dist_sq = dx * dx + dy * dy;
 
-                            // Solo procesar como marquee si ha habido un arrastre real (más de 3 píxeles)
-                            if dist_sq > 9.0 {
-                                let rect_x = start.x.min(end.x);
-                                let rect_y = start.y.min(end.y);
-                                let rect_w = (start.x - end.x).abs().max(1.0);
-                                let rect_h = (start.y - end.y).abs().max(1.0);
+                        // Solo procesar como marquee si ha habido un arrastre real (más de 3 píxeles)
+                        if dist_sq > 9.0 {
+                            let rect_x = start.x.min(end.x);
+                            let rect_y = start.y.min(end.y);
+                            let rect_w = (start.x - end.x).abs().max(1.0);
+                            let rect_h = (start.y - end.y).abs().max(1.0);
 
-                                let rect = iced::Rectangle {
-                                    x: rect_x,
-                                    y: rect_y,
-                                    width: rect_w,
-                                    height: rect_h,
-                                };
+                            let rect = iced::Rectangle {
+                                x: rect_x,
+                                y: rect_y,
+                                width: rect_w,
+                                height: rect_h,
+                            };
 
-                                self.library_manager.select_marquee(rect, self.modifiers);
-                            }
+                            self.library_manager.select_marquee(rect, self.modifiers);
                         }
                     }
                     self.library_manager.is_dragging = false;

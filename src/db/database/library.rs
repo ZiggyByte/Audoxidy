@@ -85,10 +85,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(s) = r {
-                results.push(s);
-            }
+        for s in rows.flatten() {
+            results.push(s);
         }
         Ok(results)
     }
@@ -162,10 +160,8 @@ impl Database {
         })?;
 
         let mut songs = Vec::new();
-        for r in rows {
-            if let Ok(s) = r {
-                songs.push(s);
-            }
+        for s in rows.flatten() {
+            songs.push(s);
         }
         Ok(songs)
     }
@@ -201,10 +197,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(a) = r {
-                results.push(a);
-            }
+        for a in rows.flatten() {
+            results.push(a);
         }
         Ok(results)
     }
@@ -242,10 +236,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(a) = r {
-                results.push(a);
-            }
+        for a in rows.flatten() {
+            results.push(a);
         }
         Ok(results)
     }
@@ -258,10 +250,8 @@ impl Database {
         let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?;
 
         let mut results = Vec::new();
-        for r in rows {
-            if let Ok(f) = r {
-                results.push(f);
-            }
+        for f in rows.flatten() {
+            results.push(f);
         }
         Ok(results)
     }
@@ -281,7 +271,7 @@ impl Database {
             Ok((
                 row.get::<_, i64>(0)? as u64,
                 row.get::<_, f64>(1).unwrap_or(0.0),
-                row.get::<_, f64>(2).unwrap_or(0.0) as f64,
+                row.get::<_, f64>(2).unwrap_or(0.0),
             ))
         })?;
         Ok(stats)
@@ -307,7 +297,7 @@ impl Database {
             Ok((
                 row.get::<_, i64>(0)? as u64,
                 row.get::<_, f64>(1).unwrap_or(0.0),
-                row.get::<_, f64>(2).unwrap_or(0.0) as f64,
+                row.get::<_, f64>(2).unwrap_or(0.0),
             ))
         })?;
         Ok(stats)
@@ -380,10 +370,8 @@ impl Database {
         })?;
 
         let mut songs = Vec::new();
-        for r in rows {
-            if let Ok(s) = r {
-                songs.push(s);
-            }
+        for s in rows.flatten() {
+            songs.push(s);
         }
         Ok(songs)
     }
@@ -459,10 +447,8 @@ impl Database {
         })?;
 
         let mut songs = Vec::new();
-        for r in rows {
-            if let Ok(s) = r {
-                songs.push(s);
-            }
+        for s in rows.flatten() {
+            songs.push(s);
         }
         Ok(songs)
     }
@@ -501,10 +487,8 @@ impl Database {
                 ))
             })?;
             let mut res = Vec::new();
-            for r in mapped {
-                if let Ok(v) = r {
-                    res.push(v);
-                }
+            for v in mapped.flatten() {
+                res.push(v);
             }
             res
         } else {
@@ -518,10 +502,8 @@ impl Database {
                 ))
             })?;
             let mut res = Vec::new();
-            for r in mapped {
-                if let Ok(v) = r {
-                    res.push(v);
-                }
+            for v in mapped.flatten() {
+                res.push(v);
             }
             res
         };
@@ -532,11 +514,11 @@ impl Database {
     /// Obtiene el valor máximo de `import_order` entre todas las canciones.
     pub fn get_max_import_order(&self) -> Result<i64> {
         let mut stmt = self.conn.prepare("SELECT MAX(import_order) FROM SONGS")?;
-        let res = stmt.query_row([], |row| {
+
+        stmt.query_row([], |row| {
             let val: Option<i64> = row.get(0)?;
             Ok(val.unwrap_or(0))
-        });
-        res
+        })
     }
 
     /// Obtiene estadísticas generales de la biblioteca (canciones, álbumes, artistas, duración, tamaño).
@@ -655,10 +637,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(entry) = row {
-                results.push(entry);
-            }
+        for entry in rows.flatten() {
+            results.push(entry);
         }
         Ok(results)
     }
@@ -781,10 +761,8 @@ impl Database {
         })?;
 
         let mut songs = Vec::new();
-        for row in rows {
-            if let Ok(s) = row {
-                songs.push(s);
-            }
+        for s in rows.flatten() {
+            songs.push(s);
         }
         Ok(songs)
     }

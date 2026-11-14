@@ -119,10 +119,10 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 }
             }
             iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
-                if !bounds.contains(cursor_pos) {
-                    if let Some(ref cb) = self.on_selected_state_change {
-                        shell.publish(cb(false));
-                    }
+                if !bounds.contains(cursor_pos)
+                    && let Some(ref cb) = self.on_selected_state_change
+                {
+                    shell.publish(cb(false));
                 }
             }
             _ => {}
@@ -709,13 +709,11 @@ impl<'a, Message: 'a + Clone> iced::advanced::Widget<Message, Theme, iced::Rende
                             state.input_value_text.remove(state.input_cursor_pos);
                         }
                     }
-                    iced::keyboard::Key::Character(c) => {
-                        if state.input_value_text.len() < 20 {
-                            let ch = c.chars().next().unwrap_or(' ');
-                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
-                                state.input_value_text.insert(state.input_cursor_pos, ch);
-                                state.input_cursor_pos += 1;
-                            }
+                    iced::keyboard::Key::Character(c) if state.input_value_text.len() < 20 => {
+                        let ch = c.chars().next().unwrap_or(' ');
+                        if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
+                            state.input_value_text.insert(state.input_cursor_pos, ch);
+                            state.input_cursor_pos += 1;
                         }
                     }
                     _ => {}
@@ -979,15 +977,15 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-            if cursor.is_over(layout.bounds()) {
-                let d = match delta {
-                    mouse::ScrollDelta::Lines { y, .. } => *y,
-                    mouse::ScrollDelta::Pixels { y, .. } => *y / 10.0,
-                };
-                shell.publish((self.on_scroll)(d));
-                return;
-            }
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && cursor.is_over(layout.bounds())
+        {
+            let d = match delta {
+                mouse::ScrollDelta::Lines { y, .. } => *y,
+                mouse::ScrollDelta::Pixels { y, .. } => *y / 10.0,
+            };
+            shell.publish((self.on_scroll)(d));
+            return;
         }
         self.content.as_widget_mut().update(
             &mut tree.children[0],
@@ -2039,13 +2037,11 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                             state.input_value_text.remove(state.input_cursor_pos);
                         }
                     }
-                    iced::keyboard::Key::Character(c) => {
-                        if state.input_value_text.len() < 20 {
-                            let ch = c.chars().next().unwrap_or(' ');
-                            if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
-                                state.input_value_text.insert(state.input_cursor_pos, ch);
-                                state.input_cursor_pos += 1;
-                            }
+                    iced::keyboard::Key::Character(c) if state.input_value_text.len() < 20 => {
+                        let ch = c.chars().next().unwrap_or(' ');
+                        if ch.is_ascii_digit() || ch == '.' || ch == '-' || ch.is_whitespace() {
+                            state.input_value_text.insert(state.input_cursor_pos, ch);
+                            state.input_cursor_pos += 1;
                         }
                     }
                     _ => {}
@@ -2435,7 +2431,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
 
         let font_size = self.options.input_font_size;
         let pad_h = self.options.input_padding_h;
-        let pad_v = self.options.input_padding_v;
+        let _pad_v = self.options.input_padding_v;
         let (input_width, input_height) = self.compute_input_size();
         let gap = self.options.input_gap;
 

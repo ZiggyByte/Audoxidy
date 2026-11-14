@@ -38,24 +38,24 @@ impl LibraryManager {
         // Esto evita que la interfaz se vea vacía si el usuario vuelve rápido, pero libera la mayoría de la RAM.
         let mut cleared = false;
 
-        if let Some(albums) = &mut self.cached_albums {
-            if albums.len() > 100 {
-                tracing::debug!("Audoxidy GC: Cleaning inactive albums from the library");
-                albums.truncate(100);
-                albums.shrink_to_fit();
-                self.filtered_albums = None;
-                cleared = true;
-            }
+        if let Some(albums) = &mut self.cached_albums
+            && albums.len() > 100
+        {
+            tracing::debug!("Audoxidy GC: Cleaning inactive albums from the library");
+            albums.truncate(100);
+            albums.shrink_to_fit();
+            self.filtered_albums = None;
+            cleared = true;
         }
 
-        if let Some(songs) = &mut self.cached_all_songs {
-            if songs.len() > 500 {
-                tracing::debug!("Audoxidy GC: Cleaning inactive songs from the library");
-                songs.truncate(500);
-                songs.shrink_to_fit();
-                self.filtered_songs = None;
-                cleared = true;
-            }
+        if let Some(songs) = &mut self.cached_all_songs
+            && songs.len() > 500
+        {
+            tracing::debug!("Audoxidy GC: Cleaning inactive songs from the library");
+            songs.truncate(500);
+            songs.shrink_to_fit();
+            self.filtered_songs = None;
+            cleared = true;
         }
 
         if cleared {
@@ -1233,11 +1233,11 @@ impl LibraryManager {
                 for album_entry in albums {
                     let composite_id = format!("{}|{}", album_entry.artist, album_entry.id);
                     items.push(LibraryListItem::Album(composite_id.clone()));
-                    if self.expanded_album.as_deref() == Some(composite_id.as_str()) {
-                        if let Some(songs) = &self.expanded_album_songs {
-                            for song in songs {
-                                items.push(LibraryListItem::Song(song.id));
-                            }
+                    if self.expanded_album.as_deref() == Some(composite_id.as_str())
+                        && let Some(songs) = &self.expanded_album_songs
+                    {
+                        for song in songs {
+                            items.push(LibraryListItem::Song(song.id));
                         }
                     }
                 }

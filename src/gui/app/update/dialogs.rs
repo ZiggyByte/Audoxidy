@@ -123,42 +123,36 @@ impl crate::gui::app::AudoxidyApp {
                         return Task::perform(
                             async move {
                                 match mode {
-                                    ExportMode::PortableFolder => {
-                                        if let Some(folder) = rfd::AsyncFileDialog::new()
-                                            .set_title("Seleccionar carpeta de exportación")
-                                            .pick_folder()
-                                            .await
-                                        {
-                                            Some((
+                                    ExportMode::PortableFolder => rfd::AsyncFileDialog::new()
+                                        .set_title("Seleccionar carpeta de exportación")
+                                        .pick_folder()
+                                        .await
+                                        .map(|folder| {
+                                            (
                                                 id,
                                                 folder.path().to_string_lossy().into_owned(),
                                                 format,
                                                 mode,
-                                            ))
-                                        } else {
-                                            None
-                                        }
-                                    }
+                                            )
+                                        }),
                                     ExportMode::SingleFile => {
                                         let ext = match format {
                                             ExportFormat::M3U => "m3u",
                                             ExportFormat::M3U8 => "m3u8",
                                         };
-                                        if let Some(file) = rfd::AsyncFileDialog::new()
+                                        rfd::AsyncFileDialog::new()
                                             .set_title("Guardar lista de reproducción")
                                             .add_filter("Lista de reproducción", &[ext])
                                             .save_file()
                                             .await
-                                        {
-                                            Some((
-                                                id,
-                                                file.path().to_string_lossy().into_owned(),
-                                                format,
-                                                mode,
-                                            ))
-                                        } else {
-                                            None
-                                        }
+                                            .map(|file| {
+                                                (
+                                                    id,
+                                                    file.path().to_string_lossy().into_owned(),
+                                                    format,
+                                                    mode,
+                                                )
+                                            })
                                     }
                                 }
                             },

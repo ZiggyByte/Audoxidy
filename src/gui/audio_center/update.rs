@@ -168,7 +168,7 @@ impl AudioCenterManager {
                     device_name: self.selected_device.clone(),
                     device_id: selected_device_id.clone(),
                     sample_rate: self.selected_sample_rate,
-                    bit_depth: Some(self.selected_bit_depth.clone()),
+                    bit_depth: Some(self.selected_bit_depth),
                     channels: ChannelConfig::Manual(self.selected_channels_manual),
                     buffer_size: self.selected_buffer_size,
                 };

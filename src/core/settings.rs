@@ -24,8 +24,10 @@ fn deserialize_f32_blob(blob: Option<Vec<u8>>) -> Option<Vec<f32>> {
         }
         Some(
             bytes
-                .chunks_exact(4)
-                .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|c| f32::from_le_bytes(*c))
                 .collect(),
         )
     })

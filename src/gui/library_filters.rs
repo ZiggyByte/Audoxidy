@@ -207,8 +207,8 @@ impl LibraryFiltersManager {
                     for (l1, l2, l3_opt) in hierarchy {
                         char_sets.insert(Self::get_group_char(&l1));
 
-                        let l2_map = indices.entry(l1.to_string()).or_insert_with(HashMap::new);
-                        let l3_set = l2_map.entry(l2.to_string()).or_insert_with(HashSet::new);
+                        let l2_map = indices.entry(l1.to_string()).or_default();
+                        let l3_set = l2_map.entry(l2.to_string()).or_default();
 
                         if let Some(l3) = l3_opt {
                             l3_set.insert(l3.to_string());
@@ -838,24 +838,20 @@ pub fn view<'a>(
         .height(Length::Fill)
         .style(|_t: &Theme| container::Style::default().background(COLOR_BG));
 
-    let overlay = if let Some(menu) = menu_options_container {
-        Some(
-            container(mouse_area(menu).on_press(Message::NoOp))
-                .width(Length::Fixed(FILTER_PANEL_WIDTH))
-                .height(Length::Fill)
-                .padding(iced::Padding {
-                    top: FILTER_OVERLAY_TOP,
-                    bottom: 0.0,
-                    left: SPACE_LG,
-                    right: SPACE_LG,
-                })
-                .align_x(iced::alignment::Horizontal::Center)
-                .align_y(iced::alignment::Vertical::Top)
-                .into(),
-        )
-    } else {
-        None
-    };
+    let overlay = menu_options_container.map(|menu| {
+        container(mouse_area(menu).on_press(Message::NoOp))
+            .width(Length::Fixed(FILTER_PANEL_WIDTH))
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: FILTER_OVERLAY_TOP,
+                bottom: 0.0,
+                left: SPACE_LG,
+                right: SPACE_LG,
+            })
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Top)
+            .into()
+    });
 
     (base_view.into(), overlay)
 }

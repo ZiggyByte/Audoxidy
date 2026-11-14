@@ -52,17 +52,12 @@ fn platform_min_buffer_frames() -> u32 {
 // --- Device-related types extracted from engine.rs ---
 
 /// Profundidad de bits para la salida de audio.
-#[derive(Clone, Debug, PartialEq, Copy)]
+#[derive(Clone, Debug, PartialEq, Copy, Default)]
 pub enum BitDepth {
     Bits16,
     Bits24,
+    #[default]
     Bits32Float,
-}
-
-impl Default for BitDepth {
-    fn default() -> Self {
-        Self::Bits32Float
-    }
 }
 
 /// Configuración de canales de salida.
@@ -155,19 +150,18 @@ fn choose_device_lookup(
     let has_saved_id = saved_id.is_some_and(|s| !s.is_empty());
     let has_saved_name = saved_name.is_some_and(|s| !s.is_empty());
 
-    if let Some(id) = saved_id.filter(|s| !s.is_empty()) {
-        if let Some(index) = present.iter().position(|(present_id, _)| present_id == id) {
-            return DeviceLookup::StableId(index);
-        }
+    if let Some(id) = saved_id.filter(|s| !s.is_empty())
+        && let Some(index) = present.iter().position(|(present_id, _)| present_id == id)
+    {
+        return DeviceLookup::StableId(index);
     }
 
-    if let Some(name) = saved_name.filter(|s| !s.is_empty()) {
-        if let Some(index) = present
+    if let Some(name) = saved_name.filter(|s| !s.is_empty())
+        && let Some(index) = present
             .iter()
             .position(|(_, present_name)| present_name == name)
-        {
-            return DeviceLookup::LegacyName(index);
-        }
+    {
+        return DeviceLookup::LegacyName(index);
     }
 
     if has_saved_id || has_saved_name {

@@ -58,10 +58,10 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
         if rate.is_none() && quantum.is_none() {
             // Mejor esfuerzo: el archivo puede no existir si nunca se persistió
             // una tasa/quantum, en cuyo caso no hay nada que restaurar.
-            if let Err(e) = std::fs::remove_file(&file_path) {
-                if e.kind() != std::io::ErrorKind::NotFound {
-                    tracing::debug!("No se pudo eliminar {}: {}", file_path, e);
-                }
+            if let Err(e) = std::fs::remove_file(&file_path)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::debug!("No se pudo eliminar {}: {}", file_path, e);
             }
             return;
         }
@@ -200,10 +200,10 @@ pub fn system_sound_status() -> (String, String) {
                     if let Some(val) = extract_value(line) {
                         sys_quantum = Some(val);
                     }
-                } else if line.contains("clock.force-quantum") {
-                    if let Some(val) = extract_value(line) {
-                        sys_force_quantum = Some(val);
-                    }
+                } else if line.contains("clock.force-quantum")
+                    && let Some(val) = extract_value(line)
+                {
+                    sys_force_quantum = Some(val);
                 }
             }
         }
@@ -270,10 +270,10 @@ pub fn system_sound_status() -> (String, String) {
             if let Ok(content) = std::fs::read_to_string(file_path) {
                 for line in content.lines() {
                     let trimmed = line.trim();
-                    if trimmed.starts_with("default-fragment-size-msec") {
-                        if let Some(val) = trimmed.split('=').nth(1) {
-                            pulse_quantum = Some(val.trim().to_string());
-                        }
+                    if trimmed.starts_with("default-fragment-size-msec")
+                        && let Some(val) = trimmed.split('=').nth(1)
+                    {
+                        pulse_quantum = Some(val.trim().to_string());
                     }
                 }
             }

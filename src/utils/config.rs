@@ -396,7 +396,7 @@ pub fn validate_config(config: &AppConfig) -> ConfigValidation {
 
     // Validar sample rate
     if let Some(sr) = config.audio.sample_rate {
-        if sr < 8000 || sr > 768000 {
+        if !(8000..=768000).contains(&sr) {
             errors.push(format!(
                 "Sample rate {} Hz fuera de rango (8000-768000)",
                 sr
@@ -669,10 +669,10 @@ pub fn check_config_reload() -> Option<AppConfig> {
     };
 
     let mut last_mtime = CONFIG_MTIME.lock().unwrap();
-    if let Some(last) = *last_mtime {
-        if modified <= last {
-            return None; // No cambió
-        }
+    if let Some(last) = *last_mtime
+        && modified <= last
+    {
+        return None; // No cambió
     }
     *last_mtime = Some(modified);
 

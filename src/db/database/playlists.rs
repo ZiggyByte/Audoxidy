@@ -497,10 +497,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(s) = row {
-                results.push(s);
-            }
+        for s in rows.flatten() {
+            results.push(s);
         }
         Ok(results)
     }
@@ -585,10 +583,8 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(s) = row {
-                results.push(s);
-            }
+        for s in rows.flatten() {
+            results.push(s);
         }
         Ok(results)
     }
@@ -767,10 +763,8 @@ impl Database {
         let mut history = Vec::new();
         let history_rows =
             stmt_history.query_map(params![playlist_id, session_id], |r| r.get(0))?;
-        for row in history_rows {
-            if let Ok(song_id) = row {
-                history.push(song_id);
-            }
+        for song_id in history_rows.flatten() {
+            history.push(song_id);
         }
 
         // Cargar shuffle_order (play_order < 0), ordenado por valor absoluto
@@ -780,10 +774,8 @@ impl Database {
 
         let mut shuffle_order = Vec::new();
         let order_rows = stmt_order.query_map(params![playlist_id, session_id], |r| r.get(0))?;
-        for row in order_rows {
-            if let Ok(song_id) = row {
-                shuffle_order.push(song_id);
-            }
+        for song_id in order_rows.flatten() {
+            shuffle_order.push(song_id);
         }
 
         // 3. Obtener la posición actual desde PLAYLISTS
@@ -835,10 +827,8 @@ impl Database {
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(song_id) = row {
-                results.push(song_id);
-            }
+        for song_id in rows.flatten() {
+            results.push(song_id);
         }
         Ok(results)
     }
@@ -852,10 +842,8 @@ impl Database {
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
 
         let mut results = Vec::new();
-        for row in rows {
-            if let Ok(song_id) = row {
-                results.push(song_id);
-            }
+        for song_id in rows.flatten() {
+            results.push(song_id);
         }
         Ok(results)
     }

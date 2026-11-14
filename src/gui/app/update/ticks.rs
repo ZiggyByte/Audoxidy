@@ -39,29 +39,29 @@ impl crate::gui::app::AudoxidyApp {
         TickKind::Frame.record_fire();
         self.update_meter();
 
-        if self.library_manager.is_dragging {
-            if let Some(pos) = self.player_ui_state.mouse_pos {
-                let win_h = self.window_size.1 as f32;
-                let threshold_top = 150.0;
-                let threshold_bottom = win_h - 100.0;
+        if self.library_manager.is_dragging
+            && let Some(pos) = self.player_ui_state.mouse_pos
+        {
+            let win_h = self.window_size.1 as f32;
+            let threshold_top = 150.0;
+            let threshold_bottom = win_h - 100.0;
 
-                let mut scroll_delta = 0.0;
-                if pos.y < threshold_top {
-                    scroll_delta = (pos.y - threshold_top) / 5.0;
-                } else if pos.y > threshold_bottom {
-                    scroll_delta = (pos.y - threshold_bottom) / 5.0;
-                }
+            let mut scroll_delta = 0.0;
+            if pos.y < threshold_top {
+                scroll_delta = (pos.y - threshold_top) / 5.0;
+            } else if pos.y > threshold_bottom {
+                scroll_delta = (pos.y - threshold_bottom) / 5.0;
+            }
 
-                if scroll_delta != 0.0 {
-                    let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
-                    return iced::widget::operation::scroll_by(
-                        scroll_id,
-                        iced::widget::scrollable::AbsoluteOffset {
-                            x: 0.0,
-                            y: scroll_delta,
-                        },
-                    );
-                }
+            if scroll_delta != 0.0 {
+                let scroll_id = crate::gui::library::LIBRARY_SCROLL_ID.clone();
+                return iced::widget::operation::scroll_by(
+                    scroll_id,
+                    iced::widget::scrollable::AbsoluteOffset {
+                        x: 0.0,
+                        y: scroll_delta,
+                    },
+                );
             }
         }
         Task::none()
@@ -75,12 +75,12 @@ impl crate::gui::app::AudoxidyApp {
         self.player_ui_state.tick_count = self.player_ui_state.tick_count.wrapping_add(1);
 
         // Geometry persistence debounce
-        if let Some(dirty_at) = self.geometry_dirty_at {
-            if dirty_at.elapsed() >= std::time::Duration::from_millis(500) {
-                self.persist_geometry();
-                self.geometry_dirty_at = None;
-                self.geometry_last_saved = Some(std::time::Instant::now());
-            }
+        if let Some(dirty_at) = self.geometry_dirty_at
+            && dirty_at.elapsed() >= std::time::Duration::from_millis(500)
+        {
+            self.persist_geometry();
+            self.geometry_dirty_at = None;
+            self.geometry_last_saved = Some(std::time::Instant::now());
         }
 
         let state = self.core.audio_state();
@@ -169,40 +169,38 @@ impl crate::gui::app::AudoxidyApp {
                 // Prefetch de carátula y pre-carga de la siguiente canción
                 // ~15s antes del final (transiciones sin cortes). El dedup
                 // por handle/path evita repetir el trabajo en cada tick.
-                if remaining <= 15.0 {
-                    if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
-                        if let Some(ref cover_path) = next_song.cover_path {
-                            if self.player_ui_state.prefetched_next_handle.is_none()
-                                && self.player_ui_state.current_cover_path != cover_path.as_ref()
-                            {
-                                self.player_ui_state.prefetched_next_handle = Some(
-                                    iced::widget::image::Handle::from_path(cover_path.as_ref()),
-                                );
-                            }
+                if remaining <= 15.0
+                    && let Some(next_song) = self.playlist_manager.get_next_song_ref()
+                {
+                    if let Some(ref cover_path) = next_song.cover_path
+                        && self.player_ui_state.prefetched_next_handle.is_none()
+                        && self.player_ui_state.current_cover_path != cover_path.as_ref()
+                    {
+                        self.player_ui_state.prefetched_next_handle =
+                            Some(iced::widget::image::Handle::from_path(cover_path.as_ref()));
+                    }
+                    // The preload decision (15s window and per-track
+                    // dedup) lives in the Core domain; the cover is
+                    // prefetched separately, not gated on the dedup.
+                    let decision = crate::core::playback::check_preload_trigger(
+                        remaining,
+                        Some(next_song.file_path.as_ref()),
+                        self.player_ui_state.preloaded_next_path.as_deref(),
+                    );
+                    if decision.should_preload {
+                        if let Some(next_path) = decision.next_path.as_deref() {
+                            let _ = self.core.preload_next(
+                                next_path,
+                                next_song.title.as_ref(),
+                                next_song.artist_name.as_ref(),
+                                next_song.album_title.as_ref(),
+                                next_song.cover_path.as_deref().map(str::to_string),
+                            );
                         }
-                        // The preload decision (15s window and per-track
-                        // dedup) lives in the Core domain; the cover is
-                        // prefetched separately, not gated on the dedup.
-                        let decision = crate::core::playback::check_preload_trigger(
-                            remaining,
-                            Some(next_song.file_path.as_ref()),
-                            self.player_ui_state.preloaded_next_path.as_deref(),
-                        );
-                        if decision.should_preload {
-                            if let Some(next_path) = decision.next_path.as_deref() {
-                                let _ = self.core.preload_next(
-                                    next_path,
-                                    &next_song.title.to_string(),
-                                    &next_song.artist_name.to_string(),
-                                    &next_song.album_title.to_string(),
-                                    next_song.cover_path.as_deref().map(str::to_string),
-                                );
-                            }
-                            self.player_ui_state.preloaded_next_path = decision.new_preloaded_path;
-                            if decision.clear_preload_finished {
-                                // La pre-carga está activa: el GC no debe correr.
-                                self.player_ui_state.preload_finished_at = None;
-                            }
+                        self.player_ui_state.preloaded_next_path = decision.new_preloaded_path;
+                        if decision.clear_preload_finished {
+                            // La pre-carga está activa: el GC no debe correr.
+                            self.player_ui_state.preload_finished_at = None;
                         }
                     }
                 }
@@ -220,25 +218,23 @@ impl crate::gui::app::AudoxidyApp {
                 .map(|d| d.as_secs())
                 .ok();
 
-            if self.playlist_manager.shuffle_active {
-                if let Some(session) = &self.playlist_manager.shuffle_session {
-                    log_persist(
-                        "shuffle_session",
-                        self.core.persist_shuffle_session(
-                            self.playlist_manager.active_playlist_id,
-                            session,
-                        ),
-                    );
-                }
+            if self.playlist_manager.shuffle_active
+                && let Some(session) = &self.playlist_manager.shuffle_session
+            {
+                log_persist(
+                    "shuffle_session",
+                    self.core
+                        .persist_shuffle_session(self.playlist_manager.active_playlist_id, session),
+                );
             }
 
             self.sync_player_art();
             self.persist_playlist_state();
 
-            if !self.is_mouse_over_playlist {
-                if let Some(idx) = self.playlist_manager.playing_song_idx {
-                    return self.execute_playlist_autoscroll(idx);
-                }
+            if !self.is_mouse_over_playlist
+                && let Some(idx) = self.playlist_manager.playing_song_idx
+            {
+                return self.execute_playlist_autoscroll(idx);
             }
         }
 
@@ -533,7 +529,7 @@ impl crate::gui::app::AudoxidyApp {
         let raw_rms_r = meter_data.read_rms_r();
 
         // ── M/S computation: Mid = (L+R)/2, Side = (L-R)/2 ──
-        let (display_peak_l, display_peak_r, display_rms_l, display_rms_r) = if m.ms_mode {
+        let (display_peak_l, display_peak_r, _display_rms_l, _display_rms_r) = if m.ms_mode {
             let mid_peak = (raw_peak_l + raw_peak_r) / 2.0;
             let side_peak = (raw_peak_l - raw_peak_r) / 2.0;
             let mid_rms = (raw_rms_l + raw_rms_r) / 2.0;
@@ -615,18 +611,18 @@ impl crate::gui::app::AudoxidyApp {
         // because the subscription stays active while is_fading_out == true.
 
         // Pause fade animation
-        if m.is_fading_out {
-            if let Some(start) = m.fade_out_start {
-                let elapsed = start.elapsed().as_secs_f32();
-                let fade_secs = METER_FADE_OUT_SECS;
-                let factor = (1.0 - elapsed / fade_secs).clamp(0.0, 1.0);
-                m.display_l = m.last_playing_l * factor;
-                m.display_r = m.last_playing_r * factor;
-                if factor <= 0.0 {
-                    m.is_fading_out = false;
-                    m.display_l = 0.0;
-                    m.display_r = 0.0;
-                }
+        if m.is_fading_out
+            && let Some(start) = m.fade_out_start
+        {
+            let elapsed = start.elapsed().as_secs_f32();
+            let fade_secs = METER_FADE_OUT_SECS;
+            let factor = (1.0 - elapsed / fade_secs).clamp(0.0, 1.0);
+            m.display_l = m.last_playing_l * factor;
+            m.display_r = m.last_playing_r * factor;
+            if factor <= 0.0 {
+                m.is_fading_out = false;
+                m.display_l = 0.0;
+                m.display_r = 0.0;
             }
         }
     }

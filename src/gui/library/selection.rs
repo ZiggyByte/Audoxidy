@@ -89,11 +89,11 @@ impl LibraryManager {
         let mut found = false;
 
         // 1. Intentar encontrar por focused_item
-        if let Some(focused) = &self.focused_item {
-            if let Some(pos) = items.iter().position(|(it, _)| it == focused) {
-                current_idx = pos;
-                found = true;
-            }
+        if let Some(focused) = &self.focused_item
+            && let Some(pos) = items.iter().position(|(it, _)| it == focused)
+        {
+            current_idx = pos;
+            found = true;
         }
 
         // 2. Fallback a campos legados si no se encontró foco explícito
@@ -335,12 +335,11 @@ impl LibraryManager {
                 match item {
                     LibraryListItem::Artist(name) => {
                         let is_collapsed = self.collapsed_artists.contains(name);
-                        if is_boundary || is_collapsed {
-                            if let Some(group) = self.artist_groups.iter().find(|g| g.name == *name)
-                            {
-                                for song in &group.songs {
-                                    self.selected_items.insert(LibraryListItem::Song(song.id));
-                                }
+                        if (is_boundary || is_collapsed)
+                            && let Some(group) = self.artist_groups.iter().find(|g| g.name == *name)
+                        {
+                            for song in &group.songs {
+                                self.selected_items.insert(LibraryListItem::Song(song.id));
                             }
                         }
                     }
@@ -376,28 +375,27 @@ impl LibraryManager {
                 .as_ref()
                 .or(self.cached_all_songs.as_ref());
 
-            if let Some(songs) = songs_source {
-                if let Some(alb_entry) = self
+            if let Some(songs) = songs_source
+                && let Some(alb_entry) = self
                     .cached_albums
                     .as_ref()
                     .and_then(|all| all.iter().find(|a| a.id == album_id && a.artist == artist))
-                {
-                    return Some(
-                        songs
-                            .iter()
-                            .filter(|s| {
-                                // La identidad del álbum es su hash; el título y el
-                                // artista solo cubren instantáneas sin el campo.
-                                if s.album_hash.is_some() {
-                                    return s.album_hash.as_deref() == Some(album_id);
-                                }
-                                s.album.as_deref() == Some(&alb_entry.title)
-                                    && crate::utils::get_effective_artist(s) == artist
-                            })
-                            .cloned()
-                            .collect(),
-                    );
-                }
+            {
+                return Some(
+                    songs
+                        .iter()
+                        .filter(|s| {
+                            // La identidad del álbum es su hash; el título y el
+                            // artista solo cubren instantáneas sin el campo.
+                            if s.album_hash.is_some() {
+                                return s.album_hash.as_deref() == Some(album_id);
+                            }
+                            s.album.as_deref() == Some(&alb_entry.title)
+                                && crate::utils::get_effective_artist(s) == artist
+                        })
+                        .cloned()
+                        .collect(),
+                );
             }
         }
         None
@@ -636,18 +634,17 @@ impl LibraryManager {
 
     /// Actualiza la memoria de la última canción seleccionada para un artista.
     pub fn update_selection_memory(&mut self) {
-        if let Some(song_idx) = self.selected_song_idx {
-            if let Some(songs) = &self.filtered_songs {
-                if let Some(song) = songs.get(song_idx) {
-                    let artist = song
-                        .artist
-                        .as_ref()
-                        .map(|s| s.to_string())
-                        .or_else(|| song.album_artist.as_ref().map(|s| s.to_string()))
-                        .unwrap_or_else(|| "Artista Desconocido".to_string());
-                    self.artist_last_selection.insert(artist, song_idx);
-                }
-            }
+        if let Some(song_idx) = self.selected_song_idx
+            && let Some(songs) = &self.filtered_songs
+            && let Some(song) = songs.get(song_idx)
+        {
+            let artist = song
+                .artist
+                .as_ref()
+                .map(|s| s.to_string())
+                .or_else(|| song.album_artist.as_ref().map(|s| s.to_string()))
+                .unwrap_or_else(|| "Artista Desconocido".to_string());
+            self.artist_last_selection.insert(artist, song_idx);
         }
     }
 

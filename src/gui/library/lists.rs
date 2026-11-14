@@ -1,5 +1,5 @@
 use iced::{
-    Alignment, Color, Element, Length, Padding, Theme,
+    Alignment, Element, Length, Padding, Theme,
     widget::{Space, column, container, mouse_area, row, svg, text},
 };
 
@@ -70,7 +70,7 @@ pub fn album_art_widget<'a, Message: 'a>(
                     .width(Length::Fixed(icon_side))
                     .height(Length::Fixed(icon_side))
                     .style(|_t: &Theme, _s| svg::Style {
-                        color: Some(Color::from(COLOR_TEXT_SECONDARY))
+                        color: Some(COLOR_TEXT_SECONDARY)
                     }),
                     text("AuDoxiDY")
                         .font(crate::gui::theme::FONT_STAGE_WANDER)
@@ -100,7 +100,7 @@ pub fn album_art_widget<'a, Message: 'a>(
                 .width(Length::Fixed(20.0))
                 .height(Length::Fixed(20.0))
                 .style(|_t: &Theme, _s| svg::Style {
-                    color: Some(Color::from(COLOR_TEXT_SECONDARY)),
+                    color: Some(COLOR_TEXT_SECONDARY),
                 }),
             )
             .width(bounds)
@@ -177,7 +177,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
                 container(
                     text(truncated)
                         .size(13)
-                        .color(Color::from(txt_color))
+                        .color(txt_color)
                         .font(FONT_INTER_SANS_MEDIUM)
                         .wrapping(iced::widget::text::Wrapping::None)
                 )
@@ -191,7 +191,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
         } else {
             text(truncated)
                 .size(13)
-                .color(Color::from(txt_color))
+                .color(txt_color)
                 .font(FONT_INTER_SANS_MEDIUM)
                 .wrapping(iced::widget::text::Wrapping::None)
                 .into()
@@ -256,7 +256,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
             .align_y(Alignment::Center)
             .style(move |_t: &Theme| {
                 if is_selected {
-                    container::Style::default().background(Color::from(COLOR_CONTRAST))
+                    container::Style::default().background(COLOR_CONTRAST)
                 } else {
                     container::Style::default()
                 }

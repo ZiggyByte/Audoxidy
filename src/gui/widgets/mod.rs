@@ -19,7 +19,6 @@ use crate::gui::theme::{
 };
 use crate::utils::{SortColumn, format_duration, truncate_text};
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI8, Ordering};
 
 mod buttons;

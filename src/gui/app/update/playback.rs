@@ -96,25 +96,25 @@ impl crate::gui::app::AudoxidyApp {
                     .ok();
                 self.persist_playlist_state();
 
-                if self.playlist_manager.shuffle_active {
-                    if let Some(session) = &self.playlist_manager.shuffle_session {
-                        log_persist(
-                            "shuffle_session",
-                            self.core.persist_shuffle_session(
-                                self.playlist_manager.active_playlist_id,
-                                session,
-                            ),
-                        );
-                    }
+                if self.playlist_manager.shuffle_active
+                    && let Some(session) = &self.playlist_manager.shuffle_session
+                {
+                    log_persist(
+                        "shuffle_session",
+                        self.core.persist_shuffle_session(
+                            self.playlist_manager.active_playlist_id,
+                            session,
+                        ),
+                    );
                 }
 
                 self.sync_player_art();
                 let wake_task = self.wake_up_controls(false);
-                if !self.is_mouse_over_playlist {
-                    if let Some(idx) = self.playlist_manager.playing_song_idx {
-                        let scroll_task = self.execute_playlist_autoscroll(idx);
-                        return Task::batch(vec![wake_task, scroll_task]);
-                    }
+                if !self.is_mouse_over_playlist
+                    && let Some(idx) = self.playlist_manager.playing_song_idx
+                {
+                    let scroll_task = self.execute_playlist_autoscroll(idx);
+                    return Task::batch(vec![wake_task, scroll_task]);
                 }
                 wake_task
             }
@@ -122,25 +122,25 @@ impl crate::gui::app::AudoxidyApp {
                 self.playlist_manager.play_prev(self.core.audio_manager());
                 self.persist_playlist_state();
 
-                if self.playlist_manager.shuffle_active {
-                    if let Some(session) = &self.playlist_manager.shuffle_session {
-                        log_persist(
-                            "shuffle_session",
-                            self.core.persist_shuffle_session(
-                                self.playlist_manager.active_playlist_id,
-                                session,
-                            ),
-                        );
-                    }
+                if self.playlist_manager.shuffle_active
+                    && let Some(session) = &self.playlist_manager.shuffle_session
+                {
+                    log_persist(
+                        "shuffle_session",
+                        self.core.persist_shuffle_session(
+                            self.playlist_manager.active_playlist_id,
+                            session,
+                        ),
+                    );
                 }
 
                 self.sync_player_art();
                 let wake_task = self.wake_up_controls(false);
-                if !self.is_mouse_over_playlist {
-                    if let Some(idx) = self.playlist_manager.playing_song_idx {
-                        let scroll_task = self.execute_playlist_autoscroll(idx);
-                        return Task::batch(vec![wake_task, scroll_task]);
-                    }
+                if !self.is_mouse_over_playlist
+                    && let Some(idx) = self.playlist_manager.playing_song_idx
+                {
+                    let scroll_task = self.execute_playlist_autoscroll(idx);
+                    return Task::batch(vec![wake_task, scroll_task]);
                 }
                 wake_task
             }
@@ -304,14 +304,13 @@ impl crate::gui::app::AudoxidyApp {
         //    índice ya apunte a la canción real.
         let mut new_cover_path = String::new();
         let mut song_found = false;
-        if let Some(idx) = self.playlist_manager.playing_song_idx {
-            if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
-                if song.file_path.as_ref() == audio_state.path {
-                    song_found = true;
-                    if let Some(ref cp) = song.cover_path {
-                        new_cover_path = cp.to_string();
-                    }
-                }
+        if let Some(idx) = self.playlist_manager.playing_song_idx
+            && let Some(song) = self.playlist_manager.get_song_at_linear_index(idx)
+            && song.file_path.as_ref() == audio_state.path
+        {
+            song_found = true;
+            if let Some(ref cp) = song.cover_path {
+                new_cover_path = cp.to_string();
             }
         }
         if !song_found {

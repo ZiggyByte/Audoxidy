@@ -11,12 +11,12 @@ pub fn custom_scrollbar_style(
             ..
         } => {
             if is_vertical_scrollbar_hovered || is_horizontal_scrollbar_hovered {
-                Color::from(COLOR_TEXT_PRIMARY)
+                COLOR_TEXT_PRIMARY
             } else {
-                Color::from(COLOR_TEXT_SECONDARY)
+                COLOR_TEXT_SECONDARY
             }
         }
-        iced::widget::scrollable::Status::Dragged { .. } => Color::from(COLOR_ACCENT),
+        iced::widget::scrollable::Status::Dragged { .. } => COLOR_ACCENT,
         _ => Color::TRANSPARENT,
     };
 
@@ -34,14 +34,8 @@ pub fn custom_scrollbar_style(
                                 offset: 0.49,
                                 color: Color::TRANSPARENT,
                             }),
-                            Some(iced::gradient::ColorStop {
-                                offset: 0.5,
-                                color: color,
-                            }),
-                            Some(iced::gradient::ColorStop {
-                                offset: 1.0,
-                                color: color,
-                            }),
+                            Some(iced::gradient::ColorStop { offset: 0.5, color }),
+                            Some(iced::gradient::ColorStop { offset: 1.0, color }),
                             None,
                             None,
                             None,
@@ -71,14 +65,8 @@ pub fn custom_scrollbar_style(
                                 offset: 0.49,
                                 color: Color::TRANSPARENT,
                             }),
-                            Some(iced::gradient::ColorStop {
-                                offset: 0.5,
-                                color: color,
-                            }),
-                            Some(iced::gradient::ColorStop {
-                                offset: 1.0,
-                                color: color,
-                            }),
+                            Some(iced::gradient::ColorStop { offset: 0.5, color }),
+                            Some(iced::gradient::ColorStop { offset: 1.0, color }),
                             None,
                             None,
                             None,

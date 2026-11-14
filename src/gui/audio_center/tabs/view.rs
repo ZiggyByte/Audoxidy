@@ -220,5 +220,5 @@ pub fn view<'a>(
     .on_press(crate::gui::app::Message::NoOp);
 
     // Envolvemos con opaque para que no se traspase el "focus" / "hover" del puntero a la interfaz de abajo en esta área
-    opaque(non_pass_through_window).into()
+    opaque(non_pass_through_window)
 }

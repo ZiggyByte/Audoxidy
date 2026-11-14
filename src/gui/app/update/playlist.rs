@@ -12,7 +12,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::AddSongToPlaylist(song) => {
                 let core = self.core.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
-                return Task::perform(
+                Task::perform(
                     async move {
                         if let Err(e) = core.add_song_to_playlist(active_id, song.id) {
                             tracing::warn!(
@@ -26,13 +26,13 @@ impl crate::gui::app::AudoxidyApp {
                         active_id
                     },
                     |id| Message::SwitchPlaylist(id, false),
-                );
+                )
             }
             Message::PlayAlbum(songs) => {
                 let core = self.core.clone();
                 let active_id = self.playlist_manager.active_playlist_id;
                 let song_ids: Vec<i64> = songs.iter().map(|s| s.id).collect();
-                return Task::perform(
+                Task::perform(
                     async move {
                         if let Err(e) = core.add_songs_to_playlist(active_id, &song_ids) {
                             tracing::warn!(
@@ -46,7 +46,7 @@ impl crate::gui::app::AudoxidyApp {
                         active_id
                     },
                     |id| Message::SwitchPlaylist(id, false),
-                );
+                )
             }
             Message::PlaySongIndex(idx) => {
                 self.focus = AppFocus::Playlist;
@@ -63,11 +63,11 @@ impl crate::gui::app::AudoxidyApp {
 
                 let focus_task = focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone());
 
-                if is_double_click {
-                    if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
-                        // Reproduce la canción (o la reinicia si ya es la actual).
-                        self.play_song_from_playlist(idx);
-                    }
+                if is_double_click
+                    && let Some(_song) = self.playlist_manager.get_song_at_linear_index(idx)
+                {
+                    // Reproduce la canción (o la reinicia si ya es la actual).
+                    self.play_song_from_playlist(idx);
                 }
                 focus_task
             }
@@ -90,7 +90,7 @@ impl crate::gui::app::AudoxidyApp {
                 self.core.stop();
                 self.persist_playlist_state();
 
-                return Task::done(Message::GlobalMemoryPurge);
+                Task::done(Message::GlobalMemoryPurge)
             }
             Message::ToggleSongEnabled(linear_idx, force_state) => {
                 self.focus = AppFocus::Playlist;
@@ -146,10 +146,9 @@ impl crate::gui::app::AudoxidyApp {
                 if let Some(PlaylistItemType::Separator(g_idx, _)) = self
                     .playlist_manager
                     .get_item_info_at_linear_index(linear_idx)
+                    && let Some(group) = self.playlist_manager.active_groups().get(g_idx)
                 {
-                    if let Some(group) = self.playlist_manager.active_groups().get(g_idx) {
-                        folder_to_update = Some(group.folder_path.clone());
-                    }
+                    folder_to_update = Some(group.folder_path.clone());
                 }
 
                 if let Some(state) = force_state {
@@ -228,7 +227,7 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::RefreshPlaylists(id_opt) => {
                 let core = self.core.clone();
-                return Task::perform(
+                Task::perform(
                     async move { core.get_all_playlists().ok() },
                     move |playlists_opt| {
                         if let Some(playlists) = playlists_opt {
@@ -237,7 +236,7 @@ impl crate::gui::app::AudoxidyApp {
                             Message::NoOp
                         }
                     },
-                );
+                )
             }
             Message::InternalPlaylistsRefreshed(playlists, id_opt) => {
                 let active_id = self.playlist_manager.active_playlist_id;
@@ -254,10 +253,10 @@ impl crate::gui::app::AudoxidyApp {
                             .playlists
                             .iter()
                             .any(|p| p.id == active_id);
-                        if !still_exists {
-                            if let Some(first) = self.playlist_manager.playlists.first() {
-                                return Task::done(Message::SwitchPlaylist(first.id, false));
-                            }
+                        if !still_exists
+                            && let Some(first) = self.playlist_manager.playlists.first()
+                        {
+                            return Task::done(Message::SwitchPlaylist(first.id, false));
                         }
                     }
                 }
@@ -281,7 +280,7 @@ impl crate::gui::app::AudoxidyApp {
                             .ok()
                             .flatten()
                             .map(|p| p.name)
-                            .unwrap_or_else(|| "Playlist_Exportada".to_string().into());
+                            .unwrap_or_else(|| "Playlist_Exportada".to_string());
 
                         let is_portable = mode == ExportMode::PortableFolder;
                         let mut m3u_content = String::from("#EXTM3U\n");
@@ -368,24 +367,20 @@ impl crate::gui::app::AudoxidyApp {
                         let p_data = core.get_playlist_by_id(id).ok().flatten();
                         let mut session_opt = None;
 
-                        if let Some(p) = &p_data {
-                            if p.shuffle_active {
-                                if let Ok(Some(mut session)) = core.load_shuffle_session(id) {
-                                    if let Some(song_id) = p.last_song_id {
-                                        if let Some(pos) = session
-                                            .shuffle_order
-                                            .iter()
-                                            .position(|&sid| sid == song_id)
-                                        {
-                                            session.current_position = pos + 1;
-                                            if !session.history.contains(&song_id) {
-                                                session.history.push(song_id);
-                                            }
-                                        }
-                                    }
-                                    session_opt = Some(session);
+                        if let Some(p) = &p_data
+                            && p.shuffle_active
+                            && let Ok(Some(mut session)) = core.load_shuffle_session(id)
+                        {
+                            if let Some(song_id) = p.last_song_id
+                                && let Some(pos) =
+                                    session.shuffle_order.iter().position(|&sid| sid == song_id)
+                            {
+                                session.current_position = pos + 1;
+                                if !session.history.contains(&song_id) {
+                                    session.history.push(song_id);
                                 }
                             }
+                            session_opt = Some(session);
                         }
                         (id, auto_play, groups, p_data, session_opt)
                     },
@@ -419,42 +414,37 @@ impl crate::gui::app::AudoxidyApp {
                         p_data.last_song_id
                     };
 
-                    if let Some(song_id) = song_id_to_play {
-                        if let Some(l_idx) =
+                    if let Some(song_id) = song_id_to_play
+                        && let Some(l_idx) =
                             self.playlist_manager.get_linear_index_by_song_id(song_id)
-                        {
-                            if let Some(song) =
-                                self.playlist_manager.get_song_at_linear_index(l_idx)
-                            {
-                                let path = song.file_path.clone();
-                                let title = song.title.clone();
-                                let artist = song.artist_name.to_string();
-                                let album = song.album_title.to_string();
-                                let cover_path = song.cover_path.as_deref().map(str::to_string);
+                        && let Some(song) = self.playlist_manager.get_song_at_linear_index(l_idx)
+                    {
+                        let path = song.file_path.clone();
+                        let title = song.title.clone();
+                        let artist = song.artist_name.to_string();
+                        let album = song.album_title.to_string();
+                        let cover_path = song.cover_path.as_deref().map(str::to_string);
 
-                                let is_playing_needed =
-                                    if auto_play { true } else { p_data.is_playing };
-                                let last_pos = if auto_play { 0.0 } else { p_data.last_pos_sec };
+                        let is_playing_needed = if auto_play { true } else { p_data.is_playing };
+                        let last_pos = if auto_play { 0.0 } else { p_data.last_pos_sec };
 
-                                self.playlist_manager.playing_song_idx = Some(l_idx);
-                                self.playlist_manager.focused_idx = Some(l_idx);
-                                self.playlist_manager.selected_idxs.clear();
-                                self.playlist_manager.selected_idxs.insert(l_idx);
-                                self.playlist_manager.selection_pivot = Some(l_idx);
+                        self.playlist_manager.playing_song_idx = Some(l_idx);
+                        self.playlist_manager.focused_idx = Some(l_idx);
+                        self.playlist_manager.selected_idxs.clear();
+                        self.playlist_manager.selected_idxs.insert(l_idx);
+                        self.playlist_manager.selection_pivot = Some(l_idx);
 
-                                let _ = self.load_file_with_gains(
-                                    &path,
-                                    title.to_string(),
-                                    artist.to_string(),
-                                    album,
-                                    cover_path,
-                                );
-                                self.core.seek(last_pos);
-                                self.core.set_playing(is_playing_needed);
-                                self.sync_player_art();
-                                was_restored = true;
-                            }
-                        }
+                        let _ = self.load_file_with_gains(
+                            &path,
+                            title.to_string(),
+                            artist.to_string(),
+                            album,
+                            cover_path,
+                        );
+                        self.core.seek(last_pos);
+                        self.core.set_playing(is_playing_needed);
+                        self.sync_player_art();
+                        was_restored = true;
                     }
                 }
 
@@ -555,7 +545,7 @@ impl crate::gui::app::AudoxidyApp {
                     }
                 });
 
-                let prioritized = system.into_iter().chain(others.into_iter());
+                let prioritized = system.into_iter().chain(others);
 
                 for pl in prioritized {
                     entries.push(ContextMenuEntry {
@@ -646,32 +636,32 @@ impl crate::gui::app::AudoxidyApp {
                         }
                     };
 
-                    if let Some(idx) = target_song_idx {
-                        if let Some(song) = self.playlist_manager.get_song_at_linear_index(idx) {
-                            let path = song.file_path.clone();
-                            let title = song.title.clone();
-                            let artist = song.artist_name.to_string();
-                            let album = song.album_title.to_string();
-                            let cover_path = song.cover_path.as_deref().map(str::to_string);
+                    if let Some(idx) = target_song_idx
+                        && let Some(song) = self.playlist_manager.get_song_at_linear_index(idx)
+                    {
+                        let path = song.file_path.clone();
+                        let title = song.title.clone();
+                        let artist = song.artist_name.to_string();
+                        let album = song.album_title.to_string();
+                        let cover_path = song.cover_path.as_deref().map(str::to_string);
 
-                            self.sync_player_art();
-                            if let Err(e) = self.load_file_with_gains(
-                                &path,
-                                title.to_string(),
-                                artist,
-                                album,
-                                cover_path,
-                            ) {
-                                tracing::error!("Error reproduciendo archivo: {}", e);
-                            } else {
-                                self.core.play();
-                                self.playlist_manager.playing_song_idx = Some(idx);
-                                self.playlist_manager.selected_idxs.clear();
-                                self.playlist_manager.selected_idxs.insert(idx);
-                                self.playlist_manager.focused_idx = Some(idx);
-                                self.playlist_manager.selection_pivot = Some(idx);
-                                self.persist_playlist_state();
-                            }
+                        self.sync_player_art();
+                        if let Err(e) = self.load_file_with_gains(
+                            &path,
+                            title.to_string(),
+                            artist,
+                            album,
+                            cover_path,
+                        ) {
+                            tracing::error!("Error reproduciendo archivo: {}", e);
+                        } else {
+                            self.core.play();
+                            self.playlist_manager.playing_song_idx = Some(idx);
+                            self.playlist_manager.selected_idxs.clear();
+                            self.playlist_manager.selected_idxs.insert(idx);
+                            self.playlist_manager.focused_idx = Some(idx);
+                            self.playlist_manager.selection_pivot = Some(idx);
+                            self.persist_playlist_state();
                         }
                     }
                 }
@@ -775,10 +765,9 @@ impl crate::gui::app::AudoxidyApp {
                                 .active_groups()
                                 .iter()
                                 .find(|g| g.first_item_id == anchor)
+                                && let Some(song) = group.songs.get(local_idx)
                             {
-                                if let Some(song) = group.songs.get(local_idx) {
-                                    path_opt = Some(song.file_path.clone());
-                                }
+                                path_opt = Some(song.file_path.clone());
                             }
                         }
                         crate::gui::playlist::PlaylistItemType::Separator(_folder, anchor) => {
@@ -787,10 +776,9 @@ impl crate::gui::app::AudoxidyApp {
                                 .active_groups()
                                 .iter()
                                 .find(|g| g.first_item_id == anchor)
+                                && let Some(first_song) = group.songs.first()
                             {
-                                if let Some(first_song) = group.songs.first() {
-                                    path_opt = Some(first_song.file_path.clone());
-                                }
+                                path_opt = Some(first_song.file_path.clone());
                             }
                         }
                     }
@@ -820,10 +808,9 @@ impl crate::gui::app::AudoxidyApp {
                             crate::gui::playlist::PlaylistItemType::Song(g_idx, s_idx, _) => {
                                 if let Some(group) =
                                     self.playlist_manager.active_groups().get(g_idx)
+                                    && let Some(song_ref) = group.songs.get(s_idx)
                                 {
-                                    if let Some(song_ref) = group.songs.get(s_idx) {
-                                        ids.push(song_ref.song_id);
-                                    }
+                                    ids.push(song_ref.song_id);
                                 }
                             }
                             crate::gui::playlist::PlaylistItemType::Separator(_, anchor) => {
@@ -917,7 +904,7 @@ impl crate::gui::app::AudoxidyApp {
                 // Ordenar las de usuario alfabéticamente (case-insensitive)
                 others.sort_by(|a, b| crate::utils::compare_strings_ignore_case(&a.name, &b.name));
 
-                let prioritized = system.into_iter().chain(others.into_iter());
+                let prioritized = system.into_iter().chain(others);
 
                 for pl in prioritized {
                     entries.push(ContextMenuEntry {
@@ -951,10 +938,9 @@ impl crate::gui::app::AudoxidyApp {
                                     .groups
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
+                                    && let Some(song_ref) = group.songs.get(local_idx)
                                 {
-                                    if let Some(song_ref) = group.songs.get(local_idx) {
-                                        ids.push(song_ref.song_id);
-                                    }
+                                    ids.push(song_ref.song_id);
                                 }
                             }
                             crate::gui::playlist::PlaylistItemType::Separator(_folder, anchor) => {
@@ -1000,10 +986,9 @@ impl crate::gui::app::AudoxidyApp {
                                     .groups
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
+                                    && let Some(song_ref) = group.songs.get(local_idx)
                                 {
-                                    if let Some(song_ref) = group.songs.get(local_idx) {
-                                        ids.push(song_ref.song_id);
-                                    }
+                                    ids.push(song_ref.song_id);
                                 }
                             }
                             crate::gui::playlist::PlaylistItemType::Separator(_folder, anchor) => {
@@ -1088,11 +1073,10 @@ impl crate::gui::app::AudoxidyApp {
                             PlaylistItemType::Song(..) => {
                                 if let Some(song) =
                                     self.playlist_manager.get_song_at_linear_index(idx)
+                                    && !song.enabled
                                 {
-                                    if !song.enabled {
-                                        any_disabled = true;
-                                        break;
-                                    }
+                                    any_disabled = true;
+                                    break;
                                 }
                             }
                             PlaylistItemType::Separator(_folder, anchor) => {
@@ -1101,11 +1085,10 @@ impl crate::gui::app::AudoxidyApp {
                                     .groups
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
+                                    && group.songs.iter().any(|s| !s.enabled)
                                 {
-                                    if group.songs.iter().any(|s| !s.enabled) {
-                                        any_disabled = true;
-                                        break;
-                                    }
+                                    any_disabled = true;
+                                    break;
                                 }
                             }
                         }

@@ -56,18 +56,14 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
                 _ => None,
             };
 
-            if let Some(h) = handle {
-                Some(
-                    svg(h)
-                        .width(IconSize::M.px())
-                        .height(IconSize::M.px())
-                        .style(move |_t: &Theme, _s: svg::Status| svg::Style {
-                            color: Some(COLOR_TEXT_SECONDARY),
-                        }),
-                )
-            } else {
-                None
-            }
+            handle.map(|h| {
+                svg(h)
+                    .width(IconSize::M.px())
+                    .height(IconSize::M.px())
+                    .style(move |_t: &Theme, _s: svg::Status| svg::Style {
+                        color: Some(COLOR_TEXT_SECONDARY),
+                    })
+            })
         } else {
             None
         };
@@ -164,16 +160,19 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 
     column![
         container(
-            scrollable(sort_bar_content)
-                .direction(iced::widget::scrollable::Direction::Horizontal(
-                    iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0)
-                ))
+            scrollable(sort_bar_content).direction(
+                iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(0)
+                        .scroller_width(0)
+                )
+            )
         )
-            .width(Length::Fill)
-            .height(Length::Fixed(BAR_SUB))
-            .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
+        .width(Length::Fill)
+        .height(Length::Fixed(BAR_SUB))
+        .style(|_t: &Theme| container::Style::default().background(COLOR_BG)),
         container(Space::new().width(Length::Fill).height(DIVIDER_THIN))
-            .style(|_t: &Theme| container::Style::default().background(Color::from(COLOR_CONTRAST)))
+            .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST))
     ]
     .into()
 }

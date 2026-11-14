@@ -109,10 +109,10 @@ impl SystemMediaControls {
         not(any(target_os = "macos", target_os = "ios", target_os = "android"))
     ))]
     pub fn set_volume(&self, volume: f64) {
-        if let Ok(mut controls) = self.controls.lock() {
-            if let Err(e) = controls.set_volume(volume.clamp(0.0, 1.0)) {
-                tracing::debug!("No se pudo reflejar el volumen en los controles multimedia: {e}");
-            }
+        if let Ok(mut controls) = self.controls.lock()
+            && let Err(e) = controls.set_volume(volume.clamp(0.0, 1.0))
+        {
+            tracing::debug!("No se pudo reflejar el volumen en los controles multimedia: {e}");
         }
     }
 

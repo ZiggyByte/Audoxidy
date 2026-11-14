@@ -649,41 +649,40 @@ pub fn view<'a>(
         .push(dropdown);
 
     // Dynamic Tooltip Cursor exacto para barra de progreso
-    if let Some(pos) = ui_state.mouse_pos {
-        if ui_state.is_active
-            && pos.y >= PLAYER_PANEL_SIZE - BAR_TOP
-            && pos.y <= PLAYER_PANEL_SIZE
-            && pos.x >= 13.0
-            && pos.x <= 387.0
-            && state.total_duration_sec > 0.0
-        {
-            let frac = ((pos.x - 13.0) / 376.0).clamp(0.0, 1.0);
-            let tooltip_txt = format_duration(frac as f64 * state.total_duration_sec);
+    if let Some(pos) = ui_state.mouse_pos
+        && ui_state.is_active
+        && pos.y >= PLAYER_PANEL_SIZE - BAR_TOP
+        && pos.y <= PLAYER_PANEL_SIZE
+        && pos.x >= 13.0
+        && pos.x <= 387.0
+        && state.total_duration_sec > 0.0
+    {
+        let frac = ((pos.x - 13.0) / 376.0).clamp(0.0, 1.0);
+        let tooltip_txt = format_duration(frac as f64 * state.total_duration_sec);
 
-            let tooltip_box = container(text(tooltip_txt).size(12).color(Color::WHITE))
-                .padding(SPACE_XS)
-                .style(|_t: &Theme| {
-                    container::Style::default()
-                        .background(COLOR_CONTRAST)
-                        .border(
-                            iced::Border::default()
-                                .width(STROKE_HAIRLINE)
-                                .color(COLOR_TEXT_SECONDARY),
-                        )
-                });
+        let tooltip_box = container(text(tooltip_txt).size(12).color(Color::WHITE))
+            .padding(SPACE_XS)
+            .style(|_t: &Theme| {
+                container::Style::default()
+                    .background(COLOR_CONTRAST)
+                    .border(
+                        iced::Border::default()
+                            .width(STROKE_HAIRLINE)
+                            .color(COLOR_TEXT_SECONDARY),
+                    )
+            });
 
-            let hover_tooltip = container(tooltip_box)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .padding(iced::Padding {
-                    top: pos.y - 30.0,
-                    right: 0.0,
-                    bottom: 0.0,
-                    left: pos.x - 15.0,
-                });
+        let hover_tooltip = container(tooltip_box)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(iced::Padding {
+                top: pos.y - 30.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: pos.x - 15.0,
+            });
 
-            main_stack = main_stack.push(hover_tooltip);
-        }
+        main_stack = main_stack.push(hover_tooltip);
     }
 
     // Apilar capas en el contenedor final

@@ -305,17 +305,15 @@ impl PlaylistManager {
                     }
 
                     // Si el foco estaba en una canción, moverlo al separador del grupo
-                    if let Some(sel) = self.focused_idx {
-                        if let Some(PlaylistItemType::Song(_, _, anchor)) =
+                    if let Some(sel) = self.focused_idx
+                        && let Some(PlaylistItemType::Song(_, _, anchor)) =
                             self.get_item_info_at_linear_index(sel)
-                        {
-                            if let Some(new_sel) = self.find_separator_index_for_anchor(anchor) {
-                                self.focused_idx = Some(new_sel);
-                                self.selected_idxs.clear();
-                                self.selected_idxs.insert(new_sel);
-                                self.selection_pivot = Some(new_sel);
-                            }
-                        }
+                        && let Some(new_sel) = self.find_separator_index_for_anchor(anchor)
+                    {
+                        self.focused_idx = Some(new_sel);
+                        self.selected_idxs.clear();
+                        self.selected_idxs.insert(new_sel);
+                        self.selection_pivot = Some(new_sel);
                     }
                     self.invalidate_cache();
                 }
@@ -524,11 +522,10 @@ impl PlaylistManager {
         }
 
         if let (Some(a), Some(enabled), true) = (anchor, new_state, self.filtered_groups.is_some())
+            && let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a)
         {
-            if let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a) {
-                for song in &mut group.songs {
-                    song.enabled = enabled;
-                }
+            for song in &mut group.songs {
+                song.enabled = enabled;
             }
         }
     }
@@ -555,11 +552,11 @@ impl PlaylistManager {
             }
         }
 
-        if let (Some(a), true) = (anchor, self.filtered_groups.is_some()) {
-            if let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a) {
-                for song in &mut group.songs {
-                    song.enabled = enabled;
-                }
+        if let (Some(a), true) = (anchor, self.filtered_groups.is_some())
+            && let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a)
+        {
+            for song in &mut group.songs {
+                song.enabled = enabled;
             }
         }
     }
@@ -579,13 +576,12 @@ impl PlaylistManager {
                 match info {
                     PlaylistItemType::Separator(_, anchor) => {
                         // Find the group to add ALL its songs
-                        if let Some(pos) = self.find_separator_index_for_anchor(anchor) {
-                            if let Some(si) = self.get_group_info_at_linear_index(pos) {
-                                if let Some(group) = groups.get(si.0) {
-                                    for song_offset in 0..group.songs.len() {
-                                        song_linear_idxs.insert(pos + 1 + song_offset);
-                                    }
-                                }
+                        if let Some(pos) = self.find_separator_index_for_anchor(anchor)
+                            && let Some(si) = self.get_group_info_at_linear_index(pos)
+                            && let Some(group) = groups.get(si.0)
+                        {
+                            for song_offset in 0..group.songs.len() {
+                                song_linear_idxs.insert(pos + 1 + song_offset);
                             }
                         }
                     }
@@ -717,19 +713,19 @@ impl PlaylistManager {
     pub fn play_next(&mut self, audio_manager: &AudioManager) {
         if self.repeat_mode == 2 {
             // Repeat one
-            if let Some(idx) = self.playing_song_idx {
-                if let Some(song) = self.get_song_at_linear_index(idx) {
-                    let _ = audio_manager.load_file(
-                        &song.file_path,
-                        song.title.to_string(),
-                        song.artist_name.to_string(),
-                        song.album_title.to_string(),
-                        song.cover_path.as_deref().map(str::to_string),
-                        None,
-                        None,
-                    );
-                    audio_manager.play();
-                }
+            if let Some(idx) = self.playing_song_idx
+                && let Some(song) = self.get_song_at_linear_index(idx)
+            {
+                let _ = audio_manager.load_file(
+                    &song.file_path,
+                    song.title.to_string(),
+                    song.artist_name.to_string(),
+                    song.album_title.to_string(),
+                    song.cover_path.as_deref().map(str::to_string),
+                    None,
+                    None,
+                );
+                audio_manager.play();
             }
             return;
         }
@@ -744,22 +740,21 @@ impl PlaylistManager {
                     let song_id = session.shuffle_order[pos];
                     pos += 1;
 
-                    if let Some(l_idx) = self.get_linear_index_by_song_id(song_id) {
-                        if let Some(song) = self.get_song_at_linear_index(l_idx) {
-                            if song.enabled {
-                                found_next = Some((
-                                    song_id,
-                                    l_idx,
-                                    song.file_path.clone(),
-                                    song.title.to_string(),
-                                    song.artist_name.to_string(),
-                                    song.album_title.to_string(),
-                                    song.cover_path.as_deref().map(str::to_string),
-                                    pos,
-                                ));
-                                break;
-                            }
-                        }
+                    if let Some(l_idx) = self.get_linear_index_by_song_id(song_id)
+                        && let Some(song) = self.get_song_at_linear_index(l_idx)
+                        && song.enabled
+                    {
+                        found_next = Some((
+                            song_id,
+                            l_idx,
+                            song.file_path.clone(),
+                            song.title.to_string(),
+                            song.artist_name.to_string(),
+                            song.album_title.to_string(),
+                            song.cover_path.as_deref().map(str::to_string),
+                            pos,
+                        ));
+                        break;
                     }
                 }
             }
@@ -795,20 +790,20 @@ impl PlaylistManager {
 
         // Sequential logic
         let current = self.playing_song_idx.unwrap_or(usize::MAX);
-        if let Some(next_idx) = self.find_next_enabled_song_internal(current) {
-            if let Some(song) = self.get_song_at_linear_index(next_idx) {
-                let _ = audio_manager.load_file(
-                    &song.file_path,
-                    song.title.to_string(),
-                    song.artist_name.to_string(),
-                    song.album_title.to_string(),
-                    song.cover_path.as_deref().map(str::to_string),
-                    None,
-                    None,
-                );
-                self.playing_song_idx = Some(next_idx);
-                audio_manager.play();
-            }
+        if let Some(next_idx) = self.find_next_enabled_song_internal(current)
+            && let Some(song) = self.get_song_at_linear_index(next_idx)
+        {
+            let _ = audio_manager.load_file(
+                &song.file_path,
+                song.title.to_string(),
+                song.artist_name.to_string(),
+                song.album_title.to_string(),
+                song.cover_path.as_deref().map(str::to_string),
+                None,
+                None,
+            );
+            self.playing_song_idx = Some(next_idx);
+            audio_manager.play();
         }
     }
 
@@ -823,18 +818,16 @@ impl PlaylistManager {
                     }
                     if let Some(prev_id) = session.history.last().cloned() {
                         if let Some(l_idx) = self.get_linear_index_by_song_id(prev_id) {
-                            if let Some(song) = self.get_song_at_linear_index(l_idx) {
-                                Some((
+                            self.get_song_at_linear_index(l_idx).map(|song| {
+                                (
                                     l_idx,
                                     song.file_path.clone(),
                                     song.title.to_string(),
                                     song.artist_name.to_string(),
                                     song.album_title.to_string(),
                                     song.cover_path.as_deref().map(str::to_string),
-                                ))
-                            } else {
-                                None
-                            }
+                                )
+                            })
                         } else {
                             None
                         }
@@ -869,11 +862,11 @@ impl PlaylistManager {
             let mut idx = current - 1;
             let mut found = None;
             loop {
-                if let Some(song) = self.get_song_at_linear_index(idx) {
-                    if song.enabled {
-                        found = Some(idx);
-                        break;
-                    }
+                if let Some(song) = self.get_song_at_linear_index(idx)
+                    && song.enabled
+                {
+                    found = Some(idx);
+                    break;
                 }
                 if idx == 0 {
                     break;
@@ -883,20 +876,20 @@ impl PlaylistManager {
             found
         };
 
-        if let Some(idx) = prev_idx {
-            if let Some(song) = self.get_song_at_linear_index(idx) {
-                let _ = audio_manager.load_file(
-                    &song.file_path,
-                    song.title.to_string(),
-                    song.artist_name.to_string(),
-                    song.album_title.to_string(),
-                    song.cover_path.as_deref().map(str::to_string),
-                    None,
-                    None,
-                );
-                self.playing_song_idx = Some(idx);
-                audio_manager.play();
-            }
+        if let Some(idx) = prev_idx
+            && let Some(song) = self.get_song_at_linear_index(idx)
+        {
+            let _ = audio_manager.load_file(
+                &song.file_path,
+                song.title.to_string(),
+                song.artist_name.to_string(),
+                song.album_title.to_string(),
+                song.cover_path.as_deref().map(str::to_string),
+                None,
+                None,
+            );
+            self.playing_song_idx = Some(idx);
+            audio_manager.play();
         }
     }
 
@@ -923,10 +916,10 @@ impl PlaylistManager {
                 wrapped = true;
             }
 
-            if let Some(song) = self.get_song_at_linear_index(idx) {
-                if song.enabled {
-                    return Some(idx);
-                }
+            if let Some(song) = self.get_song_at_linear_index(idx)
+                && song.enabled
+            {
+                return Some(idx);
             }
             idx += 1;
         }
@@ -941,10 +934,10 @@ impl PlaylistManager {
                 return None;
             }
             idx -= 1;
-            if let Some(song) = self.get_song_at_linear_index(idx) {
-                if song.enabled {
-                    return Some(idx);
-                }
+            if let Some(song) = self.get_song_at_linear_index(idx)
+                && song.enabled
+            {
+                return Some(idx);
             }
         }
     }
@@ -952,21 +945,20 @@ impl PlaylistManager {
     /// Notifica que una canción fue reproducida manualmente (por doble clic o enter).
     /// Esto es vital para el modo Shuffle para evitar repeticiones y mantener el historial.
     pub fn notify_manual_play(&mut self, song_id: i64) {
-        if self.shuffle_active {
-            if let Some(session) = &mut self.shuffle_session {
-                // 1. Añadir al historial
-                session.history.push(song_id);
+        if self.shuffle_active
+            && let Some(session) = &mut self.shuffle_session
+        {
+            // 1. Añadir al historial
+            session.history.push(song_id);
 
-                // 2. Eliminar de la cola futura si estaba presente para evitar que se repita
-                // Solo buscamos desde la posición actual en adelante
-                if session.current_position < session.shuffle_order.len() {
-                    if let Some(idx) = session.shuffle_order[session.current_position..]
-                        .iter()
-                        .position(|&x| x == song_id)
-                    {
-                        session.shuffle_order.remove(session.current_position + idx);
-                    }
-                }
+            // 2. Eliminar de la cola futura si estaba presente para evitar que se repita
+            // Solo buscamos desde la posición actual en adelante
+            if session.current_position < session.shuffle_order.len()
+                && let Some(idx) = session.shuffle_order[session.current_position..]
+                    .iter()
+                    .position(|&x| x == song_id)
+            {
+                session.shuffle_order.remove(session.current_position + idx);
             }
         }
     }

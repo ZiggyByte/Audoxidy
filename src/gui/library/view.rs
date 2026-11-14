@@ -208,9 +208,9 @@ pub fn view<'a>(
         manager.resizing_column,
         manager.hovered_column,
         sort_bar_pad,
-        |col| Message::ColumnHover(col),
-        |col| Message::StartColumnResize(col),
-        |col| Message::LibrarySortChanged(col),
+        Message::ColumnHover,
+        Message::StartColumnResize,
+        Message::LibrarySortChanged,
     );
 
     // --- CONTENIDO GRID / LISTA ---
@@ -753,52 +753,52 @@ pub fn view<'a>(
 
     let mut content_stack = iced::widget::Stack::new().push(content_with_deselection);
 
-    if manager.is_dragging {
-        if let (Some(start), Some(end)) = (manager.marquee_start, manager.marquee_end) {
-            let dx = start.x - end.x;
-            let dy = start.y - end.y;
-            let dist_sq = dx * dx + dy * dy;
+    if manager.is_dragging
+        && let (Some(start), Some(end)) = (manager.marquee_start, manager.marquee_end)
+    {
+        let dx = start.x - end.x;
+        let dy = start.y - end.y;
+        let dist_sq = dx * dx + dy * dy;
 
-            if dist_sq > 9.0 {
-                let scroll_y = manager.scroll_offset.y;
-                let visual_start_y = start.y - scroll_y;
-                let visual_end_y = end.y - scroll_y;
+        if dist_sq > 9.0 {
+            let scroll_y = manager.scroll_offset.y;
+            let visual_start_y = start.y - scroll_y;
+            let visual_end_y = end.y - scroll_y;
 
-                // Calculamos los límites visuales reales (clamped al viewport del área de contenido)
-                let y_min = visual_start_y.min(visual_end_y);
-                let y_max = visual_start_y.max(visual_end_y);
+            // Calculamos los límites visuales reales (clamped al viewport del área de contenido)
+            let y_min = visual_start_y.min(visual_end_y);
+            let y_max = visual_start_y.max(visual_end_y);
 
-                let x = start.x.min(end.x);
-                let y = y_min.max(0.0);
-                let w = dx.abs().max(1.0);
-                let h = (y_max - y).max(0.0);
+            let x = start.x.min(end.x);
+            let y = y_min.max(0.0);
+            let w = dx.abs().max(1.0);
+            let h = (y_max - y).max(0.0);
 
-                if h > 0.1 && w > 0.1 {
-                    let marquee_rect = container(
-                        iced::widget::Space::new()
-                            .width(Length::Fill)
-                            .height(Length::Fill),
-                    )
-                    .width(Length::Fixed(w))
-                    .height(Length::Fixed(h))
-                    .style(move |_t| container::Style {
-                        background: Some(COLOR_ACCENT.scale_alpha(0.3).into()),
-                        border: iced::Border {
-                            color: COLOR_ACCENT,
-                            width: STROKE_HAIRLINE,
-                            radius: 4.0.into(),
-                        },
-                        ..Default::default()
-                    });
+            if h > 0.1 && w > 0.1 {
+                let marquee_rect = container(
+                    iced::widget::Space::new()
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .width(Length::Fixed(w))
+                .height(Length::Fixed(h))
+                .style(move |_t| container::Style {
+                    background: Some(COLOR_ACCENT.scale_alpha(0.3).into()),
+                    border: iced::Border {
+                        color: COLOR_ACCENT,
+                        width: STROKE_HAIRLINE,
+                        radius: 4.0.into(),
+                    },
+                    ..Default::default()
+                });
 
-                    content_stack =
-                        content_stack.push(container(marquee_rect).padding(iced::Padding {
-                            top: y,
-                            right: 0.0,
-                            bottom: 0.0,
-                            left: x,
-                        }));
-                }
+                content_stack =
+                    content_stack.push(container(marquee_rect).padding(iced::Padding {
+                        top: y,
+                        right: 0.0,
+                        bottom: 0.0,
+                        left: x,
+                    }));
             }
         }
     }

@@ -117,15 +117,16 @@ impl AudioManager {
         let (mut tg, mut ag) = (track_gain, album_gain);
 
         // Si no se pasaron ganancias (ej. desde el módulo Playlist), intentamos buscarlas nosotros en la BD
-        if tg.is_none() && ag.is_none() {
-            if let Some(db_arc) = &*self.database.lock() {
-                // Usamos try_lock para evitar Deadlocks si el llamador ya tiene la BD bloqueada (ej. en el inicio de la App)
-                if let Ok(db) = db_arc.try_lock() {
-                    if let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path) {
-                        tg = db_tg;
-                        ag = db_ag;
-                    }
-                }
+        if tg.is_none()
+            && ag.is_none()
+            && let Some(db_arc) = &*self.database.lock()
+        {
+            // Usamos try_lock para evitar Deadlocks si el llamador ya tiene la BD bloqueada (ej. en el inicio de la App)
+            if let Ok(db) = db_arc.try_lock()
+                && let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path)
+            {
+                tg = db_tg;
+                ag = db_ag;
             }
         }
 
@@ -155,15 +156,14 @@ impl AudioManager {
         album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
         let (mut tg, mut ag) = (track_gain, album_gain);
-        if tg.is_none() && ag.is_none() {
-            if let Some(db_arc) = &*self.database.lock() {
-                if let Ok(db) = db_arc.try_lock() {
-                    if let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path) {
-                        tg = db_tg;
-                        ag = db_ag;
-                    }
-                }
-            }
+        if tg.is_none()
+            && ag.is_none()
+            && let Some(db_arc) = &*self.database.lock()
+            && let Ok(db) = db_arc.try_lock()
+            && let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path)
+        {
+            tg = db_tg;
+            ag = db_ag;
         }
         self.engine.preload_file(
             path,

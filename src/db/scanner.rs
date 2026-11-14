@@ -76,10 +76,10 @@ impl Scanner {
         let mut current_order = start_order;
         let mut enqueued_covers = std::collections::HashSet::new();
 
-        if let Ok(db) = db_m.lock() {
-            if let Err(e) = db.begin_transaction() {
-                tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
-            }
+        if let Ok(db) = db_m.lock()
+            && let Err(e) = db.begin_transaction()
+        {
+            tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
         }
 
         // Start boundary of the negative cover set: an entry recorded by an
@@ -97,37 +97,26 @@ impl Scanner {
             .enumerate()
         {
             let path = entry.path();
-            if path.is_file() {
-                if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
-                    if supported_extensions.contains(&ext.to_lowercase().as_str()) {
-                        Self::process_file(
-                            db_m,
-                            path,
-                            root,
-                            current_order,
-                            &mut enqueued_covers,
-                            false,
-                        );
-                        current_order += 1;
+            if path.is_file()
+                && let Some(ext) = path.extension().and_then(|e| e.to_str())
+                && supported_extensions.contains(&ext.to_lowercase().as_str())
+            {
+                Self::process_file(db_m, path, root, current_order, &mut enqueued_covers, false);
+                current_order += 1;
 
-                        if count % 500 == 0 {
-                            if let Ok(db) = db_m.lock() {
-                                if let Err(e) = db.commit_transaction() {
-                                    tracing::warn!(
-                                        "No se pudo confirmar la transacción del escáner: {}",
-                                        e
-                                    );
-                                }
-                                if let Err(e) = db.begin_transaction() {
-                                    tracing::warn!(
-                                        "No se pudo iniciar la transacción del escáner: {}",
-                                        e
-                                    );
-                                }
-                            }
-                            dirty_flag.store(true, Ordering::Relaxed);
+                if count % 500 == 0 {
+                    if let Ok(db) = db_m.lock() {
+                        if let Err(e) = db.commit_transaction() {
+                            tracing::warn!(
+                                "No se pudo confirmar la transacción del escáner: {}",
+                                e
+                            );
+                        }
+                        if let Err(e) = db.begin_transaction() {
+                            tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
                         }
                     }
+                    dirty_flag.store(true, Ordering::Relaxed);
                 }
             }
         }
@@ -186,149 +175,144 @@ impl Scanner {
         // Prioridad: Id3v2 > VorbisComments > Mp4ilst > Ape > RiffInfo > Id3v1
         let mut fused_map = std::collections::HashMap::new();
 
-        if let Ok(probe) = Probe::open(path) {
-            if let Ok(tagged_file) = probe
+        if let Ok(probe) = Probe::open(path)
+            && let Ok(tagged_file) = probe
                 .guess_file_type()
                 .unwrap_or(Probe::open(path).unwrap())
                 .read()
-            {
-                let props = tagged_file.properties();
-                song.sample_rate = props.sample_rate().map(|sr| sr as i64);
-                song.channels = props.channels().map(|ch| ch as i64);
-                song.duration_secs = Some(props.duration().as_secs_f64());
-                song.bit_depth = props.bit_depth().map(|b| b as i64);
+        {
+            let props = tagged_file.properties();
+            song.sample_rate = props.sample_rate().map(|sr| sr as i64);
+            song.channels = props.channels().map(|ch| ch as i64);
+            song.duration_secs = Some(props.duration().as_secs_f64());
+            song.bit_depth = props.bit_depth().map(|b| b as i64);
 
-                // 1. Recolectar TODAS las etiquetas presentes
-                for tag in tagged_file.tags() {
-                    let tag_type = tag.tag_type();
+            // 1. Recolectar TODAS las etiquetas presentes
+            for tag in tagged_file.tags() {
+                let tag_type = tag.tag_type();
 
-                    // Nivel de prioridad dependiente del formato (Menor es más prioritario)
-                    let file_type = tagged_file.file_type();
-                    let priority = match (file_type, tag_type) {
-                        // FLAC: VorbisComments tiene la prioridad absoluta (ID3v2 es solo lectura)
-                        (lofty::file::FileType::Flac, lofty::tag::TagType::VorbisComments) => 1,
+                // Nivel de prioridad dependiente del formato (Menor es más prioritario)
+                let file_type = tagged_file.file_type();
+                let priority = match (file_type, tag_type) {
+                    // FLAC: VorbisComments tiene la prioridad absoluta (ID3v2 es solo lectura)
+                    (lofty::file::FileType::Flac, lofty::tag::TagType::VorbisComments) => 1,
 
-                        // APE/MPC: APE tiene la prioridad absoluta (ID3v2/v1 son secundarios o solo lectura)
-                        (
-                            lofty::file::FileType::Ape | lofty::file::FileType::Mpc,
-                            lofty::tag::TagType::Ape,
-                        ) => 1,
+                    // APE/MPC: APE tiene la prioridad absoluta (ID3v2/v1 son secundarios o solo lectura)
+                    (
+                        lofty::file::FileType::Ape | lofty::file::FileType::Mpc,
+                        lofty::tag::TagType::Ape,
+                    ) => 1,
 
-                        // WAV/AIFF: ID3v2 tiene prioridad sobre RIFF INFO/Text Chunks
-                        (
-                            lofty::file::FileType::Wav | lofty::file::FileType::Aiff,
-                            lofty::tag::TagType::Id3v2,
-                        ) => 1,
-                        (lofty::file::FileType::Wav, lofty::tag::TagType::RiffInfo) => 2,
+                    // WAV/AIFF: ID3v2 tiene prioridad sobre RIFF INFO/Text Chunks
+                    (
+                        lofty::file::FileType::Wav | lofty::file::FileType::Aiff,
+                        lofty::tag::TagType::Id3v2,
+                    ) => 1,
+                    (lofty::file::FileType::Wav, lofty::tag::TagType::RiffInfo) => 2,
 
-                        // Prioridades globales (Mantenidas para MP3, AAC, etc.)
-                        (_, lofty::tag::TagType::Id3v2) => 1,
-                        (_, lofty::tag::TagType::VorbisComments) => 2,
-                        (_, lofty::tag::TagType::Mp4Ilst) => 3,
-                        (_, lofty::tag::TagType::Ape) => 4,
-                        (_, lofty::tag::TagType::RiffInfo) => 5,
-                        (_, lofty::tag::TagType::Id3v1) => 6,
-                        _ => 10,
-                    };
+                    // Prioridades globales (Mantenidas para MP3, AAC, etc.)
+                    (_, lofty::tag::TagType::Id3v2) => 1,
+                    (_, lofty::tag::TagType::VorbisComments) => 2,
+                    (_, lofty::tag::TagType::Mp4Ilst) => 3,
+                    (_, lofty::tag::TagType::Ape) => 4,
+                    (_, lofty::tag::TagType::RiffInfo) => 5,
+                    (_, lofty::tag::TagType::Id3v1) => 6,
+                    _ => 10,
+                };
 
-                    for item in tag.items() {
-                        let key = item.key();
-                        if let lofty::tag::ItemValue::Text(val) = item.value() {
-                            // Lógica de Fusión: Solo actualizamos si no existe o si el nuevo tag tiene más prioridad
-                            let entry = fused_map
-                                .entry(key.clone())
-                                .or_insert((priority, val.clone()));
-                            if priority < entry.0 {
-                                *entry = (priority, val.clone());
-                            }
-                        }
-                    }
-
-                    // Intentar extraer carátula del tag más prioritario que la tenga
-                    if pic_bytes.is_none() {
-                        if let Some(pic) = tag.pictures().first() {
-                            pic_bytes = Some(pic.data().to_vec());
+                for item in tag.items() {
+                    let key = item.key();
+                    if let lofty::tag::ItemValue::Text(val) = item.value() {
+                        // Lógica de Fusión: Solo actualizamos si no existe o si el nuevo tag tiene más prioridad
+                        let entry = fused_map.entry(key).or_insert((priority, val.clone()));
+                        if priority < entry.0 {
+                            *entry = (priority, val.clone());
                         }
                     }
                 }
 
-                // 2. Poblar SongData con los valores fusionados (Alta Fidelidad)
-                let get_fused = |key: ItemKey| fused_map.get(&key).map(|(_, v)| v.clone());
-
-                song.title = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::TrackTitle).as_deref(),
-                );
-                song.artist = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::TrackArtist).as_deref(),
-                );
-                song.album = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::AlbumTitle).as_deref(),
-                );
-                song.genre =
-                    crate::utils::interner::intern_string_opt(get_fused(ItemKey::Genre).as_deref());
-                song.track_number = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::TrackNumber).as_deref(),
-                );
-                song.album_artist = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::AlbumArtist).as_deref(),
-                );
-
-                // Año con lógica de fallback robusta pero preservando formato
-                song.release_year = crate::utils::interner::intern_string_opt(
-                    get_fused(ItemKey::Year)
-                        .or_else(|| get_fused(ItemKey::RecordingDate))
-                        .or_else(|| get_fused(ItemKey::OriginalReleaseDate))
-                        .map(|d| {
-                            d.chars()
-                                .filter(|c| c.is_digit(10))
-                                .take(4)
-                                .collect::<String>()
-                        })
-                        .as_deref(),
-                );
-
-                extended.lyrics =
-                    get_fused(ItemKey::UnsyncLyrics).or_else(|| get_fused(ItemKey::Lyrics));
-                extended.comments = get_fused(ItemKey::Comment);
-                extended.composer = get_fused(ItemKey::Composer);
-                extended.lyricist = get_fused(ItemKey::Lyricist);
-                extended.publisher = get_fused(ItemKey::Publisher);
-                extended.copyright = get_fused(ItemKey::CopyrightMessage);
-                extended.encoded_by = get_fused(ItemKey::EncodedBy);
-                extended.catalog = get_fused(ItemKey::CatalogNumber);
-                extended.isrc = get_fused(ItemKey::Isrc);
-                extended.key = get_fused(ItemKey::InitialKey);
-                extended.bpm = get_fused(ItemKey::Bpm);
-
-                extended.track_gain = get_fused(ItemKey::ReplayGainTrackGain)
-                    .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
-                extended.album_gain = get_fused(ItemKey::ReplayGainAlbumGain)
-                    .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
+                // Intentar extraer carátula del tag más prioritario que la tenga
+                if pic_bytes.is_none()
+                    && let Some(pic) = tag.pictures().first()
+                {
+                    pic_bytes = Some(pic.data().to_vec());
+                }
             }
+
+            // 2. Poblar SongData con los valores fusionados (Alta Fidelidad)
+            let get_fused = |key: ItemKey| fused_map.get(&key).map(|(_, v)| v.clone());
+
+            song.title = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::TrackTitle).as_deref(),
+            );
+            song.artist = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::TrackArtist).as_deref(),
+            );
+            song.album = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::AlbumTitle).as_deref(),
+            );
+            song.genre =
+                crate::utils::interner::intern_string_opt(get_fused(ItemKey::Genre).as_deref());
+            song.track_number = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::TrackNumber).as_deref(),
+            );
+            song.album_artist = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::AlbumArtist).as_deref(),
+            );
+
+            // Año con lógica de fallback robusta pero preservando formato
+            song.release_year = crate::utils::interner::intern_string_opt(
+                get_fused(ItemKey::Year)
+                    .or_else(|| get_fused(ItemKey::RecordingDate))
+                    .or_else(|| get_fused(ItemKey::OriginalReleaseDate))
+                    .map(|d| {
+                        d.chars()
+                            .filter(|c| c.is_ascii_digit())
+                            .take(4)
+                            .collect::<String>()
+                    })
+                    .as_deref(),
+            );
+
+            extended.lyrics =
+                get_fused(ItemKey::UnsyncLyrics).or_else(|| get_fused(ItemKey::Lyrics));
+            extended.comments = get_fused(ItemKey::Comment);
+            extended.composer = get_fused(ItemKey::Composer);
+            extended.lyricist = get_fused(ItemKey::Lyricist);
+            extended.publisher = get_fused(ItemKey::Publisher);
+            extended.copyright = get_fused(ItemKey::CopyrightMessage);
+            extended.encoded_by = get_fused(ItemKey::EncodedBy);
+            extended.catalog = get_fused(ItemKey::CatalogNumber);
+            extended.isrc = get_fused(ItemKey::Isrc);
+            extended.key = get_fused(ItemKey::InitialKey);
+            extended.bpm = get_fused(ItemKey::Bpm);
+
+            extended.track_gain = get_fused(ItemKey::ReplayGainTrackGain)
+                .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
+            extended.album_gain = get_fused(ItemKey::ReplayGainAlbumGain)
+                .and_then(|s| s.replace(" dB", "").parse::<f64>().ok());
         }
 
         let pic_hash = pic_bytes
             .as_ref()
             .map(|b| Database::generate_hash(&hex::encode(b)));
 
-        if let Ok(mut db) = db_m.lock() {
-            if let Ok((target_file_name, needs_processing)) =
+        if let Ok(mut db) = db_m.lock()
+            && let Ok((target_file_name, needs_processing)) =
                 db.insert_song_full(&song, &extended, pic_hash, is_external)
-            {
-                if needs_processing && !enqueued_covers.contains(&target_file_name) {
-                    if let Some(data) = pic_bytes {
-                        // Only enqueue when the AVIF file does not exist yet. The
-                        // name arrives complete from the insert, so the existence
-                        // check and the write cannot disagree.
-                        let expected_path = crate::utils::paths::get()
-                            .cover_cache_dir
-                            .join(&target_file_name);
-                        if !expected_path.exists() {
-                            crate::utils::covers::enqueue_cover_job(data, target_file_name.clone());
-                            enqueued_covers.insert(target_file_name);
-                        }
-                    }
-                }
+            && needs_processing
+            && !enqueued_covers.contains(&target_file_name)
+            && let Some(data) = pic_bytes
+        {
+            // Only enqueue when the AVIF file does not exist yet. The
+            // name arrives complete from the insert, so the existence
+            // check and the write cannot disagree.
+            let expected_path = crate::utils::paths::get()
+                .cover_cache_dir
+                .join(&target_file_name);
+            if !expected_path.exists() {
+                crate::utils::covers::enqueue_cover_job(data, target_file_name.clone());
+                enqueued_covers.insert(target_file_name);
             }
         }
     }
@@ -375,7 +359,7 @@ impl Scanner {
             let id = db.create_playlist(&playlist_name, false).ok()?;
 
             let mut enqueued_covers = std::collections::HashSet::new();
-            for (_i, p) in paths.iter().enumerate() {
+            for p in paths.iter() {
                 let p_str = p.to_string_lossy().to_string();
 
                 // 1. Verificar si la canción ya existe (para no duplicar)
@@ -432,10 +416,10 @@ impl Scanner {
             "mp3", "flac", "wav", "ogg", "m4a", "aac", "ape", "aiff", "mpc", "opus", "spx", "wv",
         ];
 
-        if let Ok(db) = db_m.lock() {
-            if let Err(e) = db.begin_transaction() {
-                tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
-            }
+        if let Ok(db) = db_m.lock()
+            && let Err(e) = db.begin_transaction()
+        {
+            tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
         }
 
         for path in paths {
@@ -451,15 +435,15 @@ impl Scanner {
                     // Añadir a la playlist
                     if let Ok(db) = db_m.lock() {
                         let path_str = path.to_string_lossy();
-                        if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
-                            if let Err(e) = db.add_song_to_playlist(playlist_id, song_id) {
-                                tracing::warn!(
-                                    "No se pudo añadir la canción {} a la playlist {}: {}",
-                                    song_id,
-                                    playlist_id,
-                                    e
-                                );
-                            }
+                        if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str)
+                            && let Err(e) = db.add_song_to_playlist(playlist_id, song_id)
+                        {
+                            tracing::warn!(
+                                "No se pudo añadir la canción {} a la playlist {}: {}",
+                                song_id,
+                                playlist_id,
+                                e
+                            );
                         }
                     }
                 } else if ext == "m3u" || ext == "m3u8" {
@@ -482,15 +466,15 @@ impl Scanner {
                             Self::process_file(db_m, p, "", 0, &mut enqueued_covers, true);
                             if let Ok(db) = db_m.lock() {
                                 let path_str = p.to_string_lossy();
-                                if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str) {
-                                    if let Err(e) = db.add_song_to_playlist(playlist_id, song_id) {
-                                        tracing::warn!(
-                                            "No se pudo añadir la canción {} a la playlist {}: {}",
-                                            song_id,
-                                            playlist_id,
-                                            e
-                                        );
-                                    }
+                                if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str)
+                                    && let Err(e) = db.add_song_to_playlist(playlist_id, song_id)
+                                {
+                                    tracing::warn!(
+                                        "No se pudo añadir la canción {} a la playlist {}: {}",
+                                        song_id,
+                                        playlist_id,
+                                        e
+                                    );
                                 }
                             }
                         }

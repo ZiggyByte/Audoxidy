@@ -58,41 +58,33 @@ impl crate::gui::app::AudoxidyApp {
                 }
                 Task::none()
             }
-            Message::EqPresetImportFile => {
-                return Task::perform(
-                    async {
-                        let file = rfd::AsyncFileDialog::new()
-                            .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
-                            .set_title("Importar preset de ecualizador")
-                            .pick_file()
-                            .await;
-                        if let Some(f) = file {
-                            let data = f.read().await;
-                            Some((f.path().to_path_buf(), data))
-                        } else {
-                            None
-                        }
-                    },
-                    |result| {
-                        Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileImported(result))
-                    },
-                );
-            }
-            Message::EqPresetExportFile(_preset_name) => {
-                return Task::perform(
-                    async {
-                        rfd::AsyncFileDialog::new()
-                            .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
-                            .set_title("Exportar preset de ecualizador")
-                            .save_file()
-                            .await
-                            .map(|f| f.path().to_path_buf())
-                    },
-                    |result| {
-                        Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileExported(result))
-                    },
-                );
-            }
+            Message::EqPresetImportFile => Task::perform(
+                async {
+                    let file = rfd::AsyncFileDialog::new()
+                        .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
+                        .set_title("Importar preset de ecualizador")
+                        .pick_file()
+                        .await;
+                    if let Some(f) = file {
+                        let data = f.read().await;
+                        Some((f.path().to_path_buf(), data))
+                    } else {
+                        None
+                    }
+                },
+                |result| Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileImported(result)),
+            ),
+            Message::EqPresetExportFile(_preset_name) => Task::perform(
+                async {
+                    rfd::AsyncFileDialog::new()
+                        .add_filter("Audoxidy EQ Preset", &["json", "aeqp"])
+                        .set_title("Exportar preset de ecualizador")
+                        .save_file()
+                        .await
+                        .map(|f| f.path().to_path_buf())
+                },
+                |result| Message::AudioCenterMsg(AudioCenterMessage::EqPresetFileExported(result)),
+            ),
             Message::AudioCenterMsg(ac_msg) => {
                 match &ac_msg {
                     crate::gui::audio_center::AudioCenterMessage::SliderHoverActive(true) => {
@@ -129,14 +121,12 @@ impl crate::gui::app::AudoxidyApp {
                 // EqPresetLoadSelected: update dialog state for selection persistence
                 if let crate::gui::audio_center::AudioCenterMessage::EqPresetLoadSelected(idx) =
                     &ac_msg
-                {
-                    if let ActiveDialog::EqPresetLoad {
+                    && let ActiveDialog::EqPresetLoad {
                         selected_preset_idx,
                         ..
                     } = &mut self.active_dialog
-                    {
-                        *selected_preset_idx = *idx;
-                    }
+                {
+                    *selected_preset_idx = *idx;
                 }
 
                 // EqPresetIconSave opens the Save dialog in app.rs

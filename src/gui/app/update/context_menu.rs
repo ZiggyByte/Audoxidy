@@ -23,13 +23,13 @@ impl crate::gui::app::AudoxidyApp {
                         | Some(Message::PlaylistShowInLibrary(idx))
                         | Some(Message::PlaylistDeleteSelection(idx))
                         | Some(Message::PlaylistToggleEnabled(idx))
-                        | Some(Message::PlaylistRequestSubMenu(idx)) => {
-                            if !self.playlist_manager.selected_idxs.contains(idx) {
-                                self.playlist_manager.selected_idxs.clear();
-                                self.playlist_manager.selected_idxs.insert(*idx);
-                                self.playlist_manager.focused_idx = Some(*idx);
-                                self.playlist_manager.selection_pivot = Some(*idx);
-                            }
+                        | Some(Message::PlaylistRequestSubMenu(idx))
+                            if !self.playlist_manager.selected_idxs.contains(idx) =>
+                        {
+                            self.playlist_manager.selected_idxs.clear();
+                            self.playlist_manager.selected_idxs.insert(*idx);
+                            self.playlist_manager.focused_idx = Some(*idx);
+                            self.playlist_manager.selection_pivot = Some(*idx);
                         }
                         _ => {}
                     }

@@ -325,12 +325,11 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
 /// duración de `0.0`, que desactiva el disparo temporal de la pre-carga y deja
 /// que el decodificador dirija la transición por buffer/EOF.
 fn derive_duration_sec(track: &symphonia::core::formats::Track, fallback_rate: u32) -> Option<f64> {
-    if let Some(tb) = track.time_base {
-        if let Some(dur) = track.duration {
-            if let Some(t) = tb.calc_duration(dur) {
-                return Some(t.as_secs_f64());
-            }
-        }
+    if let Some(tb) = track.time_base
+        && let Some(dur) = track.duration
+        && let Some(t) = tb.calc_duration(dur)
+    {
+        return Some(t.as_secs_f64());
     }
     let sr = track
         .codec_params
@@ -453,7 +452,7 @@ fn open_preload_track(
         return Ok(());
     };
 
-    let source = open_audio_source(&path).map_err(|e| super::AudioError::IoError(e))?;
+    let source = open_audio_source(&path).map_err(super::AudioError::IoError)?;
     let mss = MediaSourceStream::new(source, Default::default());
     let hint = Hint::new();
     let metadata_opts = MetadataOptions::default()
@@ -648,10 +647,10 @@ fn preload_decode_batch(
     let mut batch_out: Vec<f64> = Vec::new();
     if let Some(rs) = preload_resampler.as_mut() {
         for c in 0..src_channels {
-            if c < preload_resampler_in_buf.len() {
-                if let Some(plane) = preload_plane_pool.get(c) {
-                    preload_resampler_in_buf[c].extend(plane.iter().copied());
-                }
+            if c < preload_resampler_in_buf.len()
+                && let Some(plane) = preload_plane_pool.get(c)
+            {
+                preload_resampler_in_buf[c].extend(plane.iter().copied());
             }
         }
         if preload_input_pool.len() < src_channels {
@@ -681,7 +680,10 @@ fn preload_decode_batch(
             let mut output_adapter =
                 SequentialSliceOfVecs::new_mut(preload_output_pool, src_channels, out_frames)
                     .unwrap();
-            if let Ok(_) = rs.process_into_buffer(&input_adapter, &mut output_adapter, None) {
+            if rs
+                .process_into_buffer(&input_adapter, &mut output_adapter, None)
+                .is_ok()
+            {
                 AudioEngine::mix_channels_planar(
                     preload_output_pool,
                     out_frames,
@@ -730,7 +732,7 @@ fn crossfade_auto_due(total_duration_sec: f64, current_pos_sec: f64, auto_ms: f6
 pub(crate) fn predecode_cap_frames_for(cap_ms: f64, out_rate: u32, out_channels: usize) -> usize {
     const PRELOAD_MAX_SAMPLES: usize = 8_000_000;
     let cap_ms = (cap_ms + 2000.0).clamp(0.0, 8000.0);
-    let sec_cap = ((cap_ms as f64 / 1000.0) * out_rate as f64) as usize * out_channels;
+    let sec_cap = ((cap_ms / 1000.0) * out_rate as f64) as usize * out_channels;
     sec_cap.min(PRELOAD_MAX_SAMPLES).max(out_channels)
 }
 
@@ -919,10 +921,10 @@ fn tail_decode_batch(
 
         if let Some(rs) = tail_resampler.as_mut() {
             for c in 0..src_channels {
-                if c < tail_resampler_in_buf.len() {
-                    if let Some(plane) = tail_plane_pool.get(c) {
-                        tail_resampler_in_buf[c].extend(plane.iter().copied());
-                    }
+                if c < tail_resampler_in_buf.len()
+                    && let Some(plane) = tail_plane_pool.get(c)
+                {
+                    tail_resampler_in_buf[c].extend(plane.iter().copied());
                 }
             }
             if tail_input_pool.len() < src_channels {
@@ -952,7 +954,10 @@ fn tail_decode_batch(
                 let mut output_adapter =
                     SequentialSliceOfVecs::new_mut(tail_output_pool, src_channels, out_frames)
                         .unwrap();
-                if let Ok(_) = rs.process_into_buffer(&input_adapter, &mut output_adapter, None) {
+                if rs
+                    .process_into_buffer(&input_adapter, &mut output_adapter, None)
+                    .is_ok()
+                {
                     AudioEngine::mix_channels_planar(
                         tail_output_pool,
                         out_frames,
@@ -2460,7 +2465,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     if has_preload {
                         let preload_ready = preload_format
                             .as_ref()
-                            .and_then(|_| preload_decoder.as_ref())
+                            .and(preload_decoder.as_ref())
                             .is_some();
 
                         if preload_ready || !predecode_buffer.is_empty() {
@@ -2762,10 +2767,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         let src_channels = spec.channels().count();
 
                         for c in 0..src_channels {
-                            if c < resampler_in_buf.len() {
-                                if let Some(plane) = decode_plane_pool.get(c) {
-                                    resampler_in_buf[c].extend(plane.iter().copied());
-                                }
+                            if c < resampler_in_buf.len()
+                                && let Some(plane) = decode_plane_pool.get(c)
+                            {
+                                resampler_in_buf[c].extend(plane.iter().copied());
                             }
                         }
 
@@ -2810,8 +2815,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             )
                             .unwrap();
 
-                            if let Ok(_) =
-                                rs.process_into_buffer(&input_adapter, &mut output_adapter, None)
+                            if rs
+                                .process_into_buffer(&input_adapter, &mut output_adapter, None)
+                                .is_ok()
                             {
                                 resampled_frames += out_frames;
                                 if tracing::enabled!(tracing::Level::TRACE) {
@@ -2855,8 +2861,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // Tiempo idle (buffer del stream lleno o sin pista activa): aprovechamos
             // para decodificar la pista pre-cargada en segundo plano.
             // Abrir la pista pendiente (diferido) y luego decodificar un lote.
-            if preload_pending.is_some() && preload_format.is_none() {
-                if let Err(e) = open_preload_track(
+            if preload_pending.is_some()
+                && preload_format.is_none()
+                && let Err(e) = open_preload_track(
                     &mut preload_pending,
                     &mut preload_format,
                     &mut preload_decoder,
@@ -2872,9 +2879,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut preload_rg,
                     &mut predecode_cap_frames,
                     &state,
-                ) {
-                    tracing::error!("Pre-carga falló: {}", e);
-                }
+                )
+            {
+                tracing::error!("Pre-carga falló: {}", e);
             }
             if preload_format.is_some() {
                 // Decodificamos un lote por iteración; el loop controla la frecuencia.
@@ -2892,7 +2899,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut predecode_buffer,
                     predecode_cap_frames,
                     out_rate,
-                    out_channels as usize,
+                    out_channels,
                 );
             }
             // Durante la mezcla: recargar la COLA de la canción anterior (capa de la
@@ -2913,7 +2920,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     &mut tail_buffer,
                     tail_buffer_cap,
                     out_rate,
-                    out_channels as usize,
+                    out_channels,
                 )
             } else {
                 false
@@ -3037,7 +3044,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         &engine,
                         &state,
                         out_rate,
-                        out_channels as usize,
+                        out_channels,
                         true, // automático: la GUI avanza a la canción nueva
                     );
                     crossfade_duration_sec = auto_ms / 1000.0;
@@ -3094,7 +3101,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             };
 
             if crossfade_active {
-                let out_ch = out_channels as usize;
+                let out_ch = out_channels;
                 if out_ch > 0 {
                     let batch_dt_cf =
                         output_accumulator.len() as f64 / out_ch as f64 / out_rate as f64;
@@ -3214,15 +3221,15 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                 // 1. ReplayGain base from tags (album + track sum)
                 if s.rg_master_enabled {
-                    if s.replay_gain_track_enabled {
-                        if let Some(tg) = s.replay_gain_track {
-                            gain_db += tg as f64;
-                        }
+                    if s.replay_gain_track_enabled
+                        && let Some(tg) = s.replay_gain_track
+                    {
+                        gain_db += tg as f64;
                     }
-                    if s.replay_gain_album_enabled {
-                        if let Some(ag) = s.replay_gain_album {
-                            gain_db += ag as f64;
-                        }
+                    if s.replay_gain_album_enabled
+                        && let Some(ag) = s.replay_gain_album
+                    {
+                        gain_db += ag as f64;
                     }
 
                     // 2. RG offsets per source:
@@ -3324,7 +3331,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 
                     if peak < threshold {
                         // Silent frame: accumulate and potentially drop.
-                        let frame_samples = output_accumulator.len() / out_channels as usize;
+                        let frame_samples = output_accumulator.len() / out_channels;
                         silence_samples += frame_samples;
                         let silence_duration_ms =
                             (silence_samples as f64 / out_rate as f64) * 1000.0;
@@ -3483,9 +3490,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             let dsp_span = debug_batch_span!("batch_dsp");
             let dsp_start = dsp_span.as_ref().map(|_| Instant::now());
             let _dsp_enter = dsp_span.as_ref().map(|s| s.enter());
-            let dsp_frames = output_accumulator.len() / out_channels.max(1) as usize;
+            let dsp_frames = output_accumulator.len() / out_channels.max(1);
             {
-                let out_ch = out_channels as usize;
+                let out_ch = out_channels;
                 // combined = applied_vol (smoothed or immediate user volume)
                 // × fade_coeff (equal-power musical fade, 1.0 when Idle).
                 // Durante la mezcla cruzada, el fade ya se aplicó por separado
@@ -3621,7 +3628,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     }
                 }
             }
-            record_batch(&dsp_span, dsp_start, dsp_frames, out_channels as usize);
+            record_batch(&dsp_span, dsp_start, dsp_frames, out_channels);
 
             // Conversión limpia de f64 a f32 (Zero-Allocation pool)
             for &sample in output_accumulator.iter() {
@@ -3640,7 +3647,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 let push_span = debug_batch_span!("batch_push");
                 let push_start = push_span.as_ref().map(|_| Instant::now());
                 let _push_enter = push_span.as_ref().map(|s| s.enter());
-                let push_frames = output_accumulator_f32.len() / out_channels.max(1) as usize;
+                let push_frames = output_accumulator_f32.len() / out_channels.max(1);
                 // Push al RingBuffer (lock breve por iteración)
                 // --- PUSHING ATÓMICO (FRAME ALIGNMENT) ---
                 // Aseguramos que solo se envíen múltiplos exactos de `out_channels`.
@@ -3649,7 +3656,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 while pos < output_accumulator_f32.len() {
                     let mut pushed = 0;
                     if let Some(producer) = producer_mutex.lock().as_mut() {
-                        let out_ch_usize = out_channels as usize;
+                        let out_ch_usize = out_channels;
                         let remaining = output_accumulator_f32.len() - pos;
                         let available = producer.capacity().get() - producer.occupied_len();
 
@@ -3696,7 +3703,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         pos += pushed;
                     }
                 }
-                record_batch(&push_span, push_start, push_frames, out_channels as usize);
+                record_batch(&push_span, push_start, push_frames, out_channels);
             }
         }
     }

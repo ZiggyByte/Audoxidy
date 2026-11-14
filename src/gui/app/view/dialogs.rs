@@ -452,15 +452,14 @@ impl AudoxidyApp {
                                 ..Default::default()
                             }
                         });
-                        if enabled {
-                            if let Some(m) = msg {
+                        if enabled
+                            && let Some(m) = msg {
                                 btn = btn.on_press(m);
                             }
-                        }
                         btn.into()
                     }
 
-                    let mut content = iced::widget::column![
+                    let content = iced::widget::column![
                         iced::widget::text("Nombre del preset:")
                             .size(13)
                             .color(COLOR_TEXT_PRIMARY)

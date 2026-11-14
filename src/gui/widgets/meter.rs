@@ -699,7 +699,7 @@ pub fn meter_popup_view<'a>(
 
     // Activar/desactivar medidor: toggle
     let enabled_checkbox: Element<'a, Message> =
-        StandardCheckbox::new(meter_enabled, |b| Message::MeterToggleEnabled(b)).into();
+        StandardCheckbox::new(meter_enabled, Message::MeterToggleEnabled).into();
     let enabled_row = row![
         enabled_checkbox,
         Space::new().width(Length::Fixed(5.0)),
@@ -745,7 +745,7 @@ pub fn meter_popup_view<'a>(
 
     // Modo M/S: toggle (solo visual, computación en update_meter)
     let ms_checkbox: Element<'a, Message> =
-        StandardCheckbox::new(ms_mode, |b| Message::MeterMsModeToggle(b)).into();
+        StandardCheckbox::new(ms_mode, Message::MeterMsModeToggle).into();
     let ms_row = row![
         ms_checkbox,
         Space::new().width(Length::Fixed(5.0)),
@@ -759,7 +759,7 @@ pub fn meter_popup_view<'a>(
 
     // Hold infinito: toggle
     let inf_checkbox: Element<'a, Message> =
-        StandardCheckbox::new(infinite_hold, |b| Message::MeterInfiniteHoldToggle(b)).into();
+        StandardCheckbox::new(infinite_hold, Message::MeterInfiniteHoldToggle).into();
     let inf_row = row![
         inf_checkbox,
         Space::new().width(Length::Fixed(5.0)),

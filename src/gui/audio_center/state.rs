@@ -242,23 +242,25 @@ impl AudioCenterManager {
                 }
                 Some(
                     bytes
-                        .chunks_exact(4)
-                        .map(|c| f32::from_le_bytes(c.try_into().unwrap()))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .map(|c| f32::from_le_bytes(*c))
                         .collect(),
                 )
             })
         }
 
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-        if let Ok(db_lock) = db.lock() {
-            if let Ok(raw) = db_lock.load_eq_presets_raw() {
-                self.custom_presets = raw
-                    .into_iter()
-                    .map(|(name, preamp_gain, b20, b31)| {
-                        EqPreset::new(&name, preamp_gain, deserialize(b20), deserialize(b31))
-                    })
-                    .collect();
-            }
+        if let Ok(db_lock) = db.lock()
+            && let Ok(raw) = db_lock.load_eq_presets_raw()
+        {
+            self.custom_presets = raw
+                .into_iter()
+                .map(|(name, preamp_gain, b20, b31)| {
+                    EqPreset::new(&name, preamp_gain, deserialize(b20), deserialize(b31))
+                })
+                .collect();
         }
     }
     /// Build unified preset list for Load dialog:
@@ -275,7 +277,7 @@ impl AudioCenterManager {
 
         // 2. Custom presets (sorted A-Z)
         let mut custom: Vec<&crate::audio::preset::EqPreset> = self.custom_presets.iter().collect();
-        custom.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        custom.sort_by_key(|a| a.name.to_lowercase());
         all.extend(custom);
 
         // 3. Built-in presets excluding Default and hidden
@@ -284,7 +286,7 @@ impl AudioCenterManager {
             .iter()
             .filter(|p| p.name != "Default" && !self.hidden_builtins.contains(&p.name))
             .collect();
-        builtin.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+        builtin.sort_by_key(|a| a.name.to_lowercase());
         all.extend(builtin);
 
         all
@@ -651,47 +653,47 @@ impl AudioCenterManager {
                 if self.selected_device.is_none() {
                     self.selected_device = db.get_setting("audio_device").filter(|s| !s.is_empty());
                 }
-                if let Some(bd_str) = db.get_setting("audio_bit_depth") {
-                    if let Some(bd) = match bd_str.as_str() {
+                if let Some(bd_str) = db.get_setting("audio_bit_depth")
+                    && let Some(bd) = match bd_str.as_str() {
                         "16" => Some(BitDepth::Bits16),
                         "24" => Some(BitDepth::Bits24),
                         "32" => Some(BitDepth::Bits32Float),
                         _ => None,
-                    } {
-                        self.selected_bit_depth = bd;
                     }
+                {
+                    self.selected_bit_depth = bd;
                 }
-                if self.system_rate == SystemSelection::Default {
-                    if let Some(sr_str) = db.get_setting("audio_system_rate") {
-                        self.system_rate = match sr_str.as_str() {
-                            "default" => SystemSelection::Default,
-                            "auto" => SystemSelection::Automatic,
-                            s if s.starts_with("fixed:") => {
-                                if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
-                                    SystemSelection::Fixed(val)
-                                } else {
-                                    SystemSelection::Default
-                                }
+                if self.system_rate == SystemSelection::Default
+                    && let Some(sr_str) = db.get_setting("audio_system_rate")
+                {
+                    self.system_rate = match sr_str.as_str() {
+                        "default" => SystemSelection::Default,
+                        "auto" => SystemSelection::Automatic,
+                        s if s.starts_with("fixed:") => {
+                            if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
+                                SystemSelection::Fixed(val)
+                            } else {
+                                SystemSelection::Default
                             }
-                            _ => SystemSelection::Default,
-                        };
-                    }
+                        }
+                        _ => SystemSelection::Default,
+                    };
                 }
-                if self.system_quantum == SystemSelection::Default {
-                    if let Some(sq_str) = db.get_setting("audio_system_quantum") {
-                        self.system_quantum = match sq_str.as_str() {
-                            "default" => SystemSelection::Default,
-                            "auto" => SystemSelection::Automatic,
-                            s if s.starts_with("fixed:") => {
-                                if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
-                                    SystemSelection::Fixed(val)
-                                } else {
-                                    SystemSelection::Default
-                                }
+                if self.system_quantum == SystemSelection::Default
+                    && let Some(sq_str) = db.get_setting("audio_system_quantum")
+                {
+                    self.system_quantum = match sq_str.as_str() {
+                        "default" => SystemSelection::Default,
+                        "auto" => SystemSelection::Automatic,
+                        s if s.starts_with("fixed:") => {
+                            if let Ok(val) = s["fixed:".len()..].parse::<u32>() {
+                                SystemSelection::Fixed(val)
+                            } else {
+                                SystemSelection::Default
                             }
-                            _ => SystemSelection::Default,
-                        };
-                    }
+                        }
+                        _ => SystemSelection::Default,
+                    };
                 }
                 if let Some(buf_str) = db.get_setting("audio_buffer_size") {
                     self.selected_buffer_size = if buf_str == "auto" {
@@ -707,10 +709,10 @@ impl AudioCenterManager {
                 if let Some(val) = db.get_setting("eq_bands_31") {
                     self.equalizer_bands_31 = val == "1";
                 }
-                if let Some(val) = db.get_setting("preamp_gain") {
-                    if let Ok(g) = val.parse::<f32>() {
-                        self.preamp_gain = g;
-                    }
+                if let Some(val) = db.get_setting("preamp_gain")
+                    && let Ok(g) = val.parse::<f32>()
+                {
+                    self.preamp_gain = g;
                 }
                 if let Some(val) = db.get_setting("eq_band_gains_20") {
                     let gains: Vec<f32> = val
@@ -721,15 +723,15 @@ impl AudioCenterManager {
                         self.eq_band_gains = gains;
                     }
                 }
-                if self.equalizer_bands_31 {
-                    if let Some(val) = db.get_setting("eq_band_gains_31") {
-                        let gains: Vec<f32> = val
-                            .split(',')
-                            .filter_map(|s| s.parse::<f32>().ok())
-                            .collect();
-                        if gains.len() == 31 {
-                            self.eq_band_gains = gains;
-                        }
+                if self.equalizer_bands_31
+                    && let Some(val) = db.get_setting("eq_band_gains_31")
+                {
+                    let gains: Vec<f32> = val
+                        .split(',')
+                        .filter_map(|s| s.parse::<f32>().ok())
+                        .collect();
+                    if gains.len() == 31 {
+                        self.eq_band_gains = gains;
                     }
                 }
                 // Load selected preset name from DB
@@ -1034,7 +1036,7 @@ impl AudioCenterManager {
 
         self.equalizer_enabled = audio_manager.get_eq_enabled();
         let eq_bands = audio_manager.get_eq_bands_count();
-        self.equalizer_bands_31 = if eq_bands == 31 { true } else { false };
+        self.equalizer_bands_31 = eq_bands == 31;
         self.preamp_gain = audio_manager.get_preamp_gain();
 
         let mut bands = Vec::new();
@@ -1044,17 +1046,16 @@ impl AudioCenterManager {
         self.eq_band_gains = bands;
 
         // Determinar host real en base al backend de cpal, o adivinar por nombre
-        if !self.cached_hosts.is_empty() {
-            if self.selected_host.is_none()
+        if !self.cached_hosts.is_empty()
+            && (self.selected_host.is_none()
                 || !self
                     .cached_hosts
-                    .contains(self.selected_host.as_ref().unwrap())
-            {
-                if self.cached_hosts.contains(&"ALSA".to_string()) {
-                    self.selected_host = Some("ALSA".to_string());
-                } else {
-                    self.selected_host = Some(self.cached_hosts[0].clone());
-                }
+                    .contains(self.selected_host.as_ref().unwrap()))
+        {
+            if self.cached_hosts.contains(&"ALSA".to_string()) {
+                self.selected_host = Some("ALSA".to_string());
+            } else {
+                self.selected_host = Some(self.cached_hosts[0].clone());
             }
         }
 

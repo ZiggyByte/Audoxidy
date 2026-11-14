@@ -73,8 +73,8 @@ impl LibraryManager {
                                 .map(|d| s.size.unwrap_or(0) as f64 * 8.0 / (d * 1000.0))
                                 .unwrap_or(0.0)
                         };
-                        bitrate(&**a)
-                            .partial_cmp(&bitrate(&**b))
+                        bitrate(a)
+                            .partial_cmp(&bitrate(b))
                             .unwrap_or(std::cmp::Ordering::Equal)
                     }
                     SortColumn::Genre => {
@@ -418,34 +418,34 @@ impl LibraryManager {
         if let Some(album_id) = self.expanded_album.clone() {
             // Ahora buscamos en filtered_songs o disparamos consulta específica si fuera necesario.
             // Para simplicidad por ahora, si las canciones están en filtered_songs las usamos.
-            if let Some(songs) = &self.filtered_songs {
-                if let Some(album_entry) = self.cached_albums.as_ref().and_then(|all| {
+            if let Some(songs) = &self.filtered_songs
+                && let Some(album_entry) = self.cached_albums.as_ref().and_then(|all| {
                     all.iter().find(|a| {
                         (format!("{}|{}", a.artist, a.id) == album_id) || (a.id == album_id)
                     })
-                }) {
-                    let mut alb_songs: Vec<_> = songs
-                        .iter()
-                        .filter(|s| {
-                            // La identidad del álbum es su hash; el título solo se usa
-                            // como respaldo para instantáneas antiguas sin el campo.
-                            if s.album_hash.is_some() {
-                                return s.album_hash.as_deref() == Some(album_entry.id.as_str());
-                            }
-                            let s_alb = s.album.as_deref().unwrap_or("Desconocido");
-                            let s_art = crate::utils::get_effective_artist(s);
-                            s_alb == album_entry.title && s_art == album_entry.artist
-                        })
-                        .cloned()
-                        .collect();
+                })
+            {
+                let mut alb_songs: Vec<_> = songs
+                    .iter()
+                    .filter(|s| {
+                        // La identidad del álbum es su hash; el título solo se usa
+                        // como respaldo para instantáneas antiguas sin el campo.
+                        if s.album_hash.is_some() {
+                            return s.album_hash.as_deref() == Some(album_entry.id.as_str());
+                        }
+                        let s_alb = s.album.as_deref().unwrap_or("Desconocido");
+                        let s_art = crate::utils::get_effective_artist(s);
+                        s_alb == album_entry.title && s_art == album_entry.artist
+                    })
+                    .cloned()
+                    .collect();
 
-                    if !alb_songs.is_empty() {
-                        self.sort_songs(&mut alb_songs);
-                        self.expanded_album_songs = Some(alb_songs);
-                    } else {
-                        self.expanded_album = None;
-                        self.expanded_album_songs = None;
-                    }
+                if !alb_songs.is_empty() {
+                    self.sort_songs(&mut alb_songs);
+                    self.expanded_album_songs = Some(alb_songs);
+                } else {
+                    self.expanded_album = None;
+                    self.expanded_album_songs = None;
                 }
             }
         }

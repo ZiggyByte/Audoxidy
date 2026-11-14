@@ -633,9 +633,7 @@ impl DelayLine {
     }
 
     fn reset(&mut self) {
-        for s in &mut self.buffer {
-            *s = 0.0;
-        }
+        self.buffer.fill(0.0);
         self.index = 0;
     }
 }
@@ -807,7 +805,7 @@ impl Reverb {
         wet: f64,
     ) {
         let input_orig = *sample;
-        let input_scaled = input_orig * gain as f64;
+        let input_scaled = input_orig * gain;
 
         let fdn_input = pre_delay.read();
         pre_delay.write(input_scaled);
@@ -844,7 +842,7 @@ impl Reverb {
         let reverb_out = delay_outs.iter().sum::<f64>() / 8.0;
 
         // Linear crossfade with auto RMS compensation
-        let wet_mix = (wet as f64).clamp(0.0, 1.0);
+        let wet_mix = wet.clamp(0.0, 1.0);
         let dry_mix = 1.0 - wet_mix;
         let wet_level = 0.5;
         let comp = 1.0 / (dry_mix + wet_mix * wet_level).max(0.1);
@@ -897,6 +895,12 @@ impl Reverb {
                 *s = 0.0;
             }
         }
+    }
+}
+
+impl Default for Reverb {
+    fn default() -> Self {
+        Self::new()
     }
 }
 // --- Compressor ---
@@ -1371,10 +1375,10 @@ impl BiquadFilter {
     /// Procesa un frame completo a través del filtro biquad con SIMD en x86_64.
     pub fn process_frame(&mut self, frame: &mut [f64]) {
         match self.filter_type {
-            BiquadFilterType::Peak | BiquadFilterType::LowShelf | BiquadFilterType::HighShelf => {
-                if self.gain.abs() < 0.01 {
-                    return;
-                }
+            BiquadFilterType::Peak | BiquadFilterType::LowShelf | BiquadFilterType::HighShelf
+                if self.gain.abs() < 0.01 =>
+            {
+                return;
             }
             _ => {}
         }
@@ -1649,6 +1653,12 @@ impl StereoExpanderHybrid {
     }
 }
 
+impl Default for StereoExpanderHybrid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[derive(Clone)]
 pub struct StereoExpanderSurround {
     // Crossover 1: 250Hz (Low vs MidHigh)
@@ -1694,6 +1704,12 @@ impl StereoExpanderSurround {
             side_ap3: AllPassFilter::new(557),
             sample_rate: sr,
         }
+    }
+}
+
+impl Default for StereoExpanderSurround {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

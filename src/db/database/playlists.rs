@@ -713,12 +713,14 @@ impl Database {
 
             // Insertar shuffle_order (canciones pendientes)
             for (i, &song_id) in session.shuffle_order.iter().enumerate() {
-                // play_order negativo para diferenciar de history
+                // `play_order` is negative for a pending song and non-negative
+                // for a played one, so the offset keeps the first pending song
+                // out of the history range.
                 stmt.execute(params![
                     playlist_id,
                     session.session_id,
                     song_id,
-                    -(i as i64)
+                    -((i as i64) + 1)
                 ])?;
             }
 

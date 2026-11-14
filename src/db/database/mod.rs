@@ -322,6 +322,9 @@ mod db_round_trip_tests {
 mod cover_tests;
 
 #[cfg(test)]
+mod crud_tests;
+
+#[cfg(test)]
 mod fts_consistency_tests;
 
 #[cfg(test)]

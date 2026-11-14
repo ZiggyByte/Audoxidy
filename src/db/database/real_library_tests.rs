@@ -62,6 +62,17 @@ fn library_copy() -> Option<PathBuf> {
         .expect("VACUUM INTO must copy the library into the temporary file");
     drop(reader);
 
+    let rows: i64 = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|connection| {
+            connection.query_row("SELECT COUNT(*) FROM SONGS", [], |row| row.get(0))
+        })
+        .unwrap_or(0);
+    if rows == 0 {
+        println!("real library copy is empty: measurements skipped");
+        let _ = std::fs::remove_file(&copy);
+        return None;
+    }
+
     Some(copy)
 }
 

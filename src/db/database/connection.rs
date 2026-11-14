@@ -74,30 +74,7 @@ pub struct Database {
     pub(in crate::db::database) rebuilt: bool,
 }
 
-impl Default for Database {
-    fn default() -> Self {
-        Self::new().expect("No se pudo iniciar la DB local SQLite")
-    }
-}
-
 impl Database {
-    /// Opens or creates the library database at the configured path.
-    ///
-    /// Tests must inject a path: the version gate rebuilds an incompatible file,
-    /// so opening the default path from a test would delete the real library.
-    pub fn new() -> Result<Self> {
-        #[cfg(test)]
-        {
-            panic!(
-                "tests must not open the default library path: the schema version gate would rebuild and delete it; use new_at or new_memory"
-            );
-        }
-        #[cfg(not(test))]
-        {
-            Self::open_at(&crate::utils::paths::get().db_path)
-        }
-    }
-
     /// Opens the database at `path`, replacing the file when it is incompatible.
     ///
     /// The version is probed before the writable connection exists: a matching
@@ -113,9 +90,23 @@ impl Database {
     fn open_at(path: &std::path::Path) -> Result<Self> {
         let rebuilt = match probe_user_version(path) {
             VersionProbe::Incompatible => {
-                let _ = std::fs::remove_file(path);
-                let _ = std::fs::remove_file(sibling_path(path, "-wal"));
-                let _ = std::fs::remove_file(sibling_path(path, "-shm"));
+                for candidate in [
+                    path.to_path_buf(),
+                    sibling_path(path, "-wal"),
+                    sibling_path(path, "-shm"),
+                ] {
+                    if candidate.exists() {
+                        std::fs::remove_file(&candidate).map_err(|error| {
+                            rusqlite::Error::SqliteFailure(
+                                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR_DELETE),
+                                Some(format!(
+                                    "no se pudo eliminar la base incompatible {}: {error}",
+                                    candidate.display()
+                                )),
+                            )
+                        })?;
+                    }
+                }
                 true
             }
             VersionProbe::Failed(error) => return Err(error),

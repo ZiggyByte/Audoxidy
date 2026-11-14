@@ -319,6 +319,25 @@ impl LibraryManager {
             let mut seen_albums = std::collections::HashSet::new();
 
             if let Some(all_albums) = &self.cached_albums {
+                // One pass over the album list replaces the linear scan the grid
+                // used to run for every distinct album. `or_insert` keeps the
+                // earliest entry for a key, which is the album the earlier
+                // search returned; the maps are only ever looked up, never
+                // iterated.
+                let mut by_hash: std::collections::HashMap<&str, &AlbumEntry> =
+                    std::collections::HashMap::new();
+                let mut by_title_artist: std::collections::HashMap<(&str, &str), &AlbumEntry> =
+                    std::collections::HashMap::new();
+                let mut by_title: std::collections::HashMap<&str, &AlbumEntry> =
+                    std::collections::HashMap::new();
+                for album in all_albums {
+                    by_hash.entry(album.id.as_str()).or_insert(album);
+                    by_title_artist
+                        .entry((album.title.as_str(), album.artist.as_str()))
+                        .or_insert(album);
+                    by_title.entry(album.title.as_str()).or_insert(album);
+                }
+
                 for group in &self.artist_groups {
                     for song in &group.songs {
                         let Some(alb_title) = &song.album else {
@@ -337,18 +356,19 @@ impl LibraryManager {
                             continue;
                         }
 
+                        // The order is load-bearing: a hash that matches no album
+                        // still falls through to the title-plus-artist lookup and
+                        // then to the title-only one.
                         let entry = song
                             .album_hash
                             .as_deref()
-                            .and_then(|hash| all_albums.iter().find(|a| a.id == hash))
+                            .and_then(|hash| by_hash.get(hash).copied())
                             .or_else(|| {
-                                all_albums.iter().find(|a| {
-                                    a.title.as_str() == &**alb_title && a.artist == group.name
-                                })
+                                by_title_artist
+                                    .get(&(alb_title.as_ref(), group.name.as_str()))
+                                    .copied()
                             })
-                            .or_else(|| {
-                                all_albums.iter().find(|a| a.title.as_str() == &**alb_title)
-                            });
+                            .or_else(|| by_title.get(alb_title.as_ref()).copied());
 
                         if let Some(entry) = entry {
                             let mut unified_entry = entry.clone();

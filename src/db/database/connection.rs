@@ -143,6 +143,36 @@ impl Database {
         self.rebuilt
     }
 
+    /// Refreshes the query planner's statistics with `PRAGMA optimize`.
+    ///
+    /// The pragma has exactly three sanctioned call points: after a scan
+    /// completes, after a bulk metadata re-read, and on application close. It
+    /// never runs at startup — a fresh database has nothing to analyze, and the
+    /// post-scan call already covers the tables that grew.
+    ///
+    /// A table is analyzed only while one of SQLite's conditions holds for it:
+    /// an index with no `sqlite_stat1` entry, a planner that already used the
+    /// statistics on this connection, or the `0x10000` bit in the mask. The
+    /// scanner's connection never prepares the library queries, so after the
+    /// first analyze its calls would become permanent no-ops; that caller passes
+    /// `0x10002`, which sets `0x10000` and adds the default bit.
+    ///
+    /// The close path ends in `std::process::exit(0)`, which skips every
+    /// destructor, so the call there must be explicit in the close handler and
+    /// must precede the exit: a hook attached to `Drop` would never run.
+    ///
+    /// `analysis_limit` is deliberately not set. SQLite 3.46 and newer apply
+    /// their own temporary limit inside `PRAGMA optimize`, so a value assigned
+    /// here would be inert.
+    pub fn optimize_query_planner(&self, mask: Option<i64>) -> Result<()> {
+        match mask {
+            Some(mask) => self.conn.pragma_update(None, "optimize", mask),
+            // The unmasked pragma can report what it analyzed, so the batch form
+            // is used to discard any result row instead of tripping `execute`.
+            None => self.conn.execute_batch("PRAGMA optimize"),
+        }
+    }
+
     /// Creates an in-memory database for tests.
     ///
     /// It never probes and never deletes: an in-memory database reports version 0

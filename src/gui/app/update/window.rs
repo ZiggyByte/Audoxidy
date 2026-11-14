@@ -339,6 +339,10 @@ impl crate::gui::app::AudoxidyApp {
                 }
                 crate::gui::player::WindowAction::Close => {
                     self.persist_geometry();
+                    // The exit below skips every destructor, so the planner's
+                    // statistics are refreshed here and nothing may follow the
+                    // exit call.
+                    self.core.optimize_query_planner();
                     std::process::exit(0);
                 }
             },

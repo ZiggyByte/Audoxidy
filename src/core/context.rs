@@ -95,6 +95,22 @@ impl Core {
         self.database.lock().map_err(|_| CoreError::LockUnavailable)
     }
 
+    /// Refreshes the query planner's statistics on the library connection.
+    ///
+    /// The close path is the caller: the process is exiting, so a failure cannot
+    /// be acted on and is only logged. The call has to happen before
+    /// `std::process::exit(0)`, which skips every destructor, so there is no
+    /// `Drop` hook that could run it instead.
+    pub fn optimize_query_planner(&self) {
+        let Ok(database) = self.lock_db() else {
+            tracing::warn!("No se pudo bloquear la base de datos para optimizar el planificador");
+            return;
+        };
+        if let Err(error) = database.optimize_query_planner(None) {
+            tracing::warn!("No se pudo optimizar el planificador de consultas: {error}");
+        }
+    }
+
     /// Returns a reference to the scanner.
     pub fn scanner(&self) -> &Arc<Scanner> {
         &self.scanner

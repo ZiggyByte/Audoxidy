@@ -57,8 +57,13 @@ impl Drop for TempDbDir {
 
 /// Inserts one song so the file holds rows a rebuild must discard.
 fn insert_song(db: &mut Database) {
+    insert_song_at(db, "/music/schema_gate.flac");
+}
+
+/// Inserts one song at `path`, so a test can fill the file with several rows.
+fn insert_song_at(db: &mut Database, path: &str) {
     let song = SongData {
-        full_file_path: Arc::from("/music/schema_gate.flac".to_string().into_boxed_str()),
+        full_file_path: Arc::from(path.to_string().into_boxed_str()),
         title: Some(Arc::from("Schema Gate".to_string().into_boxed_str())),
         artist: Some(Arc::from("Schema Artist".to_string().into_boxed_str())),
         album: Some(Arc::from("Schema Album".to_string().into_boxed_str())),
@@ -104,6 +109,18 @@ fn pragma_text(db: &Database, name: &str) -> String {
     db.conn
         .pragma_query_value(None, name, |row| row.get::<_, String>(0))
         .unwrap_or_else(|error| panic!("read the {name} pragma: {error}"))
+}
+
+/// Reports whether the catalog holds a table of `name`.
+fn table_exists(db: &Database, name: &str) -> bool {
+    db.conn
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?1",
+            [name],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap_or_else(|error| panic!("look up the {name} table: {error}"))
+        > 0
 }
 
 /// Tables the schema declares, in the order the catalog sorts them.
@@ -526,4 +543,57 @@ fn test_absent_path_creates_the_parentless_file() {
         "a path whose parent does not exist is a typed failure, not a panic"
     );
     assert!(!path.exists(), "no database is created somewhere else");
+}
+
+#[test]
+fn test_optimize_creates_statistics_and_is_idempotent() {
+    let temp = TempDbDir::new();
+    let mut db = Database::new_at(&temp.db_path()).expect("create the database");
+    for index in 0..5 {
+        insert_song_at(&mut db, &format!("/music/optimize_{index}.flac"));
+    }
+
+    assert!(
+        !table_exists(&db, "sqlite_stat1"),
+        "nothing has analyzed the database yet"
+    );
+
+    db.optimize_query_planner(None)
+        .expect("the first optimize creates the statistics");
+    assert!(
+        table_exists(&db, "sqlite_stat1"),
+        "the planner now has statistics to read"
+    );
+    let rows_after_first = row_count(&db, "sqlite_stat1");
+    assert!(
+        rows_after_first > 0,
+        "a populated database produces at least one statistics row"
+    );
+
+    db.optimize_query_planner(None)
+        .expect("a second optimize over fresh statistics is a no-op, not an error");
+    assert_eq!(
+        row_count(&db, "sqlite_stat1"),
+        rows_after_first,
+        "the second call analyzes nothing and rewrites nothing"
+    );
+}
+
+#[test]
+fn test_optimize_with_the_scanner_mask_succeeds() {
+    let temp = TempDbDir::new();
+    let mut db = Database::new_at(&temp.db_path()).expect("create the scanner database");
+    insert_song_at(&mut db, "/music/scanner_mask.flac");
+
+    // The scanner's connection writes rows and never prepares the library
+    // queries, so its statistics would never refresh without the mask.
+    db.optimize_query_planner(Some(0x10002))
+        .expect("the masked call succeeds on a write-only connection");
+    assert!(
+        table_exists(&db, "sqlite_stat1"),
+        "the mask makes the call analyze instead of return without work"
+    );
+
+    db.optimize_query_planner(Some(0x10002))
+        .expect("a later scan on the same connection still succeeds");
 }

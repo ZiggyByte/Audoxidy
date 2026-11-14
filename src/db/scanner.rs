@@ -137,6 +137,16 @@ impl Scanner {
                 tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
             }
             db.flush_prepared_statements();
+            // Statistics are refreshed once the bulk writes settle. The mask is
+            // required on this connection: its planner never runs the library
+            // queries, so an unmasked call would stop analyzing after the first
+            // scan.
+            if let Err(e) = db.optimize_query_planner(Some(0x10002)) {
+                tracing::debug!(
+                    "No se pudo optimizar el planificador tras el escaneo: {}",
+                    e
+                );
+            }
         }
 
         dirty_flag.store(true, Ordering::Relaxed);
@@ -394,6 +404,14 @@ impl Scanner {
 
             if let Err(e) = db.commit_transaction() {
                 tracing::warn!("No se pudo confirmar la transacción del escáner: {}", e);
+            }
+            // The import writes in bulk through the scanner connection too, so it
+            // refreshes the statistics once its transaction commits.
+            if let Err(e) = db.optimize_query_planner(Some(0x10002)) {
+                tracing::debug!(
+                    "No se pudo optimizar el planificador tras importar el M3U: {}",
+                    e
+                );
             }
             id
         };

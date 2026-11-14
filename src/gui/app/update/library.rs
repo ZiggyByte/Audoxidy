@@ -979,18 +979,18 @@ impl crate::gui::app::AudoxidyApp {
                     scroll_to(LIBRARY_SCROLL_ID.clone(), AbsoluteOffset { x: 0.0, y: 0.0 }),
                 ])
             }
-            Message::ToggleTreeNode(name) => {
-                if self.filters_manager.expanded_nodes.contains(&name) {
-                    self.filters_manager.expanded_nodes.remove(&name);
+            Message::ToggleTreeNode(node) => {
+                if self.filters_manager.expanded_nodes.contains(&node) {
+                    self.filters_manager.expanded_nodes.remove(&node);
                 } else {
-                    self.filters_manager.expanded_nodes.insert(name.clone());
+                    self.filters_manager.expanded_nodes.insert(node);
                 }
                 self.filters_manager.refresh_flattened_tree();
                 Task::none()
             }
-            Message::SelectTreeNode(name) => {
+            Message::SelectTreeNode(node) => {
                 self.focus = AppFocus::Library;
-                self.filters_manager.selected_tree_node = Some(name.clone());
+                self.filters_manager.selected_tree_node = Some(node);
 
                 // Limpiar selección de la biblioteca para que filter_stats tenga prioridad
                 self.library_manager.selected_album = None;
@@ -1005,53 +1005,55 @@ impl crate::gui::app::AudoxidyApp {
                 self.library_manager.filter_year = None;
                 self.library_manager.filter_folder_id = None;
 
-                let parts: Vec<&str> = name.split('|').collect();
-                // parts[0] is the FilterType label string (e.g. "Genre")
-                let main_val = parts.get(1).copied(); // Level 1 (e.g. Genre name)
-                let sub_val = parts.get(2).copied(); // Level 2 (e.g. Artist name)
-                let third_val = parts.get(3).copied(); // Level 3 (e.g. Album name)
+                // The node id is an index; the labels are walked only on click.
+                let levels = self.filters_manager.node_levels(node);
+                if let Some((filter_type, labels)) = levels {
+                    let main_val = labels.first().copied(); // Level 1 (e.g. Genre name)
+                    let sub_val = labels.get(1).copied(); // Level 2 (e.g. Artist name)
+                    let third_val = labels.get(2).copied(); // Level 3 (e.g. Album name)
 
-                match self.filters_manager.current_filter {
-                    crate::gui::library_filters::FilterType::Artist => {
-                        if let Some(art) = main_val {
-                            self.library_manager.filter_artist = Some(art.to_string());
+                    match filter_type {
+                        crate::gui::library_filters::FilterType::Artist => {
+                            if let Some(art) = main_val {
+                                self.library_manager.filter_artist = Some(art.to_string());
+                            }
+                            if let Some(alb) = sub_val {
+                                self.library_manager.filter_album = Some(alb.to_string());
+                            }
                         }
-                        if let Some(alb) = sub_val {
-                            self.library_manager.filter_album = Some(alb.to_string());
+                        crate::gui::library_filters::FilterType::Album => {
+                            if let Some(alb) = main_val {
+                                self.library_manager.filter_album = Some(alb.to_string());
+                            }
+                            if let Some(art) = sub_val {
+                                self.library_manager.filter_artist = Some(art.to_string());
+                            }
                         }
-                    }
-                    crate::gui::library_filters::FilterType::Album => {
-                        if let Some(alb) = main_val {
-                            self.library_manager.filter_album = Some(alb.to_string());
+                        crate::gui::library_filters::FilterType::Genre => {
+                            if let Some(gnr) = main_val {
+                                self.library_manager.filter_genre = Some(gnr.to_string());
+                            }
+                            if let Some(art) = sub_val {
+                                self.library_manager.filter_artist = Some(art.to_string());
+                            }
+                            if let Some(alb) = third_val {
+                                self.library_manager.filter_album = Some(alb.to_string());
+                            }
                         }
-                        if let Some(art) = sub_val {
-                            self.library_manager.filter_artist = Some(art.to_string());
+                        crate::gui::library_filters::FilterType::Year => {
+                            if let Some(yr) = main_val {
+                                self.library_manager.filter_year = Some(yr.to_string());
+                            }
+                            if let Some(art) = sub_val {
+                                self.library_manager.filter_artist = Some(art.to_string());
+                            }
+                            if let Some(alb) = third_val {
+                                self.library_manager.filter_album = Some(alb.to_string());
+                            }
                         }
-                    }
-                    crate::gui::library_filters::FilterType::Genre => {
-                        if let Some(gnr) = main_val {
-                            self.library_manager.filter_genre = Some(gnr.to_string());
+                        crate::gui::library_filters::FilterType::Folder => {
+                            // Manejado por Message::SelectFolder
                         }
-                        if let Some(art) = sub_val {
-                            self.library_manager.filter_artist = Some(art.to_string());
-                        }
-                        if let Some(alb) = third_val {
-                            self.library_manager.filter_album = Some(alb.to_string());
-                        }
-                    }
-                    crate::gui::library_filters::FilterType::Year => {
-                        if let Some(yr) = main_val {
-                            self.library_manager.filter_year = Some(yr.to_string());
-                        }
-                        if let Some(art) = sub_val {
-                            self.library_manager.filter_artist = Some(art.to_string());
-                        }
-                        if let Some(alb) = third_val {
-                            self.library_manager.filter_album = Some(alb.to_string());
-                        }
-                    }
-                    crate::gui::library_filters::FilterType::Folder => {
-                        // Manejado por Message::SelectFolder
                     }
                 }
 

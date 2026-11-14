@@ -34,24 +34,47 @@ impl FilterType {
     }
 }
 
+/// Three-level hierarchy read from the database before it is flattened into the
+/// arena: L1 → L2 → set of L3. The keys are the interned strings the database
+/// already returns, so the build shares them instead of copying the text.
+type FilterHierarchy =
+    BTreeMap<std::sync::Arc<str>, HashMap<std::sync::Arc<str>, HashSet<std::sync::Arc<str>>>>;
+
+/// Identifier of a node inside the filter arena.
+pub type FilterNodeId = u32;
+
+/// Sentinel for a node without a parent (a root).
+const NO_PARENT: FilterNodeId = FilterNodeId::MAX;
+
+/// One node of the precomputed filter index.
+///
+/// Labels are the interned `Arc<str>` the database layer already returns, so the
+/// index shares them with the song and album snapshots instead of copying the
+/// text. A node's identity is its arena index and its ancestors are reached
+/// through `parent`, which removes the per-node `"Genre|Rock|Queen"` path
+/// strings the old tree stored.
 #[derive(Debug, Clone)]
-pub struct TreeNode {
-    pub label: String,
-    pub id: String, // format: "FilterType|L1|L2|...". e.g. "Genre|Rock|Queen|Innuendo"
-    pub children: Vec<TreeNode>,
+struct FilterNode {
+    label: std::sync::Arc<str>,
+    parent: FilterNodeId,
+    children: Vec<FilterNodeId>,
+    depth: u8,
+    filter: FilterType,
 }
 
 /// Índice pre-calculado de filtros. Se construye UNA sola vez al cargar canciones.
 struct FilterIndex {
-    /// Árbol completo y ordenado por cada FilterType
-    trees: HashMap<FilterType, Vec<TreeNode>>,
+    /// Flat arena; children are indices, never owned nodes.
+    nodes: Vec<FilterNode>,
+    /// Roots of each filter tree, sorted.
+    roots: HashMap<FilterType, Vec<FilterNodeId>>,
     /// Letras del abecedario disponibles por cada FilterType
     subfilters: HashMap<FilterType, Vec<String>>,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct VisibleTreeItem {
-    pub label: String,
-    pub id: String,
+    pub id: FilterNodeId,
     pub depth: usize,
     pub has_children: bool,
     pub is_expanded: bool,
@@ -61,7 +84,7 @@ pub struct LibraryFiltersManager {
     pub current_filter: FilterType,
     pub menu_open: bool,
     pub selected_subfilter: Option<String>,
-    pub expanded_nodes: HashSet<String>,
+    pub expanded_nodes: HashSet<FilterNodeId>,
     pub search_query: String, // internal search specific to this module
 
     // Índice pre-calculado (se construye una vez con build_filter_index)
@@ -69,8 +92,12 @@ pub struct LibraryFiltersManager {
 
     // Datos visibles para la UI (se actualizan con apply_view)
     pub active_subfilters: Vec<String>, // available characters e.g. ["#", "·", "A", "C", "R"]
-    pub tree_data: Vec<TreeNode>,
-    pub selected_tree_node: Option<String>,
+    /// Roots of the active tree that pass the subfilter and the search.
+    pub tree_data: Vec<FilterNodeId>,
+    pub selected_tree_node: Option<FilterNodeId>,
+    /// Per-node visibility of the active filter type for the current subfilter
+    /// and search. Indexed like `FilterIndex::nodes`; rebuilt on `apply_view`.
+    visible: Vec<bool>,
 
     // Virtualización
     pub scroll_offset: iced::Vector,
@@ -93,6 +120,7 @@ impl Default for LibraryFiltersManager {
             active_subfilters: Vec::new(),
             tree_data: Vec::new(),
             selected_tree_node: None,
+            visible: Vec::new(),
             scroll_offset: iced::Vector::new(0.0, 0.0),
             last_viewport: None,
             cached_flattened_tree: RefCell::new(None),
@@ -142,10 +170,12 @@ impl LibraryFiltersManager {
         });
     }
 
-    fn sort_tree(nodes: &mut Vec<TreeNode>) {
-        nodes.sort_by(|a, b| {
-            let group_a = Self::get_group_char(&a.label);
-            let group_b = Self::get_group_char(&b.label);
+    fn sort_node_ids(ids: &mut [FilterNodeId], nodes: &[FilterNode]) {
+        ids.sort_by(|&a, &b| {
+            let node_a = &nodes[a as usize];
+            let node_b = &nodes[b as usize];
+            let group_a = Self::get_group_char(&node_a.label);
+            let group_b = Self::get_group_char(&node_b.label);
             let w_a = if group_a == "#" {
                 0
             } else if group_a == "•" {
@@ -160,14 +190,10 @@ impl LibraryFiltersManager {
             } else {
                 2
             };
-            w_a.cmp(&w_b)
-                .then_with(|| crate::utils::compare_strings_ignore_case(&a.label, &b.label))
+            w_a.cmp(&w_b).then_with(|| {
+                crate::utils::compare_strings_ignore_case(&node_a.label, &node_b.label)
+            })
         });
-        for node in nodes.iter_mut() {
-            if !node.children.is_empty() {
-                Self::sort_tree(&mut node.children);
-            }
-        }
     }
 
     /// Construye el índice de filtros UNA sola vez. Llamar al cargar canciones o cuando el escáner detecta cambios.
@@ -183,13 +209,13 @@ impl LibraryFiltersManager {
             FilterType::Folder,
         ];
 
-        let mut trees: HashMap<FilterType, Vec<TreeNode>> = HashMap::new();
+        let mut nodes: Vec<FilterNode> = Vec::new();
+        let mut roots: HashMap<FilterType, Vec<FilterNodeId>> = HashMap::new();
         let mut subfilters: HashMap<FilterType, Vec<String>> = HashMap::new();
 
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db) = db_m.lock() {
             for ft in &all_types {
-                let ft_label = format!("{:?}", ft);
                 let filter_str = match ft {
                     FilterType::Genre => "Genre",
                     FilterType::Artist => "Artist",
@@ -199,59 +225,81 @@ impl LibraryFiltersManager {
                 };
 
                 if let Ok(hierarchy) = db.get_filter_hierarchy(filter_str) {
-                    // Estructura intermedia: L1 -> L2 -> Set<L3>
-                    let mut indices: BTreeMap<String, HashMap<String, HashSet<String>>> =
-                        BTreeMap::new();
+                    // Estructura intermedia: L1 -> L2 -> Set<L3>. The database
+                    // already returns interned strings, so this map keeps the
+                    // same allocation the songs use instead of copying the text.
+                    let mut indices: FilterHierarchy = BTreeMap::new();
                     let mut char_sets: HashSet<String> = HashSet::new();
 
                     for (l1, l2, l3_opt) in hierarchy {
                         char_sets.insert(Self::get_group_char(&l1));
 
-                        let l2_map = indices.entry(l1.to_string()).or_default();
-                        let l3_set = l2_map.entry(l2.to_string()).or_default();
+                        let l2_map = indices.entry(l1).or_default();
+                        let l3_set = l2_map.entry(l2).or_default();
 
                         if let Some(l3) = l3_opt {
-                            l3_set.insert(l3.to_string());
+                            l3_set.insert(l3);
                         }
                     }
 
-                    // Convertir a TreeNodes
-                    let mut tree: Vec<TreeNode> = Vec::with_capacity(indices.len());
+                    // Convertir a la arena plana. Children are pushed before
+                    // their parent, so a child index is known when the parent is
+                    // created; the parent link is fixed right after.
+                    let mut root_ids: Vec<FilterNodeId> = Vec::with_capacity(indices.len());
                     for (l1_label, l2_map) in indices {
-                        let id1 = format!("{}|{}", ft_label, l1_label);
-                        let mut children1: Vec<TreeNode> = Vec::with_capacity(l2_map.len());
+                        let mut l2_ids: Vec<FilterNodeId> = Vec::with_capacity(l2_map.len());
 
                         for (l2_label, l3_set) in l2_map {
-                            let id2 = format!("{}|{}", id1, l2_label);
-                            let mut children2: Vec<TreeNode> = Vec::with_capacity(l3_set.len());
+                            let mut l3_ids: Vec<FilterNodeId> = l3_set
+                                .into_iter()
+                                .map(|l3_label| {
+                                    let id = nodes.len() as FilterNodeId;
+                                    nodes.push(FilterNode {
+                                        label: l3_label,
+                                        parent: NO_PARENT,
+                                        children: Vec::new(),
+                                        depth: 2,
+                                        filter: *ft,
+                                    });
+                                    id
+                                })
+                                .collect();
+                            Self::sort_node_ids(&mut l3_ids, &nodes);
 
-                            for l3_val in l3_set {
-                                let id3 = format!("{}|{}", id2, l3_val);
-                                children2.push(TreeNode {
-                                    label: l3_val,
-                                    id: id3,
-                                    children: Vec::new(),
-                                });
-                            }
-
-                            Self::sort_tree(&mut children2);
-                            children1.push(TreeNode {
+                            let id2 = nodes.len() as FilterNodeId;
+                            let l3_children = l3_ids.clone();
+                            nodes.push(FilterNode {
                                 label: l2_label,
-                                id: id2,
-                                children: children2,
+                                parent: NO_PARENT,
+                                children: l3_ids,
+                                depth: 1,
+                                filter: *ft,
                             });
+                            for child in l3_children {
+                                nodes[child as usize].parent = id2;
+                            }
+                            l2_ids.push(id2);
                         }
 
-                        Self::sort_tree(&mut children1);
-                        tree.push(TreeNode {
+                        Self::sort_node_ids(&mut l2_ids, &nodes);
+
+                        let id1 = nodes.len() as FilterNodeId;
+                        let l2_children = l2_ids.clone();
+                        nodes.push(FilterNode {
                             label: l1_label,
-                            id: id1,
-                            children: children1,
+                            parent: NO_PARENT,
+                            children: l2_ids,
+                            depth: 0,
+                            filter: *ft,
                         });
+                        for child in l2_children {
+                            nodes[child as usize].parent = id1;
+                        }
+                        root_ids.push(id1);
                     }
 
-                    Self::sort_tree(&mut tree);
-                    trees.insert(*ft, tree);
+                    Self::sort_node_ids(&mut root_ids, &nodes);
+                    roots.insert(*ft, root_ids);
 
                     let mut chars: Vec<String> = char_sets.into_iter().collect();
                     Self::sort_subfilters(&mut chars);
@@ -260,7 +308,11 @@ impl LibraryFiltersManager {
             }
         }
 
-        self.filter_index = Some(FilterIndex { trees, subfilters });
+        self.filter_index = Some(FilterIndex {
+            nodes,
+            roots,
+            subfilters,
+        });
 
         // Actualizar la vista inmediatamente
         self.apply_view();
@@ -268,32 +320,51 @@ impl LibraryFiltersManager {
 
     pub fn refresh_flattened_tree(&self) {
         let mut flattened = Vec::new();
-        for node in &self.tree_data {
-            Self::flatten_tree_node(node, 0, &self.expanded_nodes, &mut flattened);
+        if let Some(index) = self.filter_index.as_ref() {
+            for &root in &self.tree_data {
+                Self::flatten_node(
+                    index,
+                    root,
+                    self.expanded_nodes.contains(&root),
+                    &self.visible,
+                    &self.expanded_nodes,
+                    &mut flattened,
+                );
+            }
         }
         *self.cached_flattened_tree.borrow_mut() = Some(flattened);
     }
 
-    fn flatten_tree_node(
-        node: &TreeNode,
-        depth: usize,
-        expanded: &HashSet<String>,
+    fn flatten_node(
+        index: &FilterIndex,
+        id: FilterNodeId,
+        is_expanded: bool,
+        visible: &[bool],
+        expanded: &HashSet<FilterNodeId>,
         result: &mut Vec<VisibleTreeItem>,
     ) {
-        let is_expanded = expanded.contains(&node.id);
-        let has_children = !node.children.is_empty();
+        let node = &index.nodes[id as usize];
+        let has_children = node.children.iter().any(|&child| visible[child as usize]);
 
         result.push(VisibleTreeItem {
-            label: node.label.clone(),
-            id: node.id.clone(),
-            depth,
+            id,
+            depth: node.depth as usize,
             has_children,
             is_expanded,
         });
 
-        if is_expanded && has_children {
-            for child in &node.children {
-                Self::flatten_tree_node(child, depth + 1, expanded, result);
+        if is_expanded {
+            for &child in &node.children {
+                if visible[child as usize] {
+                    Self::flatten_node(
+                        index,
+                        child,
+                        expanded.contains(&child),
+                        visible,
+                        expanded,
+                        result,
+                    );
+                }
             }
         }
     }
@@ -326,18 +397,40 @@ impl LibraryFiltersManager {
         let top_space = start_index as f32 * item_height;
         let bottom_space = (total_items.saturating_sub(end_index)) as f32 * item_height;
 
-        let visible_items = flattened[start_index..end_index]
-            .iter()
-            .map(|item| VisibleTreeItem {
-                label: item.label.clone(),
-                id: item.id.clone(),
-                depth: item.depth,
-                has_children: item.has_children,
-                is_expanded: item.is_expanded,
-            })
-            .collect();
+        // The items are plain indices and flags now, so this is a cheap copy
+        // without a single string allocation.
+        let visible_items = flattened[start_index..end_index].to_vec();
 
         (top_space, bottom_space, visible_items)
+    }
+
+    /// Label of a node, borrowed from the index.
+    pub fn node_label(&self, id: FilterNodeId) -> &str {
+        self.filter_index
+            .as_ref()
+            .and_then(|index| index.nodes.get(id as usize))
+            .map(|node| node.label.as_ref())
+            .unwrap_or("")
+    }
+
+    /// Filter type and the labels from the root to `id`, both included.
+    ///
+    /// Built only when a node is selected, never per frame.
+    pub fn node_levels(&self, id: FilterNodeId) -> Option<(FilterType, Vec<&str>)> {
+        let index = self.filter_index.as_ref()?;
+        let node = index.nodes.get(id as usize)?;
+        let mut labels = Vec::with_capacity(node.depth as usize + 1);
+        let mut current = id;
+        loop {
+            let current_node = index.nodes.get(current as usize)?;
+            labels.push(current_node.label.as_ref());
+            if current_node.parent == NO_PARENT {
+                break;
+            }
+            current = current_node.parent;
+        }
+        labels.reverse();
+        Some((node.filter, labels))
     }
 
     /// Actualiza tree_data y active_subfilters desde el índice pre-calculado.
@@ -345,77 +438,78 @@ impl LibraryFiltersManager {
     pub fn apply_view(&mut self) {
         self.tree_data.clear();
         self.active_subfilters.clear();
+        self.visible.clear();
 
-        let index = match &self.filter_index {
-            Some(idx) => idx,
-            None => {
-                self.refresh_flattened_tree();
-                return;
-            }
+        let Some(index) = self.filter_index.as_ref() else {
+            self.refresh_flattened_tree();
+            return;
         };
 
-        // 1. Subfilters (letras del abecedario) - directo de la caché
         if let Some(chars) = index.subfilters.get(&self.current_filter) {
             self.active_subfilters = chars.clone();
         }
 
-        // 2. Árbol filtrado
-        if let Some(full_tree) = index.trees.get(&self.current_filter) {
-            let has_search = !self.search_query.is_empty();
-            let query_lower = self.search_query.to_lowercase();
+        let Some(roots) = index.roots.get(&self.current_filter) else {
+            self.refresh_flattened_tree();
+            return;
+        };
 
-            use rayon::prelude::*;
-            self.tree_data = full_tree
-                .par_iter()
-                .filter_map(|node| {
-                    // Filtro por subfiltro (letra del abecedario)
-                    if let Some(ref sub) = self.selected_subfilter {
-                        let group = Self::get_group_char(&node.label);
-                        if &group != sub {
-                            return None;
-                        }
-                    }
+        let mut visible = vec![false; index.nodes.len()];
+        let has_search = !self.search_query.is_empty();
+        let query_lower = self.search_query.to_lowercase();
+        let subfilter = self.selected_subfilter.as_deref();
 
-                    // Filtro por búsqueda de texto
-                    if has_search {
-                        Self::filter_node_by_search(node, &query_lower)
-                    } else {
-                        Some(node.clone())
-                    }
-                })
-                .collect();
+        for &root in roots {
+            if let Some(sub) = subfilter {
+                if Self::get_group_char(&index.nodes[root as usize].label) != sub {
+                    continue;
+                }
+            }
+            if has_search {
+                Self::mark_search_visible(index, root, &query_lower, &mut visible);
+            } else {
+                Self::mark_subtree_visible(index, root, &mut visible);
+            }
         }
+
+        self.tree_data = roots
+            .iter()
+            .copied()
+            .filter(|&root| visible[root as usize])
+            .collect();
+        self.visible = visible;
         self.refresh_flattened_tree();
     }
 
-    /// Filtra recursivamente un nodo del árbol por búsqueda de texto.
-    /// Retorna None si ni el nodo ni sus hijos coinciden.
-    fn filter_node_by_search(node: &TreeNode, query: &str) -> Option<TreeNode> {
-        let self_matches = node.label.to_lowercase().contains(query);
-
-        use rayon::prelude::*;
-        // Filtrar hijos recursivamente en paralelo
-        let filtered_children: Vec<TreeNode> = node
-            .children
-            .par_iter()
-            .filter_map(|child| Self::filter_node_by_search(child, query))
-            .collect();
-
-        if self_matches || !filtered_children.is_empty() {
-            Some(TreeNode {
-                label: node.label.clone(),
-                id: node.id.clone(),
-                children: if self_matches {
-                    // Si el padre coincide, mostrar todos sus hijos
-                    node.children.clone()
-                } else {
-                    // Si solo coinciden hijos, mostrar solo los que coinciden
-                    filtered_children
-                },
-            })
-        } else {
-            None
+    /// Marks a node and all its descendants visible.
+    fn mark_subtree_visible(index: &FilterIndex, id: FilterNodeId, visible: &mut [bool]) {
+        visible[id as usize] = true;
+        for &child in &index.nodes[id as usize].children {
+            Self::mark_subtree_visible(index, child, visible);
         }
+    }
+
+    /// Marks what a text search shows, mirroring the old tree filter: a node
+    /// whose label matches keeps every descendant; otherwise only the branches
+    /// that contain a match survive.
+    fn mark_search_visible(
+        index: &FilterIndex,
+        id: FilterNodeId,
+        query: &str,
+        visible: &mut [bool],
+    ) -> bool {
+        let node = &index.nodes[id as usize];
+        if node.label.to_lowercase().contains(query) {
+            Self::mark_subtree_visible(index, id, visible);
+            return true;
+        }
+
+        let mut any_child = false;
+        for &child in &node.children {
+            any_child |= Self::mark_search_visible(index, child, query, visible);
+        }
+        visible[id as usize] = any_child;
+        any_child
     }
 }
 
@@ -740,7 +834,7 @@ pub fn view<'a>(
             let padding_left = item.depth as f32 * SPACE_MD;
 
             let t_label = crate::gui::widgets::smart_truncate_text(
-                item.label,
+                manager.node_label(item.id).to_string(),
                 13.0,
                 FONT_INTER_SANS_MEDIUM,
                 COLOR_TEXT_SECONDARY,
@@ -748,7 +842,7 @@ pub fn view<'a>(
 
             let row_content = if item.has_children {
                 row![
-                    chevron_btn_sized(icon, Message::ToggleTreeNode(item.id.clone()), IconSize::M),
+                    chevron_btn_sized(icon, Message::ToggleTreeNode(item.id), IconSize::M),
                     Space::new().width(0.0),
                     t_label,
                 ]
@@ -760,7 +854,7 @@ pub fn view<'a>(
                 ]
             };
 
-            let is_active = manager.selected_tree_node.as_deref() == Some(item.id.as_str());
+            let is_active = manager.selected_tree_node == Some(item.id);
 
             let interactable = button(
                 container(row_content.align_y(Alignment::Center))
@@ -783,7 +877,7 @@ pub fn view<'a>(
                 }
                 st
             })
-            .on_press(Message::SelectTreeNode(item.id.clone()));
+            .on_press(Message::SelectTreeNode(item.id));
 
             tree_col_content = tree_col_content.push(interactable);
         }
@@ -854,4 +948,139 @@ pub fn view<'a>(
     });
 
     (base_view.into(), overlay)
+}
+
+#[cfg(test)]
+mod filter_arena_tests {
+    use super::*;
+
+    fn manager_with_index() -> LibraryFiltersManager {
+        let mut nodes = Vec::new();
+        // Rock -> Queen -> Innuendo
+        nodes.push(FilterNode {
+            label: std::sync::Arc::from("Rock"),
+            parent: NO_PARENT,
+            children: vec![1],
+            depth: 0,
+            filter: FilterType::Genre,
+        });
+        nodes.push(FilterNode {
+            label: std::sync::Arc::from("Queen"),
+            parent: 0,
+            children: vec![2],
+            depth: 1,
+            filter: FilterType::Genre,
+        });
+        nodes.push(FilterNode {
+            label: std::sync::Arc::from("Innuendo"),
+            parent: 1,
+            children: Vec::new(),
+            depth: 2,
+            filter: FilterType::Genre,
+        });
+        // Jazz -> Miles
+        nodes.push(FilterNode {
+            label: std::sync::Arc::from("Jazz"),
+            parent: NO_PARENT,
+            children: vec![4],
+            depth: 0,
+            filter: FilterType::Genre,
+        });
+        nodes.push(FilterNode {
+            label: std::sync::Arc::from("Miles"),
+            parent: 3,
+            children: Vec::new(),
+            depth: 1,
+            filter: FilterType::Genre,
+        });
+
+        let mut roots = HashMap::new();
+        roots.insert(FilterType::Genre, vec![0, 3]);
+        let mut subfilters = HashMap::new();
+        subfilters.insert(FilterType::Genre, vec!["J".to_string(), "R".to_string()]);
+
+        let mut manager = LibraryFiltersManager::default();
+        manager.filter_index = Some(FilterIndex {
+            nodes,
+            roots,
+            subfilters,
+        });
+        manager.current_filter = FilterType::Genre;
+        manager.apply_view();
+        manager
+    }
+
+    fn visible_ids(manager: &LibraryFiltersManager) -> Vec<FilterNodeId> {
+        manager
+            .get_visible_tree_items()
+            .2
+            .into_iter()
+            .map(|item| item.id)
+            .collect()
+    }
+
+    #[test]
+    fn test_filter_arena_resolves_the_path_only_on_demand() {
+        let manager = manager_with_index();
+        let (filter, labels) = manager.node_levels(2).expect("el nodo existe");
+
+        assert_eq!(filter, FilterType::Genre);
+        assert_eq!(labels, vec!["Rock", "Queen", "Innuendo"]);
+    }
+
+    #[test]
+    fn test_filter_search_keeps_the_matching_branch_and_its_parents() {
+        let mut manager = manager_with_index();
+        manager.search_query = "innu".to_string();
+        manager.apply_view();
+
+        assert_eq!(
+            manager.tree_data,
+            vec![0],
+            "solo el árbol con coincidencias"
+        );
+        assert_eq!(
+            visible_ids(&manager),
+            vec![0],
+            "sin expandir solo se ve la raíz"
+        );
+
+        manager.expanded_nodes.insert(0);
+        manager.refresh_flattened_tree();
+        assert_eq!(
+            visible_ids(&manager),
+            vec![0, 1],
+            "el padre de la coincidencia"
+        );
+
+        manager.expanded_nodes.insert(1);
+        manager.refresh_flattened_tree();
+        assert_eq!(visible_ids(&manager), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn test_filter_search_matching_a_root_keeps_all_its_descendants() {
+        let mut manager = manager_with_index();
+        manager.search_query = "rock".to_string();
+        manager.expanded_nodes.insert(0);
+        manager.expanded_nodes.insert(1);
+        manager.apply_view();
+        manager.refresh_flattened_tree();
+
+        assert_eq!(visible_ids(&manager), vec![0, 1, 2]);
+        assert!(manager.tree_data.contains(&0));
+    }
+
+    #[test]
+    fn test_filter_subfilter_keeps_the_whole_matching_subtree() {
+        let mut manager = manager_with_index();
+        manager.selected_subfilter = Some("R".to_string());
+        manager.expanded_nodes.insert(0);
+        manager.expanded_nodes.insert(1);
+        manager.apply_view();
+        manager.refresh_flattened_tree();
+
+        assert_eq!(manager.tree_data, vec![0], "solo la raíz de la letra R");
+        assert_eq!(visible_ids(&manager), vec![0, 1, 2]);
+    }
 }

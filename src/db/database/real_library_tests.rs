@@ -15,7 +15,7 @@
 //! no tracing subscriber, so a tracing event would be discarded and `--nocapture`
 //! would show nothing.
 
-use super::{Database, LibrarySearchParams, SongData};
+use super::{Database, LibrarySearchParams, PlaylistSongRef, SongData};
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -110,9 +110,15 @@ fn schema_shape(conn: &Connection) -> String {
     let artists: i64 = conn
         .query_row("SELECT COUNT(*) FROM ARTISTS", [], |row| row.get(0))
         .unwrap_or(0);
+    let playlists: i64 = conn
+        .query_row("SELECT COUNT(*) FROM PLAYLISTS", [], |row| row.get(0))
+        .unwrap_or(0);
+    let playlist_items: i64 = conn
+        .query_row("SELECT COUNT(*) FROM PLAYLIST_ITEMS", [], |row| row.get(0))
+        .unwrap_or(0);
 
     format!(
-        "user_version={user_version}, SONGS_FTS_CONTENT={}, ALBUMS.cover_path={}, SONGS={songs} (library {library_songs}), ALBUMS={albums}, ARTISTS={artists}",
+        "user_version={user_version}, SONGS_FTS_CONTENT={}, ALBUMS.cover_path={}, SONGS={songs} (library {library_songs}), ALBUMS={albums}, ARTISTS={artists}, PLAYLISTS={playlists}, PLAYLIST_ITEMS={playlist_items}",
         if fts_content > 0 { "present" } else { "absent" },
         if cover_path_column > 0 {
             "present"
@@ -315,5 +321,74 @@ fn test_real_library_read_paths_are_measured() {
         "the filtered read returns exactly the rows its join shape selects"
     );
 
+    remove_copy(&copy);
+}
+
+#[test]
+fn test_playlist_read_paths_are_measured() {
+    let _guard = measurement_lock();
+    let Some(copy) = library_copy() else {
+        println!("real library absent: playlist read paths not measured");
+        return;
+    };
+    let db = copy_database(&copy);
+    println!("measured library shape: {}", schema_shape(&db.conn));
+    println!(
+        "PlaylistSongRef struct size: {} bytes",
+        std::mem::size_of::<PlaylistSongRef>()
+    );
+
+    let playlists = db.get_all_playlists().expect("the playlists must be read");
+
+    for playlist in &playlists {
+        let mut samples = Vec::with_capacity(3);
+        let mut items = 0;
+        for _ in 0..3 {
+            let started = Instant::now();
+            let songs = db
+                .get_playlist_songs(playlist.id)
+                .expect("the playlist read must succeed");
+            samples.push(started.elapsed().as_secs_f64() * 1000.0);
+            items = songs.len();
+        }
+        println!(
+            "playlist {:?} (id {}, system {}): {items} items, median {:.3} ms",
+            playlist.name,
+            playlist.id,
+            playlist.is_system,
+            median_ms(samples)
+        );
+    }
+
+    let before = anon_residency_kib();
+    let held: Vec<Vec<PlaylistSongRef>> = playlists
+        .iter()
+        .map(|playlist| {
+            db.get_playlist_songs(playlist.id)
+                .expect("the playlist rows must be read")
+        })
+        .collect();
+    std::hint::black_box(&held);
+    let after = anon_residency_kib();
+
+    let total_items: usize = held.iter().map(Vec::len).sum();
+    match (before, after) {
+        (Some(before), Some(after)) => {
+            let delta = after as i64 - before as i64;
+            let per_item = if total_items > 0 {
+                delta * 1024 / total_items as i64
+            } else {
+                0
+            };
+            println!(
+                "Pss_Anon before playlists: {before} KiB; with {total_items} items held: {after} KiB; delta: {delta} KiB; per item: {per_item} B"
+            );
+        }
+        _ => println!(
+            "Pss_Anon unavailable on this platform: playlist residency not measured for {total_items} items"
+        ),
+    }
+
+    drop(held);
     remove_copy(&copy);
 }

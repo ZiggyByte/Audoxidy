@@ -1315,8 +1315,9 @@ fn test_band_is_truncated_at_the_budget_ceiling() {
     clear_negative_cover_cache();
 
     // A viewport tall enough that the window and its band together exceed the hard
-    // ceiling at the album bucket: the 48 MiB clamp on a large screen.
-    let height = 4300.0;
+    // ceiling at the album bucket, while the window alone still fits: the 32 MiB
+    // clamp on a large screen.
+    let height = 3000.0;
     let mut manager = manager_at_1080p(600);
     manager.last_viewport = Some(iced::Rectangle {
         x: 0.0,
@@ -1422,10 +1423,10 @@ fn test_band_is_capped_by_the_budget_not_the_ceiling() {
     let _guard = global_guard();
     clear_negative_cover_cache();
 
-    // A viewport tall enough that three screens of entries exceed the 48 MiB clamp at
+    // A viewport tall enough that three screens of entries exceed the 32 MiB clamp at
     // the album bucket, so the budget lands below three capacities and the band has to
-    // be capped by the budget rather than by the ceiling.
-    let height = 4300.0;
+    // be capped by the budget rather than by the ceiling. The window alone still fits.
+    let height = 3000.0;
     let mut manager = manager_at_1080p(600);
     manager.last_viewport = Some(iced::Rectangle {
         x: 0.0,

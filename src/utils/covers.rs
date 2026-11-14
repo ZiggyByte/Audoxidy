@@ -802,7 +802,10 @@ pub fn viewport_capacity(columns: usize, viewport_h: f32, row_height: f32) -> us
 pub const COVER_BUDGET_MIN_BYTES: usize = 8 * 1024 * 1024;
 
 /// Ceiling for the decoded-cover budget, in bytes.
-pub const COVER_BUDGET_MAX_BYTES: usize = 48 * 1024 * 1024;
+///
+/// Three viewports of one bucket fit in 32 MiB at the measured 220 px bucket;
+/// the ceiling only binds at high DPI, where the same entry count costs more.
+pub const COVER_BUDGET_MAX_BYTES: usize = 32 * 1024 * 1024;
 
 /// Budget for decoded covers: the window, its prefetch band and a scroll-back
 /// cushion of one viewport, clamped.

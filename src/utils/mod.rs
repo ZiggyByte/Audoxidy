@@ -68,6 +68,25 @@ pub enum SortColumn {
 }
 
 impl SortColumn {
+    /// Returns whether the library can be ordered by this column.
+    ///
+    /// The technical columns (`Format`, `SampleRate`, `Channels`, `BitDepth`) are
+    /// rendered by [`format_metadata`] in the list views and in the expanded album
+    /// song list, but they are display-only: a press on their header must not
+    /// reorder anything, and no SQL `ORDER BY` may name them. `AlbumCard` and
+    /// `AlbumThumbnail` are layout pseudo-columns with no ordering either.
+    pub fn is_sortable(&self) -> bool {
+        !matches!(
+            self,
+            SortColumn::Format
+                | SortColumn::SampleRate
+                | SortColumn::Channels
+                | SortColumn::BitDepth
+                | SortColumn::AlbumCard
+                | SortColumn::AlbumThumbnail
+        )
+    }
+
     /// Devuelve la etiqueta en español para la columna.
     pub fn as_str(&self) -> &'static str {
         match self {

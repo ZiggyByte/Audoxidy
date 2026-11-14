@@ -62,6 +62,11 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::LibrarySortChanged(col) => {
+                // A stale element or a test can deliver a column the header bar no
+                // longer emits; a display-only column has no ordering to apply.
+                if !col.is_sortable() {
+                    return Task::none();
+                }
                 self.focus = AppFocus::Library;
                 if self.library_manager.sort_column == Some(col) {
                     if self.library_manager.sort_ascending == Some(true) {

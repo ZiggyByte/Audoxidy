@@ -130,31 +130,22 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
             }
         };
 
-        let sort_btn = if sort == SortColumn::AlbumCard || sort == SortColumn::AlbumThumbnail {
-            button(sort_btn_content)
-                .width(Length::Fill)
-                .padding(iced::Padding {
-                    left: 5.0,
-                    right: 0.0,
-                    top: 0.0,
-                    bottom: 0.0,
-                })
-                .style(|_t: &Theme, _s| {
-                    button::Style::default().with_background(Color::TRANSPARENT)
-                })
+        // Layout pseudo-columns and the display-only technical columns keep their
+        // label, width and separator, but offer no press surface: the library has
+        // no ordering for them, so a click must not request one.
+        let sort_btn = button(sort_btn_content)
+            .width(Length::Fill)
+            .padding(iced::Padding {
+                left: 5.0,
+                right: 0.0,
+                top: 0.0,
+                bottom: 0.0,
+            })
+            .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT));
+        let sort_btn = if sort.is_sortable() {
+            sort_btn.on_press(on_sort(sort))
         } else {
-            button(sort_btn_content)
-                .width(Length::Fill)
-                .padding(iced::Padding {
-                    left: 5.0,
-                    right: 0.0,
-                    top: 0.0,
-                    bottom: 0.0,
-                })
-                .style(|_t: &Theme, _s| {
-                    button::Style::default().with_background(Color::TRANSPARENT)
-                })
-                .on_press(on_sort(sort))
+            sort_btn
         };
 
         let content = row![

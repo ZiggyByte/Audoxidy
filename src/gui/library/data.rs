@@ -57,15 +57,15 @@ impl LibraryManager {
                             b.track_number.as_deref(),
                         ))
                     }
-                    SortColumn::Format => crate::utils::compare_strings_ignore_case(
-                        a.format.as_deref().unwrap_or(""),
-                        b.format.as_deref().unwrap_or(""),
-                    ),
+                    // Display-only columns: rendered by `format_metadata`, but they
+                    // are neither sort keys nor filter dimensions, so the comparator
+                    // stays neutral instead of claiming an ordering the UI cannot ask
+                    // for. The match remains exhaustive.
+                    SortColumn::Format => std::cmp::Ordering::Equal,
+                    SortColumn::SampleRate => std::cmp::Ordering::Equal,
+                    SortColumn::Channels => std::cmp::Ordering::Equal,
+                    SortColumn::BitDepth => std::cmp::Ordering::Equal,
                     SortColumn::Size => a.size.unwrap_or(0).cmp(&b.size.unwrap_or(0)),
-                    SortColumn::SampleRate => {
-                        a.sample_rate.unwrap_or(0).cmp(&b.sample_rate.unwrap_or(0))
-                    }
-                    SortColumn::Channels => a.channels.unwrap_or(0).cmp(&b.channels.unwrap_or(0)),
                     SortColumn::Bitrate => {
                         let bitrate = |s: &crate::db::database::SongData| {
                             s.duration_secs
@@ -118,7 +118,6 @@ impl LibraryManager {
                             .partial_cmp(&dur_b)
                             .unwrap_or(std::cmp::Ordering::Equal)
                     }
-                    SortColumn::BitDepth => a.bit_depth.unwrap_or(0).cmp(&b.bit_depth.unwrap_or(0)),
                     SortColumn::AlbumCard => std::cmp::Ordering::Equal,
                     SortColumn::AlbumThumbnail => std::cmp::Ordering::Equal,
                 };

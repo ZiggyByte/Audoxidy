@@ -192,18 +192,8 @@ impl crate::gui::app::AudoxidyApp {
                         {
                             alb_songs = all_songs
                                 .iter()
-                                .filter(|s| match s.album_hash.as_deref() {
-                                    // The album row's hash is unique per folder, so two
-                                    // versions that share a title and artist expand
-                                    // independently and never mix their songs.
-                                    Some(hash) => hash == album_entry.id,
-                                    // Rows without a hash fall back to the display
-                                    // identity.
-                                    None => {
-                                        let s_alb = s.album.as_deref().unwrap_or("Desconocido");
-                                        let s_art = crate::utils::get_effective_artist(s);
-                                        s_alb == album_entry.title && s_art == album_entry.artist
-                                    }
+                                .filter(|s| {
+                                    crate::gui::library::song_belongs_to_album(s, album_entry)
                                 })
                                 .cloned()
                                 .collect();

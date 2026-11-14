@@ -5,6 +5,7 @@
 
 pub(crate) mod cover_cache;
 mod data;
+pub(crate) use data::song_belongs_to_album;
 pub(crate) mod grid_metrics;
 pub(crate) mod lists;
 mod selection;

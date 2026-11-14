@@ -140,16 +140,22 @@ impl AudoxidyApp {
         // into the initial dialog.
         let library_rebuilt = core.library_rebuilt();
 
-        // The saved view is read once, before the first data load, so the first
-        // layout already uses the chosen mode instead of the default.
-        // db-lock: a single short read — the guard is released before any other
-        // call.
-        let library_view_mode = match core.database().lock() {
-            Ok(db) => crate::gui::library::LibraryViewMode::from_setting_value(
-                db.get_setting("library_view_mode").as_deref(),
-            ),
-            Err(_) => crate::gui::library::LibraryViewMode::Grid,
+        // Every persisted preference is read once, in one statement under one
+        // short guard, before the first data load. The guard is released before
+        // any other call, and every later read comes from this map instead of
+        // issuing a per-key query.
+        let startup_settings = match core.database().lock() {
+            Ok(db) => db.load_all_settings().unwrap_or_default(),
+            Err(_) => std::collections::HashMap::new(),
         };
+
+        // The saved view is read before the first data load, so the first
+        // layout already uses the chosen mode instead of the default.
+        let library_view_mode = crate::gui::library::LibraryViewMode::from_setting_value(
+            startup_settings
+                .get("library_view_mode")
+                .map(String::as_str),
+        );
 
         let mut library_manager = LibraryManager {
             view_mode: library_view_mode,
@@ -228,37 +234,43 @@ impl AudoxidyApp {
         filters_manager.build_filter_index(core.database());
 
         let mut playlist_manager = PlaylistManager::default();
-        // db-lock: snapshot de solo lectura; el guard se libera antes de tocar
-        // el gestor de audio y de la E/S de PipeWire.
+        // db-lock: snapshot de solo lectura de la última playlist; el guard se
+        // libera antes de tocar el gestor de audio y de la E/S de PipeWire.
         let startup_audio = if let Ok(db_lock) = core.database().lock() {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
-            let host_id = db_lock.get_setting("audio_host").filter(|s| !s.is_empty());
-            let device_name = db_lock
-                .get_setting("audio_device")
-                .filter(|s| !s.is_empty());
-            let device_id = db_lock
-                .get_setting("audio_device_id")
-                .filter(|s| !s.is_empty());
-            let sample_rate = db_lock.get_setting("audio_sample_rate").and_then(|s| {
+            let host_id = startup_settings
+                .get("audio_host")
+                .filter(|s| !s.is_empty())
+                .cloned();
+            let device_name = startup_settings
+                .get("audio_device")
+                .filter(|s| !s.is_empty())
+                .cloned();
+            let device_id = startup_settings
+                .get("audio_device_id")
+                .filter(|s| !s.is_empty())
+                .cloned();
+            let sample_rate = startup_settings.get("audio_sample_rate").and_then(|s| {
                 if s == "auto" {
                     None
                 } else {
                     s.parse::<u32>().ok()
                 }
             });
-            let bit_depth = db_lock
-                .get_setting("audio_bit_depth")
-                .and_then(|s| match s.as_str() {
-                    "16" => Some(crate::audio::engine::BitDepth::Bits16),
-                    "24" => Some(crate::audio::engine::BitDepth::Bits24),
-                    "32" => Some(crate::audio::engine::BitDepth::Bits32Float),
-                    _ => None,
-                });
-            let channels_val = db_lock
-                .get_setting("audio_channels")
+            let bit_depth =
+                startup_settings
+                    .get("audio_bit_depth")
+                    .and_then(|s| match s.as_str() {
+                        "16" => Some(crate::audio::engine::BitDepth::Bits16),
+                        "24" => Some(crate::audio::engine::BitDepth::Bits24),
+                        "32" => Some(crate::audio::engine::BitDepth::Bits32Float),
+                        _ => None,
+                    });
+            let channels_val = startup_settings
+                .get("audio_channels")
                 .and_then(|s| s.parse::<u16>().ok());
-            let buffer_size = db_lock.get_setting("audio_buffer_size").and_then(|s| {
+            let buffer_size = startup_settings.get("audio_buffer_size").and_then(|s| {
                 if s == "auto" {
                     None
                 } else {
@@ -303,21 +315,21 @@ impl AudoxidyApp {
                     _ => crate::gui::audio_center::SystemSelection::Default,
                 }
             };
-            let sys_rate = db_lock
-                .get_setting("audio_system_rate")
-                .map(|s| parse_system_sel(&s))
+            let sys_rate = startup_settings
+                .get("audio_system_rate")
+                .map(|s| parse_system_sel(s))
                 .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
-            let sys_quantum = db_lock
-                .get_setting("audio_system_quantum")
-                .map(|s| parse_system_sel(&s))
+            let sys_quantum = startup_settings
+                .get("audio_system_quantum")
+                .map(|s| parse_system_sel(s))
                 .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
 
             let pipewire_rate = match sys_rate {
                 crate::gui::audio_center::SystemSelection::Default => None,
                 crate::gui::audio_center::SystemSelection::Automatic => {
                     // Usar la tasa del reproductor si está configurada, sino 48000.
-                    db_lock
-                        .get_setting("audio_sample_rate")
+                    startup_settings
+                        .get("audio_sample_rate")
                         .and_then(|s| {
                             if s == "auto" {
                                 None
@@ -352,7 +364,7 @@ impl AudoxidyApp {
             };
 
             // 1. Cargar última playlist activa
-            if let Some(last_id_str) = db_lock.get_setting("last_active_playlist_id") {
+            if let Some(last_id_str) = startup_settings.get("last_active_playlist_id") {
                 if let Ok(last_id) = last_id_str.parse::<i64>() {
                     playlist_manager.active_playlist_id = last_id;
                 }
@@ -502,198 +514,187 @@ impl AudoxidyApp {
         let mut audio_center_manager = AudioCenterManager::default();
 
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente.
-        // db-lock: cada lectura se hace en un scope propio y el guard se libera
-        // antes de tocar el gestor de audio.
-        let player_volume = core
-            .database()
-            .lock()
-            .ok()
-            .and_then(|db_lock| db_lock.get_setting("player_volume"))
+        let player_volume = startup_settings
+            .get("player_volume")
             .and_then(|vol_str| vol_str.parse::<f32>().ok());
         if let Some(vol) = player_volume {
             core.audio_manager().set_volume(vol.clamp(0.0, 1.0));
         }
 
         // Cargar Volumen y Mezcla al inicio (aplicar al motor inmediatamente)
-        // db-lock: snapshot del estado de audio; el guard se libera antes de
-        // tomar el lock de escritura del estado.
-        let startup_state = core
-            .database()
-            .lock()
-            .ok()
-            .map(|db_lock| StartupAudioState {
-                fades_enabled: db_lock
-                    .get_setting("vol_fades_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                smooth_volume_enabled: db_lock
-                    .get_setting("vol_smooth_volume_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                fade_in_ms: db_lock
-                    .get_setting("vol_fade_in_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(2000.0),
-                fade_out_ms: db_lock
-                    .get_setting("vol_fade_out_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(3000.0),
-                fade_in_enabled: db_lock
-                    .get_setting("vol_fade_in_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                fade_out_enabled: db_lock
-                    .get_setting("vol_fade_out_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                silence_enabled: db_lock
-                    .get_setting("vol_silence_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                silence_duration_ms: db_lock
-                    .get_setting("vol_silence_duration_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(1000.0),
-                silence_threshold_db: db_lock
-                    .get_setting("vol_silence_threshold_db")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(-47.0),
-                silence_edge_trim_enabled: db_lock
-                    .get_setting("vol_silence_edge_trim_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                rg_fixed_enabled: db_lock
-                    .get_setting("vol_rg_fixed_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                rg_fixed_db: db_lock
-                    .get_setting("vol_rg_fixed_db")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(0.0),
-                rg_master_enabled: db_lock
-                    .get_setting("vol_rg_master_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                replay_gain_track_enabled: db_lock
-                    .get_setting("vol_rg_track_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                replay_gain_album_enabled: db_lock
-                    .get_setting("vol_rg_album_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                rg_analyze_rt_enabled: db_lock
-                    .get_setting("vol_rg_analyze_rt_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(true),
-                rg_offset_album_db: db_lock
-                    .get_setting("vol_rg_offset_album_db")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(0.0),
-                rg_offset_track_db: db_lock
-                    .get_setting("vol_rg_offset_track_db")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(0.0),
-                rg_offset_rt_db: db_lock
-                    .get_setting("vol_rg_offset_rt_db")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(0.0),
-                // Mezcla Cruzada / Crossfade: cargar al arranque (aplicar al motor inmediatamente)
-                crossfade_enabled: db_lock
-                    .get_setting("crossfade_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                crossfade_manual_enabled: db_lock
-                    .get_setting("crossfade_manual_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                crossfade_manual_ms: db_lock
-                    .get_setting("crossfade_manual_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(1000.0),
-                crossfade_auto_enabled: db_lock
-                    .get_setting("crossfade_auto_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                crossfade_auto_ms: db_lock
-                    .get_setting("crossfade_auto_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(250.0),
-                // VU Meter — cargar configuración al arranque
-                meter_hold_time_ms: db_lock
-                    .get_setting("meter_hold_time_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(1500.0),
-                meter_rms_window_ms: db_lock
-                    .get_setting("meter_rms_window_ms")
-                    .and_then(|v| v.parse::<f32>().ok())
-                    .unwrap_or(300.0),
-                meter_infinite_hold: db_lock
-                    .get_setting("meter_infinite_hold")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-                meter_enabled: db_lock
-                    .get_setting("meter_enabled")
-                    .map(|v| v == "1")
-                    .unwrap_or(false),
-            });
-        if let Some(s) = startup_state {
+        let startup_state = StartupAudioState {
+            fades_enabled: startup_settings
+                .get("vol_fades_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            smooth_volume_enabled: startup_settings
+                .get("vol_smooth_volume_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            fade_in_ms: startup_settings
+                .get("vol_fade_in_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(2000.0),
+            fade_out_ms: startup_settings
+                .get("vol_fade_out_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(3000.0),
+            fade_in_enabled: startup_settings
+                .get("vol_fade_in_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            fade_out_enabled: startup_settings
+                .get("vol_fade_out_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            silence_enabled: startup_settings
+                .get("vol_silence_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            silence_duration_ms: startup_settings
+                .get("vol_silence_duration_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1000.0),
+            silence_threshold_db: startup_settings
+                .get("vol_silence_threshold_db")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(-47.0),
+            silence_edge_trim_enabled: startup_settings
+                .get("vol_silence_edge_trim_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            rg_fixed_enabled: startup_settings
+                .get("vol_rg_fixed_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            rg_fixed_db: startup_settings
+                .get("vol_rg_fixed_db")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0),
+            rg_master_enabled: startup_settings
+                .get("vol_rg_master_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            replay_gain_track_enabled: startup_settings
+                .get("vol_rg_track_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            replay_gain_album_enabled: startup_settings
+                .get("vol_rg_album_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            rg_analyze_rt_enabled: startup_settings
+                .get("vol_rg_analyze_rt_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(true),
+            rg_offset_album_db: startup_settings
+                .get("vol_rg_offset_album_db")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0),
+            rg_offset_track_db: startup_settings
+                .get("vol_rg_offset_track_db")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0),
+            rg_offset_rt_db: startup_settings
+                .get("vol_rg_offset_rt_db")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(0.0),
+            // Mezcla Cruzada / Crossfade: cargar al arranque (aplicar al motor inmediatamente)
+            crossfade_enabled: startup_settings
+                .get("crossfade_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            crossfade_manual_enabled: startup_settings
+                .get("crossfade_manual_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            crossfade_manual_ms: startup_settings
+                .get("crossfade_manual_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1000.0),
+            crossfade_auto_enabled: startup_settings
+                .get("crossfade_auto_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            crossfade_auto_ms: startup_settings
+                .get("crossfade_auto_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(250.0),
+            // VU Meter — cargar configuración al arranque
+            meter_hold_time_ms: startup_settings
+                .get("meter_hold_time_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(1500.0),
+            meter_rms_window_ms: startup_settings
+                .get("meter_rms_window_ms")
+                .and_then(|v| v.parse::<f32>().ok())
+                .unwrap_or(300.0),
+            meter_infinite_hold: startup_settings
+                .get("meter_infinite_hold")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+            meter_enabled: startup_settings
+                .get("meter_enabled")
+                .map(|v| v == "1")
+                .unwrap_or(false),
+        };
+        {
             let state_arc = core.audio_manager().state();
             let mut state = state_arc.write();
-            state.fades_enabled = s.fades_enabled;
-            state.smooth_volume_enabled = s.smooth_volume_enabled;
-            state.fade_in_ms = s.fade_in_ms;
-            state.fade_out_ms = s.fade_out_ms;
-            state.fade_in_enabled = s.fade_in_enabled;
-            state.fade_out_enabled = s.fade_out_enabled;
-            state.silence_enabled = s.silence_enabled;
-            state.silence_duration_ms = s.silence_duration_ms;
-            state.silence_threshold_db = s.silence_threshold_db;
-            state.silence_edge_trim_enabled = s.silence_edge_trim_enabled;
-            state.rg_fixed_enabled = s.rg_fixed_enabled;
-            state.rg_fixed_db = s.rg_fixed_db;
-            state.rg_master_enabled = s.rg_master_enabled;
-            state.replay_gain_track_enabled = s.replay_gain_track_enabled;
-            state.replay_gain_album_enabled = s.replay_gain_album_enabled;
-            state.rg_analyze_rt_enabled = s.rg_analyze_rt_enabled;
-            state.rg_offset_album_db = s.rg_offset_album_db;
-            state.rg_offset_track_db = s.rg_offset_track_db;
-            state.rg_offset_rt_db = s.rg_offset_rt_db;
-            state.crossfade_enabled = s.crossfade_enabled;
-            state.crossfade_manual_enabled = s.crossfade_manual_enabled;
-            state.crossfade_manual_ms = s.crossfade_manual_ms;
-            state.crossfade_auto_enabled = s.crossfade_auto_enabled;
-            state.crossfade_auto_ms = s.crossfade_auto_ms;
-            state.meter_hold_time_ms = s.meter_hold_time_ms;
-            state.meter_rms_window_ms = s.meter_rms_window_ms;
-            state.meter_infinite_hold = s.meter_infinite_hold;
-            state.meter_enabled = s.meter_enabled;
+            state.fades_enabled = startup_state.fades_enabled;
+            state.smooth_volume_enabled = startup_state.smooth_volume_enabled;
+            state.fade_in_ms = startup_state.fade_in_ms;
+            state.fade_out_ms = startup_state.fade_out_ms;
+            state.fade_in_enabled = startup_state.fade_in_enabled;
+            state.fade_out_enabled = startup_state.fade_out_enabled;
+            state.silence_enabled = startup_state.silence_enabled;
+            state.silence_duration_ms = startup_state.silence_duration_ms;
+            state.silence_threshold_db = startup_state.silence_threshold_db;
+            state.silence_edge_trim_enabled = startup_state.silence_edge_trim_enabled;
+            state.rg_fixed_enabled = startup_state.rg_fixed_enabled;
+            state.rg_fixed_db = startup_state.rg_fixed_db;
+            state.rg_master_enabled = startup_state.rg_master_enabled;
+            state.replay_gain_track_enabled = startup_state.replay_gain_track_enabled;
+            state.replay_gain_album_enabled = startup_state.replay_gain_album_enabled;
+            state.rg_analyze_rt_enabled = startup_state.rg_analyze_rt_enabled;
+            state.rg_offset_album_db = startup_state.rg_offset_album_db;
+            state.rg_offset_track_db = startup_state.rg_offset_track_db;
+            state.rg_offset_rt_db = startup_state.rg_offset_rt_db;
+            state.crossfade_enabled = startup_state.crossfade_enabled;
+            state.crossfade_manual_enabled = startup_state.crossfade_manual_enabled;
+            state.crossfade_manual_ms = startup_state.crossfade_manual_ms;
+            state.crossfade_auto_enabled = startup_state.crossfade_auto_enabled;
+            state.crossfade_auto_ms = startup_state.crossfade_auto_ms;
+            state.meter_hold_time_ms = startup_state.meter_hold_time_ms;
+            state.meter_rms_window_ms = startup_state.meter_rms_window_ms;
+            state.meter_infinite_hold = startup_state.meter_infinite_hold;
+            state.meter_enabled = startup_state.meter_enabled;
         }
 
         // EQ enable / bands_31 / preamp_gain
-        // db-lock: snapshot de EQ y presets; el guard se libera antes de aplicar
-        // los ajustes al gestor de audio.
+        // db-lock: only the custom presets come from the database; the guard is
+        // released before the settings are applied to the audio manager.
         let startup_eq = core.database().lock().ok().map(|db_lock| {
-            let eq_enabled = db_lock
-                .get_setting("eq_enabled")
+            let eq_enabled = startup_settings
+                .get("eq_enabled")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let eq_bands_31 = db_lock
-                .get_setting("eq_bands_31")
+            let eq_bands_31 = startup_settings
+                .get("eq_bands_31")
                 .map(|v| v == "1")
                 .unwrap_or(false);
-            let preamp_gain: f32 = db_lock
-                .get_setting("preamp_gain")
+            let preamp_gain: f32 = startup_settings
+                .get("preamp_gain")
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(0.0);
             // EQ band gains (20 y 31)
-            let bands_20: Vec<f32> = db_lock
-                .get_setting("eq_band_gains_20")
+            let bands_20: Vec<f32> = startup_settings
+                .get("eq_band_gains_20")
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 20)
                 .unwrap_or_else(|| vec![0.0; 20]);
-            let bands_31: Vec<f32> = db_lock
-                .get_setting("eq_band_gains_31")
+            let bands_31: Vec<f32> = startup_settings
+                .get("eq_band_gains_31")
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 31)
                 .unwrap_or_else(|| vec![0.0; 31]);
@@ -727,7 +728,7 @@ impl AudoxidyApp {
                         .collect()
                 })
                 .unwrap_or_default();
-            let selected_preset_name = db_lock.get_setting("eq_selected_preset");
+            let selected_preset_name = startup_settings.get("eq_selected_preset").cloned();
 
             StartupEq {
                 eq_enabled,
@@ -779,139 +780,139 @@ impl AudoxidyApp {
         }
 
         // DSP effects persistence
-        // db-lock: snapshot de los parámetros DSP; el guard se libera antes de
-        // aplicar los efectos a la cadena.
-        let startup_dsp = core.database().lock().ok().map(|db_lock| StartupDsp {
-            sub_bass_enabled: db_lock
-                .get_setting("dsp_sub_bass_enabled")
+        let startup_dsp = StartupDsp {
+            sub_bass_enabled: startup_settings
+                .get("dsp_sub_bass_enabled")
                 .map(|v| v == "1"),
-            mid_bass_enabled: db_lock
-                .get_setting("dsp_mid_bass_enabled")
+            mid_bass_enabled: startup_settings
+                .get("dsp_mid_bass_enabled")
                 .map(|v| v == "1"),
-            voice_boost_enabled: db_lock
-                .get_setting("dsp_voice_boost_enabled")
+            voice_boost_enabled: startup_settings
+                .get("dsp_voice_boost_enabled")
                 .map(|v| v == "1"),
-            noise_gate_enabled: db_lock
-                .get_setting("dsp_noise_gate_enabled")
+            noise_gate_enabled: startup_settings
+                .get("dsp_noise_gate_enabled")
                 .map(|v| v == "1"),
-            stereo_expander_enabled: db_lock
-                .get_setting("dsp_stereo_expander_enabled")
+            stereo_expander_enabled: startup_settings
+                .get("dsp_stereo_expander_enabled")
                 .map(|v| v == "1"),
-            stereo_balance_enabled: db_lock
-                .get_setting("dsp_stereo_balance_enabled")
+            stereo_balance_enabled: startup_settings
+                .get("dsp_stereo_balance_enabled")
                 .map(|v| v == "1"),
-            compressor_enabled: db_lock
-                .get_setting("dsp_compressor_enabled")
+            compressor_enabled: startup_settings
+                .get("dsp_compressor_enabled")
                 .map(|v| v == "1"),
-            limiter_enabled: db_lock.get_setting("dsp_limiter_enabled").map(|v| v == "1"),
-            reverb_enabled: db_lock.get_setting("dsp_reverb_enabled").map(|v| v == "1"),
-            sub_bass_gain: db_lock
-                .get_setting("dsp_sub_bass_gain")
+            limiter_enabled: startup_settings
+                .get("dsp_limiter_enabled")
+                .map(|v| v == "1"),
+            reverb_enabled: startup_settings.get("dsp_reverb_enabled").map(|v| v == "1"),
+            sub_bass_gain: startup_settings
+                .get("dsp_sub_bass_gain")
                 .and_then(|v| v.parse::<f32>().ok()),
-            mid_bass_gain: db_lock
-                .get_setting("dsp_mid_bass_gain")
+            mid_bass_gain: startup_settings
+                .get("dsp_mid_bass_gain")
                 .and_then(|v| v.parse::<f32>().ok()),
-            voice_boost_gain: db_lock
-                .get_setting("dsp_voice_boost_gain")
+            voice_boost_gain: startup_settings
+                .get("dsp_voice_boost_gain")
                 .and_then(|v| v.parse::<f32>().ok()),
-            noise_gate_threshold: db_lock
-                .get_setting("dsp_noise_gate_threshold")
+            noise_gate_threshold: startup_settings
+                .get("dsp_noise_gate_threshold")
                 .and_then(|v| v.parse::<f32>().ok()),
-            stereo_expander_width: db_lock
-                .get_setting("dsp_stereo_expander_width")
+            stereo_expander_width: startup_settings
+                .get("dsp_stereo_expander_width")
                 .and_then(|v| v.parse::<f32>().ok()),
-            stereo_expander_surround: db_lock
-                .get_setting("dsp_stereo_expander_mode")
+            stereo_expander_surround: startup_settings
+                .get("dsp_stereo_expander_mode")
                 .map(|v| v == "surround"),
-            stereo_balance_balance: db_lock
-                .get_setting("dsp_stereo_balance_balance")
+            stereo_balance_balance: startup_settings
+                .get("dsp_stereo_balance_balance")
                 .and_then(|v| v.parse::<f32>().ok()),
-            compressor_threshold: db_lock
-                .get_setting("dsp_compressor_threshold")
+            compressor_threshold: startup_settings
+                .get("dsp_compressor_threshold")
                 .and_then(|v| v.parse::<f32>().ok()),
-            compressor_intensity: db_lock
-                .get_setting("dsp_compressor_intensity")
+            compressor_intensity: startup_settings
+                .get("dsp_compressor_intensity")
                 .and_then(|v| v.parse::<f32>().ok()),
-            limiter_ceiling: db_lock
-                .get_setting("dsp_limiter_ceiling")
+            limiter_ceiling: startup_settings
+                .get("dsp_limiter_ceiling")
                 .and_then(|v| v.parse::<f32>().ok()),
-            reverb_wet: db_lock
-                .get_setting("dsp_reverb_wet")
+            reverb_wet: startup_settings
+                .get("dsp_reverb_wet")
                 .and_then(|v| v.parse::<f32>().ok()),
-            reverb_room_size: db_lock
-                .get_setting("dsp_reverb_room_size")
+            reverb_room_size: startup_settings
+                .get("dsp_reverb_room_size")
                 .and_then(|v| v.parse::<f32>().ok()),
-        });
-        if let Some(dsp) = startup_dsp {
+        };
+        {
             core.audio_manager().with_dsp_mut(|chain| {
-                if let Some(v) = dsp.sub_bass_enabled {
+                if let Some(v) = startup_dsp.sub_bass_enabled {
                     chain.sub_bass.enabled = v;
                 }
-                if let Some(v) = dsp.mid_bass_enabled {
+                if let Some(v) = startup_dsp.mid_bass_enabled {
                     chain.mid_bass.enabled = v;
                 }
-                if let Some(v) = dsp.voice_boost_enabled {
+                if let Some(v) = startup_dsp.voice_boost_enabled {
                     chain.voice_boost.enabled = v;
                 }
-                if let Some(v) = dsp.noise_gate_enabled {
+                if let Some(v) = startup_dsp.noise_gate_enabled {
                     chain.noise_gate.enabled = v;
                 }
-                if let Some(v) = dsp.stereo_expander_enabled {
+                if let Some(v) = startup_dsp.stereo_expander_enabled {
                     chain.stereo_expander.enabled = v;
                 }
-                if let Some(v) = dsp.stereo_balance_enabled {
+                if let Some(v) = startup_dsp.stereo_balance_enabled {
                     chain.stereo_balance.enabled = v;
                 }
-                if let Some(v) = dsp.compressor_enabled {
+                if let Some(v) = startup_dsp.compressor_enabled {
                     chain.compressor.enabled = v;
                 }
-                if let Some(v) = dsp.limiter_enabled {
+                if let Some(v) = startup_dsp.limiter_enabled {
                     chain.limiter.enabled = v;
                 }
-                if let Some(v) = dsp.reverb_enabled {
+                if let Some(v) = startup_dsp.reverb_enabled {
                     chain.reverb.enabled = v;
                 }
             });
             core.audio_manager().with_dsp_mut(|chain| {
                 // Slider values
-                if let Some(v) = dsp.sub_bass_gain {
+                if let Some(v) = startup_dsp.sub_bass_gain {
                     chain.sub_bass.gain = v;
                 }
-                if let Some(v) = dsp.mid_bass_gain {
+                if let Some(v) = startup_dsp.mid_bass_gain {
                     chain.mid_bass.gain = v;
                 }
-                if let Some(v) = dsp.voice_boost_gain {
+                if let Some(v) = startup_dsp.voice_boost_gain {
                     chain.voice_boost.gain = v;
                 }
-                if let Some(v) = dsp.noise_gate_threshold {
+                if let Some(v) = startup_dsp.noise_gate_threshold {
                     chain.noise_gate.threshold = v;
                 }
-                if let Some(v) = dsp.stereo_expander_width {
+                if let Some(v) = startup_dsp.stereo_expander_width {
                     chain.stereo_expander.width = v;
                 }
-                if let Some(v) = dsp.stereo_expander_surround {
+                if let Some(v) = startup_dsp.stereo_expander_surround {
                     chain.stereo_expander.mode = if v {
                         crate::audio::dsp::ExpanderMode::Surround
                     } else {
                         crate::audio::dsp::ExpanderMode::Hybrid
                     };
                 }
-                if let Some(v) = dsp.stereo_balance_balance {
+                if let Some(v) = startup_dsp.stereo_balance_balance {
                     chain.stereo_balance.balance = v;
                 }
-                if let Some(v) = dsp.compressor_threshold {
+                if let Some(v) = startup_dsp.compressor_threshold {
                     chain.compressor.threshold = v;
                 }
-                if let Some(v) = dsp.compressor_intensity {
+                if let Some(v) = startup_dsp.compressor_intensity {
                     chain.compressor.intensity = v;
                 }
-                if let Some(v) = dsp.limiter_ceiling {
+                if let Some(v) = startup_dsp.limiter_ceiling {
                     chain.limiter.ceiling = v;
                 }
-                if let Some(v) = dsp.reverb_wet {
+                if let Some(v) = startup_dsp.reverb_wet {
                     chain.reverb.wet = v;
                 }
-                if let Some(v) = dsp.reverb_room_size {
+                if let Some(v) = startup_dsp.reverb_room_size {
                     chain.reverb.room_size = v;
                 }
             });
@@ -919,132 +920,128 @@ impl AudoxidyApp {
 
         // --- Volumen y Mezcla settings ---
         // Load into AudioCenterManager fields AND apply to AudioState
-        // db-lock: snapshot de volumen y crossfade; el guard se libera antes de
-        // escribir el estado de audio y el espejo del centro de audio.
-        let startup_volume = core.database().lock().ok().map(|db_lock| StartupVolume {
-            fades_enabled: db_lock.get_setting("vol_fades_enabled").map(|v| v == "1"),
-            smooth_volume_enabled: db_lock
-                .get_setting("vol_smooth_volume_enabled")
+        let startup_volume = StartupVolume {
+            fades_enabled: startup_settings.get("vol_fades_enabled").map(|v| v == "1"),
+            smooth_volume_enabled: startup_settings
+                .get("vol_smooth_volume_enabled")
                 .map(|v| v == "1"),
-            fade_in_ms: db_lock
-                .get_setting("vol_fade_in_ms")
+            fade_in_ms: startup_settings
+                .get("vol_fade_in_ms")
                 .and_then(|v| v.parse::<f32>().ok()),
-            fade_out_ms: db_lock
-                .get_setting("vol_fade_out_ms")
+            fade_out_ms: startup_settings
+                .get("vol_fade_out_ms")
                 .and_then(|v| v.parse::<f32>().ok()),
-            silence_enabled: db_lock.get_setting("vol_silence_enabled").map(|v| v == "1"),
-            silence_duration_ms: db_lock
-                .get_setting("vol_silence_duration_ms")
-                .and_then(|v| v.parse::<f32>().ok()),
-            silence_threshold_db: db_lock
-                .get_setting("vol_silence_threshold_db")
-                .and_then(|v| v.parse::<f32>().ok()),
-            silence_edge_trim_enabled: db_lock
-                .get_setting("vol_silence_edge_trim_enabled")
+            silence_enabled: startup_settings
+                .get("vol_silence_enabled")
                 .map(|v| v == "1"),
-            rg_master_enabled: db_lock
-                .get_setting("vol_rg_master_enabled")
-                .map(|v| v == "1"),
-            rg_track_enabled: db_lock
-                .get_setting("vol_rg_track_enabled")
-                .map(|v| v == "1"),
-            rg_album_enabled: db_lock
-                .get_setting("vol_rg_album_enabled")
-                .map(|v| v == "1"),
-            rg_analyze_rt_enabled: db_lock
-                .get_setting("vol_rg_analyze_rt_enabled")
-                .map(|v| v == "1"),
-            rg_offset_album_db: db_lock
-                .get_setting("vol_rg_offset_album_db")
+            silence_duration_ms: startup_settings
+                .get("vol_silence_duration_ms")
                 .and_then(|v| v.parse::<f32>().ok()),
-            rg_offset_track_db: db_lock
-                .get_setting("vol_rg_offset_track_db")
+            silence_threshold_db: startup_settings
+                .get("vol_silence_threshold_db")
                 .and_then(|v| v.parse::<f32>().ok()),
-            rg_offset_rt_db: db_lock
-                .get_setting("vol_rg_offset_rt_db")
+            silence_edge_trim_enabled: startup_settings
+                .get("vol_silence_edge_trim_enabled")
+                .map(|v| v == "1"),
+            rg_master_enabled: startup_settings
+                .get("vol_rg_master_enabled")
+                .map(|v| v == "1"),
+            rg_track_enabled: startup_settings
+                .get("vol_rg_track_enabled")
+                .map(|v| v == "1"),
+            rg_album_enabled: startup_settings
+                .get("vol_rg_album_enabled")
+                .map(|v| v == "1"),
+            rg_analyze_rt_enabled: startup_settings
+                .get("vol_rg_analyze_rt_enabled")
+                .map(|v| v == "1"),
+            rg_offset_album_db: startup_settings
+                .get("vol_rg_offset_album_db")
                 .and_then(|v| v.parse::<f32>().ok()),
-        });
-        if let Some(vol) = startup_volume {
-            if let Some(v) = vol.fades_enabled {
+            rg_offset_track_db: startup_settings
+                .get("vol_rg_offset_track_db")
+                .and_then(|v| v.parse::<f32>().ok()),
+            rg_offset_rt_db: startup_settings
+                .get("vol_rg_offset_rt_db")
+                .and_then(|v| v.parse::<f32>().ok()),
+        };
+        {
+            if let Some(v) = startup_volume.fades_enabled {
                 audio_center_manager.volumen_fades_enabled = v;
                 core.audio_manager().state().write().fades_enabled = v;
             }
-            if let Some(v) = vol.smooth_volume_enabled {
+            if let Some(v) = startup_volume.smooth_volume_enabled {
                 audio_center_manager.volumen_smooth_volume_enabled = v;
                 core.audio_manager().state().write().smooth_volume_enabled = v;
             }
-            if let Some(v) = vol.fade_in_ms {
+            if let Some(v) = startup_volume.fade_in_ms {
                 audio_center_manager.volumen_fade_in_ms = v as f64;
                 core.audio_manager().state().write().fade_in_ms = v;
             }
-            if let Some(v) = vol.fade_out_ms {
+            if let Some(v) = startup_volume.fade_out_ms {
                 audio_center_manager.volumen_fade_out_ms = v as f64;
                 core.audio_manager().state().write().fade_out_ms = v;
             }
-            if let Some(v) = vol.silence_enabled {
+            if let Some(v) = startup_volume.silence_enabled {
                 audio_center_manager.volumen_silence_enabled = v;
                 core.audio_manager().state().write().silence_enabled = v;
             }
-            if let Some(v) = vol.silence_duration_ms {
+            if let Some(v) = startup_volume.silence_duration_ms {
                 audio_center_manager.volumen_silence_duration_ms = v as f64;
                 core.audio_manager().state().write().silence_duration_ms = v;
             }
-            if let Some(v) = vol.silence_threshold_db {
+            if let Some(v) = startup_volume.silence_threshold_db {
                 audio_center_manager.volumen_silence_threshold_db = v as f64;
                 core.audio_manager().state().write().silence_threshold_db = v;
             }
-            if let Some(v) = vol.silence_edge_trim_enabled {
+            if let Some(v) = startup_volume.silence_edge_trim_enabled {
                 audio_center_manager.volumen_silence_edge_trim_enabled = v;
                 core.audio_manager()
                     .state()
                     .write()
                     .silence_edge_trim_enabled = v;
             }
-            if let Some(v) = vol.rg_master_enabled {
+            if let Some(v) = startup_volume.rg_master_enabled {
                 audio_center_manager.volumen_rg_master_enabled = v;
                 core.audio_manager().state().write().rg_master_enabled = v;
             }
-            if let Some(v) = vol.rg_track_enabled {
+            if let Some(v) = startup_volume.rg_track_enabled {
                 audio_center_manager.volumen_rg_track_enabled = v;
                 core.audio_manager()
                     .state()
                     .write()
                     .replay_gain_track_enabled = v;
             }
-            if let Some(v) = vol.rg_album_enabled {
+            if let Some(v) = startup_volume.rg_album_enabled {
                 audio_center_manager.volumen_rg_album_enabled = v;
                 core.audio_manager()
                     .state()
                     .write()
                     .replay_gain_album_enabled = v;
             }
-            if let Some(v) = vol.rg_analyze_rt_enabled {
+            if let Some(v) = startup_volume.rg_analyze_rt_enabled {
                 audio_center_manager.volumen_rg_analyze_rt_enabled = v;
                 core.audio_manager().state().write().rg_analyze_rt_enabled = v;
             }
-            if let Some(v) = vol.rg_offset_album_db {
+            if let Some(v) = startup_volume.rg_offset_album_db {
                 audio_center_manager.volumen_rg_offset_album_db = v as f64;
                 core.audio_manager().state().write().rg_offset_album_db = v;
             }
-            if let Some(v) = vol.rg_offset_track_db {
+            if let Some(v) = startup_volume.rg_offset_track_db {
                 audio_center_manager.volumen_rg_offset_track_db = v as f64;
                 core.audio_manager().state().write().rg_offset_track_db = v;
             }
-            if let Some(v) = vol.rg_offset_rt_db {
+            if let Some(v) = startup_volume.rg_offset_rt_db {
                 audio_center_manager.volumen_rg_offset_rt_db = v as f64;
                 core.audio_manager().state().write().rg_offset_rt_db = v;
             }
         }
 
         // VU Meter — cargar modo M/S para PlayerUiState
-        // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
-        let meter_ms_mode = if let Ok(db) = core.database().lock() {
-            db.get_setting("meter_ms_mode")
-                .map(|v| v == "1")
-                .unwrap_or(false)
-        } else {
-            false
-        };
+        let meter_ms_mode = startup_settings
+            .get("meter_ms_mode")
+            .map(|v| v == "1")
+            .unwrap_or(false);
 
         // Geometría de ventana persistida: se refleja en el estado inicial para
         // que los eventos de redimensionado no confundan el tamaño maximizado

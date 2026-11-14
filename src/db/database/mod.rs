@@ -329,3 +329,6 @@ mod real_library_tests;
 
 #[cfg(test)]
 mod schema_tests;
+
+#[cfg(test)]
+mod settings_tests;

@@ -213,6 +213,47 @@ fn test_count_comparison_detects_a_missing_content_row() {
 }
 
 #[test]
+fn test_rebuild_repairs_a_missing_content_row() {
+    let mut db = Database::new_memory().expect("create the in-memory database");
+    let rowid = seed_song(
+        &mut db,
+        "/music/fts-repair.flac",
+        "Zzq-Repair-Token",
+        "Zzq-Repair-Artist",
+        "Zzq-Repair-Album",
+    );
+
+    db.conn
+        .execute("DELETE FROM SONGS_FTS_CONTENT WHERE song_id = ?1", [rowid])
+        .expect("remove the content row without touching the song");
+    assert!(
+        !db.is_fts_consistent().unwrap(),
+        "the missing row is detected before the repair"
+    );
+
+    db.rebuild_fts_index().expect("rebuild the index");
+
+    assert!(
+        db.is_fts_consistent().unwrap(),
+        "the repair restores the missing content row"
+    );
+    assert_eq!(
+        db.fts_content_count().unwrap(),
+        1,
+        "exactly one content row is reconstructed"
+    );
+    let found: i64 = db
+        .conn
+        .query_row(
+            "SELECT count(*) FROM SONGS_FTS WHERE SONGS_FTS MATCH ?1 AND rowid = ?2",
+            params![token("Zzq-Repair-Token"), rowid],
+            |row| row.get(0),
+        )
+        .expect("search the rebuilt index");
+    assert_eq!(found, 1, "the rebuilt index finds the restored song");
+}
+
+#[test]
 fn test_album_rename_reindexes_every_song_of_the_album() {
     let mut db = Database::new_memory().expect("create the in-memory database");
     let first = seed_song(

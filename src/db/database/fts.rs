@@ -33,14 +33,28 @@ impl Database {
         Ok(self.fts_content_count()? == self.songs_count()?)
     }
 
-    /// Rebuilds the whole index from the content table.
+    /// Rebuilds the whole index from the songs it is expected to mirror.
     ///
-    /// This is the repair path for a mismatch: it discards the index rows and
-    /// regenerates them from the current content rows.
+    /// This is the repair path for a mismatch. `rebuild` alone only regenerates
+    /// the index from the content rows that exist, so a missing content row
+    /// would survive the repair and keep the counts mismatched. The index is
+    /// regenerated first so the content-table triggers, which delete from the
+    /// index, always run against rows the index actually holds; the content is
+    /// then repopulated from `SONGS` and the index is regenerated again.
     pub fn rebuild_fts_index(&self) -> Result<()> {
-        self.conn
-            .execute("INSERT INTO SONGS_FTS(SONGS_FTS) VALUES('rebuild')", [])?;
-        Ok(())
+        let transaction = self.conn.unchecked_transaction()?;
+        transaction.execute("INSERT INTO SONGS_FTS(SONGS_FTS) VALUES('rebuild')", [])?;
+        transaction.execute("DELETE FROM SONGS_FTS_CONTENT", [])?;
+        transaction.execute(
+            "INSERT INTO SONGS_FTS_CONTENT (song_id, title, artist_name, album_title)
+             SELECT s.id, s.title, ar.name, al.title
+             FROM SONGS s
+             JOIN ARTISTS ar ON s.artist_id = ar.id
+             JOIN ALBUMS al ON s.album_id = al.id",
+            [],
+        )?;
+        transaction.execute("INSERT INTO SONGS_FTS(SONGS_FTS) VALUES('rebuild')", [])?;
+        transaction.commit()
     }
 
     /// Runs the integrity check that compares the index with the content table.

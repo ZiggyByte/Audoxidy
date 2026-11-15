@@ -3,7 +3,7 @@ use crate::db::database::PlaylistSongRef;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
     BAR_BOTTOM, BAR_TAB, IconSize, MARGIN_MD, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW, SPACE_MD,
-    SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{

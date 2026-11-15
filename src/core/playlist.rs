@@ -110,6 +110,17 @@ impl Core {
         Ok(())
     }
 
+    /// Sets the enabled flag of many playlist items in one transaction.
+    pub fn set_songs_enabled_in_playlist(
+        &self,
+        playlist_id: i64,
+        song_ids: &[i64],
+        enabled: bool,
+    ) -> Result<usize, CoreError> {
+        let mut db = self.lock_db()?;
+        Ok(db.set_songs_enabled_in_playlist(playlist_id, song_ids, enabled)?)
+    }
+
     /// Toggles the enabled flag of one playlist item.
     pub fn toggle_song_enabled_in_playlist(
         &self,

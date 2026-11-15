@@ -8,8 +8,18 @@ use std::sync::Arc;
 
 impl PlaylistManager {
     pub fn apply_filter(&mut self) {
+        // The positions below are indices into the active list, and this call is
+        // about to change that list. Resolve the playing identity first, then
+        // re-resolve it against the new list; the selection is dropped because its
+        // positions would point at different songs.
+        let playing_id = self
+            .playing_song_idx
+            .and_then(|idx| self.get_song_at_linear_index(idx))
+            .map(|song| song.song_id);
+
         if self.search_query.is_empty() {
             self.filtered_groups = None;
+            self.restore_active_indices(playing_id);
             self.invalidate_cache();
             return;
         }
@@ -46,12 +56,19 @@ impl PlaylistManager {
             })
             .collect();
 
-        self.filtered_groups = if filtered.is_empty() {
-            None
-        } else {
-            Some(filtered)
-        };
+        // A query with no matches must show an empty playlist, not the full one:
+        // `None` means "no filter", so the empty result is stored as `Some(vec![])`.
+        self.filtered_groups = Some(filtered);
+        self.restore_active_indices(playing_id);
         self.invalidate_cache();
+    }
+
+    /// Re-resolves the position-dependent state after the active list changed.
+    fn restore_active_indices(&mut self, playing_id: Option<i64>) {
+        self.playing_song_idx = playing_id.and_then(|id| self.get_linear_index_by_song_id(id));
+        self.selected_idxs.clear();
+        self.focused_idx = None;
+        self.selection_pivot = None;
     }
 
     /// Obtiene la siguiente canción para precarga de carátulas y audio.
@@ -67,7 +84,10 @@ impl PlaylistManager {
             // En shuffle la siguiente es la primera canción HABILITADA desde la
             // posición actual de la sesión (idéntico a play_next).
             self.shuffle_session.as_ref().and_then(|session| {
-                session.shuffle_order[session.current_position..]
+                session
+                    .shuffle_order
+                    .get(session.current_position..)
+                    .unwrap_or(&[])
                     .iter()
                     .find_map(|&song_id| {
                         let l_idx = self.get_linear_index_by_song_id(song_id)?;
@@ -89,7 +109,13 @@ impl PlaylistManager {
 
     /// Establece los grupos de la playlist e invalida el caché
     pub fn set_groups(&mut self, groups: Vec<PlaylistFolderGroup>) {
+        let playing_id = self
+            .playing_song_idx
+            .and_then(|idx| self.get_song_at_linear_index(idx))
+            .map(|song| song.song_id);
         self.groups = groups;
+        self.filtered_groups = None;
+        self.restore_active_indices(playing_id);
         self.invalidate_cache();
     }
 
@@ -97,6 +123,8 @@ impl PlaylistManager {
     pub fn clear_groups(&mut self) {
         self.groups.clear();
         self.filtered_groups = None;
+        self.playing_song_idx = None;
+        self.restore_active_indices(None);
         self.invalidate_cache();
     }
 
@@ -111,6 +139,10 @@ impl PlaylistManager {
             self.groups.clear();
             self.groups.shrink_to_fit();
             self.filtered_groups = None;
+            self.playing_song_idx = None;
+            self.selected_idxs.clear();
+            self.focused_idx = None;
+            self.selection_pivot = None;
             self.cached_visible_items.borrow_mut().take();
             self.data_unloaded = true;
         }
@@ -619,7 +651,9 @@ impl PlaylistManager {
 
     /// Activa el modo shuffle generando una nueva sesión aleatoria.
     pub fn activate_shuffle(&mut self) {
-        let groups = self.active_groups();
+        // The order is built from the full playlist, not from a filtered view:
+        // otherwise a search would permanently exclude every non-matching song.
+        let groups = &self.groups;
         let mut songs: Vec<i64> = groups
             .iter()
             .flat_map(|g| g.songs.iter())
@@ -810,43 +844,48 @@ impl PlaylistManager {
     /// Retrocede a la canción anterior.
     pub fn play_prev(&mut self, audio_manager: &AudioManager) {
         if self.shuffle_active {
-            let prev_song_data = if let Some(session) = &mut self.shuffle_session {
-                if session.history.len() > 1 {
-                    session.history.pop(); // Quitar la actual
+            // Resolve the previous entry before mutating the session: a failed
+            // resolution must not leave the history shorter than the position.
+            let previous_id = self.shuffle_session.as_ref().and_then(|session| {
+                if session.history.len() <= 1 {
+                    None
+                } else {
+                    session.history.get(session.history.len() - 2).copied()
+                }
+            });
+
+            let previous = previous_id
+                .and_then(|song_id| self.get_linear_index_by_song_id(song_id))
+                .and_then(|l_idx| {
+                    self.get_song_at_linear_index(l_idx).map(|song| {
+                        (
+                            l_idx,
+                            song.file_path.clone(),
+                            song.title.to_string(),
+                            song.artist_name.to_string(),
+                            song.album_title.to_string(),
+                            song.cover_path.as_deref().map(str::to_string),
+                        )
+                    })
+                });
+
+            if let Some((l_idx, path, title, artist, album, cover)) = previous {
+                if let Some(session) = &mut self.shuffle_session {
+                    session.history.pop();
                     if session.current_position > 0 {
                         session.current_position -= 1;
                     }
-                    if let Some(prev_id) = session.history.last().cloned() {
-                        if let Some(l_idx) = self.get_linear_index_by_song_id(prev_id) {
-                            self.get_song_at_linear_index(l_idx).map(|song| {
-                                (
-                                    l_idx,
-                                    song.file_path.clone(),
-                                    song.title.to_string(),
-                                    song.artist_name.to_string(),
-                                    song.album_title.to_string(),
-                                    song.cover_path.as_deref().map(str::to_string),
-                                )
-                            })
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
                 }
-            } else {
-                None
-            };
-
-            if let Some((l_idx, path, title, artist, album, cover)) = prev_song_data {
                 self.playing_song_idx = Some(l_idx);
                 let _ = audio_manager.load_file(&path, title, artist, album, cover, None, None);
                 audio_manager.play();
                 return;
             }
+
+            // The session cannot resolve the previous song (removed or filtered
+            // out). Drop the stale session and fall back to the sequential walk
+            // instead of keeping one that points somewhere else.
+            self.shuffle_session = None;
         }
 
         let current = self.playing_song_idx.unwrap_or(0);
@@ -954,7 +993,10 @@ impl PlaylistManager {
             // 2. Eliminar de la cola futura si estaba presente para evitar que se repita
             // Solo buscamos desde la posición actual en adelante
             if session.current_position < session.shuffle_order.len()
-                && let Some(idx) = session.shuffle_order[session.current_position..]
+                && let Some(idx) = session
+                    .shuffle_order
+                    .get(session.current_position..)
+                    .unwrap_or(&[])
                     .iter()
                     .position(|&x| x == song_id)
             {

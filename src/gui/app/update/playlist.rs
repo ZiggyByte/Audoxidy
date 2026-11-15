@@ -396,6 +396,9 @@ impl crate::gui::app::AudoxidyApp {
 
                 if let Some(groups) = groups {
                     self.playlist_manager.set_groups(groups);
+                    // Apply the active query before restoring the row selection, so
+                    // the restore is the last write and the filter cannot clear it.
+                    self.playlist_manager.apply_filter();
                 }
 
                 let mut was_restored = false;
@@ -455,7 +458,6 @@ impl crate::gui::app::AudoxidyApp {
                     self.playlist_manager.focused_idx = None;
                     self.playlist_manager.selection_pivot = None;
                 }
-                self.playlist_manager.apply_filter();
 
                 // --- Autoscroll de pestaña activa ---
                 let playlists = &self.playlist_manager.playlists;
@@ -816,7 +818,7 @@ impl crate::gui::app::AudoxidyApp {
                             crate::gui::playlist::PlaylistItemType::Separator(_, anchor) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                 {
@@ -827,6 +829,20 @@ impl crate::gui::app::AudoxidyApp {
                     }
                     ids
                 };
+
+                // If the song being played is among the removed ones, drop the
+                // index before the refresh persists it: the row will no longer exist
+                // and writing it would corrupt the resume point.
+                let playing_id = self
+                    .playlist_manager
+                    .playing_song_idx
+                    .and_then(|idx| self.playlist_manager.get_song_at_linear_index(idx))
+                    .map(|song| song.song_id);
+                if let Some(playing_id) = playing_id
+                    && target_songs.contains(&playing_id)
+                {
+                    self.playlist_manager.playing_song_idx = None;
+                }
 
                 if !target_songs.is_empty() {
                     return Task::batch(vec![
@@ -935,7 +951,7 @@ impl crate::gui::app::AudoxidyApp {
                             ) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                     && let Some(song_ref) = group.songs.get(local_idx)
@@ -946,7 +962,7 @@ impl crate::gui::app::AudoxidyApp {
                             crate::gui::playlist::PlaylistItemType::Separator(_folder, anchor) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                 {
@@ -983,7 +999,7 @@ impl crate::gui::app::AudoxidyApp {
                             ) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                     && let Some(song_ref) = group.songs.get(local_idx)
@@ -994,7 +1010,7 @@ impl crate::gui::app::AudoxidyApp {
                             crate::gui::playlist::PlaylistItemType::Separator(_folder, anchor) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                 {
@@ -1082,7 +1098,7 @@ impl crate::gui::app::AudoxidyApp {
                             PlaylistItemType::Separator(_folder, anchor) => {
                                 if let Some(group) = self
                                     .playlist_manager
-                                    .groups
+                                    .active_groups()
                                     .iter()
                                     .find(|g| g.first_item_id == anchor)
                                     && group.songs.iter().any(|s| !s.enabled)
@@ -1097,21 +1113,81 @@ impl crate::gui::app::AudoxidyApp {
 
                 let target_enabled = any_disabled;
 
-                let mut tasks = Vec::new();
+                // Collect the target ids once (single rows and whole folders), apply
+                // the change in memory and persist it in one transaction. The old
+                // path issued one autocommit UPDATE per selected row, which froze the
+                // UI on a large playlist.
+                let mut song_ids = Vec::new();
+                let mut seen = std::collections::HashSet::new();
                 for idx in targets {
                     if let Some(info) = self.playlist_manager.get_item_info_at_linear_index(idx) {
                         match info {
-                            PlaylistItemType::Song(..) => tasks.push(
-                                self.update(Message::ToggleSongEnabled(idx, Some(target_enabled))),
-                            ),
-                            PlaylistItemType::Separator(..) => tasks.push(
-                                self.update(Message::ToggleGroupEnabled(idx, Some(target_enabled))),
-                            ),
+                            PlaylistItemType::Song(..) => {
+                                if let Some(song) =
+                                    self.playlist_manager.get_song_at_linear_index(idx)
+                                    && seen.insert(song.song_id)
+                                {
+                                    song_ids.push(song.song_id);
+                                }
+                            }
+                            PlaylistItemType::Separator(_folder, anchor) => {
+                                if let Some(group) = self
+                                    .playlist_manager
+                                    .active_groups()
+                                    .iter()
+                                    .find(|g| g.first_item_id == anchor)
+                                {
+                                    for song in &group.songs {
+                                        if seen.insert(song.song_id) {
+                                            song_ids.push(song.song_id);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
+
+                if song_ids.is_empty() {
+                    return focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone());
+                }
+
+                let id_set: std::collections::HashSet<i64> = song_ids.iter().copied().collect();
+                let apply = |groups: &mut Vec<crate::db::database::PlaylistFolderGroup>| {
+                    for group in groups.iter_mut() {
+                        for song in group.songs.iter_mut() {
+                            if id_set.contains(&song.song_id) {
+                                song.enabled = target_enabled;
+                            }
+                        }
+                    }
+                };
+                apply(&mut self.playlist_manager.groups);
+                if let Some(filtered) = &mut self.playlist_manager.filtered_groups {
+                    apply(filtered);
+                }
+                self.playlist_manager.invalidate_cache();
+
+                let core = self.core.clone();
+                let playlist_id = self.playlist_manager.active_playlist_id;
                 Task::batch(vec![
-                    Task::batch(tasks),
+                    Task::perform(
+                        async move {
+                            if let Err(e) = core.set_songs_enabled_in_playlist(
+                                playlist_id,
+                                &song_ids,
+                                target_enabled,
+                            ) {
+                                tracing::warn!(
+                                    target: "audoxidy::persistence",
+                                    playlist_id,
+                                    error = %e,
+                                    "No se pudo cambiar el estado de las canciones en bloque"
+                                );
+                            }
+                        },
+                        |_| Message::NoOp,
+                    ),
                     focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone()),
                 ])
             }
@@ -1165,6 +1241,11 @@ impl crate::gui::app::AudoxidyApp {
     }
 
     pub(in crate::gui::app) fn persist_playlist_state(&self) {
+        // An unloaded playlist has no rows to resolve the playing id against; writing
+        // now would erase the saved resume point.
+        if self.playlist_manager.data_unloaded {
+            return;
+        }
         let state = self.core.audio_state();
         let playlist_id = self.playlist_manager.active_playlist_id;
         let last_song_id = self

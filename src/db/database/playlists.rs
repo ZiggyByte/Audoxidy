@@ -291,6 +291,35 @@ impl Database {
         Ok(())
     }
 
+    /// Sets `enabled` for many items of one playlist in a single transaction.
+    ///
+    /// A bulk enable/disable used to issue one autocommit `UPDATE` per selected
+    /// item, which on a large playlist meant thousands of writes inside one
+    /// message. One transaction keeps the UI responsive.
+    pub fn set_songs_enabled_in_playlist(
+        &mut self,
+        playlist_id: i64,
+        song_ids: &[i64],
+        enabled: bool,
+    ) -> Result<usize> {
+        if song_ids.is_empty() {
+            return Ok(0);
+        }
+
+        let val = if enabled { 1 } else { 0 };
+        let tx = self.conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
+            )?;
+            for song_id in song_ids {
+                stmt.execute(params![val, playlist_id, song_id])?;
+            }
+        }
+        tx.commit()?;
+        Ok(song_ids.len())
+    }
+
     /// Cambia el estado enabled/disabled de todas las canciones de un folder/álbum en una playlist.
     pub fn toggle_folder_enabled_in_playlist(
         &self,

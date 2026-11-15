@@ -112,4 +112,44 @@ mod tests {
         pm.playing_song_idx = Some(1);
         assert!(pm.get_next_song_ref().is_none());
     }
+
+    #[test]
+    fn test_filter_with_no_matches_yields_an_empty_active_list() {
+        let mut pm = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
+        pm.search_query = "no-existe".to_string();
+        pm.apply_filter();
+
+        assert!(pm.active_groups().is_empty());
+        assert!(pm.filtered_groups.is_some());
+    }
+
+    #[test]
+    fn test_filter_remaps_the_playing_index_by_song_id() {
+        let mut pm = manager_with_songs(vec![
+            make_song(1, "/a.flac"),
+            make_song(2, "/b.flac"),
+            make_song(3, "/c.flac"),
+        ]);
+        // Canción 2: separador + índice 1.
+        pm.playing_song_idx = Some(2);
+        pm.search_query = "Título 2".to_string();
+        pm.apply_filter();
+
+        assert_eq!(pm.playing_song_idx, Some(1));
+        assert_eq!(pm.get_song_at_linear_index(1).map(|s| s.song_id), Some(2));
+    }
+
+    #[test]
+    fn test_filter_clears_positions_that_belong_to_the_previous_list() {
+        let mut pm = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
+        pm.selected_idxs.insert(1);
+        pm.focused_idx = Some(1);
+        pm.selection_pivot = Some(1);
+        pm.search_query = "Título 2".to_string();
+        pm.apply_filter();
+
+        assert!(pm.selected_idxs.is_empty());
+        assert_eq!(pm.focused_idx, None);
+        assert_eq!(pm.selection_pivot, None);
+    }
 }

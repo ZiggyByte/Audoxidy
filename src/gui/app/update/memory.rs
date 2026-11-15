@@ -33,11 +33,13 @@ impl crate::gui::app::AudoxidyApp {
                 let is_playing = self.core.is_playing();
                 let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
 
-                // Descargar listas inactivas (la pestaña activa siempre se conserva)
+                // Descargar listas inactivas. La pestaña activa ya está cubierta
+                // por `is_playlist_focused`; el tercer argumento ya no fuerza `true`,
+                // que era lo que impedía toda descarga.
                 self.playlist_manager.unload(
                     is_playlist_focused,
                     is_playing || is_loaded_in_player,
-                    true,
+                    false,
                 );
 
                 // Descargar biblioteca inactiva
@@ -56,11 +58,19 @@ impl crate::gui::app::AudoxidyApp {
                 // 3. Limpiar caché global de strings (Interner)
                 crate::utils::interner::clear_interner();
 
-                // The decoded-cover store is deliberately left alone: its byte
-                // budget retains the viewport plus the cushion behind the scroll
-                // and evicts the rest, so a purge here would wipe the covers a
-                // scroll back needs and force them to be decoded again.
-                // `trim_outside_window` stays available for tests only.
+                // With the library out of focus the prefetch band and the scroll-back
+                // cushion are dead weight; the window the view is showing is kept, so
+                // returning to the same scroll position is still instant. A scroll
+                // into the trimmed band re-decodes those covers asynchronously.
+                if !is_library_focused {
+                    let dropped = self.library_manager.cover_store.trim_outside_window();
+                    tracing::debug!(
+                        target: "audoxidy::covers",
+                        dropped,
+                        retained_bytes = self.library_manager.cover_store.bytes(),
+                        "GC: carátulas decodificadas fuera de la ventana liberadas"
+                    );
+                }
 
                 // 4. Liberar la memoria de la pre-carga de audio (seguro durante la
                 //    reproducción: no reinicia el stream). NO se resetea

@@ -710,13 +710,10 @@ fn test_cover_cache_retains_scroll_back_cushion() {
         );
     }
 
-    // The collection pass must not empty the cushion either: the byte budget is
-    // the only thing that decides what a scroll leaves behind.
-    let memory_source = include_str!("../app/update/memory.rs");
-    assert!(
-        !memory_source.contains(concat!(".trim_outside_", "window(")),
-        "la recolección no puede recortar la caché de carátulas"
-    );
+    // Owner decision 2026-11-14: the collection pass trims the covers outside the
+    // window when the library is out of focus, and keeps the window. The behavioral
+    // test above (`test_cover_cache_trim_outside_window_keeps_window`) pins that the
+    // visible window is never dropped.
 }
 
 #[test]

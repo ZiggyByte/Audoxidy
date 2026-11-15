@@ -517,6 +517,33 @@ fn open_preload_track(
     Ok(())
 }
 
+/// Delay after the promoted head drains before its retained capacity is released.
+///
+/// Releasing at the DRAIN→DECODE edge is what caused the old audible cut: the
+/// allocator ran while the ring was draining. Waiting this long puts the release
+/// in the middle of the track, where the ring is at its target.
+const PRELOAD_SHRINK_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Minimum retained bytes worth a deallocation.
+const PRELOAD_SHRINK_MIN_BYTES: usize = 1024 * 1024;
+
+/// Whether the idle preload capacity may be released now.
+///
+/// The four conditions are what keep the release away from the transition: no
+/// pending head, no preload being built, the delay already elapsed, and enough
+/// retained bytes to be worth the allocator work.
+fn should_release_preload_idle(
+    pending_empty: bool,
+    preload_busy: bool,
+    idle: Option<std::time::Duration>,
+    retained_bytes: usize,
+) -> bool {
+    pending_empty
+        && !preload_busy
+        && idle.is_some_and(|elapsed| elapsed >= PRELOAD_SHRINK_IDLE)
+        && retained_bytes >= PRELOAD_SHRINK_MIN_BYTES
+}
+
 /// Decodifica un lote de la pista pre-cargada y lo añade (f64 interleaved,
 /// ya resampleado a `out_rate × out_channels`) al buffer de pre-decode.
 ///
@@ -1404,6 +1431,8 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut predecode_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     let mut predecode_cap_frames: usize = 0;
     let mut preloaded_pending: Vec<f64> = Vec::new();
+    let mut preload_drained_at: Option<std::time::Instant> = None;
+    let mut preload_had_pending = false;
     // Resampler propio de la pre-carga (independiente del de la pista actual).
     let mut preload_resampler: Option<Async<f64>> = None;
     let mut preload_resampler_rates: Option<(u32, u32, usize)> = None;
@@ -1435,6 +1464,18 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut tail_buffer_cap: usize = 0;
 
     loop {
+        // Track when the promoted head finishes draining. The capacity is released
+        // later, never at this edge: that deallocation was audible in the past.
+        if preloaded_pending.is_empty() {
+            if preload_had_pending {
+                preload_had_pending = false;
+                preload_drained_at = Some(std::time::Instant::now());
+            }
+        } else {
+            preload_had_pending = true;
+            preload_drained_at = None;
+        }
+
         // Limpieza TOTAL por ciclo para evitar que datos fantasmas (basura residual) se queden en el acumulador.
         // Esto erradica los pitidos y zumbidos al cambiar de canción o al procesar OGG irregulares.
         output_accumulator.clear();
@@ -2188,6 +2229,26 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         .map(|p| p.capacity().get())
                         .unwrap_or(0),
                     target_latency_samples
+                );
+            }
+
+            // Release the retained preload capacity once the promoted head has been
+            // consumed and no new preload is being built. The ring is at its target
+            // in this branch, so the allocator work is masked by buffered audio.
+            let retained_bytes = (predecode_buffer.capacity() + preloaded_pending.capacity())
+                * std::mem::size_of::<f64>();
+            if should_release_preload_idle(
+                preloaded_pending.is_empty(),
+                preload_pending.is_some() || preload_format.is_some(),
+                preload_drained_at.map(|instant| instant.elapsed()),
+                retained_bytes,
+            ) {
+                predecode_buffer.shrink_to_fit();
+                preloaded_pending.shrink_to_fit();
+                preload_drained_at = None;
+                tracing::debug!(
+                    "Pre-carga ociosa: capacidad liberada ({} KiB)",
+                    retained_bytes / 1024
                 );
             }
 
@@ -4436,5 +4497,41 @@ mod preload_handoff_tests {
         assert_eq!(head.len(), 20);
         assert_eq!(head.front().copied(), Some(0.0));
         assert_eq!(head.back().copied(), Some(19.0));
+    }
+}
+
+#[cfg(test)]
+mod preload_shrink_tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn test_idle_preload_release_waits_for_the_drain_and_the_delay() {
+        let eight_mib = 8 << 20;
+
+        assert!(
+            !should_release_preload_idle(true, false, Some(Duration::from_secs(29)), eight_mib),
+            "no se libera antes del retardo"
+        );
+        assert!(
+            should_release_preload_idle(true, false, Some(Duration::from_secs(30)), eight_mib),
+            "con el retardo cumplido y el ring lleno sí se libera"
+        );
+        assert!(
+            !should_release_preload_idle(false, false, Some(Duration::from_secs(60)), eight_mib),
+            "no se libera mientras queda cabeza pendiente"
+        );
+        assert!(
+            !should_release_preload_idle(true, true, Some(Duration::from_secs(60)), eight_mib),
+            "no se libera con una precarga en curso"
+        );
+        assert!(
+            !should_release_preload_idle(true, false, None, eight_mib),
+            "sin un drenado registrado no hay nada que liberar"
+        );
+        assert!(
+            !should_release_preload_idle(true, false, Some(Duration::from_secs(60)), 512 * 1024),
+            "por debajo del umbral no merece la pena desasignar"
+        );
     }
 }

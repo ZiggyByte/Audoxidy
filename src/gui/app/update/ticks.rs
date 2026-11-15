@@ -177,7 +177,7 @@ impl crate::gui::app::AudoxidyApp {
                         && self.player_ui_state.current_cover_path != cover_path.as_ref()
                     {
                         self.player_ui_state.prefetched_next_handle =
-                            crate::gui::player::load_cover_handle(cover_path.as_ref());
+                            Some(iced::widget::image::Handle::from_path(cover_path.as_ref()));
                     }
                     // The preload decision (15s window and per-track
                     // dedup) lives in the Core domain; the cover is

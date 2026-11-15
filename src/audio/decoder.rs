@@ -517,33 +517,6 @@ fn open_preload_track(
     Ok(())
 }
 
-/// Delay after the promoted head drains before its retained capacity is released.
-///
-/// Releasing at the DRAIN→DECODE edge is what caused the old audible cut: the
-/// allocator ran while the ring was draining. Waiting this long puts the release
-/// in the middle of the track, where the ring is at its target.
-const PRELOAD_SHRINK_IDLE: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Minimum retained bytes worth a deallocation.
-const PRELOAD_SHRINK_MIN_BYTES: usize = 1024 * 1024;
-
-/// Whether the idle preload capacity may be released now.
-///
-/// The four conditions are what keep the release away from the transition: no
-/// pending head, no preload being built, the delay already elapsed, and enough
-/// retained bytes to be worth the allocator work.
-fn should_release_preload_idle(
-    pending_empty: bool,
-    preload_busy: bool,
-    idle: Option<std::time::Duration>,
-    retained_bytes: usize,
-) -> bool {
-    pending_empty
-        && !preload_busy
-        && idle.is_some_and(|elapsed| elapsed >= PRELOAD_SHRINK_IDLE)
-        && retained_bytes >= PRELOAD_SHRINK_MIN_BYTES
-}
-
 /// Decodifica un lote de la pista pre-cargada y lo añade (f64 interleaved,
 /// ya resampleado a `out_rate × out_channels`) al buffer de pre-decode.
 ///
@@ -737,6 +710,36 @@ fn preload_decode_batch(
     let appended = append_preload_batch(predecode_buffer, &mut batch_out);
     record_batch(&span, start, appended / out_channels.max(1), out_channels);
     true
+}
+
+/// Moves the predecoded head into the pending queue without copying it.
+///
+/// The head from the previous track has already drained, so the two buffers can
+/// exchange roles: the filled one becomes the pending queue and the empty one is
+/// ready for the next preload. Only a track shorter than the head leaves data in
+/// the pending queue, and then the tail is appended (the one case that allocates).
+fn promote_preload_head(
+    pending: &mut std::collections::VecDeque<f64>,
+    predecode: &mut std::collections::VecDeque<f64>,
+) {
+    if predecode.is_empty() {
+        return;
+    }
+    if pending.is_empty() {
+        std::mem::swap(pending, predecode);
+    } else {
+        pending.extend(predecode.drain(..));
+    }
+}
+
+/// Hands the drained pending buffer to the preloader when it is the larger one.
+fn reuse_drained_preload_buffer(
+    pending: &mut std::collections::VecDeque<f64>,
+    predecode: &mut std::collections::VecDeque<f64>,
+) {
+    if pending.is_empty() && predecode.is_empty() && pending.capacity() > predecode.capacity() {
+        std::mem::swap(predecode, pending);
+    }
 }
 
 /// Appends one decoded preload batch to the pre-decode head.
@@ -1216,7 +1219,7 @@ fn begin_forward_crossfade(
         Option<f64>,
         Option<f64>,
     )>,
-    preloaded_pending: &mut Vec<f64>,
+    preloaded_pending: &mut std::collections::VecDeque<f64>,
     fade_state: &mut FadeState,
     silence_samples: &mut usize,
     in_silence: &mut bool,
@@ -1255,9 +1258,10 @@ fn begin_forward_crossfade(
     *resample_output_pool = std::mem::take(preload_output_pool);
 
     // 3. El inicio de la primaria (0→X) ya está decodificado en el predecode.
-    if !predecode_buffer.is_empty() {
-        preloaded_pending.extend(predecode_buffer.drain(..));
-    }
+    //    La cabeza anterior ya se drenó, así que los dos buffers pueden intercambiar
+    //    su papel sin copiar ni reservar: el mismo bloque de memoria pasa a ser la
+    //    cola pendiente y el buffer vacío queda listo para la siguiente precarga.
+    promote_preload_head(preloaded_pending, predecode_buffer);
 
     // 4. Actualizar el estado compartido a la primaria.
     {
@@ -1430,9 +1434,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     )> = None;
     let mut predecode_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     let mut predecode_cap_frames: usize = 0;
-    let mut preloaded_pending: Vec<f64> = Vec::new();
-    let mut preload_drained_at: Option<std::time::Instant> = None;
-    let mut preload_had_pending = false;
+    let mut preloaded_pending: std::collections::VecDeque<f64> = std::collections::VecDeque::new();
     // Resampler propio de la pre-carga (independiente del de la pista actual).
     let mut preload_resampler: Option<Async<f64>> = None;
     let mut preload_resampler_rates: Option<(u32, u32, usize)> = None;
@@ -1464,18 +1466,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     let mut tail_buffer_cap: usize = 0;
 
     loop {
-        // Track when the promoted head finishes draining. The capacity is released
-        // later, never at this edge: that deallocation was audible in the past.
-        if preloaded_pending.is_empty() {
-            if preload_had_pending {
-                preload_had_pending = false;
-                preload_drained_at = Some(std::time::Instant::now());
-            }
-        } else {
-            preload_had_pending = true;
-            preload_drained_at = None;
-        }
-
         // Limpieza TOTAL por ciclo para evitar que datos fantasmas (basura residual) se queden en el acumulador.
         // Esto erradica los pitidos y zumbidos al cambiar de canción o al procesar OGG irregulares.
         output_accumulator.clear();
@@ -2232,26 +2222,6 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 );
             }
 
-            // Release the retained preload capacity once the promoted head has been
-            // consumed and no new preload is being built. The ring is at its target
-            // in this branch, so the allocator work is masked by buffered audio.
-            let retained_bytes = (predecode_buffer.capacity() + preloaded_pending.capacity())
-                * std::mem::size_of::<f64>();
-            if should_release_preload_idle(
-                preloaded_pending.is_empty(),
-                preload_pending.is_some() || preload_format.is_some(),
-                preload_drained_at.map(|instant| instant.elapsed()),
-                retained_bytes,
-            ) {
-                predecode_buffer.shrink_to_fit();
-                preloaded_pending.shrink_to_fit();
-                preload_drained_at = None;
-                tracing::debug!(
-                    "Pre-carga ociosa: capacidad liberada ({} KiB)",
-                    retained_bytes / 1024
-                );
-            }
-
             // Tiempo de espera (el ringbuf está al target de latencia): aprovechamos
             // este momento —que es donde el decoder pasa la mayor parte del tiempo—
             // para decodificar la pista pre-cargada en segundo plano. Sin esto, el
@@ -2260,6 +2230,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // Primero se abre la pista pendiente (diferido del handler de comandos
             // para no bloquear la reproducción) y luego se decodifica un lote.
             if preload_pending.is_some() && preload_format.is_none() {
+                // The previous head drained long ago; reuse its empty buffer for
+                // this preload instead of allocating a second one.
+                reuse_drained_preload_buffer(&mut preloaded_pending, &mut predecode_buffer);
                 let t_open = std::time::Instant::now();
                 if let Err(e) = open_preload_track(
                     &mut preload_pending,
@@ -4501,37 +4474,50 @@ mod preload_handoff_tests {
 }
 
 #[cfg(test)]
-mod preload_shrink_tests {
+mod preload_buffer_tests {
     use super::*;
-    use std::time::Duration;
+    use std::collections::VecDeque;
 
     #[test]
-    fn test_idle_preload_release_waits_for_the_drain_and_the_delay() {
-        let eight_mib = 8 << 20;
+    fn test_promotion_moves_the_head_without_copying_or_losing_samples() {
+        let mut predecode: VecDeque<f64> = (0..8).map(|value| value as f64).collect();
+        let mut pending: VecDeque<f64> = VecDeque::new();
 
+        promote_preload_head(&mut pending, &mut predecode);
+
+        assert_eq!(pending.len(), 8);
+        assert_eq!(pending.front().copied(), Some(0.0));
+        assert_eq!(pending.back().copied(), Some(7.0));
         assert!(
-            !should_release_preload_idle(true, false, Some(Duration::from_secs(29)), eight_mib),
-            "no se libera antes del retardo"
+            predecode.is_empty(),
+            "el buffer queda listo para reutilizarse"
         );
-        assert!(
-            should_release_preload_idle(true, false, Some(Duration::from_secs(30)), eight_mib),
-            "con el retardo cumplido y el ring lleno sí se libera"
+    }
+
+    #[test]
+    fn test_promotion_appends_when_the_pending_queue_still_has_data() {
+        let mut predecode: VecDeque<f64> = vec![1.0, 2.0].into();
+        let mut pending: VecDeque<f64> = vec![9.0].into();
+
+        promote_preload_head(&mut pending, &mut predecode);
+
+        assert_eq!(
+            pending.iter().copied().collect::<Vec<_>>(),
+            vec![9.0, 1.0, 2.0]
         );
-        assert!(
-            !should_release_preload_idle(false, false, Some(Duration::from_secs(60)), eight_mib),
-            "no se libera mientras queda cabeza pendiente"
-        );
-        assert!(
-            !should_release_preload_idle(true, true, Some(Duration::from_secs(60)), eight_mib),
-            "no se libera con una precarga en curso"
-        );
-        assert!(
-            !should_release_preload_idle(true, false, None, eight_mib),
-            "sin un drenado registrado no hay nada que liberar"
-        );
-        assert!(
-            !should_release_preload_idle(true, false, Some(Duration::from_secs(60)), 512 * 1024),
-            "por debajo del umbral no merece la pena desasignar"
-        );
+        assert!(predecode.is_empty());
+    }
+
+    #[test]
+    fn test_drained_pending_buffer_is_reused_by_the_next_preload() {
+        let mut pending: VecDeque<f64> = VecDeque::with_capacity(64);
+        let mut predecode: VecDeque<f64> = VecDeque::new();
+        let reusable = pending.capacity();
+
+        reuse_drained_preload_buffer(&mut pending, &mut predecode);
+
+        assert_eq!(predecode.capacity(), reusable);
+        assert!(predecode.is_empty());
+        assert_eq!(pending.capacity(), 0);
     }
 }

@@ -121,6 +121,17 @@ impl AudoxidyApp {
                         "Renombrar".to_string(),
                     )
                 },
+                ActiveDialog::PlaylistError { message } => {
+                    crate::gui::widgets::standard_modal(
+                        "No se pudo completar la operación".to_string(),
+                        iced::widget::column![crate::gui::widgets::modal_text(message.clone())]
+                            .spacing(SPACE_MD)
+                            .into(),
+                        Some(Message::CloseDialog),
+                        None,
+                        "Cerrar".to_string(),
+                    )
+                }
                 ActiveDialog::DeleteConfirm { name, .. } => {
                     crate::gui::widgets::standard_modal(
                         "¿Eliminar lista?".to_string(),

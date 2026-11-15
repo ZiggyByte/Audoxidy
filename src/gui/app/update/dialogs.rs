@@ -67,7 +67,22 @@ impl crate::gui::app::AudoxidyApp {
                         pending_add_songs,
                     } => {
                         let final_name = if name.trim().is_empty() {
-                            format!("Nueva lista {}", self.playlist_manager.playlists.len() + 1)
+                            // The old `len + 1` collided after any deletion. Walk
+                            // until a free name is found so the unique constraint
+                            // cannot reject an automatic name.
+                            let mut index = self.playlist_manager.playlists.len() + 1;
+                            loop {
+                                let candidate = format!("Nueva lista {index}");
+                                if !self
+                                    .playlist_manager
+                                    .playlists
+                                    .iter()
+                                    .any(|playlist| playlist.name == candidate)
+                                {
+                                    break candidate;
+                                }
+                                index += 1;
+                            }
                         } else {
                             name
                         };
@@ -75,10 +90,14 @@ impl crate::gui::app::AudoxidyApp {
                         let target_songs = pending_add_songs;
                         return Task::perform(
                             async move {
-                                core.create_playlist_with_songs(&final_name, &target_songs)
-                                    .ok()
+                                match core.create_playlist_with_songs(&final_name, &target_songs) {
+                                    Ok(_) => None,
+                                    Err(error) => Some(format!(
+                                        "No se pudo crear la lista «{final_name}»: {error}"
+                                    )),
+                                }
                             },
-                            Message::RefreshPlaylists,
+                            Message::PlaylistOperationFinished,
                         );
                     }
                     ActiveDialog::RenamePlaylist { id, new_name, .. } => {
@@ -96,14 +115,26 @@ impl crate::gui::app::AudoxidyApp {
                                 let source_id = id;
                                 return Task::perform(
                                     async move {
-                                        core.rename_system_playlist(source_id, &final_name).ok()
+                                        match core.rename_system_playlist(source_id, &final_name) {
+                                            Ok(_) => None,
+                                            Err(error) => Some(format!(
+                                                "No se pudo renombrar la lista «{final_name}»: {error}"
+                                            )),
+                                        }
                                     },
-                                    Message::RefreshPlaylists,
+                                    Message::PlaylistOperationFinished,
                                 );
                             } else {
                                 return Task::perform(
-                                    async move { core.rename_playlist(id, &new_name).ok().map(|_| id) },
-                                    Message::RefreshPlaylists,
+                                    async move {
+                                        match core.rename_playlist(id, &new_name) {
+                                            Ok(_) => None,
+                                            Err(error) => Some(format!(
+                                                "No se pudo renombrar la lista «{new_name}»: {error}"
+                                            )),
+                                        }
+                                    },
+                                    Message::PlaylistOperationFinished,
                                 );
                             }
                         }

@@ -110,6 +110,18 @@ impl Core {
         Ok(())
     }
 
+    /// Swaps the position of two songs in one playlist in a single transaction.
+    pub fn swap_playlist_item_order(
+        &self,
+        playlist_id: i64,
+        first_song_id: i64,
+        second_song_id: i64,
+    ) -> Result<(), CoreError> {
+        let mut db = self.lock_db()?;
+        db.swap_playlist_item_order(playlist_id, first_song_id, second_song_id)?;
+        Ok(())
+    }
+
     /// Sets the enabled flag of many playlist items in one transaction.
     pub fn set_songs_enabled_in_playlist(
         &self,

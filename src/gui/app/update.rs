@@ -65,6 +65,8 @@ impl crate::gui::app::AudoxidyApp {
             | Message::TogglePlaylistFolder(..)
             | Message::CreatePlaylist
             | Message::RefreshPlaylists(..)
+            | Message::PlaylistOperationFinished(..)
+            | Message::PlaylistMoveSong(..)
             | Message::InternalPlaylistsRefreshed(..)
             | Message::ExportPlaylist(..)
             | Message::SwitchPlaylist(..)

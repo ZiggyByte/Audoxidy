@@ -95,7 +95,10 @@ pub struct PlaylistSongRef {
 pub struct PlaylistFolderGroup {
     pub folder_path: std::sync::Arc<str>,
     pub folder_name: std::sync::Arc<str>,
-    pub songs: Vec<PlaylistSongRef>,
+    /// Shared song entries. The filtered view clones these `Arc`s instead of the
+    /// 200-byte structs, so filtering a large playlist costs ~8 bytes per match
+    /// instead of a full copy.
+    pub songs: Vec<std::sync::Arc<PlaylistSongRef>>,
     pub total_duration: f64,
     pub first_item_id: i64,
 }

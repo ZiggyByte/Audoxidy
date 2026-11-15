@@ -32,7 +32,7 @@ impl PlaylistManager {
             .groups
             .par_iter()
             .filter_map(|group| {
-                let matching_songs: Vec<PlaylistSongRef> = group
+                let matching_songs: Vec<std::sync::Arc<PlaylistSongRef>> = group
                     .songs
                     .iter()
                     .filter(|s| {
@@ -158,7 +158,7 @@ impl PlaylistManager {
             }
             let song_local_idx = linear_idx - count - 1;
             if song_local_idx < group.songs.len() {
-                return Some(&group.songs[song_local_idx]);
+                return Some(group.songs[song_local_idx].as_ref());
             }
             count += 1 + group.songs.len();
         }
@@ -457,7 +457,7 @@ impl PlaylistManager {
             }
             let song_local_idx = linear_idx - count - 1;
             if song_local_idx < group.songs.len() {
-                return Some(&mut group.songs[song_local_idx]);
+                return Some(std::sync::Arc::make_mut(&mut group.songs[song_local_idx]));
             }
             count += 1 + group.songs.len();
         }
@@ -498,7 +498,7 @@ impl PlaylistManager {
             for group in &mut self.groups {
                 for song in &mut group.songs {
                     if song.song_id == sid {
-                        song.enabled = enabled;
+                        std::sync::Arc::make_mut(song).enabled = enabled;
                         break;
                     }
                 }
@@ -518,7 +518,7 @@ impl PlaylistManager {
             for group in &mut self.groups {
                 for song in &mut group.songs {
                     if song.song_id == sid {
-                        song.enabled = enabled;
+                        std::sync::Arc::make_mut(song).enabled = enabled;
                         break;
                     }
                 }
@@ -546,7 +546,7 @@ impl PlaylistManager {
                 let any_enabled = group.songs.iter().any(|s| s.enabled);
                 let state = !any_enabled;
                 for song in &mut group.songs {
-                    song.enabled = state;
+                    std::sync::Arc::make_mut(song).enabled = state;
                 }
                 anchor = Some(group.first_item_id);
                 new_state = Some(state);
@@ -557,7 +557,7 @@ impl PlaylistManager {
             && let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a)
         {
             for song in &mut group.songs {
-                song.enabled = enabled;
+                std::sync::Arc::make_mut(song).enabled = enabled;
             }
         }
     }
@@ -578,7 +578,7 @@ impl PlaylistManager {
 
             if let Some(group) = groups.get_mut(gi) {
                 for song in &mut group.songs {
-                    song.enabled = enabled;
+                    std::sync::Arc::make_mut(song).enabled = enabled;
                 }
                 anchor = Some(group.first_item_id);
             }
@@ -588,7 +588,7 @@ impl PlaylistManager {
             && let Some(group) = self.groups.iter_mut().find(|g| g.first_item_id == a)
         {
             for song in &mut group.songs {
-                song.enabled = enabled;
+                std::sync::Arc::make_mut(song).enabled = enabled;
             }
         }
     }

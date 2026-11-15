@@ -52,6 +52,7 @@ pub enum Message {
     CreatePlaylist,
     ExportPlaylist(i64, String, ExportFormat, ExportMode), // id, target_path, format, mode
     RefreshPlaylists(Option<i64>),
+    PlaylistOperationFinished(Option<String>),
     InternalPlaylistsRefreshed(Vec<crate::db::database::PlaylistData>, Option<i64>),
     InternalPlaylistLoaded(
         i64,
@@ -186,6 +187,7 @@ pub enum Message {
     PlaylistShowFileLocation(usize),
     PlaylistShowInLibrary(usize),
     PlaylistDeleteSelection(usize),
+    PlaylistMoveSong(usize, i8),
     PlaylistRequestSubMenu(usize),
     PlaylistSendToNewList(usize),
     PlaylistSendToList(usize, i64),
@@ -232,6 +234,11 @@ pub enum ActiveDialog {
         id: i64,
         current_name: String,
         new_name: String,
+    },
+    /// A playlist create/rename failed; shown as its own modal so the error is
+    /// not swallowed by the dialog closing.
+    PlaylistError {
+        message: String,
     },
     DeleteConfirm {
         id: i64,

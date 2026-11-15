@@ -43,7 +43,6 @@ pub struct PlaylistManager {
     pub show_tab_dropdown: bool,
 
     /// IDs de pestañas visibles (para overflow management)
-    pub visible_tabs_count: Option<usize>,
 
     /// Sesión de shuffle activa
     pub shuffle_session: Option<ShuffleSession>,
@@ -84,7 +83,6 @@ impl Default for PlaylistManager {
             search_query: String::new(),
             filtered_groups: None,
             show_tab_dropdown: false,
-            visible_tabs_count: None,
             shuffle_session: None,
             playlists: Vec::new(),
             collapsed_groups: std::collections::HashSet::new(),
@@ -99,7 +97,10 @@ impl Default for PlaylistManager {
 
 /// Aplanar todos los grupos en un solo índice lineal
 pub fn flatten_groups(groups: &[PlaylistFolderGroup]) -> Vec<&PlaylistSongRef> {
-    groups.iter().flat_map(|g| g.songs.iter()).collect()
+    groups
+        .iter()
+        .flat_map(|g| g.songs.iter().map(|song| song.as_ref()))
+        .collect()
 }
 
 /// Contar items lineales (separadores + canciones)

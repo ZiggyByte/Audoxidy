@@ -256,44 +256,9 @@ fn build_tab_dropdown_button<'a>(manager: &'a PlaylistManager) -> Element<'a, Me
     )
 }
 
-fn build_dropdown_menu<'a>(
-    playlists: &[crate::db::database::PlaylistData],
-    visible_count: usize,
-) -> Element<'a, Message> {
-    let mut items = column![].padding([SPACE_XS, SPACE_SM]).spacing(SPACE_XS);
-
-    for p_data in playlists.iter().skip(visible_count) {
-        let name = &p_data.name;
-        let id = p_data.id;
-
-        let item = text(name.clone())
-            .size(14)
-            .color(COLOR_TEXT_SECONDARY)
-            .font(FONT_INTER_SANS_MEDIUM);
-
-        let item_btn = button(item)
-            .width(Length::Fill)
-            .padding([SPACE_XS, SPACE_XS])
-            .style(|_t: &Theme, _s| button::Style::default().with_background(COLOR_BG))
-            .on_press(Message::SwitchPlaylist(id, false));
-
-        items = items.push(item_btn);
-    }
-
-    container(items)
-        .width(Length::Fill)
-        .style(|_t: &Theme| container::Style {
-            background: Some(Background::Color(COLOR_CONTRAST)),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-// ============================================================
-// Lista de canciones con separadores de carpeta
-// ============================================================
-
+/// Height of one playlist song row; it is the shared list row token.
 pub(in crate::gui::playlist) const SONG_ROW_HEIGHT: f32 = PLAYLIST_ROW;
+/// Height of one playlist folder separator; it uses the same row token.
 pub(in crate::gui::playlist) const FOLDER_SEPARATOR_HEIGHT: f32 = PLAYLIST_ROW;
 
 fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
@@ -402,6 +367,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
                     songs_col = songs_col.push(build_song_row(
                         song,
+                        *s_idx + 1,
                         *linear_idx,
                         is_playing,
                         is_selected,
@@ -526,6 +492,7 @@ fn build_folder_separator<'a>(
 
 fn build_song_row<'a>(
     song: &'a PlaylistSongRef,
+    song_number: usize,
     linear_idx: usize,
     is_playing: bool,
     is_selected: bool,
@@ -556,7 +523,7 @@ fn build_song_row<'a>(
     let track_prefix = if let Some(ref tn) = song.track_number {
         format!("{}.", tn)
     } else {
-        format!("{:02}.", linear_idx)
+        format!("{:02}.", song_number)
     };
 
     let prefix_width = 20.0;

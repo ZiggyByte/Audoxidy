@@ -22,8 +22,8 @@ mod tests {
     use super::*;
     use crate::db::database::{PlaylistFolderGroup, PlaylistSongRef, ShuffleSession};
 
-    fn make_song(song_id: i64, path: &str) -> PlaylistSongRef {
-        PlaylistSongRef {
+    fn make_song(song_id: i64, path: &str) -> std::sync::Arc<PlaylistSongRef> {
+        std::sync::Arc::new(PlaylistSongRef {
             item_id: song_id,
             song_id,
             sequence_order: song_id as f64,
@@ -41,10 +41,10 @@ mod tests {
             folder_name: "Raíz".into(),
             cover_path: None,
             cover_override: None,
-        }
+        })
     }
 
-    fn manager_with_songs(songs: Vec<PlaylistSongRef>) -> PlaylistManager {
+    fn manager_with_songs(songs: Vec<std::sync::Arc<PlaylistSongRef>>) -> PlaylistManager {
         let mut pm = PlaylistManager::default();
         pm.set_groups(vec![PlaylistFolderGroup {
             folder_path: "/".into(),
@@ -59,7 +59,7 @@ mod tests {
     #[test]
     fn test_get_next_song_ref_sequential_skips_disabled() {
         let mut songs = vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")];
-        songs[0].enabled = false; // La actual está deshabilitada
+        std::sync::Arc::make_mut(&mut songs[0]).enabled = false; // La actual está deshabilitada
         let pm = manager_with_songs(songs);
         // playing_song_idx apunta a la canción 1 (índice lineal 1: separador + 0)
         let pm2 = PlaylistManager {
@@ -79,7 +79,7 @@ mod tests {
             make_song(2, "/b.flac"),
             make_song(3, "/c.flac"),
         ];
-        songs[0].enabled = false;
+        std::sync::Arc::make_mut(&mut songs[0]).enabled = false;
         let mut pm = manager_with_songs(songs);
         pm.shuffle_active = true;
         pm.shuffle_session = Some(ShuffleSession {

@@ -12,6 +12,16 @@ pub fn get_item_context_menu_entries(
             action: Some(Message::PlaylistContextMenuPlay(linear_idx)),
         },
         ContextMenuEntry {
+            label: "Mover arriba".to_string(),
+            icon: Some("arrow-up-chevron.svg".to_string()),
+            action: Some(Message::PlaylistMoveSong(linear_idx, -1)),
+        },
+        ContextMenuEntry {
+            label: "Mover abajo".to_string(),
+            icon: Some("arrow-down-chevron.svg".to_string()),
+            action: Some(Message::PlaylistMoveSong(linear_idx, 1)),
+        },
+        ContextMenuEntry {
             label: "".to_string(),
             icon: None,
             action: None,

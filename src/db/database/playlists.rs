@@ -358,6 +358,38 @@ impl Database {
         Ok(())
     }
 
+    /// Swaps the `sequence_order` of two items of the same playlist.
+    ///
+    /// One transaction: a reorder must never leave both rows with the same order
+    /// or commit only one of the two updates.
+    pub fn swap_playlist_item_order(
+        &mut self,
+        playlist_id: i64,
+        first_song_id: i64,
+        second_song_id: i64,
+    ) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let first_order: f64 = tx.query_row(
+            "SELECT sequence_order FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
+            params![playlist_id, first_song_id],
+            |row| row.get(0),
+        )?;
+        let second_order: f64 = tx.query_row(
+            "SELECT sequence_order FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
+            params![playlist_id, second_song_id],
+            |row| row.get(0),
+        )?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE PLAYLIST_ITEMS SET sequence_order = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
+            )?;
+            stmt.execute(params![second_order, playlist_id, first_song_id])?;
+            stmt.execute(params![first_order, playlist_id, second_song_id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Actualiza el sequence_order de una canción (para reordenamiento drag-and-drop).
     pub fn update_playlist_item_order(
         &self,
@@ -526,8 +558,15 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for s in rows.flatten() {
-            results.push(s);
+        for row in rows {
+            match row {
+                Ok(song) => results.push(song),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila de canción de playlist ilegible"
+                ),
+            }
         }
         Ok(results)
     }
@@ -612,8 +651,15 @@ impl Database {
         })?;
 
         let mut results = Vec::new();
-        for s in rows.flatten() {
-            results.push(s);
+        for row in rows {
+            match row {
+                Ok(song) => results.push(song),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila de canción de playlist ilegible"
+                ),
+            }
         }
         Ok(results)
     }
@@ -648,7 +694,7 @@ impl Database {
             if is_same_folder {
                 if let Some(group) = groups.last_mut() {
                     group.total_duration += song.duration;
-                    group.songs.push(song);
+                    group.songs.push(std::sync::Arc::new(song));
                 }
             } else {
                 let first_item_id = song.item_id;
@@ -661,7 +707,7 @@ impl Database {
                     folder_name,
                     total_duration: duration,
                     first_item_id,
-                    songs: vec![song],
+                    songs: vec![std::sync::Arc::new(song)],
                 });
             }
         }
@@ -792,8 +838,15 @@ impl Database {
         let mut history = Vec::new();
         let history_rows =
             stmt_history.query_map(params![playlist_id, session_id], |r| r.get(0))?;
-        for song_id in history_rows.flatten() {
-            history.push(song_id);
+        for row in history_rows {
+            match row {
+                Ok(song_id) => history.push(song_id),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila del historial de shuffle ilegible"
+                ),
+            }
         }
 
         // Cargar shuffle_order (play_order < 0), ordenado por valor absoluto
@@ -803,8 +856,15 @@ impl Database {
 
         let mut shuffle_order = Vec::new();
         let order_rows = stmt_order.query_map(params![playlist_id, session_id], |r| r.get(0))?;
-        for song_id in order_rows.flatten() {
-            shuffle_order.push(song_id);
+        for row in order_rows {
+            match row {
+                Ok(song_id) => shuffle_order.push(song_id),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila del orden de shuffle ilegible"
+                ),
+            }
         }
 
         // 3. Obtener la posición actual desde PLAYLISTS
@@ -856,8 +916,15 @@ impl Database {
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
 
         let mut results = Vec::new();
-        for song_id in rows.flatten() {
-            results.push(song_id);
+        for row in rows {
+            match row {
+                Ok(song_id) => results.push(song_id),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila de id de canción de playlist ilegible"
+                ),
+            }
         }
         Ok(results)
     }
@@ -871,8 +938,15 @@ impl Database {
         let rows = stmt.query_map([playlist_id], |r| r.get(0))?;
 
         let mut results = Vec::new();
-        for song_id in rows.flatten() {
-            results.push(song_id);
+        for row in rows {
+            match row {
+                Ok(song_id) => results.push(song_id),
+                Err(error) => tracing::warn!(
+                    target: "audoxidy::persistence",
+                    error = %error,
+                    "Fila de id de canción de playlist ilegible"
+                ),
+            }
         }
         Ok(results)
     }

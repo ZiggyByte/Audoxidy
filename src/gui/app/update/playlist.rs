@@ -238,6 +238,16 @@ impl crate::gui::app::AudoxidyApp {
                     },
                 )
             }
+            Message::PlaylistOperationFinished(error) => {
+                if let Some(message) = error {
+                    // Surface the failure instead of closing the dialog silently.
+                    self.active_dialog = ActiveDialog::PlaylistError { message };
+                    self.dialog_pos = Some(self.last_mouse_pos);
+                    Task::none()
+                } else {
+                    self.update(Message::RefreshPlaylists(None))
+                }
+            }
             Message::InternalPlaylistsRefreshed(playlists, id_opt) => {
                 let active_id = self.playlist_manager.active_playlist_id;
                 self.playlist_manager.playlists = playlists;
@@ -871,6 +881,59 @@ impl crate::gui::app::AudoxidyApp {
                 }
                 focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
+            Message::PlaylistMoveSong(linear_idx, direction) => {
+                self.focus = AppFocus::Playlist;
+                self.context_menu = None;
+                use crate::gui::playlist::PlaylistItemType;
+
+                let Some(PlaylistItemType::Song(g_idx, s_idx, _)) = self
+                    .playlist_manager
+                    .get_item_info_at_linear_index(linear_idx)
+                else {
+                    return Task::none();
+                };
+
+                let target_idx = if direction < 0 {
+                    match s_idx.checked_sub(1) {
+                        Some(index) => index,
+                        None => return Task::none(),
+                    }
+                } else {
+                    s_idx + 1
+                };
+
+                let (first_id, second_id) = {
+                    let Some(group) = self.playlist_manager.active_groups().get(g_idx) else {
+                        return Task::none();
+                    };
+                    let Some(first) = group.songs.get(s_idx) else {
+                        return Task::none();
+                    };
+                    let Some(second) = group.songs.get(target_idx) else {
+                        return Task::none();
+                    };
+                    (first.song_id, second.song_id)
+                };
+
+                let core = self.core.clone();
+                let playlist_id = self.playlist_manager.active_playlist_id;
+                Task::perform(
+                    async move {
+                        if let Err(error) =
+                            core.swap_playlist_item_order(playlist_id, first_id, second_id)
+                        {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                playlist_id,
+                                error = %error,
+                                "No se pudo reordenar la canción en la playlist"
+                            );
+                        }
+                        playlist_id
+                    },
+                    |id| Message::SwitchPlaylist(id, false),
+                )
+            }
             Message::PlaylistRequestSubMenu(linear_idx) => {
                 let pos = self.last_mouse_pos;
                 use crate::gui::widgets::ContextMenuEntry;
@@ -1157,7 +1220,7 @@ impl crate::gui::app::AudoxidyApp {
                     for group in groups.iter_mut() {
                         for song in group.songs.iter_mut() {
                             if id_set.contains(&song.song_id) {
-                                song.enabled = target_enabled;
+                                std::sync::Arc::make_mut(song).enabled = target_enabled;
                             }
                         }
                     }

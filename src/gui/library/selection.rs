@@ -506,7 +506,56 @@ impl LibraryManager {
                 }
             }
         }
+        self.order_songs_by_album_for_playlist(&mut results);
         results
+    }
+
+    /// Orders a selection so every album's tracks stay together.
+    ///
+    /// The library snapshot is ordered by album title and track, not by album
+    /// identity, so selecting two versions of the same album returns their tracks
+    /// interleaved (track 1 of every version, then track 2). A playlist must
+    /// receive each version as a contiguous block, in the grid order, with its
+    /// tracks in track-number order.
+    fn order_songs_by_album_for_playlist(
+        &self,
+        songs: &mut Vec<Arc<crate::db::database::SongData>>,
+    ) {
+        let mut album_order = std::collections::HashMap::new();
+        if let Some(albums) = self
+            .filtered_albums
+            .as_ref()
+            .or(self.cached_albums.as_ref())
+        {
+            for (index, album) in albums.iter().enumerate() {
+                album_order.entry(album.id.as_str()).or_insert(index);
+            }
+        }
+
+        songs.sort_by(|a, b| {
+            let album_index = |song: &Arc<crate::db::database::SongData>| {
+                song.album_hash
+                    .as_deref()
+                    .and_then(|hash| album_order.get(hash).copied())
+                    .unwrap_or(usize::MAX)
+            };
+            let track = |song: &Arc<crate::db::database::SongData>| {
+                song.track_number
+                    .as_deref()
+                    .and_then(|value| value.parse::<u32>().ok())
+                    .unwrap_or(u32::MAX)
+            };
+
+            album_index(a)
+                .cmp(&album_index(b))
+                .then_with(|| track(a).cmp(&track(b)))
+                .then_with(|| {
+                    a.title
+                        .as_deref()
+                        .unwrap_or("")
+                        .cmp(b.title.as_deref().unwrap_or(""))
+                })
+        });
     }
 
     /// Obtiene el nombre del artista que se debe contraer/expandir según la dirección de la tecla flecha.
@@ -650,5 +699,63 @@ impl LibraryManager {
 
     pub fn select_song(&mut self, idx: Option<usize>) {
         self.selected_song_idx = idx;
+    }
+}
+
+#[cfg(test)]
+mod selection_order_tests {
+    use super::*;
+    use crate::db::database::SongData;
+    use crate::gui::library::types::AlbumEntry;
+
+    fn album(id: &str) -> AlbumEntry {
+        AlbumEntry {
+            id: id.to_string(),
+            title: "Hits".to_string(),
+            artist: "Artist".to_string(),
+            genre: "Rock".to_string(),
+            year: "1999".to_string(),
+            cover_path: None,
+        }
+    }
+
+    fn song(id: i64, album_hash: &str, track: &str) -> Arc<SongData> {
+        Arc::new(SongData {
+            id,
+            album_hash: Some(Arc::from(album_hash)),
+            album: Some(Arc::from("Hits")),
+            artist: Some(Arc::from("Artist")),
+            album_artist: Some(Arc::from("Artist")),
+            track_number: Some(Arc::from(track)),
+            title: Some(Arc::from(format!("Track {track}"))),
+            ..SongData::default()
+        })
+    }
+
+    #[test]
+    fn test_album_versions_are_kept_together_when_adding_to_a_playlist() {
+        let mut manager = LibraryManager::default();
+        manager.cached_albums = Some(vec![album("hash-b"), album("hash-a")]);
+        manager.cached_all_songs = Some(vec![
+            song(1, "hash-a", "1"),
+            song(2, "hash-b", "1"),
+            song(3, "hash-a", "2"),
+            song(4, "hash-b", "2"),
+        ]);
+        manager
+            .selected_items
+            .insert(LibraryListItem::Album("Artist|hash-b".to_string()));
+        manager
+            .selected_items
+            .insert(LibraryListItem::Album("Artist|hash-a".to_string()));
+
+        let selected = manager.get_selected_songs();
+        let ids: Vec<i64> = selected.iter().map(|song| song.id).collect();
+
+        assert_eq!(
+            ids,
+            vec![2, 4, 1, 3],
+            "cada versión va contigua, en orden de rejilla y de pista"
+        );
     }
 }

@@ -605,6 +605,30 @@ mod window_shell_tests {
     }
 
     #[test]
+    fn reanchor_uses_the_measured_width_after_a_layout() {
+        let minimum = crate::gui::library::grid_metrics::GridMetrics::minimum();
+        let predicted = predicted_reported_width(1200.0, minimum, 100.0);
+
+        assert!((predicted - 1300.0).abs() < f32::EPSILON);
+
+        let inferred = minimum.columns as f32 * minimum.card_width + ALBUM_SCROLLBAR_RAIL;
+        assert!(
+            predicted > inferred + 500.0,
+            "la anchura medida no puede confundirse con la inversión del mínimo"
+        );
+    }
+
+    #[test]
+    fn reanchor_falls_back_to_the_inverse_before_the_first_layout() {
+        let minimum = crate::gui::library::grid_metrics::GridMetrics::minimum();
+        let expected = minimum.columns as f32 * minimum.card_width + ALBUM_SCROLLBAR_RAIL + 50.0;
+
+        let predicted = predicted_reported_width(0.0, minimum, 50.0);
+
+        assert!((predicted - expected).abs() < 0.001);
+    }
+
+    #[test]
     fn drag_threshold_ignores_short_clicks() {
         // Press and a tiny movement stay below the 4 px threshold.
         let origin = point(100.0, 100.0);
@@ -656,6 +680,23 @@ mod window_shell_tests {
     }
 }
 
+/// Width the next layout will report for a window width delta.
+///
+/// Once a layout has run the reported width is exact. Before the first layout the
+/// snapshot is the minimum one, so inverting it is the only estimate available.
+fn predicted_reported_width(
+    measured: f32,
+    current: crate::gui::library::grid_metrics::GridMetrics,
+    width_delta: f32,
+) -> f32 {
+    let base = if measured > 0.0 {
+        measured
+    } else {
+        current.columns as f32 * current.card_width + ALBUM_SCROLLBAR_RAIL
+    };
+    base + width_delta
+}
+
 impl AudoxidyApp {
     /// Re-anchors the library viewport for a window width delta.
     ///
@@ -666,18 +707,16 @@ impl AudoxidyApp {
         if self.library_manager.view_mode != crate::gui::library::LibraryViewMode::Grid {
             return None;
         }
-        let current = self.library_manager.grid_metrics.get();
         // The width the last layout reported is exact; only before the first
         // layout does the snapshot have to be inverted, and then its value is the
         // minimum one. Trusting the inversion after a layout was the defect: the
         // predicted width could be ~1000 px when the real content was ~517 px.
-        let measured = self.library_manager.reported_width.get();
-        let reported_width = if measured > 0.0 {
-            measured
-        } else {
-            current.columns as f32 * current.card_width + ALBUM_SCROLLBAR_RAIL
-        };
-        let next = crate::gui::library::grid_metrics::grid_metrics(reported_width + width_delta);
+        let reported_width = predicted_reported_width(
+            self.library_manager.reported_width.get(),
+            self.library_manager.grid_metrics.get(),
+            width_delta,
+        );
+        let next = crate::gui::library::grid_metrics::grid_metrics(reported_width);
 
         self.apply_grid_anchor_to(next, self.library_manager.scroll_offset.y)
     }

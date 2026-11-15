@@ -345,7 +345,7 @@ impl Core {
 
         let unreferenced = {
             let db = self.lock_db()?;
-            let mut unreferenced = Vec::new();
+            let mut unreferenced: Vec<CoverCandidate> = Vec::new();
 
             for candidate in candidates {
                 match candidate {
@@ -354,7 +354,11 @@ impl Core {
                         cover_hash,
                         file_name,
                     } => match db.is_cover_hash_referenced(&album_hash, &cover_hash) {
-                        Ok(false) => unreferenced.push(file_name),
+                        Ok(false) => unreferenced.push(CoverCandidate::AlbumCover {
+                            album_hash,
+                            cover_hash,
+                            file_name,
+                        }),
                         Ok(true) => {}
                         Err(error) => tracing::warn!(
                             target: "audoxidy::persistence",
@@ -368,7 +372,11 @@ impl Core {
                         cover_hash,
                         file_name,
                     } => match db.is_cover_override_referenced(song_id, &cover_hash) {
-                        Ok(false) => unreferenced.push(file_name),
+                        Ok(false) => unreferenced.push(CoverCandidate::SongOverride {
+                            song_id,
+                            cover_hash,
+                            file_name,
+                        }),
                         Ok(true) => {}
                         Err(error) => tracing::warn!(
                             target: "audoxidy::persistence",
@@ -383,7 +391,11 @@ impl Core {
             unreferenced
         };
 
-        for file_name in unreferenced {
+        for candidate in unreferenced {
+            let file_name = match &candidate {
+                CoverCandidate::AlbumCover { file_name, .. }
+                | CoverCandidate::SongOverride { file_name, .. } => file_name.clone(),
+            };
             let path = self.paths.cover_cache_dir.join(&file_name);
             if let Err(error) = std::fs::remove_file(&path) {
                 tracing::warn!(
@@ -392,6 +404,74 @@ impl Core {
                     error = %error,
                     "No se pudo eliminar una carátula que ya no está referenciada"
                 );
+                continue;
+            }
+
+            // The file is gone. A scan can have re-inserted the same reference
+            // between the check and the removal; the surviving row would then point
+            // at a missing file and a later scan would not rewrite it while the hash
+            // still matches. Clearing the hash makes the next scan regenerate the
+            // cover instead of leaving a durable blank one.
+            let db = match self.lock_db() {
+                Ok(db) => db,
+                Err(error) => {
+                    tracing::warn!(
+                        target: "audoxidy::persistence",
+                        file = %path.display(),
+                        error = %error,
+                        "No se pudo recomprobar la referencia de una carátula borrada"
+                    );
+                    continue;
+                }
+            };
+
+            match &candidate {
+                CoverCandidate::AlbumCover {
+                    album_hash,
+                    cover_hash,
+                    ..
+                } => match db.is_cover_hash_referenced(album_hash, cover_hash) {
+                    Ok(true) => {
+                        if let Err(error) = db.clear_album_cover_hash(album_hash, cover_hash) {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                album_hash = %album_hash,
+                                error = %error,
+                                "No se pudo limpiar una referencia de carátula reinsertada"
+                            );
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => tracing::warn!(
+                        target: "audoxidy::persistence",
+                        album_hash = %album_hash,
+                        error = %error,
+                        "No se pudo recomprobar una carátula de álbum borrada"
+                    ),
+                },
+                CoverCandidate::SongOverride {
+                    song_id,
+                    cover_hash,
+                    ..
+                } => match db.is_cover_override_referenced(*song_id, cover_hash) {
+                    Ok(true) => {
+                        if let Err(error) = db.clear_song_cover_override(*song_id, cover_hash) {
+                            tracing::warn!(
+                                target: "audoxidy::persistence",
+                                song_id,
+                                error = %error,
+                                "No se pudo limpiar una referencia de carátula propia reinsertada"
+                            );
+                        }
+                    }
+                    Ok(false) => {}
+                    Err(error) => tracing::warn!(
+                        target: "audoxidy::persistence",
+                        song_id,
+                        error = %error,
+                        "No se pudo recomprobar una carátula propia borrada"
+                    ),
+                },
             }
         }
 

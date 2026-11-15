@@ -333,10 +333,11 @@ impl crate::gui::app::AudoxidyApp {
             return;
         }
 
-        // 5. Load from disk (Handle::from_path — no RAM cache)
+        // 5. Load from disk through the bounded decode funnel, never at the
+        //    file's native size.
         if !new_cover_path.is_empty() {
             self.player_ui_state.cached_art_handle =
-                Some(iced::widget::image::Handle::from_path(&new_cover_path));
+                crate::gui::player::load_cover_handle(&new_cover_path);
             self.player_ui_state.current_art_id = audio_state.path.clone();
             self.player_ui_state.current_cover_path = new_cover_path;
             return;

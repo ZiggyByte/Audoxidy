@@ -198,6 +198,25 @@ impl Default for PlayerUiState {
     }
 }
 
+/// Loads a player cover through the bounded decode funnel.
+///
+/// `Handle::from_path` lets the image backend decode the file at its native
+/// size; a large embedded cover then costs tens of MB for an image the player
+/// draws at `cover_native_size()`. Decoding down to that size keeps the cost
+/// bounded and is the same funnel the library uses.
+pub(crate) fn load_cover_handle(path: &str) -> Option<iced::widget::image::Handle> {
+    let decoded = crate::utils::covers::decode_cover_file(
+        std::path::Path::new(path),
+        crate::utils::covers::cover_native_size(),
+    )
+    .ok()?;
+    Some(iced::widget::image::Handle::from_rgba(
+        decoded.width,
+        decoded.height,
+        decoded.pixels,
+    ))
+}
+
 pub fn view<'a>(
     audio_manager: &'a AudioManager,
     ui_state: &'a PlayerUiState,

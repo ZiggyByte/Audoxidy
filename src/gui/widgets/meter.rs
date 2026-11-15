@@ -173,7 +173,7 @@ impl VuMeterWidget {
     }
 }
 
-impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeterWidget {
+impl<Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeterWidget {
     fn size(&self) -> iced::Size<Length> {
         iced::Size {
             width: Length::Fixed(400.0),

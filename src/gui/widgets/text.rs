@@ -13,7 +13,7 @@ use super::*;
 ///
 /// El sistema utiliza el componente `Responsive` de Iced para detectar el tamaño en tiempo real,
 /// eliminando la necesidad de conteos de caracteres fijos que fallan al cambiar de fuente o ventana.
-
+///
 /// [NIVEL 1] Versión simplificada para el 90% de los casos.
 /// - Sin saltos de línea (Wrapping::None)
 /// - Sin sufijo adicional

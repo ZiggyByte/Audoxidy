@@ -141,9 +141,7 @@ pub fn view<'a>(
                     } else {
                         Some(Color::TRANSPARENT.into())
                     },
-                    text_color: if is_selected {
-                        COLOR_TEXT_PRIMARY
-                    } else if is_hovered {
+                    text_color: if is_selected || is_hovered {
                         COLOR_TEXT_PRIMARY
                     } else {
                         COLOR_TEXT_SECONDARY

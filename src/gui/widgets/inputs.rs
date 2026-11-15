@@ -1870,9 +1870,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
             // Clic derecho: reset en slider o en input
             iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right)) => {
-                if is_focus {
-                    shell.publish((self.on_right_click)());
-                } else if self.options.enable_keyboard_input && in_input {
+                if is_focus || (self.options.enable_keyboard_input && in_input) {
                     shell.publish((self.on_right_click)());
                 }
             }
@@ -2519,7 +2517,6 @@ impl<'a, Message> CustomSlider<'a, Message> {
             iced::alignment::Horizontal::Left => input_x + pad_h,
             iced::alignment::Horizontal::Center => input_x + input_width / 2.0,
             iced::alignment::Horizontal::Right => input_x + input_width - pad_h,
-            _ => input_x + pad_h,
         };
 
         // Centrado vertical manual: posición Y en el centro del input menos mitad del alto de fuente

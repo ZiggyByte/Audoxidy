@@ -610,25 +610,14 @@ pub fn view<'a>(
         )
     };
 
-    let stats_text = if manager.view_mode == LibraryViewMode::Grid {
-        format!(
-            "{} Canciones | {} Álbumes | {} Artistas | {} | {}",
-            s_count,
-            a_count,
-            art_count,
-            format_duration(d_secs),
-            format_size(s_bytes as i64)
-        )
-    } else {
-        format!(
-            "{} Canciones | {} Álbumes | {} Artistas | {} | {}",
-            s_count,
-            a_count,
-            art_count,
-            format_duration(d_secs),
-            format_size(s_bytes as i64)
-        )
-    };
+    let stats_text = format!(
+        "{} Canciones | {} Álbumes | {} Artistas | {} | {}",
+        s_count,
+        a_count,
+        art_count,
+        format_duration(d_secs),
+        format_size(s_bytes as i64)
+    );
 
     let view_icon_str = match manager.view_mode {
         LibraryViewMode::Grid => "view-grid-outlined.svg",

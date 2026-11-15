@@ -275,7 +275,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::ExportPlaylist(id, target_path, format, mode) => {
                 let core = self.core.clone();
 
-                return Task::perform(
+                Task::perform(
                     async move {
                         let sanitize_name = |s: &str| {
                             s.chars()
@@ -356,7 +356,7 @@ impl crate::gui::app::AudoxidyApp {
                         }
                     },
                     |_| Message::NoOp,
-                );
+                )
             }
             Message::SwitchPlaylist(id, auto_play) => {
                 self.focus = AppFocus::Playlist;
@@ -371,7 +371,7 @@ impl crate::gui::app::AudoxidyApp {
                 self.playlist_manager.active_playlist_id = id;
                 let core = self.core.clone();
 
-                return Task::perform(
+                Task::perform(
                     async move {
                         let groups = core.get_playlist_songs_grouped_by_folder(id).ok();
                         let p_data = core.get_playlist_by_id(id).ok().flatten();
@@ -397,7 +397,7 @@ impl crate::gui::app::AudoxidyApp {
                     |(id, auto_play, groups, p_data, session)| {
                         Message::InternalPlaylistLoaded(id, auto_play, groups, p_data, session)
                     },
-                );
+                )
             }
             Message::InternalPlaylistLoaded(id, auto_play, groups, p_data_opt, session_opt) => {
                 if id != self.playlist_manager.active_playlist_id {

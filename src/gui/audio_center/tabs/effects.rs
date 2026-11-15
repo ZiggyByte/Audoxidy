@@ -110,11 +110,13 @@ pub(super) fn view_audio_effects<'a>(
 
         // --- NUEVO CUSTOM SLIDER ---
         let on_reset_msg = on_reset.clone();
-        let mut primary_opts = crate::gui::widgets::CustomSliderOptions::default();
-        primary_opts.step_size = primary_step_size;
-        primary_opts.enable_colored_track = true;
-        primary_opts.enable_arrow_keys = true;
-        primary_opts.track_color = Some(COLOR_BG);
+        let primary_opts = crate::gui::widgets::CustomSliderOptions {
+            step_size: primary_step_size,
+            enable_colored_track: true,
+            enable_arrow_keys: true,
+            track_color: Some(COLOR_BG),
+            ..Default::default()
+        };
         let param_slider = crate::gui::widgets::CustomSlider::new(
             val,
             range.clone(),
@@ -161,11 +163,13 @@ pub(super) fn view_audio_effects<'a>(
         // Secondary slider row (optional)
         let secondary_row: Option<Element<_>> = secondary.map(
             |(s_val, s_range, s_change, s_reset, s_label, s_step, s_fmt)| {
-                let mut sec_opts = crate::gui::widgets::CustomSliderOptions::default();
-                sec_opts.step_size = s_step;
-                sec_opts.enable_colored_track = true;
-                sec_opts.enable_arrow_keys = true;
-                sec_opts.track_color = Some(COLOR_BG);
+                let sec_opts = crate::gui::widgets::CustomSliderOptions {
+                    step_size: s_step,
+                    enable_colored_track: true,
+                    enable_arrow_keys: true,
+                    track_color: Some(COLOR_BG),
+                    ..Default::default()
+                };
                 let sec_slider =
                     crate::gui::widgets::CustomSlider::new(s_val, s_range, s_change, move || {
                         s_reset.clone()

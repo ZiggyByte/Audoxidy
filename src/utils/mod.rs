@@ -183,7 +183,7 @@ pub fn format_metadata(song: &SongData, col: &SortColumn) -> String {
                 "-".to_string()
             }
         }
-        SortColumn::Size => song.size.map_or("-".to_string(), |s| format_size(s)),
+        SortColumn::Size => song.size.map_or("-".to_string(), format_size),
         SortColumn::AlbumCard => "".to_string(),
         SortColumn::AlbumThumbnail => "".to_string(),
     }

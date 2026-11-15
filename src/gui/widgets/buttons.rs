@@ -272,11 +272,11 @@ where
         .font(FONT_INTER_SANS_MEDIUM)
         .text_size(14)
         .style(|_theme: &Theme, status| {
-            let is_active_hover = match status {
+            let is_active_hover = matches!(
+                status,
                 iced::widget::pick_list::Status::Hovered
-                | iced::widget::pick_list::Status::Opened { .. } => true,
-                _ => false,
-            };
+                    | iced::widget::pick_list::Status::Opened { .. }
+            );
 
             let bg_color = if is_active_hover {
                 COLOR_ACCENT
@@ -284,11 +284,7 @@ where
                 COLOR_CONTRAST
             };
 
-            let txt_color = if is_active_hover {
-                COLOR_TEXT_PRIMARY
-            } else {
-                COLOR_TEXT_PRIMARY
-            };
+            let txt_color = COLOR_TEXT_PRIMARY;
 
             iced::widget::pick_list::Style {
                 text_color: txt_color,

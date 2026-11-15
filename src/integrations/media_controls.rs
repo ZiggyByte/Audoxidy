@@ -191,7 +191,6 @@ impl SystemMediaControls {
                 album: Some(&state.album),
                 duration: Some(Duration::from_secs_f64(state.total_duration_sec)),
                 cover_url: cover.as_deref(),
-                ..MediaMetadata::default()
             });
             if let Err(e) = result {
                 tracing::debug!(

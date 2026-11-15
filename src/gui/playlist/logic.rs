@@ -444,8 +444,8 @@ impl PlaylistManager {
         &mut self,
         linear_idx: usize,
     ) -> Option<&mut PlaylistSongRef> {
-        let groups = if self.filtered_groups.is_some() {
-            self.filtered_groups.as_mut().unwrap()
+        let groups = if let Some(filtered) = self.filtered_groups.as_mut() {
+            filtered
         } else {
             &mut self.groups
         };
@@ -536,8 +536,8 @@ impl PlaylistManager {
                 return;
             }
 
-            let groups = if self.filtered_groups.is_some() {
-                self.filtered_groups.as_mut().unwrap()
+            let groups = if let Some(filtered) = self.filtered_groups.as_mut() {
+                filtered
             } else {
                 &mut self.groups
             };
@@ -570,8 +570,8 @@ impl PlaylistManager {
                 return;
             }
 
-            let groups = if self.filtered_groups.is_some() {
-                self.filtered_groups.as_mut().unwrap()
+            let groups = if let Some(filtered) = self.filtered_groups.as_mut() {
+                filtered
             } else {
                 &mut self.groups
             };

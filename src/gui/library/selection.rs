@@ -323,8 +323,7 @@ impl LibraryManager {
         if let (Some(s), Some(e)) = (start_v, end_v) {
             let (min, max) = if s < e { (s, e) } else { (e, s) };
             self.selected_items.clear();
-            for i in min..=max {
-                let (item, _) = &items[i];
+            for (item, _) in &items[min..=max] {
                 self.selected_items.insert(item.clone());
 
                 // Si seleccionamos una cabecera, expandimos la selección a sus hijos según el requisito del usuario
@@ -517,10 +516,7 @@ impl LibraryManager {
     /// interleaved (track 1 of every version, then track 2). A playlist must
     /// receive each version as a contiguous block, in the grid order, with its
     /// tracks in track-number order.
-    fn order_songs_by_album_for_playlist(
-        &self,
-        songs: &mut Vec<Arc<crate::db::database::SongData>>,
-    ) {
+    fn order_songs_by_album_for_playlist(&self, songs: &mut [Arc<crate::db::database::SongData>]) {
         let mut album_order = std::collections::HashMap::new();
         if let Some(albums) = self
             .filtered_albums

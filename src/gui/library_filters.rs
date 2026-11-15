@@ -152,7 +152,7 @@ impl LibraryFiltersManager {
         }
     }
 
-    fn sort_subfilters(chars: &mut Vec<String>) {
+    fn sort_subfilters(chars: &mut [String]) {
         chars.sort_by(|a, b| {
             if a == "#" && b != "#" {
                 return std::cmp::Ordering::Less;
@@ -460,10 +460,10 @@ impl LibraryFiltersManager {
         let subfilter = self.selected_subfilter.as_deref();
 
         for &root in roots {
-            if let Some(sub) = subfilter {
-                if Self::get_group_char(&index.nodes[root as usize].label) != sub {
-                    continue;
-                }
+            if let Some(sub) = subfilter
+                && Self::get_group_char(&index.nodes[root as usize].label) != sub
+            {
+                continue;
             }
             if has_search {
                 Self::mark_search_visible(index, root, &query_lower, &mut visible);

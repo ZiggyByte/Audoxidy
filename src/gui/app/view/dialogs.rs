@@ -36,16 +36,12 @@ impl AudoxidyApp {
             .style(move |_t, status| {
                 let is_hovered = matches!(status, iced::widget::button::Status::Hovered);
                 iced::widget::button::Style {
-                    background: if active {
-                        Some(COLOR_ACCENT.into())
-                    } else if is_hovered {
+                    background: if active || is_hovered {
                         Some(COLOR_ACCENT.into())
                     } else {
                         Some(COLOR_CONTRAST.into())
                     },
-                    text_color: if active {
-                        COLOR_TEXT_PRIMARY
-                    } else if is_hovered {
+                    text_color: if active || is_hovered {
                         COLOR_TEXT_PRIMARY
                     } else {
                         COLOR_TEXT_SECONDARY
@@ -292,8 +288,6 @@ impl AudoxidyApp {
                             iced::widget::button::Style {
                                 background: if is_hovered && enabled {
                                     Some(iced::Background::Color(COLOR_ACCENT))
-                                } else if enabled {
-                                    Some(iced::Background::Color(COLOR_CONTRAST))
                                 } else {
                                     Some(iced::Background::Color(COLOR_CONTRAST))
                                 },

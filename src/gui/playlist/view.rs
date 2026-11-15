@@ -576,9 +576,7 @@ fn build_song_row<'a>(
 
     let content = column![row1, row2].spacing(2).padding([0, 0]);
 
-    let bg_color = if is_selected || is_playing {
-        COLOR_CONTRAST
-    } else if is_group_selected {
+    let bg_color = if is_selected || is_playing || is_group_selected {
         COLOR_CONTRAST
     } else {
         Color::TRANSPARENT

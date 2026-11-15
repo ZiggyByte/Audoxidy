@@ -438,12 +438,11 @@ impl Database {
     /// the same image. Clearing the hash makes the next scan treat the album as
     /// coverless and rewrite the file, instead of leaving a durable blank cover.
     pub fn clear_album_cover_hash(&self, album_hash: &str, cover_hash: &str) -> Result<usize> {
-        Ok(self
-            .conn
+        self.conn
             .prepare_cached(
                 "UPDATE ALBUMS SET cover_hash = NULL WHERE hash_id = ?1 AND cover_hash = ?2",
             )?
-            .execute(params![album_hash, cover_hash])?)
+            .execute(params![album_hash, cover_hash])
     }
 
     /// Clears a song override reference that still points at `cover_hash`.
@@ -451,12 +450,11 @@ impl Database {
     /// The owner id is part of the predicate for the same reason it is in
     /// `is_cover_override_referenced`.
     pub fn clear_song_cover_override(&self, song_id: i64, cover_hash: &str) -> Result<usize> {
-        Ok(self
-            .conn
+        self.conn
             .prepare_cached(
                 "UPDATE SONGS SET cover_override = NULL WHERE id = ?1 AND cover_override = ?2",
             )?
-            .execute(params![song_id, cover_hash])?)
+            .execute(params![song_id, cover_hash])
     }
 
     /// Returns every cover file name a surviving row references.

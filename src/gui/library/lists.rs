@@ -77,7 +77,7 @@ pub fn album_art_widget<'a, Message: 'a>(
                     }),
                     text("AuDoxiDY")
                         .font(crate::gui::theme::FONT_STAGE_WANDER)
-                        .size(11)
+                        .size(12)
                         .color(COLOR_TEXT_SECONDARY)
                 ]
                 .align_x(Alignment::Center)

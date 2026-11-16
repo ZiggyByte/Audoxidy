@@ -103,7 +103,7 @@ pub const FILTER_PANEL_WIDTH: f32 = 187.0;
 /// pixels, so the bottom row reserves this much less on the right: the chevron
 /// moves that many pixels towards the card edge and the text block gains the
 /// same width. The cover keeps its fixed size and its left alignment.
-pub const ALBUM_CARD_CHEVRON_INSET: f32 = 5.0;
+pub const ALBUM_CARD_CHEVRON_INSET: f32 = 6.0;
 /// Left edge of the library content, derived from the player column, the filters
 /// panel and the content inset instead of restating the window-to-content offset.
 pub const LIBRARY_CONTENT_X_ORIGIN: f32 = PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH + SPACE_XS;

@@ -3803,99 +3803,13 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
 mod decoder_tests;
 
 #[cfg(test)]
-mod preload_handoff_tests {
-    use super::*;
-
-    #[test]
-    fn test_preload_batch_is_never_truncated_at_the_cap() {
-        let cap = 100_usize;
-        let mut head: std::collections::VecDeque<f64> =
-            (0..cap - 10).map(|value| value as f64).collect();
-        let mut batch: Vec<f64> = (1_000..1_100).map(|value| value as f64).collect();
-
-        let appended = append_preload_batch(&mut head, &mut batch);
-
-        assert_eq!(appended, 100);
-        assert!(
-            head.len() >= cap,
-            "the last batch may overshoot the soft cap"
-        );
-        assert_eq!(head.len(), cap - 10 + 100);
-        assert_eq!(head.back().copied(), Some(1_099.0));
-        assert!(
-            batch.is_empty(),
-            "the whole batch must be moved, never dropped"
-        );
-    }
-
-    #[test]
-    fn test_a_full_head_never_loses_the_batch_tail() {
-        let mut head: std::collections::VecDeque<f64> = (0..10).map(|value| value as f64).collect();
-        let mut batch: Vec<f64> = (10..20).map(|value| value as f64).collect();
-
-        assert_eq!(append_preload_batch(&mut head, &mut batch), 10);
-        assert_eq!(head.len(), 20);
-        assert_eq!(head.front().copied(), Some(0.0));
-        assert_eq!(head.back().copied(), Some(19.0));
-    }
-}
+#[path = "decoder_preload_handoff_tests.rs"]
+mod preload_handoff_tests;
 
 #[cfg(test)]
-mod preload_buffer_tests {
-    use super::*;
-    use std::collections::VecDeque;
-
-    #[test]
-    fn test_promotion_moves_the_head_without_copying_or_losing_samples() {
-        let mut predecode: VecDeque<f64> = (0..8).map(|value| value as f64).collect();
-        let mut pending: VecDeque<f64> = VecDeque::new();
-
-        promote_preload_head(&mut pending, &mut predecode);
-
-        assert_eq!(pending.len(), 8);
-        assert_eq!(pending.front().copied(), Some(0.0));
-        assert_eq!(pending.back().copied(), Some(7.0));
-        assert!(
-            predecode.is_empty(),
-            "el buffer queda listo para reutilizarse"
-        );
-    }
-
-    #[test]
-    fn test_promotion_appends_when_the_pending_queue_still_has_data() {
-        let mut predecode: VecDeque<f64> = vec![1.0, 2.0].into();
-        let mut pending: VecDeque<f64> = vec![9.0].into();
-
-        promote_preload_head(&mut pending, &mut predecode);
-
-        assert_eq!(
-            pending.iter().copied().collect::<Vec<_>>(),
-            vec![9.0, 1.0, 2.0]
-        );
-        assert!(predecode.is_empty());
-    }
-
-    #[test]
-    fn test_drained_pending_buffer_is_reused_by_the_next_preload() {
-        let mut pending: VecDeque<f64> = VecDeque::with_capacity(64);
-        let mut predecode: VecDeque<f64> = VecDeque::new();
-        let reusable = pending.capacity();
-
-        reuse_drained_preload_buffer(&mut pending, &mut predecode);
-
-        assert_eq!(predecode.capacity(), reusable);
-        assert!(predecode.is_empty());
-        assert_eq!(pending.capacity(), 0);
-    }
-}
+#[path = "decoder_preload_buffer_tests.rs"]
+mod preload_buffer_tests;
 
 #[cfg(test)]
-mod preload_send_tests {
-    use super::*;
-
-    #[test]
-    fn test_opened_preload_is_send() {
-        fn assert_send<T: Send>() {}
-        assert_send::<OpenedPreload>();
-    }
-}
+#[path = "decoder_preload_send_tests.rs"]
+mod preload_send_tests;

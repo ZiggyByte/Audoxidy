@@ -66,15 +66,5 @@ pub fn get() -> &'static AppPaths {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_desktop_default_matches_app_paths() {
-        let paths = AppPaths::desktop_default();
-        assert_eq!(paths.db_path, PathBuf::from("library.db"));
-        assert_eq!(paths.cover_cache_dir, PathBuf::from("cache/covers"));
-        assert!(paths.config_path.to_string_lossy().contains("audoxidy"));
-        assert!(paths.config_path.to_string_lossy().ends_with("config.ron"));
-    }
-}
+#[path = "paths_tests.rs"]
+mod tests;

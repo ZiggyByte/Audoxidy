@@ -10,9 +10,10 @@
 //! index writes to it; that is the only writable handle in this file, and the
 //! source is never reopened.
 //!
-//! The copy is written to the temporary directory under a name composed only of
-//! the temporary directory and the process id, and the destination is bound as a
-//! statement parameter, so no user input reaches the `VACUUM INTO` statement.
+//! The copy lives in a [`TempTestDir`] the caller holds for the whole test, and
+//! the destination is bound as a statement parameter, so no user input reaches
+//! the `VACUUM INTO` statement. Dropping the guard removes the copy together
+//! with the rest of its directory.
 //!
 //! The query-plan test prepares copies of the statements in `library.rs` and
 //! `playlists.rs`. The recorded plan is evidence, not an assertion: statistics
@@ -28,38 +29,34 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+use crate::utils::test_support::TempTestDir;
+
 /// Path of the application database, relative to the crate root tests run in.
 fn library_source() -> PathBuf {
     PathBuf::from("library.db")
 }
 
-/// Copies the real library with `VACUUM INTO`, or `None` when it is absent.
+/// Copies the real library with `VACUUM INTO`, or `None` when the library is
+/// absent or holds no song row.
 ///
-/// The source and the copy are both opened read-only. The destination is
-/// interpolated as a bound parameter supported by SQLite, and it comes entirely
-/// from the temporary directory plus the process id, never from user input.
-fn library_copy() -> Option<PathBuf> {
-    use std::sync::atomic::{AtomicU64, Ordering};
-
-    static SEQUENCE: AtomicU64 = AtomicU64::new(0);
-
+/// The source is opened read-only, and the copy is opened read-only to check the
+/// row count. The destination is a bound statement parameter and lives in the
+/// directory the returned guard holds, so the caller keeps the copy alive for as
+/// long as it measures it.
+fn library_copy() -> Option<(TempTestDir, PathBuf)> {
     let source = library_source();
     if !source.exists() {
         return None;
     }
 
-    let copy = std::env::temp_dir().join(format!(
-        "audoxidy-real-library-{}-{}.db",
-        std::process::id(),
-        SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    ));
-    let _ = std::fs::remove_file(&copy);
+    let dir = TempTestDir::new("real-library");
+    let copy = dir.path().join("library.db");
 
     let reader = Connection::open_with_flags(&source, OpenFlags::SQLITE_OPEN_READ_ONLY)
         .expect("the library copy source must open read-only");
     reader
         .execute("VACUUM INTO ?1", [copy.to_string_lossy().as_ref()])
-        .expect("VACUUM INTO must copy the library into the temporary file");
+        .expect("VACUUM INTO must copy the library into the test directory");
     drop(reader);
 
     let rows: i64 = Connection::open_with_flags(&copy, OpenFlags::SQLITE_OPEN_READ_ONLY)
@@ -69,11 +66,10 @@ fn library_copy() -> Option<PathBuf> {
         .unwrap_or(0);
     if rows == 0 {
         println!("real library copy is empty: measurements skipped");
-        let _ = std::fs::remove_file(&copy);
         return None;
     }
 
-    Some(copy)
+    Some((dir, copy))
 }
 
 /// Wraps the copy in a [`Database`] without running the version gate.
@@ -97,13 +93,6 @@ fn copy_database_writable(copy: &Path) -> Database {
         conn,
         rebuilt: false,
     }
-}
-
-/// Removes the copy and any sibling SQLite may have created next to it.
-fn remove_copy(copy: &Path) {
-    let _ = std::fs::remove_file(copy);
-    let _ = std::fs::remove_file(format!("{}-wal", copy.display()));
-    let _ = std::fs::remove_file(format!("{}-shm", copy.display()));
 }
 
 /// Returns whether the copy holds the full-text content table.
@@ -231,7 +220,7 @@ fn test_song_row_size_is_recorded() {
 #[test]
 fn test_real_library_anon_residency_is_measured() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: anonymous residency not measured");
         return;
     };
@@ -262,13 +251,12 @@ fn test_real_library_anon_residency_is_measured() {
     }
 
     drop(songs);
-    remove_copy(&copy);
 }
 
 #[test]
 fn test_real_library_read_paths_are_measured() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: read paths not measured");
         return;
     };
@@ -364,14 +352,12 @@ fn test_real_library_read_paths_are_measured() {
         expected_filtered,
         "the filtered read returns exactly the rows its join shape selects"
     );
-
-    remove_copy(&copy);
 }
 
 #[test]
 fn test_playlist_read_paths_are_measured() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: playlist read paths not measured");
         return;
     };
@@ -434,13 +420,12 @@ fn test_playlist_read_paths_are_measured() {
     }
 
     drop(held);
-    remove_copy(&copy);
 }
 
 #[test]
 fn test_real_library_read_paths_return_every_song() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: read paths not checked");
         return;
     };
@@ -503,13 +488,12 @@ fn test_real_library_read_paths_return_every_song() {
         songs.len(),
         albums.len()
     );
-    remove_copy(&copy);
 }
 
 #[test]
 fn test_real_library_fts_index_is_consistent() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: full-text index not checked");
         return;
     };
@@ -518,7 +502,6 @@ fn test_real_library_fts_index_is_consistent() {
 
     if !has_fts_content(&db.conn) {
         println!("real library full-text check skipped: the copy has no content table");
-        remove_copy(&copy);
         return;
     }
 
@@ -538,14 +521,12 @@ fn test_real_library_fts_index_is_consistent() {
     db.verify_fts_integrity()
         .expect("the rebuilt index must match its content table");
     println!("real library full-text: rebuild and integrity check passed");
-
-    remove_copy(&copy);
 }
 
 #[test]
 fn test_real_library_cover_names_match_the_derivation() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: cover names not compared");
         return;
     };
@@ -635,8 +616,6 @@ fn test_real_library_cover_names_match_the_derivation() {
             "real library cover names: legacy_path_column=absent, composed={composed_rows}, present_in_cache={present}"
         );
     }
-
-    remove_copy(&copy);
 }
 
 /// One read-path statement, its label and the parameters it binds.
@@ -645,7 +624,7 @@ type PlanShape<'a> = (&'a str, &'a str, Vec<Box<dyn rusqlite::ToSql>>);
 #[test]
 fn test_real_library_query_plans_are_recorded() {
     let _guard = measurement_lock();
-    let Some(copy) = library_copy() else {
+    let Some((_dir, copy)) = library_copy() else {
         println!("real library absent: query plans not recorded");
         return;
     };
@@ -736,7 +715,6 @@ fn test_real_library_query_plans_are_recorded() {
     }
 
     println!("real library query plans recorded: {recorded}");
-    remove_copy(&copy);
 }
 
 /// The statement `get_all_songs` issues.

@@ -1,14 +1,16 @@
 //! Area tests for the schema version gate, the rebuild and the connection pragmas.
 //!
-//! Every file-backed test owns a directory under the system temporary directory
-//! and never touches the application database.
+//! Every file-backed test holds a `TempTestDir`, so no test touches the
+//! application database and the files it creates are removed when the guard
+//! drops, even if an assertion fails.
 
 use super::schema::SCHEMA_VERSION;
 use super::*;
 use rusqlite::{Connection, OptionalExtension};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::utils::test_support::TempTestDir;
 
 /// Adds a suffix to a path, matching how SQLite names the WAL siblings.
 fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
@@ -17,42 +19,9 @@ fn sibling_path(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Temporary directory owned by one test and removed when it is dropped.
-struct TempDbDir {
-    path: PathBuf,
-}
-
-impl TempDbDir {
-    fn new() -> Self {
-        static COUNTER: AtomicU64 = AtomicU64::new(0);
-        let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "audoxidy-db-schema-test-{}-{sequence}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&path).expect("create the temporary database directory");
-        Self { path }
-    }
-
-    /// The database file this directory owns.
-    fn db_path(&self) -> PathBuf {
-        self.path.join("library.db")
-    }
-
-    /// The directory itself, for paths the test builds relative to it.
-    fn dir(&self) -> &Path {
-        &self.path
-    }
-}
-
-impl Drop for TempDbDir {
-    fn drop(&mut self) {
-        let db_path = self.db_path();
-        let _ = std::fs::remove_file(&db_path);
-        let _ = std::fs::remove_file(sibling_path(&db_path, "-wal"));
-        let _ = std::fs::remove_file(sibling_path(&db_path, "-shm"));
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
+/// The database file a test directory owns.
+fn db_path(dir: &TempTestDir) -> PathBuf {
+    dir.path().join("library.db")
 }
 
 /// Inserts one song so the file holds rows a rebuild must discard.
@@ -367,8 +336,8 @@ fn test_rescan_updates_one_row_and_keeps_the_metadata() {
 
 #[test]
 fn test_new_file_is_created_at_the_current_version() {
-    let temp = TempDbDir::new();
-    let db = Database::new_at(&temp.db_path()).expect("create the database");
+    let temp = TempTestDir::new("db-schema");
+    let db = Database::new_at(&db_path(&temp)).expect("create the database");
 
     assert!(!db.was_rebuilt(), "a new file is created, not rebuilt");
     assert_eq!(user_version(&db), SCHEMA_VERSION);
@@ -377,8 +346,8 @@ fn test_new_file_is_created_at_the_current_version() {
 
 #[test]
 fn test_matching_version_keeps_the_rows() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
 
     {
         let mut db = Database::new_at(&path).expect("create the database");
@@ -398,8 +367,8 @@ fn test_matching_version_keeps_the_rows() {
 
 #[test]
 fn test_mismatched_version_deletes_the_three_files_and_recreates() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
 
     {
         let mut db = Database::new_at(&path).expect("create the database");
@@ -431,8 +400,8 @@ fn test_mismatched_version_deletes_the_three_files_and_recreates() {
 
 #[test]
 fn test_unreadable_file_is_treated_as_incompatible() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
     std::fs::write(&path, b"these bytes are not a SQLite database").expect("write the fake file");
 
     let db = Database::new_at(&path).expect("a file that is not a database is replaced");
@@ -447,8 +416,8 @@ fn test_unreadable_file_is_treated_as_incompatible() {
 
 #[test]
 fn test_unopenable_path_is_reported_not_deleted() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
     std::fs::create_dir(&path).expect("create a directory where the database should be");
 
     let result = Database::new_at(&path);
@@ -473,8 +442,8 @@ fn test_in_memory_database_sets_the_version_without_a_probe() {
 
 #[test]
 fn test_pragmas_are_applied_on_both_connection_kinds() {
-    let temp = TempDbDir::new();
-    let file_db = Database::new_at(&temp.db_path()).expect("create the database");
+    let temp = TempTestDir::new("db-schema");
+    let file_db = Database::new_at(&db_path(&temp)).expect("create the database");
     let memory_db = Database::new_memory().expect("create the in-memory database");
 
     for db in [&file_db, &memory_db] {
@@ -514,8 +483,8 @@ fn test_pragmas_are_applied_on_both_connection_kinds() {
 
 #[test]
 fn test_second_connection_on_a_rebuilt_file_does_not_rebuild_again() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
     std::fs::write(&path, b"a file written by another schema").expect("write the stale file");
 
     drop(Database::new_at(&path).expect("rebuild the database"));
@@ -530,8 +499,8 @@ fn test_second_connection_on_a_rebuilt_file_does_not_rebuild_again() {
 
 #[test]
 fn test_matching_version_deletes_nothing() {
-    let temp = TempDbDir::new();
-    let path = temp.db_path();
+    let temp = TempTestDir::new("db-schema");
+    let path = db_path(&temp);
 
     {
         let mut db = Database::new_at(&path).expect("create the database");
@@ -554,8 +523,8 @@ fn test_matching_version_deletes_nothing() {
 
 #[test]
 fn test_absent_path_creates_the_parentless_file() {
-    let temp = TempDbDir::new();
-    let path = temp.dir().join("missing").join("library.db");
+    let temp = TempTestDir::new("db-schema");
+    let path = temp.path().join("missing").join("library.db");
 
     let result = Database::new_at(&path);
 
@@ -568,8 +537,8 @@ fn test_absent_path_creates_the_parentless_file() {
 
 #[test]
 fn test_optimize_creates_statistics_and_is_idempotent() {
-    let temp = TempDbDir::new();
-    let mut db = Database::new_at(&temp.db_path()).expect("create the database");
+    let temp = TempTestDir::new("db-schema");
+    let mut db = Database::new_at(&db_path(&temp)).expect("create the database");
     for index in 0..5 {
         insert_song_at(&mut db, &format!("/music/optimize_{index}.flac"));
     }
@@ -602,8 +571,8 @@ fn test_optimize_creates_statistics_and_is_idempotent() {
 
 #[test]
 fn test_optimize_with_the_scanner_mask_succeeds() {
-    let temp = TempDbDir::new();
-    let mut db = Database::new_at(&temp.db_path()).expect("create the scanner database");
+    let temp = TempTestDir::new("db-schema");
+    let mut db = Database::new_at(&db_path(&temp)).expect("create the scanner database");
     insert_song_at(&mut db, "/music/scanner_mask.flac");
 
     // The scanner's connection writes rows and never prepares the library
@@ -636,8 +605,8 @@ fn test_autoincrement_is_kept_on_every_identity_table() {
 
 #[test]
 fn test_identity_tables_use_sqlite_sequence() {
-    let temp = TempDbDir::new();
-    let mut db = Database::new_at(&temp.db_path()).expect("create the database");
+    let temp = TempTestDir::new("db-schema");
+    let mut db = Database::new_at(&db_path(&temp)).expect("create the database");
     insert_song_at(&mut db, "/music/sqlite_sequence.flac");
 
     assert!(

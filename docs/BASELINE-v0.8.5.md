@@ -137,7 +137,7 @@ the policy; that section is the procedure.
 **Original measurement: 322 tests, all green** (`test result: ok. 322 passed; 0 failed;
 0 ignored`; the suite also runs two empty targets with 0 tests each).
 
-**Recorded floor — HARD: 648.** The floor is the measured count of the green suite, and it
+**Recorded floor — HARD: 649.** The floor is the measured count of the green suite, and it
 is the only authoritative threshold in this document. The first measurement recorded 322
 tests, taken when the convention guards landed and expected to be approximately 311; the
 measured value was 322, above the expectation, and was recorded as measured. **A future
@@ -147,14 +147,15 @@ measurement below the recorded floor is a finding to report, never a threshold t
 grown past the original measurement. The file — not the historical count above — is the
 source of truth for the floor.
 
-**Amendment (2026-11-16):** the count was raised twice as the consolidating work landed:
-to **632** names when the name list was re-based against the measured suite, and to **648**
-names at its close, once the new coverage had landed and the suite was green again. The
-count gate and the reproducible comparison command below both use **648**, the current
-measurement. Every earlier measurement is preserved unchanged as history; the list only
-ever grows.
+**Amendment (2026-11-16):** the count was raised three times as the consolidating work
+landed: to **632** names when the name list was re-based against the measured suite, to
+**648** names once the new coverage had landed and the suite was green again, and to
+**649** names when the manual checklist exposed a regression that was fixed under a new
+test. The count gate and the reproducible comparison command below both use **649**, the
+current measurement. Every earlier measurement is preserved unchanged as history; the list
+only ever grows.
 
-The authoritative name list is `docs/baseline-tests-v0.8.5.txt`: currently 648 sorted
+The authoritative name list is `docs/baseline-tests-v0.8.5.txt`: currently 649 sorted
 fully-qualified names, one per line, suitable for `diff`. The list is produced from a green
 run of the current tree, so it records every test the suite runs today.
 
@@ -169,7 +170,7 @@ TMPDIR="$HOME/.cache/audoxidy-cargo-tmp" cargo test -- --list 2>/dev/null \
   > "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt"
 
 # 2. Count check — hard floor (raise, never lower)
-test "$(wc -l < "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt")" -ge 648 \
+test "$(wc -l < "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt")" -ge 649 \
   && echo "floor OK"
 
 # 3. Removed names (must be empty — this is the failure signal)
@@ -538,6 +539,51 @@ the recorder, so none is claimed.
 - **Result:** **pass**
 - **Evidence:** User-verified pass (window drag and resize scenario, `--features
   deadlock-detection`). No artifact attached.
+
+### Re-run at the token consolidation (2026-11-16)
+
+Nine layout measurements in the library, player and playlist surfaces were replaced by
+named dimension tokens, so the six scenarios above were executed again: the suite catches a
+compile or logic break but cannot observe pixels, and this checklist is the only detector
+for a surface that moved.
+
+**Execution status: executed — six scenarios, six pass, one deviation found and fixed.**
+Run by the repository owner against a development build with a populated library and an
+audio device; the window scenario with the `deadlock-detection` feature enabled.
+
+| # | Scenario | Result | Observed |
+|---|----------|--------|----------|
+| 1 | GC / reclaim | **pass** | No reclaim of audio buffers and no stream recreation while playing; reclaim suppressed during the scan and during the post-scan preload window. |
+| 2 | Track change | **pass after a fix** | Order, metadata, artwork and progress stayed in sync through the control-driven and automatic advances. The manual crossfade at an arbitrary second cut the audio on the first attempt; after the fix below it mixes with no cut. |
+| 3 | Crossfade, automatic | **pass** | The forward mix started without a jump, without a speed change and without a cut at the tail end. |
+| 4 | Crossfade, manual | **pass** | Started immediately, mixed cleanly, no audible gap at the opening. |
+| 5 | Database refresh | **pass** | The refresh reached the UI with updated counts and metadata; search stayed consistent afterwards. |
+| 6 | Window drag and resize | **pass** | Drag from all three top bars, resize and maximise/restore reflowed without freeze or deadlock. The `iced_winit` "more than 3 consecutive RedrawRequested events produced layout invalidation" warnings appeared under aggressive resizing and are accepted as debug-build noise, not a deadlock. |
+
+**Deviation found and fixed — manual crossfade with the preload open in flight.** A manual
+crossfade triggered while the next track was still being opened dropped the mix and cut the
+audio. The log showed the preload request followed by a command line reporting no pending
+preload, and then a hard change. The decoder treated a request already handed to its helper
+thread as "nothing to mix": the queued state and the in-flight state were read as one, so
+the manual path fell through to an immediate change. The root cause dates from the change
+that moved the preload open off the decoder thread, which made the manual path discard any
+open still in flight. The fix keeps four states apart — open or head decoded, still queued,
+in flight, unavailable — waits up to two seconds for an in-flight open, and cancels a stale
+open when a new request arrives. A test asserts the four states and that a queued request
+wins over an older open. Severity: high, an audible cut on a user action; fixed and
+retested in the same run, with no follow-up needed.
+
+**Visual review.** Approved. The two declared normalizations moved as intended: the album
+placeholder wordmark sits one pixel closer to the album icon, and the player placeholder
+gained four pixels of padding per side. The other seven substitutions kept their exact
+value and no surface moved with them. Two adjustments came out of the review and landed in
+the same run: the placeholder wordmark is 12 px instead of 11 px, and the grid expansion
+chevron sits 6 px from the card edge instead of 5 px, which widens the text block next to
+it by the same amount.
+
+**Evidence.** Owner-reported results. The only artifacts available to the recorder are the
+crossfade log lines quoted for the deviation; no screenshot or log file was supplied for
+the other scenarios, so none is claimed.
 
 ## Extended manual regression checklist (nine scenarios)
 

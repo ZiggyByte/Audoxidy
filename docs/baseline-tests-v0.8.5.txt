@@ -26,6 +26,7 @@ audio::decoder::decoder_tests::test_derive_duration_sec_prefers_time_base
 audio::decoder::decoder_tests::test_derive_duration_sec_returns_none_when_unusable
 audio::decoder::decoder_tests::test_golden_decode_wav_16bit_matches_samples
 audio::decoder::decoder_tests::test_golden_decode_wav_24bit_precision
+audio::decoder::decoder_tests::test_manual_crossfade_waits_for_an_in_flight_preload
 audio::decoder::preload_buffer_tests::test_drained_pending_buffer_is_reused_by_the_next_preload
 audio::decoder::preload_buffer_tests::test_promotion_appends_when_the_pending_queue_still_has_data
 audio::decoder::preload_buffer_tests::test_promotion_moves_the_head_without_copying_or_losing_samples

@@ -214,7 +214,9 @@ impl CoverStore {
     ///
     /// The collection pass does not call this: retention is the byte budget's
     /// job, so the covers just scrolled past stay available for a scroll back
-    /// until the budget evicts them. This is the hard trim, kept for tests.
+    /// until the budget evicts them. The hard trim runs from the global memory
+    /// purge, and only while the library is out of focus, where the prefetch
+    /// band and the scroll-back cushion are dead weight.
     pub fn trim_outside_window(&mut self) -> usize {
         let removed = self.budget.trim_outside_window();
         self.drop_handles(&removed);

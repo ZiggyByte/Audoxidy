@@ -1,10 +1,12 @@
 //! RAM and purge decisions of the memory manager.
 //!
 //! The boundary tests read the pure predicates: the system hard cap, the process
-//! cap and the purge cooldown are asserted from values. The two `sysinfo` probes
-//! exercise the real read path of the platform the suite runs on and never assert
-//! an absolute RAM value: one requires a non-zero RSS, the other only checks that
-//! the reported usage does not exceed the reported total.
+//! cap and the purge cooldown are asserted from values. The timer test drives the
+//! process-global purge timer under the lock that serializes every module touching
+//! it. The two `sysinfo` probes exercise the real read path of the platform the
+//! suite runs on and never assert an absolute RAM value: one requires a non-zero
+//! RSS, the other only checks that the reported usage does not exceed the reported
+//! total.
 
 use super::*;
 
@@ -40,6 +42,56 @@ fn purge_cooldown() {
     assert_eq!(ram_purge_decision(true, 1_009, 1_000), None);
     assert_eq!(ram_purge_decision(true, 1_010, 1_000), Some(1_010));
     assert_eq!(ram_purge_decision(true, 1_011, 1_000), Some(1_011));
+}
+
+/// Drives the process-global purge timer through every branch it offers.
+///
+/// The timer is one atomic shared with the maintenance timer test, so this test
+/// holds `PURGE_TIMER_TEST_LOCK` for its whole body: unchecked, either side can
+/// back-date the other's state and a "due" assertion passes vacuously.
+///
+/// The 10-second RAM purge cooldown is deliberately out of scope. That decision
+/// belongs to the pure `ram_purge_decision`, asserted by `purge_cooldown` above,
+/// and its global stamp is only reachable through a real RAM probe, which tests
+/// must not perform.
+#[test]
+fn global_purge_timer_branches() {
+    let _timer_guard = PURGE_TIMER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+
+    // A freshly reset timer is not due.
+    MemoryManager::reset_global_purge_timer();
+    assert!(
+        !MemoryManager::should_run_global_purge(0, false),
+        "un temporizador recién reiniciado no vence"
+    );
+
+    // Past the fixed interval the check is due.
+    MemoryManager::backdate_global_purge_timer_for_tests(FIXED_PURGE_INTERVAL_SECS + 1);
+    assert!(
+        MemoryManager::should_run_global_purge(0, false),
+        "pasado el intervalo fijo la purga vence"
+    );
+
+    // The due branch stored the current stamp, so an immediate second check is
+    // not due: the interval was consumed, not merely reported.
+    assert!(
+        !MemoryManager::should_run_global_purge(0, false),
+        "la comprobación que venció consumió el intervalo"
+    );
+
+    // The scan guard returns before the timer is read, so a suppressed check
+    // leaves the back-date in place and the next check still sees it.
+    MemoryManager::backdate_global_purge_timer_for_tests(FIXED_PURGE_INTERVAL_SECS + 1);
+    assert!(
+        !MemoryManager::should_run_global_purge(0, true),
+        "un escaneo en curso suprime la purga"
+    );
+    assert!(
+        MemoryManager::should_run_global_purge(0, false),
+        "la comprobación suprimida no consumió el intervalo"
+    );
 }
 
 #[test]

@@ -176,3 +176,17 @@ fn test_library_content_origin_derives_from_panels() {
         PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH + SPACE_XS
     );
 }
+
+#[test]
+fn test_layout_tokens_hold_their_documented_values() {
+    assert_eq!(SPACE_2XS, 2.0);
+    assert_eq!(ALBUM_CARD_LINE_GAP, SPACE_2XS);
+    assert_eq!(PLAYLIST_GROUP_HEADER_INSET, 10.0);
+    assert_eq!(SCROLLBAR_WIDTH, 8.0);
+}
+
+#[test]
+fn test_icon_button_box_derives_from_the_icon_and_the_smallest_gap() {
+    assert_eq!(icon_button_box(IconSize::Xl), IconSize::Xl.px() + SPACE_XS);
+    assert_eq!(icon_button_box(IconSize::Xl), 44.0);
+}

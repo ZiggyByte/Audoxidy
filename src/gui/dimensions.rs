@@ -31,6 +31,8 @@
 //! math, never for a design value in disguise; introducing a dimension constant
 //! outside this module is not permitted.
 
+/// Gap between two stacked lines of secondary text.
+pub const SPACE_2XS: f32 = 2.0;
 /// Smallest gap between adjacent elements.
 pub const SPACE_XS: f32 = 4.0;
 /// Compact gap between adjacent elements.
@@ -110,6 +112,11 @@ pub const LIBRARY_CONTENT_X_ORIGIN: f32 = PLAYER_PANEL_SIZE + FILTER_PANEL_WIDTH
 /// transparent left half overlays the last 4 px of the row and can capture clicks
 /// there. The geometry is owner-approved; do not widen the reserve.
 pub const ALBUM_SCROLLBAR_RAIL: f32 = 4.0;
+/// Side of the shared scrollbar's box, shared by its track and its scroller.
+///
+/// It is not twice the visible rail: the rail is the width the grid reserves,
+/// while this is the whole box the scrollbar occupies.
+pub const SCROLLBAR_WIDTH: f32 = 8.0;
 /// Fixed width of the VU meter numeric readout.
 pub const METER_NUMERIC_WIDTH: f32 = 110.0;
 /// Fixed width of the audio-center window.
@@ -122,6 +129,8 @@ pub const LIST_ROW: f32 = 42.0;
 pub const LIST_ROW_HEADER: f32 = 32.0;
 /// Height of a playlist song or folder row.
 pub const PLAYLIST_ROW: f32 = 46.0;
+/// Space under the divider of a playlist group header.
+pub const PLAYLIST_GROUP_HEADER_INSET: f32 = 10.0;
 
 // ── Residual design values ─────────────────────────────────────────
 //
@@ -192,7 +201,7 @@ pub const ALBUM_CARD_TEXT_SIZE: f32 = 12.0;
 /// Absolute line height of the four card meta lines.
 pub const ALBUM_CARD_LINE_HEIGHT: f32 = 14.0;
 /// Gap between two stacked card meta lines.
-pub const ALBUM_CARD_LINE_GAP: f32 = 2.0;
+pub const ALBUM_CARD_LINE_GAP: f32 = SPACE_2XS;
 /// Height of the four-line card text block, derived from its lines so a line
 /// height change cannot desynchronise the virtualized row height.
 pub const ALBUM_CARD_TEXT_BLOCK_HEIGHT: f32 =

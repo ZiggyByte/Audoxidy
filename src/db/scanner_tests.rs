@@ -208,3 +208,59 @@ fn scanner_walk_survives_a_corrupt_file() {
             .collect::<Vec<_>>()
     );
 }
+
+/// The shared-cover invariant is enforced in source, not observed at runtime.
+///
+/// A cover shared by several songs must be enqueued once, which the walk does with
+/// the set of names it already enqueued: the enqueue is conditional on the set not
+/// holding the name, and the name enters the set only after the job was enqueued.
+/// Observing that behaviour needs embedded art, and art would write into the real
+/// cover cache, so the gate asserts the shape of the path that implements it and
+/// treats a missing anchor as a violation rather than as a pass.
+#[test]
+fn scanner_shared_cover_enqueue_is_deduplicated() {
+    let source = include_str!("scanner.rs");
+
+    assert!(
+        !source.is_empty() && source.contains("insert_song_full("),
+        "the inspected body was not found: scanner.rs must still hold the insert that feeds the enqueue"
+    );
+
+    let calls = source.matches("enqueue_cover_job").count();
+    assert_eq!(
+        calls, 1,
+        "the walk enqueues a cover from exactly one place, found {calls}"
+    );
+
+    let dedup = source
+        .find("!enqueued_covers.contains(")
+        .expect("the enqueue is guarded by the covers this walk already enqueued");
+    let exists = source
+        .find("!expected_path.exists()")
+        .expect("the enqueue checks whether the cover file exists");
+    let enqueue = source
+        .find("enqueue_cover_job")
+        .expect("the cover job is enqueued");
+    let remember = source
+        .find("enqueued_covers.insert(")
+        .expect("the enqueued name is recorded in the set");
+
+    assert!(
+        dedup < enqueue,
+        "the set is consulted before the enqueue (dedup={dedup}, enqueue={enqueue})"
+    );
+    assert!(
+        remember > enqueue,
+        "the set is updated only after the job was enqueued (enqueue={enqueue}, remember={remember})"
+    );
+    assert!(
+        dedup < exists && exists < enqueue,
+        "the existence check sits between the set and the enqueue \
+         (dedup={dedup}, exists={exists}, enqueue={enqueue})"
+    );
+    assert!(
+        !source[enqueue..remember].contains('}'),
+        "the set update shares the block of the enqueue: {:?}",
+        &source[enqueue..remember]
+    );
+}

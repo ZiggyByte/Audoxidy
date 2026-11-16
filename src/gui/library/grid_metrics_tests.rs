@@ -12,7 +12,9 @@ use crate::gui::dimensions::{
     ALBUM_SCROLLBAR_RAIL, LIST_ROW_HEADER,
 };
 use crate::gui::library::grid_metrics::*;
-use crate::gui::library::{AlbumEntry, LibraryListItem, LibraryManager, LibraryViewMode};
+use crate::gui::library::{
+    AlbumEntry, LibraryListItem, LibraryManager, LibraryNavDir, LibraryViewMode,
+};
 use std::sync::Arc;
 
 /// Tolerance applied to every derived height and to every width sum.
@@ -722,4 +724,193 @@ fn test_anchor_viewport_offset_keeps_a_visible_expanded_row() {
     let expected =
         20.0 * (expanded_row_height(&next, songs) / expanded_row_height(&previous, songs));
     assert!((target - expected).abs() < EPSILON);
+}
+
+#[test]
+fn test_cover_stays_inside_the_reference_thirty_percent_band() {
+    // The card anatomy fixes the cover at ±30 % of the 159 px reference. The band
+    // is derived from that reference and not from the clamp constants, so a clamp
+    // that drifted away from the locked ratio would still be caught here.
+    let lower = ALBUM_COVER_REFERENCE * 0.7;
+    let upper = ALBUM_COVER_REFERENCE * 1.3;
+    let mut reported_width = 2.0 * ALBUM_CARD_MIN_WIDTH + ALBUM_SCROLLBAR_RAIL;
+
+    while reported_width <= 8008.0 {
+        let metrics = grid_metrics(reported_width);
+
+        assert!(
+            metrics.cover_size >= lower - EPSILON && metrics.cover_size <= upper + EPSILON,
+            "cover left the ±30 % band at {reported_width}: {}",
+            metrics.cover_size
+        );
+        assert!(
+            metrics.cover_size < metrics.card_width,
+            "the cover must stay inside the card at {reported_width}"
+        );
+        assert!(
+            metrics.text_block_height == ALBUM_CARD_TEXT_BLOCK_HEIGHT,
+            "the text block must not follow the width at {reported_width}"
+        );
+
+        reported_width += 2.0;
+    }
+}
+
+#[test]
+fn test_metrics_are_stateless_across_the_resize_history() {
+    // The snapshot depends on the width alone: replaying the same widths in any
+    // order, after any other width, returns the same values, and a guarded width
+    // always resolves to the documented minimum layout.
+    let widths = [1329.0_f32, 769.0, 3249.0, 1009.0, 1969.0];
+
+    let ascending: Vec<GridMetrics> = widths.iter().copied().map(grid_metrics).collect();
+    let descending: Vec<GridMetrics> = widths
+        .iter()
+        .rev()
+        .copied()
+        .map(grid_metrics)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+
+    assert_eq!(ascending, descending);
+    assert_eq!(ascending, widths.map(grid_metrics).to_vec());
+
+    let minimum = GridMetrics::minimum();
+    for guarded_width in [0.0_f32, -1.0, f32::NAN, ALBUM_SCROLLBAR_RAIL] {
+        assert_eq!(grid_metrics(guarded_width), minimum);
+    }
+}
+
+#[test]
+fn test_column_count_follows_the_width_without_a_cap() {
+    // One rule decides the columns: the usable width rounded to the reference
+    // card width, never below two. Stating it as a closed form over the whole
+    // range rejects any cap, any floor at a historical maximum, and any guard
+    // that would silently override the rounded count.
+    let mut reported_width = 2.0 * ALBUM_CARD_MIN_WIDTH + ALBUM_SCROLLBAR_RAIL;
+    let mut previous_columns = 0;
+
+    while reported_width <= 8008.0 {
+        let usable_width = reported_width - ALBUM_SCROLLBAR_RAIL;
+        let expected = ((usable_width / ALBUM_CARD_REFERENCE_WIDTH).round() as usize).max(2);
+        let metrics = grid_metrics(reported_width);
+
+        assert_eq!(
+            metrics.columns, expected,
+            "the column rule changed at {reported_width}"
+        );
+        assert!(
+            metrics.columns >= previous_columns,
+            "the column count shrank while the width grew at {reported_width}"
+        );
+
+        previous_columns = metrics.columns;
+        reported_width += 4.0;
+    }
+
+    // A wide panel keeps adding columns instead of stopping at a cap, and the
+    // card never leaves its bounds to pay for them.
+    let wide = grid_metrics(3600.0);
+    assert_eq!(wide.columns, 19);
+    assert!(wide.card_width >= ALBUM_CARD_MIN_WIDTH && wide.card_width <= ALBUM_CARD_MAX_WIDTH);
+    assert!(wide.cover_size >= ALBUM_COVER_MIN && wide.cover_size <= ALBUM_COVER_MAX);
+}
+
+#[test]
+fn test_keyboard_navigation_steps_by_the_measured_columns() {
+    // Keyboard navigation asks the snapshot for the number of items per row and
+    // stores the rectangle the virtualizer produced. After a relayout the next
+    // step must follow the new column count and land on the new rectangle, not on
+    // the geometry the previous layout had.
+    let wide = grid_metrics(1969.0);
+    assert_eq!(wide.columns, 10);
+
+    let album_count = 60;
+    let mut manager = manager_with_albums(album_count, wide);
+    let albums = manager.cached_albums.clone().expect("fixture albums");
+    manager.focused_item = Some(LibraryListItem::Album(composite_id(&albums[0])));
+
+    let (item, y, height) = manager
+        .handle_key_nav(LibraryNavDir::Down, iced::keyboard::Modifiers::NONE)
+        .expect("the focused album has a neighbour below");
+
+    assert_eq!(item, LibraryListItem::Album(composite_id(&albums[10])));
+    assert!((y - wide.row_height).abs() < EPSILON);
+    assert!((height - wide.card_height).abs() < EPSILON);
+    assert_eq!(manager.selected_item_hint, Some((y, height)));
+
+    // A narrower layout halves the step: the same focus now moves four albums.
+    let narrow = grid_metrics(769.0);
+    assert_eq!(narrow.columns, 4);
+    manager.grid_metrics.set(narrow);
+    manager.invalidate_cache();
+
+    let (item, y, height) = manager
+        .handle_key_nav(LibraryNavDir::Down, iced::keyboard::Modifiers::NONE)
+        .expect("the focused album still has a neighbour below");
+
+    assert_eq!(item, LibraryListItem::Album(composite_id(&albums[14])));
+    assert!((y - 3.0 * narrow.row_height).abs() < EPSILON);
+    assert!((height - narrow.card_height).abs() < EPSILON);
+    assert_eq!(manager.selected_item_hint, Some((y, height)));
+
+    // The hinted rectangle is the one the renderer will draw for that album.
+    let rendered = manager
+        .get_visible_items()
+        .into_iter()
+        .find(|(candidate, _)| *candidate == item)
+        .expect("the focused album is part of the rendered grid");
+    assert!((rendered.1.y - y).abs() < EPSILON);
+    assert!((rendered.1.height - height).abs() < EPSILON);
+}
+
+#[test]
+fn test_anchor_never_scrolls_past_the_last_page() {
+    // A correction is clamped to the scrollable range: an offset past the end of
+    // the content lands exactly on the last page, and a negative offset on the
+    // first one.
+    let previous = grid_metrics(1969.0);
+    let next = grid_metrics(1329.0);
+    let album_count = 60;
+    let viewport_height = 800.0;
+
+    let max_scroll = (total_content_height(&next, album_count, None, 0) - viewport_height).max(0.0);
+
+    let last_page = anchor_viewport_offset(
+        &previous,
+        &next,
+        1.0e6,
+        album_count,
+        None,
+        0,
+        viewport_height,
+    );
+    assert!((last_page - max_scroll).abs() < EPSILON);
+
+    let first_page = anchor_viewport_offset(
+        &previous,
+        &next,
+        -50.0,
+        album_count,
+        None,
+        0,
+        viewport_height,
+    );
+    assert!(first_page.abs() < EPSILON);
+
+    // Inside the content the anchor tracks the row instead of clamping.
+    let old_top = row_top_of(&previous, album_count, None, 0, 1);
+    let inner = anchor_viewport_offset(
+        &previous,
+        &next,
+        old_top,
+        album_count,
+        None,
+        0,
+        viewport_height,
+    );
+    assert!(inner > 0.0 && inner < max_scroll);
+    assert!((inner - row_top_of(&next, album_count, None, 0, 1)).abs() < EPSILON);
 }

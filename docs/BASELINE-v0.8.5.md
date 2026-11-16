@@ -26,7 +26,7 @@ It records:
 - the **existing versioned criterion baselines**, referenced rather than re-measured.
 
 The tick set, the lock-order rules and the verification procedure are defined by the
-**Audoxidy Standard** (`.planning/AUDOXIDY-STANDARD.md`, sections 5, 8 and 11). This
+**Audoxidy Standard** (sections 5, 8 and 11). This
 baseline records what the tree *is*; the Standard records what it *must be*. Where this
 document cites the Standard, the Standard is authoritative and this document is the
 snapshot.

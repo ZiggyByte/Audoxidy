@@ -62,3 +62,6 @@ pub use types::{CorePaths, EqPresetSnapshot};
 
 #[cfg(test)]
 mod guard_tests;
+
+#[cfg(test)]
+mod test_layout_guard_tests;

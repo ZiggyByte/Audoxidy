@@ -1,5 +1,7 @@
 use super::*;
 
+use crate::gui::dimensions::SCROLLBAR_WIDTH;
+
 pub fn custom_scrollbar_style(
     _theme: &Theme,
     status: iced::widget::scrollable::Status,
@@ -109,7 +111,7 @@ pub fn standard_scrollable<'a, Message: 'a>(
 /// Configuración estándar de la barra de desplazamiento para uso global.
 pub fn standard_scrollbar() -> iced::widget::scrollable::Scrollbar {
     iced::widget::scrollable::Scrollbar::new()
-        .width(8)
-        .scroller_width(8)
+        .width(SCROLLBAR_WIDTH)
+        .scroller_width(SCROLLBAR_WIDTH)
         .margin(0)
 }

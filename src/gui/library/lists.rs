@@ -3,7 +3,10 @@ use iced::{
     widget::{Space, column, container, mouse_area, row, svg, text},
 };
 
-use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_MD, SPACE_XS};
+use crate::gui::dimensions::{
+    ALBUM_CARD_COVER_TEXT_GAP, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_2XS, SPACE_MD, SPACE_XL,
+    SPACE_XS,
+};
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
     FONT_INTER_SANS_MEDIUM,
@@ -78,7 +81,7 @@ pub fn album_art_widget<'a, Message: 'a>(
                         .color(COLOR_TEXT_SECONDARY)
                 ]
                 .align_x(Alignment::Center)
-                .spacing(5),
+                .spacing(SPACE_XS),
             )
             .width(bounds)
             .height(bounds)
@@ -126,7 +129,7 @@ pub fn album_art_widget<'a, Message: 'a>(
             .height(bounds)
             .align_x(iced::alignment::Horizontal::Center)
             .align_y(iced::alignment::Vertical::Center)
-            .padding(20)
+            .padding(SPACE_XL)
             .style(|_t: &Theme| container::Style::default().background(COLOR_BG))
             .into(),
         }
@@ -664,7 +667,7 @@ where
                         .color(COLOR_TEXT_PRIMARY)
                         .font(FONT_INTER_SANS_MEDIUM),
                 ]
-                .spacing(2)
+                .spacing(SPACE_2XS)
                 .width(Length::Fill);
 
                 let composite_id = format!("{}|{}", artist_name, album_hash);
@@ -683,7 +686,7 @@ where
                     is_album_explicitly_selected || is_song_selected_in_album;
 
                 let card_col = column![card_wrapper, info_col]
-                    .spacing(5)
+                    .spacing(ALBUM_CARD_COVER_TEXT_GAP)
                     .width(Length::Fixed(card_w - 30.0));
 
                 let card_container = mouse_area(

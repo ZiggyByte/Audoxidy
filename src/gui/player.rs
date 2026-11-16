@@ -5,6 +5,7 @@ use crate::gui::dimensions::{
     PLAYER_MENU_WIDTH, PLAYER_PANEL_SIZE, PLAYER_PROGRESS_PADDING_H, PLAYER_PROGRESS_PADDING_V,
     PLAYER_PROGRESS_ROW_HEIGHT, PLAYER_TITLE_HEIGHT, PLAYER_TOOLTIP_PADDING, PLAYER_ZONE_PAD_TIGHT,
     PLAYER_ZONE_PAD_WIDE, RADIUS_M, RADIUS_PILL, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+    icon_button_box,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{VolumeScrollArea, action_icon_button};
@@ -510,8 +511,8 @@ pub fn view<'a>(
                         svg(svg::Handle::from_path(
                             crate::gui::widgets::icon_asset_path(icon)
                         ))
-                        .width(44)
-                        .height(44),
+                        .width(icon_button_box(IconSize::Xl))
+                        .height(icon_button_box(IconSize::Xl)),
                         text(format!("{:.0}", vol))
                             .size(20)
                             .color(Color::WHITE)

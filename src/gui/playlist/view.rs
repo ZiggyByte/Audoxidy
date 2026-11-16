@@ -2,8 +2,8 @@ use crate::audio::AudioManager;
 use crate::db::database::PlaylistSongRef;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_TAB, IconSize, MARGIN_MD, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW, SPACE_MD,
-    SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_TAB, IconSize, MARGIN_MD, PLAYLIST_GROUP_HEADER_INSET, PLAYLIST_PANEL_WIDTH,
+    PLAYLIST_ROW, SPACE_2XS, SPACE_MD, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{
@@ -468,7 +468,7 @@ fn build_folder_separator<'a>(
                     container::Style::default().background(col)
                 }
             ),
-            Space::new().height(10.0)
+            Space::new().height(PLAYLIST_GROUP_HEADER_INSET)
         ])
         .width(Length::Fill)
         .padding(Padding {
@@ -574,7 +574,7 @@ fn build_song_row<'a>(
     .spacing(0)
     .align_y(Alignment::Center);
 
-    let content = column![row1, row2].spacing(2).padding([0, 0]);
+    let content = column![row1, row2].spacing(SPACE_2XS).padding([0, 0]);
 
     let bg_color = if is_selected || is_playing || is_group_selected {
         COLOR_CONTRAST

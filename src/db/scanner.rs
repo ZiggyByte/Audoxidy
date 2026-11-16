@@ -178,8 +178,13 @@ impl Scanner {
         if let Ok(probe) = Probe::open(path)
             && let Ok(tagged_file) = probe
                 .guess_file_type()
-                .unwrap_or(Probe::open(path).unwrap())
-                .read()
+                // A failed guess consumes the probe, so the fallback has to reopen.
+                // `or_else` keeps that reopen on the failure path only: `unwrap_or`
+                // would evaluate it eagerly, opening every scanned file twice, and
+                // its `unwrap` would abort the process when a file disappears
+                // between the two opens.
+                .or_else(|_| Probe::open(path))
+                .and_then(|probe| probe.read())
         {
             let props = tagged_file.properties();
             song.sample_rate = props.sample_rate().map(|sr| sr as i64);
@@ -297,13 +302,24 @@ impl Scanner {
             .as_ref()
             .map(|b| Database::generate_hash(&hex::encode(b)));
 
-        if let Ok(mut db) = db_m.lock()
-            && let Ok((target_file_name, needs_processing)) =
-                db.insert_song_full(&song, &extended, pic_hash, is_external)
-            && needs_processing
-            && !enqueued_covers.contains(&target_file_name)
-            && let Some(data) = pic_bytes
-        {
+        // Resolve the cover write under the database lock, then hand it off after
+        // releasing it. The gateway is bounded, so a blocked send under the lock
+        // would stall every reader of the database — the GUI included — until an
+        // AVIF encode finished, and the existence probe is filesystem I/O that has
+        // no business inside the lock either.
+        let pending_cover = match db_m.lock() {
+            Ok(mut db) => match db.insert_song_full(&song, &extended, pic_hash, is_external) {
+                Ok((target_file_name, needs_processing))
+                    if needs_processing && !enqueued_covers.contains(&target_file_name) =>
+                {
+                    Some(target_file_name)
+                }
+                _ => None,
+            },
+            Err(_) => None,
+        };
+
+        if let (Some(target_file_name), Some(data)) = (pending_cover, pic_bytes) {
             // Only enqueue when the AVIF file does not exist yet. The
             // name arrives complete from the insert, so the existence
             // check and the write cannot disagree.

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use iced::widget::image::Handle;
 
 use super::cover_cache::{
-    CoverDecodeOutcome, CoverKey, CoverStore, GridCoverElement, prefetch_band,
+    CoverDecodeOutcome, CoverKey, CoverStore, GridCoverElement, prefetch_band, prefetch_band_offset,
 };
 use super::grid_metrics::{grid_metrics, row_count, total_content_height};
 use super::state::LibraryManager;
@@ -1554,6 +1554,91 @@ fn test_scroll_request_asks_for_the_visible_window_only() {
     assert!(
         !scroll_arm.contains("request_cover_window_ahead"),
         "el scroll nunca pide la banda de precarga"
+    );
+}
+
+/// The look-ahead band follows the extent of the active view mode.
+///
+/// The list modes are several times taller than the grid for the same library, so a
+/// target clamped to the grid extent disappears for most of the scroll range.
+/// `prefetch_band_offset` takes the extent as an input, and this pins that a target
+/// past the grid rows still resolves while the supplied extent allows it.
+#[test]
+fn test_prefetch_band_offset_uses_the_supplied_content_extent() {
+    let metrics = grid_metrics(800.0);
+    let grid_total = total_content_height(&metrics, 2, None, 0);
+    let list_total = grid_total * 10.0;
+    let viewport_h = 800.0;
+
+    // Far past the grid rows, still inside the list extent.
+    let viewport_y = grid_total * 4.0;
+    let band = prefetch_band_offset(viewport_y, viewport_h, list_total, 1.0, 1.0)
+        .expect("la banda existe dentro de la extensión de lista");
+    assert!(
+        (band - (viewport_y + viewport_h)).abs() < 0.01,
+        "la banda queda una pantalla por debajo del viewport"
+    );
+    assert!(
+        band > grid_total,
+        "la banda supera la extensión de la rejilla: {band} > {grid_total}"
+    );
+
+    // Past the supplied extent there is nothing left to prefetch.
+    assert_eq!(
+        prefetch_band_offset(
+            list_total - viewport_h * 0.5,
+            viewport_h,
+            list_total,
+            1.0,
+            1.0
+        ),
+        None,
+        "una banda que arranca pasada la extensión no pide nada"
+    );
+
+    // Scrolling up from the middle keeps the band above the viewport.
+    let up = prefetch_band_offset(viewport_y, viewport_h, list_total, -1.0, 1.0)
+        .expect("la banda hacia arriba existe");
+    assert!(up < viewport_y, "la banda hacia arriba queda por encima");
+
+    // A mode that draws no covers reports no extent.
+    assert_eq!(prefetch_band_offset(0.0, viewport_h, 0.0, 1.0, 1.0), None);
+
+    // A resting gesture asks for no band.
+    assert_eq!(
+        prefetch_band_offset(0.0, viewport_h, list_total, 0.0, 1.0),
+        None
+    );
+}
+
+/// Each view mode reports its own scroll extent, from the producer the renderer uses.
+#[test]
+fn test_list_modes_report_their_own_scroll_extent() {
+    let mut manager = manager_with_one_album("covers/0.avif", 200);
+
+    manager.view_mode = LibraryViewMode::Grid;
+    let grid_extent = manager.scrollable_content_height();
+
+    manager.view_mode = LibraryViewMode::DetailedList;
+    let structure_extent = manager.get_view_structure().0;
+    let list_extent = manager.scrollable_content_height();
+
+    assert!(structure_extent > 0.0, "la lista tiene contenido");
+    assert!(
+        (list_extent - structure_extent).abs() < 0.01,
+        "la extensión de lista es la que produce el maquetador: {list_extent} vs {structure_extent}"
+    );
+    assert!(
+        list_extent > grid_extent * 4.0,
+        "la lista es mucho más alta que la rejilla: {list_extent} > {grid_extent}"
+    );
+
+    // The simple list draws no covers, so no band is requested for it.
+    manager.view_mode = LibraryViewMode::SimpleList;
+    assert_eq!(
+        manager.scrollable_content_height(),
+        0.0,
+        "la lista simple no pide banda"
     );
 }
 

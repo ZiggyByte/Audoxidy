@@ -1,9 +1,15 @@
-// Benchmark comparativo de la caché LRU de carátulas.
+// Benchmark de la caché LRU de carátulas.
 //
-// Enfrenta la implementación manual (`HashMap` + `VecDeque`) contra `lru::LruCache`
-// sobre las mismas operaciones (acierto, fallo, inserción, desalojo y ciclo completo)
-// a las dos capacidades configuradas (64 normal y 16 low-resource). Cada operación
-// mide la ruta completa, incluyendo el `Mutex` que envuelve a la caché real.
+// Mide la implementación manual (`HashMap` + `VecDeque`) sobre las operaciones de
+// acierto, fallo, inserción, desalojo y ciclo completo a las dos capacidades
+// configuradas (64 normal y 16 low-resource). Cada operación mide la ruta
+// completa, incluyendo el `Mutex` que envuelve a la caché real.
+//
+// La comparación contra `lru::LruCache` que justificó esta implementación se
+// resolvió a favor de la manual y el crate se retiró del manifiesto; sus cifras
+// quedan registradas en `benches/COVERCACHE_LRU_DECISION.md` y en
+// `benches/BASELINES.md`. Para repetir aquella comparación hay que declarar `lru`
+// como dependencia de desarrollo de forma deliberada.
 //
 // Ejecutar: cargo bench --bench covers_bench
 
@@ -11,11 +17,9 @@ use criterion::{
     BatchSize, BenchmarkGroup, Criterion, Throughput, criterion_group, criterion_main,
 };
 use iced::widget::image::Handle;
-use lru::LruCache;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::hint::black_box;
-use std::num::NonZeroUsize;
 
 /// Claves de trabajo precalculadas fuera de la rutina medida. Se generan más que
 /// la capacidad para poder insertar una clave nueva y forzar un desalojo.
@@ -81,44 +85,6 @@ impl CacheOps for HandRolled {
 
     fn len(&self) -> usize {
         self.order.len()
-    }
-}
-
-/// Adaptador sobre `lru::LruCache`; `get` promueve a MRU y `put` desaloja solo.
-struct LruAdapter {
-    cache: LruCache<String, Handle>,
-}
-
-impl LruAdapter {
-    fn new(cap: usize) -> Self {
-        Self {
-            cache: LruCache::new(
-                NonZeroUsize::new(cap).expect("la capacidad debe ser mayor que cero"),
-            ),
-        }
-    }
-}
-
-impl CacheOps for LruAdapter {
-    fn get_hit(&mut self, key: &str) -> Option<Handle> {
-        // `get` (no `peek`) promueve el acierto a la posición más reciente.
-        self.cache.get(key).cloned()
-    }
-
-    fn get_miss(&mut self, key: &str) -> Option<Handle> {
-        self.cache.get(key).cloned()
-    }
-
-    fn insert(&mut self, key: String, value: Handle) {
-        self.cache.put(key, value);
-    }
-
-    fn evict_lru(&mut self) -> Option<Handle> {
-        self.cache.pop_lru().map(|(_, value)| value)
-    }
-
-    fn len(&self) -> usize {
-        self.cache.len()
     }
 }
 
@@ -253,7 +219,6 @@ fn bench_covercache(c: &mut Criterion) {
         bench_ops(&mut group, "hand_rolled", cap, &keys, || {
             HandRolled::new(cap)
         });
-        bench_ops(&mut group, "lru", cap, &keys, || LruAdapter::new(cap));
         group.finish();
     }
 }

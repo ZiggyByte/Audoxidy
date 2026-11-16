@@ -252,13 +252,40 @@ impl CoverStore {
 /// this length does.
 pub const SCROLL_IDLE_MS: u64 = 250;
 
-/// Y offset of the look-ahead band one screen ahead in the scroll direction.
+/// Offset one look-ahead screen away from the viewport, in the scroll direction.
+///
+/// `direction` is the sign of the last scroll delta and `screens` how far ahead to
+/// look, both fixed by policy. A resting or non-finite direction and a non-positive
+/// `screens` yield `None`.
+fn band_target(viewport_y: f32, viewport_h: f32, direction: f32, screens: f32) -> Option<f32> {
+    if !viewport_y.is_finite()
+        || !viewport_h.is_finite()
+        || viewport_h <= 0.0
+        || !direction.is_finite()
+        || direction == 0.0
+        || !screens.is_finite()
+        || screens <= 0.0
+    {
+        return None;
+    }
+
+    Some(
+        viewport_y
+            + if direction < 0.0 {
+                -viewport_h * screens
+            } else {
+                viewport_h * screens
+            },
+    )
+}
+
+/// Grid look-ahead band: one screen ahead, snapped to the grid row that contains
+/// it, so a band landing inside a row still requests that row.
 ///
 /// `direction` is the sign of the last scroll delta (`1.0` downward, `-1.0`
-/// upward) and `screens` how far ahead to look, both fixed by policy. The offset
-/// is resolved to the row that contains it, so a band landing inside a row still
-/// requests that row. An empty library, a resting or non-finite direction and a
-/// band starting past the last row yield `None`.
+/// upward) and `screens` how far ahead to look, both fixed by policy. An empty
+/// library, a resting or non-finite direction and a band starting past the last
+/// row yield `None`.
 // The inputs are the exact geometry the row math already needs; grouping them
 // into a struct would only move the same list to another module.
 #[allow(clippy::too_many_arguments)]
@@ -272,23 +299,7 @@ pub fn prefetch_band(
     direction: f32,
     screens: f32,
 ) -> Option<f32> {
-    if !viewport_y.is_finite()
-        || !viewport_h.is_finite()
-        || viewport_h <= 0.0
-        || !direction.is_finite()
-        || direction == 0.0
-        || !screens.is_finite()
-        || screens <= 0.0
-    {
-        return None;
-    }
-
-    let band_y = viewport_y
-        + if direction < 0.0 {
-            -viewport_h * screens
-        } else {
-            viewport_h * screens
-        };
+    let band_y = band_target(viewport_y, viewport_h, direction, screens)?;
 
     let total =
         grid_metrics::total_content_height(metrics, album_count, expanded_row, rendered_songs);
@@ -300,6 +311,37 @@ pub fn prefetch_band(
         grid_metrics::row_at_offset(metrics, album_count, expanded_row, rendered_songs, band_y);
 
     Some(top)
+}
+
+/// Look-ahead band for a viewport whose content extent is already resolved.
+///
+/// The row-resolving window builders accept an arbitrary offset and snap it
+/// themselves, so this reports the raw target instead of forcing the offset
+/// through grid geometry. The list modes need it: their content extent is several
+/// times the grid one, so a grid-derived target either falls past the end — no band
+/// at all — or lands back inside the visible window, where the band is deduplicated
+/// against the window and spends its room on nothing.
+///
+/// `content_height` is the extent of the active view mode; a zero or unknown
+/// extent yields `None`, which is the correct answer for a mode that draws no
+/// covers.
+pub fn prefetch_band_offset(
+    viewport_y: f32,
+    viewport_h: f32,
+    content_height: f32,
+    direction: f32,
+    screens: f32,
+) -> Option<f32> {
+    if !content_height.is_finite() || content_height <= 0.0 {
+        return None;
+    }
+
+    let band_y = band_target(viewport_y, viewport_h, direction, screens)?;
+    if band_y >= content_height {
+        return None;
+    }
+
+    Some(band_y.max(0.0))
 }
 
 /// One decode request handed to the worker queue.
@@ -656,25 +698,43 @@ impl LibraryManager {
         let mut jobs = self.window_jobs(self.scroll_offset.y, height);
         let window_len = jobs.len();
 
-        let albums = self
-            .filtered_albums
-            .as_ref()
-            .or(self.cached_albums.as_ref());
-        let album_count = albums.map_or(0, Vec::len);
-        let expanded_row =
-            albums.and_then(|albums| self.expanded_album_row(albums, metrics.columns));
-        let rendered_songs = self.rendered_expanded_song_count();
+        // The band resolves in the active mode's own geometry. The grid snaps it to
+        // a row; the two list modes that draw covers supply their own extent, because
+        // a grid-derived target would fall past their end or land back inside the
+        // visible window. The simple list draws no covers, so it asks for no band.
+        let band = match self.view_mode {
+            LibraryViewMode::Grid => {
+                let albums = self
+                    .filtered_albums
+                    .as_ref()
+                    .or(self.cached_albums.as_ref());
+                let album_count = albums.map_or(0, Vec::len);
+                let expanded_row =
+                    albums.and_then(|albums| self.expanded_album_row(albums, metrics.columns));
+                let rendered_songs = self.rendered_expanded_song_count();
 
-        if let Some(band_y) = prefetch_band(
-            &metrics,
-            album_count,
-            expanded_row,
-            rendered_songs,
-            self.scroll_offset.y,
-            height,
-            self.scroll_direction.signum(),
-            screens,
-        ) {
+                prefetch_band(
+                    &metrics,
+                    album_count,
+                    expanded_row,
+                    rendered_songs,
+                    self.scroll_offset.y,
+                    height,
+                    self.scroll_direction.signum(),
+                    screens,
+                )
+            }
+            LibraryViewMode::DetailedList | LibraryViewMode::ThumbnailList => prefetch_band_offset(
+                self.scroll_offset.y,
+                height,
+                self.scrollable_content_height(),
+                self.scroll_direction.signum(),
+                screens,
+            ),
+            LibraryViewMode::SimpleList => None,
+        };
+
+        if let Some(band_y) = band {
             // The band renders with its own margin, so it repeats rows the window
             // already reaches past the viewport. Those keys are already requested
             // and must not spend the band's room.

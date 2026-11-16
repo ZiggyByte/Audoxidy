@@ -832,6 +832,47 @@ impl LibraryManager {
         }
     }
 
+    /// Total scrollable height of the active view mode.
+    ///
+    /// The grid resolves through its own metrics producer. The two list modes that
+    /// draw covers read the extent the row builder already produced for the current
+    /// frame, so a cover request costs no extra walk over the library; the simple
+    /// list draws no covers, so it reports no extent and no look-ahead band is
+    /// requested for it.
+    ///
+    /// The cover prefetch needs this because the band is placed one screen ahead in
+    /// the *active* mode's coordinates: using the grid extent for a list view puts
+    /// the target past the end of the list, so no band is ever requested beyond the
+    /// first slice of the scroll range.
+    pub fn scrollable_content_height(&self) -> f32 {
+        match self.view_mode {
+            LibraryViewMode::Grid => {
+                let metrics = self.grid_metrics.get();
+                let albums = self
+                    .filtered_albums
+                    .as_ref()
+                    .or(self.cached_albums.as_ref());
+                let album_count = albums.map_or(0, Vec::len);
+                let expanded_row =
+                    albums.and_then(|albums| self.expanded_album_row(albums, metrics.columns));
+                let rendered_songs = self.rendered_expanded_song_count();
+
+                crate::gui::library::grid_metrics::total_content_height(
+                    &metrics,
+                    album_count,
+                    expanded_row,
+                    rendered_songs,
+                )
+            }
+            LibraryViewMode::DetailedList | LibraryViewMode::ThumbnailList => self
+                .cached_detailed_view
+                .borrow()
+                .as_ref()
+                .map_or(0.0, |(height, _)| *height),
+            LibraryViewMode::SimpleList => 0.0,
+        }
+    }
+
     /// Decode jobs for the cover paths the current viewport shows.
     ///
     /// The job set follows the view mode, so no mode requests a bucket its rows do

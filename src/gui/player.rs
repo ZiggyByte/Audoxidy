@@ -690,24 +690,5 @@ pub fn view<'a>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn autosave_due_first_run_persists() {
-        assert!(autosave_due(1_000, None, 20));
-    }
-
-    #[test]
-    fn autosave_due_respects_interval() {
-        assert!(!autosave_due(1000, Some(1000), 20));
-        assert!(!autosave_due(1019, Some(1000), 20));
-        assert!(autosave_due(1020, Some(1000), 20));
-        assert!(autosave_due(1030, Some(1000), 20));
-    }
-
-    #[test]
-    fn autosave_due_handles_backwards_clock() {
-        assert!(!autosave_due(999, Some(1000), 20));
-    }
-}
+#[path = "player_tests.rs"]
+mod tests;

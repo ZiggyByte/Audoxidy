@@ -55,45 +55,5 @@ pub fn core_event_channel() -> (
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_core_event_channel_round_trip() {
-        let (tx, rx) = core_event_channel();
-        tx.send(CoreEvent::ScanStarted).unwrap();
-        tx.send(CoreEvent::ScanProgress {
-            files_processed: 42,
-        })
-        .unwrap();
-        tx.send(CoreEvent::LibraryDirty).unwrap();
-
-        assert!(matches!(rx.recv().unwrap(), CoreEvent::ScanStarted));
-        assert!(matches!(
-            rx.recv().unwrap(),
-            CoreEvent::ScanProgress {
-                files_processed: 42
-            }
-        ));
-        assert!(matches!(rx.recv().unwrap(), CoreEvent::LibraryDirty));
-    }
-
-    #[test]
-    fn test_core_event_is_send_and_clone() {
-        fn assert_send<T: Send>() {}
-        fn assert_clone<T: Clone>() {}
-        assert_send::<CoreEvent>();
-        assert_clone::<CoreEvent>();
-    }
-
-    #[test]
-    fn test_core_event_channel_bounded_capacity() {
-        let (tx, _rx) = core_event_channel();
-        // The channel is bounded(64). After sending 64 events, the 65th
-        // should block (we test the non-blocking path by using try_send).
-        for _ in 0..64 {
-            tx.try_send(CoreEvent::LibraryDirty).unwrap();
-        }
-        assert!(tx.try_send(CoreEvent::LibraryDirty).is_err());
-    }
-}
+#[path = "events_tests.rs"]
+mod tests;

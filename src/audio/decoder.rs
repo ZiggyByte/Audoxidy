@@ -442,6 +442,41 @@ struct OpenedPreload {
     replay_gain: (Option<f32>, Option<f32>),
 }
 
+/// Where the audio for a manual crossfade comes from.
+///
+/// A manual change can arrive while the next track is still queued for its
+/// blocking open, while the helper thread is already opening it, or with the
+/// head already decoded. Keeping the four states apart is what lets the decoder
+/// wait for an in-flight open instead of dropping the mix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManualPreloadSource {
+    /// The head is decoded or the next track is already open.
+    Ready,
+    /// The open request is still queued on the decoder loop.
+    Queued,
+    /// The helper thread is opening the next track.
+    InFlight,
+    /// Nothing was requested, so the mix cannot start.
+    Unavailable,
+}
+
+fn manual_preload_source(
+    preload_open: bool,
+    predecoded_frames: usize,
+    queued: bool,
+    in_flight: bool,
+) -> ManualPreloadSource {
+    if preload_open || predecoded_frames > 0 {
+        ManualPreloadSource::Ready
+    } else if queued {
+        ManualPreloadSource::Queued
+    } else if in_flight {
+        ManualPreloadSource::InFlight
+    } else {
+        ManualPreloadSource::Unavailable
+    }
+}
+
 fn open_preload_track_blocking(
     request: (
         String,
@@ -1846,6 +1881,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_album = None;
                     preload_cover = None;
                     preload_rg = (None, None);
+                    // A new request supersedes any open still running for an older
+                    // one; the helper thread sends into a dropped receiver.
+                    preload_open_rx = None;
                     preload_pending = Some((
                         path, title, artist, album, cover_path, track_gain, album_gain,
                     ));
@@ -1876,7 +1914,17 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     } else {
                         0.0
                     };
-                    if ms > 0.0 && (preload_format.is_some() || !predecode_buffer.is_empty()) {
+                    let preload_source = if ms > 0.0 {
+                        manual_preload_source(
+                            preload_format.is_some(),
+                            predecode_buffer.len(),
+                            preload_pending.is_some(),
+                            preload_open_rx.is_some(),
+                        )
+                    } else {
+                        ManualPreloadSource::Unavailable
+                    };
+                    if preload_source == ManualPreloadSource::Ready {
                         // Si ya hay una mezcla en curso, el usuario quiere cambiar
                         // AHORA: completar la mezcla activa de inmediato (el cambio
                         // de pista no debe quedar bloqueado hasta que termine).
@@ -1953,46 +2001,74 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             trace_iteration = 0;
                             tracing::debug!("[XFADE_TRACE] Crossfade manual iniciado: {} ms", ms);
                         }
-                    } else if ms > 0.0 && preload_pending.is_some() {
-                        // La pre-carga está EN COLA (la GUI la pidió justo antes al
-                        // saltar a mitad de canción) pero aún no se abrió: se abre y
-                        // se decodifica el primer lote SÍNCRONAMENTE para que la mezcla
-                        // arranque de inmediato (el ringbuf cubre la breve apertura).
-                        preload_open_rx = None;
+                    } else if matches!(
+                        preload_source,
+                        ManualPreloadSource::Queued | ManualPreloadSource::InFlight
+                    ) {
+                        // The GUI asks for the preload right before this command, so
+                        // at this point the request is either still queued or already
+                        // handed to the helper thread. Cover both: the ring buffer
+                        // absorbs the short wait and the mix starts immediately.
                         let (cmd_out_rate, cmd_out_channels) = {
                             let s = state.read();
                             (s.device_sample_rate, s.channels as usize)
                         };
                         if let Some(request) = preload_pending.take() {
+                            // A queued request wins; any older in-flight open is stale.
+                            preload_open_rx = None;
                             match open_preload_track_blocking(request) {
-                                Ok(opened) => {
-                                    install_opened_preload(
-                                        opened,
-                                        &mut preload_format,
-                                        &mut preload_decoder,
-                                        &mut preload_track_id,
-                                        &mut preload_sr,
-                                        &mut preload_total_duration_sec,
-                                        &mut preload_channel_map,
-                                        &mut preload_path,
-                                        &mut preload_title,
-                                        &mut preload_artist,
-                                        &mut preload_album,
-                                        &mut preload_cover,
-                                        &mut preload_rg,
-                                    );
-                                    let xfade_max_ms = {
-                                        let s = state.read();
-                                        s.crossfade_manual_ms.max(s.crossfade_auto_ms).max(0.0)
-                                    };
-                                    predecode_cap_frames = predecode_cap_frames_for(
-                                        xfade_max_ms as f64,
-                                        cmd_out_rate,
-                                        cmd_out_channels.max(1),
-                                    );
-                                }
+                                Ok(opened) => install_opened_preload(
+                                    opened,
+                                    &mut preload_format,
+                                    &mut preload_decoder,
+                                    &mut preload_track_id,
+                                    &mut preload_sr,
+                                    &mut preload_total_duration_sec,
+                                    &mut preload_channel_map,
+                                    &mut preload_path,
+                                    &mut preload_title,
+                                    &mut preload_artist,
+                                    &mut preload_album,
+                                    &mut preload_cover,
+                                    &mut preload_rg,
+                                ),
                                 Err(e) => tracing::error!("Pre-carga falló: {}", e),
                             }
+                        } else if let Some(rx) = preload_open_rx.take() {
+                            // The helper thread is opening the next track; block for
+                            // its result instead of dropping the mix.
+                            match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                                Ok(Ok(opened)) => install_opened_preload(
+                                    opened,
+                                    &mut preload_format,
+                                    &mut preload_decoder,
+                                    &mut preload_track_id,
+                                    &mut preload_sr,
+                                    &mut preload_total_duration_sec,
+                                    &mut preload_channel_map,
+                                    &mut preload_path,
+                                    &mut preload_title,
+                                    &mut preload_artist,
+                                    &mut preload_album,
+                                    &mut preload_cover,
+                                    &mut preload_rg,
+                                ),
+                                Ok(Err(e)) => tracing::error!("Pre-carga falló: {}", e),
+                                Err(_) => tracing::error!(
+                                    "Pre-carga no terminó a tiempo para la mezcla manual"
+                                ),
+                            }
+                        }
+                        if preload_format.is_some() {
+                            let xfade_max_ms = {
+                                let s = state.read();
+                                s.crossfade_manual_ms.max(s.crossfade_auto_ms).max(0.0)
+                            };
+                            predecode_cap_frames = predecode_cap_frames_for(
+                                xfade_max_ms as f64,
+                                cmd_out_rate,
+                                cmd_out_channels.max(1),
+                            );
                         }
                         if preload_format.is_some() {
                             let preload_has_more = preload_decode_batch(

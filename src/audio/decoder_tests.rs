@@ -8,9 +8,9 @@
 //! keeps those items private on purpose.
 
 use super::{
-    AudioDecoder, SymphoniaDecoder, apply_promotion_metadata, crossfade_auto_due,
-    derive_duration_sec, mix_tail_into_frame, predecode_cap_frames_for, tail_buffer_cap_for,
-    tail_decode_batch,
+    AudioDecoder, ManualPreloadSource, SymphoniaDecoder, apply_promotion_metadata,
+    crossfade_auto_due, derive_duration_sec, manual_preload_source, mix_tail_into_frame,
+    predecode_cap_frames_for, tail_buffer_cap_for, tail_decode_batch,
 };
 use crate::audio::engine::{AudioEngine, AudioState, ChannelMap};
 use crate::utils::test_support::{TempTestDir, write_pcm_wav};
@@ -627,5 +627,39 @@ fn mmap_source_releases_pages_and_stays_readable() {
         head,
         original[..8192],
         "relectura tras seek debe ser exacta"
+    );
+}
+
+/// A manual crossfade must wait for an in-flight preload open instead of
+/// dropping the mix. The queued and in-flight states are distinct: the idle
+/// branch takes a queued request and starts the helper thread, so by the time
+/// the crossfade command arrives the request can be in either state.
+#[test]
+fn test_manual_crossfade_waits_for_an_in_flight_preload() {
+    assert_eq!(
+        manual_preload_source(false, 0, false, true),
+        ManualPreloadSource::InFlight
+    );
+    assert_eq!(
+        manual_preload_source(false, 0, true, false),
+        ManualPreloadSource::Queued
+    );
+    assert_eq!(
+        manual_preload_source(false, 0, true, true),
+        ManualPreloadSource::Queued,
+        "a queued request is opened synchronously and wins over an older open"
+    );
+    assert_eq!(
+        manual_preload_source(true, 0, false, false),
+        ManualPreloadSource::Ready
+    );
+    assert_eq!(
+        manual_preload_source(false, 1024, false, false),
+        ManualPreloadSource::Ready,
+        "a decoded head is enough to start the mix"
+    );
+    assert_eq!(
+        manual_preload_source(false, 0, false, false),
+        ManualPreloadSource::Unavailable
     );
 }

@@ -8,84 +8,45 @@
 
 use crate::audio::dsp::DspChain;
 use crate::audio::engine::{AudioEngine, ChannelMap};
-
-// --- Loudness gain computation helper (mirrors decoder.rs:986-1025) ---
-
-/// Compute loudness gain (linear) mirroring the decoder's single gain point.
-/// All inputs are dB values; the function sums them, caps at +12 dB,
-/// and returns the linear factor 10^(gain_db/20).
-fn compute_gain_db(
-    rg_track: Option<f32>,
-    rg_album: Option<f32>,
-    rg_track_enabled: bool,
-    rg_album_enabled: bool,
-    rg_master_enabled: bool,
-    offset_album_db: f32,
-    offset_track_db: f32,
-    offset_rt_db: f32,
-    analyze_rt_enabled: bool,
-    normalize_gain_db: f32,
-) -> f64 {
-    let mut gain_db: f64 = 0.0;
-
-    if rg_master_enabled {
-        // 1. ReplayGain base from tags (album + track sum)
-        if rg_track_enabled {
-            if let Some(tg) = rg_track {
-                gain_db += tg as f64;
-            }
-        }
-        if rg_album_enabled {
-            if let Some(ag) = rg_album {
-                gain_db += ag as f64;
-            }
-        }
-
-        // 2. RG offsets per source
-        gain_db += offset_album_db as f64;
-        gain_db += offset_track_db as f64;
-
-        // 3. RT Analysis fallback: only when no tags AND analyze enabled
-        let has_tags = rg_track.is_some() || rg_album.is_some();
-        if !has_tags && analyze_rt_enabled {
-            gain_db += offset_rt_db as f64;
-        }
-    }
-
-    // 4. RMS Normalization output (shared controller)
-    gain_db += normalize_gain_db as f64;
-
-    // 5. Clamp to safety ceiling +12 dB and convert to linear
-    10.0_f64.powf(gain_db.min(12.0) / 20.0)
-}
+use crate::audio::loudness::LoudnessGainInputs;
 
 // --- Loudness gain tests ---
 
 #[test]
 fn test_loudness_gain_no_tags() {
     // No RG tags, all defaults → unity gain (0 dB)
-    let gain = compute_gain_db(
-        None, None, true, true, true, // track/album/offsets
-        0.0, 0.0, 0.0, true, 0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: None,
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: true,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: true,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     assert!((gain - 1.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_loudness_gain_rg_track() {
     // RG track = -3 dB, track enabled, album disabled → gain = 10^(-3/20)
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(-3.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -93,18 +54,19 @@ fn test_loudness_gain_rg_track() {
 #[test]
 fn test_loudness_gain_rg_album_track_sum() {
     // RG track = -3 dB, album = -2 dB, both enabled → gain = 10^(-5/20)
-    let gain = compute_gain_db(
-        Some(-3.0),
-        Some(-2.0),
-        true,
-        true,
-        true,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: Some(-2.0),
+        rg_track_enabled: true,
+        rg_album_enabled: true,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(-5.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -112,18 +74,19 @@ fn test_loudness_gain_rg_album_track_sum() {
 #[test]
 fn test_loudness_gain_offsets() {
     // RG track = -3 dB, offset_album = +2 dB → gain = 10^(-1/20)
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        2.0,
-        0.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 2.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(-1.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -132,25 +95,38 @@ fn test_loudness_gain_offsets() {
 fn test_loudness_gain_offset_track_and_album() {
     // RG track = -3 dB, offset_track = +1 dB, offset_album = +2 dB
     // gain_db = -3 + 0 + 1 + 2 = 0 dB → linear 1.0
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        2.0,
-        1.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 2.0,
+        offset_track_db: 1.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     assert!((gain - 1.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_loudness_gain_rt_fallback() {
     // No RG tags, analyze_rt=true, offset_rt = +2 dB → gain = 10^(2/20)
-    let gain = compute_gain_db(None, None, true, true, true, 0.0, 0.0, 2.0, true, 0.0);
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: None,
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: true,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 2.0,
+        analyze_rt_enabled: true,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(2.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -160,18 +136,19 @@ fn test_loudness_gain_rt_no_fallback_with_tags() {
     // RG track = -3 dB present, analyze_rt=true, offset_rt = +2 dB
     // offset_rt NOT added when tags exist.
     // gain_db = -3 + 0 = -3 dB
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        0.0,
-        0.0,
-        2.0,
-        true,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 2.0,
+        analyze_rt_enabled: true,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(-3.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -179,36 +156,38 @@ fn test_loudness_gain_rt_no_fallback_with_tags() {
 #[test]
 fn test_loudness_gain_master_off() {
     // RG master enabled=false → all RG contributions = 0, gain = 1.0
-    let gain = compute_gain_db(
-        Some(-3.0),
-        Some(-2.0),
-        true,
-        true,
-        false, // master OFF
-        5.0,
-        5.0,
-        5.0,
-        true,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: Some(-2.0),
+        rg_track_enabled: true,
+        rg_album_enabled: true,
+        rg_master_enabled: false, // master OFF
+        offset_album_db: 5.0,
+        offset_track_db: 5.0,
+        offset_rt_db: 5.0,
+        analyze_rt_enabled: true,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     assert!((gain - 1.0).abs() < 1e-10);
 }
 
 #[test]
 fn test_loudness_gain_with_normalization() {
-    // RG track = -3 dB + normalization = +4 dB → gain_db = +1 dB
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        4.0,
-    );
+    // RG track = -3 dB + fixed gain = +4 dB → gain_db = +1 dB
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 4.0,
+    });
     let expected = 10.0_f64.powf(1.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }
@@ -217,18 +196,19 @@ fn test_loudness_gain_with_normalization() {
 fn test_loudness_gain_cap() {
     // RG track = -3 dB, offset_album = +20 dB → gain_db = +17 dB
     // capped at +12 dB (safety ceiling)
-    let gain = compute_gain_db(
-        Some(-3.0),
-        None,
-        true,
-        false,
-        true,
-        20.0,
-        0.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: Some(-3.0),
+        rg_album: None,
+        rg_track_enabled: true,
+        rg_album_enabled: false,
+        rg_master_enabled: true,
+        offset_album_db: 20.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected_at_cap = 10.0_f64.powf(12.0 / 20.0);
     let expected_uncapped = 10.0_f64.powf(17.0 / 20.0);
     assert!((gain - expected_at_cap).abs() < 1e-10);
@@ -238,18 +218,19 @@ fn test_loudness_gain_cap() {
 #[test]
 fn test_loudness_gain_rg_album_only() {
     // RG album = -4 dB, album enabled, track disabled → gain = 10^(-4/20)
-    let gain = compute_gain_db(
-        None,
-        Some(-4.0),
-        false,
-        true,
-        true,
-        0.0,
-        0.0,
-        0.0,
-        false,
-        0.0,
-    );
+    let gain = crate::audio::loudness::gain_linear(&LoudnessGainInputs {
+        rg_track: None,
+        rg_album: Some(-4.0),
+        rg_track_enabled: false,
+        rg_album_enabled: true,
+        rg_master_enabled: true,
+        offset_album_db: 0.0,
+        offset_track_db: 0.0,
+        offset_rt_db: 0.0,
+        analyze_rt_enabled: false,
+        fixed_enabled: true,
+        fixed_db: 0.0,
+    });
     let expected = 10.0_f64.powf(-4.0 / 20.0);
     assert!((gain - expected).abs() < 1e-10);
 }

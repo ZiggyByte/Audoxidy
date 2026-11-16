@@ -23,10 +23,6 @@ impl crate::gui::app::AudoxidyApp {
         match message {
             Message::LibraryFocus => {
                 self.focus = AppFocus::Library;
-                if self.library_manager.data_unloaded {
-                    self.library_manager.data_unloaded = false;
-                    return self.update(Message::LibraryRefresh);
-                }
                 Task::none()
             }
             Message::ScanLibrary(folder) => {
@@ -42,11 +38,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibrarySearchQueryChanged(q) => {
                 self.focus = AppFocus::Library;
-                if self.library_manager.data_unloaded {
-                    self.library_manager.data_unloaded = false;
-                    self.library_manager.search_query = q;
-                    return self.update(Message::LibraryRefresh);
-                }
                 self.library_manager.search_query = q;
                 self.library_manager.apply_filter();
                 self.library_manager.last_viewport = None;
@@ -175,13 +166,11 @@ impl crate::gui::app::AudoxidyApp {
                         self.library_manager.selected_items.insert(item.clone());
                         self.library_manager.focused_item = Some(item);
 
-                        // Unificado: En lugar de ir a la DB, intentamos filtrar de los datos en RAM.
-                        // Pero si los datos fueron descargados por el GC (data_unloaded), forzamos carga desde DB.
+                        // Unificado: en lugar de ir a la DB, filtramos desde los datos en RAM.
                         let mut alb_songs = Vec::new();
                         let mut found_in_cache = false;
 
-                        if !self.library_manager.data_unloaded
-                            && let Some(all_songs) = &self.library_manager.cached_all_songs
+                        if let Some(all_songs) = &self.library_manager.cached_all_songs
                             && let Some(album_entry) =
                                 self.library_manager.cached_albums.as_ref().and_then(|all| {
                                     all.iter().find(|a| {
@@ -386,10 +375,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibraryKeyNav(dir, modifiers) => {
                 self.focus = AppFocus::Library;
-                if self.library_manager.data_unloaded {
-                    self.library_manager.data_unloaded = false;
-                    return self.update(Message::LibraryRefresh);
-                }
                 use crate::gui::library::LibraryNavDir;
 
                 if self.library_manager.is_list_mode() {
@@ -518,12 +503,6 @@ impl crate::gui::app::AudoxidyApp {
                 );
 
                 self.library_manager.view_menu_open = false;
-
-                if self.library_manager.data_unloaded {
-                    // Si los datos fueron descargados por el GC, forzar una recarga completa desde la DB
-                    self.library_manager.data_unloaded = false;
-                    return self.update(Message::LibraryRefresh);
-                }
 
                 let mut tasks = Vec::new();
 
@@ -743,7 +722,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::LibraryRefresh => {
                 self.focus = AppFocus::Library;
-                self.library_manager.data_unloaded = false;
 
                 let core = self.core.clone();
                 let params = self.library_manager.get_search_params();
@@ -909,11 +887,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::ChangeGeneralFilter(ft) => {
                 self.focus = AppFocus::Library;
-                if self.library_manager.data_unloaded {
-                    self.library_manager.data_unloaded = false;
-                    self.filters_manager.current_filter = ft;
-                    return self.update(Message::LibraryRefresh);
-                }
                 self.filters_manager.current_filter = ft;
                 self.filters_manager.selected_subfilter = None;
                 self.filters_manager.selected_tree_node = None;
@@ -1098,11 +1071,6 @@ impl crate::gui::app::AudoxidyApp {
                 )
             }
             Message::LibraryScroll(offset) => {
-                if self.library_manager.data_unloaded {
-                    self.library_manager.data_unloaded = false;
-                    return self.update(Message::LibraryRefresh);
-                }
-
                 let previous_y = self.library_manager.scroll_offset.y;
                 let abs_offset = offset.absolute_offset();
                 self.library_manager.scroll_offset = iced::Vector::new(abs_offset.x, abs_offset.y);

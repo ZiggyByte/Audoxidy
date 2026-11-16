@@ -42,8 +42,12 @@ impl crate::gui::app::AudoxidyApp {
                     false,
                 );
 
-                // Descargar biblioteca inactiva
-                self.library_manager.unload(is_library_focused);
+                // La biblioteca no se descarga: sus datos en RAM son el modelo que la
+                // vista necesita para dibujarse, y recortarlos obligaba a releer la
+                // base y a reconstruir las agrupaciones, lo que vaciaba las listas
+                // hasta el siguiente cambio de vista. La memoria de carátulas la
+                // acota el presupuesto de `cover_store`, que este handler recorta
+                // más abajo solo cuando la biblioteca no tiene el foco.
 
                 // 2. Limpieza de cachés de virtualización UI (Siempre se limpian para liberar RAM, se regeneran al vuelo)
                 self.library_manager.invalidate_cache();

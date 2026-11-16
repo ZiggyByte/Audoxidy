@@ -129,7 +129,6 @@ pub struct LibraryManager {
     pub last_scroll_at: Option<std::time::Instant>,
     /// Whether a delayed look-ahead prefetch is already scheduled.
     pub prefetch_scheduled: bool,
-    pub data_unloaded: bool,
     pub pending_reveal_path: Option<String>,
 }
 
@@ -218,7 +217,6 @@ impl Default for LibraryManager {
             scroll_direction: 0.0,
             last_scroll_at: None,
             prefetch_scheduled: false,
-            data_unloaded: false,
             pending_reveal_path: None,
         }
     }

@@ -92,11 +92,17 @@ pressure. It returns early when either the scanner is running or `gc_blocked_by_
 transition. Consecutive track changes therefore leave few windows for the timer, and the GC's own
 500 MB app cap never fires at 280 MB.
 
-When it does run, `handle_memory` (`src/gui/app/update/memory.rs`) unloads the inactive lists,
+When it does run, `handle_memory` (`src/gui/app/update/memory.rs`) unloads the inactive playlist,
 clears the virtualization caches, drops the decoded covers outside the visible window when the
 library is unfocused, clears the interner and purges the audio preload, then calls
 `malloc_trim(0)`. The visible cover window is kept, so returning to the same scroll position
 stays instant.
+
+The library's own row data is deliberately **not** released. It used to be truncated to 100
+albums and 500 songs with its artist groups dropped, which forced a database reload and left the
+list views empty until the grid rebuilt them. Cover RAM is now bounded by the store's byte budget
+and the guarded off-window trim above, so that truncation only traded a bounded win for a
+visible rebuild.
 
 ---
 

@@ -5,23 +5,11 @@
 //! or the application database.
 
 use super::*;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::utils::covers::{effective_cover_path, process_and_save_cover_in};
-
-/// Unique temporary directory for one test; the caller removes it at the end.
-fn temp_cover_dir() -> PathBuf {
-    static COUNTER: AtomicU64 = AtomicU64::new(0);
-    let sequence = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!(
-        "audoxidy-db-cover-test-{}-{sequence}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&dir).expect("no se pudo crear el directorio temporal de prueba");
-    dir
-}
+use crate::utils::test_support::TempTestDir;
 
 /// Encodes a solid PNG in memory so the writer reads a real image.
 fn png_bytes(width: u32, height: u32) -> Vec<u8> {
@@ -100,7 +88,7 @@ fn song_cover_override(db: &Database, song_id: i64) -> Option<String> {
 
 #[test]
 fn test_identical_images_produce_two_album_files() {
-    let dir = temp_cover_dir();
+    let dir = TempTestDir::new("db-cover");
     let mut db = Database::new_memory().expect("se debe crear la base en memoria");
     let shared_picture = "ab12cd34";
 
@@ -142,7 +130,7 @@ fn test_identical_images_produce_two_album_files() {
 
     let picture = png_bytes(4, 4);
     for file_name in [&alpha_name, &beta_name] {
-        let written = process_and_save_cover_in(&dir, &picture, file_name)
+        let written = process_and_save_cover_in(dir.path(), &picture, file_name)
             .expect("la carátula de prueba debe escribirse");
         assert_eq!(
             written.file_name().and_then(|name| name.to_str()),
@@ -150,17 +138,15 @@ fn test_identical_images_produce_two_album_files() {
             "el nombre escrito es exactamente el nombre almacenado"
         );
         assert!(
-            dir.join(file_name).exists(),
+            dir.path().join(file_name).exists(),
             "cada nombre produce su propio archivo"
         );
     }
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]
 fn test_written_cover_name_matches_the_stored_path() {
-    let dir = temp_cover_dir();
+    let dir = TempTestDir::new("db-cover");
     let mut db = Database::new_memory().expect("se debe crear la base en memoria");
 
     let (file_name, needs_processing) = insert_song(
@@ -182,18 +168,16 @@ fn test_written_cover_name_matches_the_stored_path() {
         "la extensión aparece una sola vez: una capa que la añadiera otra vez dejaría un archivo ausente"
     );
 
-    let written = process_and_save_cover_in(&dir, &png_bytes(4, 4), &stored)
+    let written = process_and_save_cover_in(dir.path(), &png_bytes(4, 4), &stored)
         .expect("la carátula de prueba debe escribirse");
     assert_eq!(
         written.file_name().and_then(|name| name.to_str()),
         Some(stored.as_str())
     );
     assert!(
-        dir.join(&stored).exists(),
+        dir.path().join(&stored).exists(),
         "unir el nombre devuelto encuentra el archivo escrito: una extensión duplicada dejaría un archivo ausente"
     );
-
-    let _ = std::fs::remove_dir_all(&dir);
 }
 
 #[test]

@@ -1,14 +1,25 @@
 //! Source-scan convention guards for the test layout.
 //!
-//! Two guards walk the source tree and assert, with no exclusion list and no
+//! Three guards walk the source tree and assert, with no exclusion list and no
 //! self-skip:
 //!
 //! 1. no production file keeps an inline test module: a test module lives in its
 //!    own `*_tests.rs` area file and is reached through a declaration, so the
-//!    body and its declaration never share a file; and
+//!    body and its declaration never share a file;
 //! 2. every `*_tests.rs` file is named by exactly one declaration that resolves
 //!    to it, so a forgotten declaration fails the suite instead of silently
-//!    dropping the tests it used to run.
+//!    dropping the tests it used to run; and
+//! 3. no non-zero numeric layout literal sits at a `padding`, `spacing`,
+//!    `width`, `height`, `min_*` or `max_*` method call under `src/gui/`, so a
+//!    measurement reaches the widgets from `src/gui/dimensions.rs` by name.
+//!
+//! The layout guard inspects method-call literals and nothing else: a
+//! `Padding { … }` struct literal and a `Length::Fixed(<literal>)` argument are
+//! outside it and need a rule of their own. Both shapes are common — 68
+//! `Padding { … }` construction sites across 17 files, and 55 non-zero
+//! `Length::Fixed(<literal>)` arguments across 7 files out of 194
+//! `Length::Fixed` occurrences — so this guard's green result reads "no method
+//! call restates a measurement", never "no literal remains".
 //!
 //! Each guard is a pure predicate over source text and paths, so it is exercised
 //! with synthetic violating and clean sources; the tree tests are thin wrappers
@@ -455,6 +466,152 @@ fn normalize_path(path: &Path) -> PathBuf {
     normalized
 }
 
+// ── Guard 3: layout measurements come from the token module ───────
+
+/// Method names whose numeric argument is a layout measurement, so the number
+/// belongs in `src/gui/dimensions.rs`.
+const LAYOUT_METHODS: [&str; 8] = [
+    "padding",
+    "spacing",
+    "width",
+    "height",
+    "min_width",
+    "min_height",
+    "max_width",
+    "max_height",
+];
+
+/// Report every method call in `source` that hands a non-zero numeric literal to
+/// a guarded layout method.
+///
+/// The first argument is read up to its matching parenthesis. A bare numeric
+/// literal other than zero, and an all-numeric array with a non-zero element, are
+/// violations; a zero value, an all-zero array, a named constant, a `Length::*`
+/// variant, an expression and a struct literal are all clean. `.size()` is
+/// deliberately absent: it is typography, and several calls through that name are
+/// widget sizes rather than font sizes.
+fn layout_literals(source: &str) -> Vec<Violation> {
+    let mut violations = Vec::new();
+    for (index, raw_line) in source.lines().enumerate() {
+        let code = strip_line_comment(raw_line);
+        for method in LAYOUT_METHODS {
+            for open in method_call_offsets(code, method) {
+                let Some(argument) = first_argument(&code[open..]) else {
+                    continue;
+                };
+                if is_non_zero_measurement(argument) {
+                    violations.push(Violation {
+                        line: index + 1,
+                        text: format!("`.{method}({argument})` restates a layout measurement"),
+                    });
+                }
+            }
+        }
+    }
+    violations
+}
+
+/// Offsets of the opening parenthesis of every `.method(` call in `code`.
+fn method_call_offsets(code: &str, method: &str) -> Vec<usize> {
+    let needle = format!(".{method}");
+    let mut offsets = Vec::new();
+    let mut offset = 0;
+    while let Some(relative) = code[offset..].find(&needle) {
+        let start = offset + relative;
+        let after = start + needle.len();
+        let rest = &code[after..];
+        let trimmed = rest.trim_start();
+        if trimmed.starts_with('(') {
+            offsets.push(after + (rest.len() - trimmed.len()));
+        }
+        offset = after;
+    }
+    offsets
+}
+
+/// The text of the first argument of the call whose parenthesis starts `code`, up
+/// to the matching closing parenthesis.
+fn first_argument(code: &str) -> Option<&str> {
+    let open = code.find('(')?;
+    let bytes = code.as_bytes();
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut index = open;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'"' => in_string = !in_string,
+            b'(' if !in_string => depth += 1,
+            b')' if !in_string => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(code[open + 1..index].trim());
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    None
+}
+
+/// True when the argument is a non-zero numeric literal, or an all-numeric array
+/// literal with a non-zero element.
+fn is_non_zero_measurement(argument: &str) -> bool {
+    if let Some(value) = numeric_literal_value(argument) {
+        return value != 0.0;
+    }
+    let Some(inner) = argument
+        .strip_prefix('[')
+        .and_then(|rest| rest.strip_suffix(']'))
+    else {
+        return false;
+    };
+    let parts: Vec<&str> = inner
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect();
+    !parts.is_empty()
+        && parts
+            .iter()
+            .all(|part| numeric_literal_value(part).is_some())
+        && parts
+            .iter()
+            .any(|part| numeric_literal_value(part) != Some(0.0))
+}
+
+/// The value of a bare Rust numeric literal, or `None` when the text is anything
+/// else — a path, a constant, an expression or a struct literal.
+fn numeric_literal_value(text: &str) -> Option<f64> {
+    let text = text.trim();
+    let body = text
+        .strip_suffix("f32")
+        .or_else(|| text.strip_suffix("f64"))
+        .unwrap_or(text);
+    if body.is_empty() {
+        return None;
+    }
+    let mut seen_digit = false;
+    let mut seen_dot = false;
+    let mut seen_exponent = false;
+    for (index, character) in body.char_indices() {
+        match character {
+            '0'..='9' => seen_digit = true,
+            '_' => {}
+            '.' if !seen_dot && !seen_exponent => seen_dot = true,
+            'e' | 'E' if seen_digit && !seen_exponent => seen_exponent = true,
+            '+' | '-'
+                if seen_exponent
+                    && matches!(body[..index].chars().next_back(), Some('e' | 'E')) => {}
+            _ => return None,
+        }
+    }
+    if !seen_digit {
+        return None;
+    }
+    body.replace('_', "").parse::<f64>().ok()
+}
+
 // ── Tests ─────────────────────────────────────────────────────────
 
 #[test]
@@ -689,5 +846,103 @@ fn test_every_area_test_file_is_declared_once() {
         reports.is_empty(),
         "every `*_tests.rs` file must be declared exactly once by an accepted owner:\n{}",
         reports.join("\n")
+    );
+}
+
+#[test]
+fn test_layout_guard_flags_non_zero_literals_at_guarded_calls() {
+    let offenders = [
+        ("padding(8)", "container().padding(8)\n"),
+        ("spacing(2)", "column![].spacing(2)\n"),
+        ("width(44)", "svg(icon).width(44)\n"),
+        ("height(10.0)", "Space::new().height(10.0)\n"),
+        ("min_width(12.0)", "Space::new().min_width(12.0)\n"),
+        ("min_height(6)", "Space::new().min_height(6)\n"),
+        ("max_width(320)", "Space::new().max_width(320)\n"),
+        ("max_height(24.0)", "Space::new().max_height(24.0)\n"),
+    ];
+    for (label, source) in offenders {
+        let violations = layout_literals(source);
+        assert_eq!(
+            violations.len(),
+            1,
+            "a non-zero literal at `{label}` must be flagged once: {violations:?}"
+        );
+        assert_eq!(violations[0].line, 1);
+    }
+
+    let zero_then_literal = "container().padding(0).width(24)\n";
+    let violations = layout_literals(zero_then_literal);
+    assert_eq!(
+        violations.len(),
+        1,
+        "the zero argument must be skipped and the literal after it flagged: {violations:?}"
+    );
+
+    let suffixed = "container().padding(8.0f32)\n";
+    assert!(
+        !layout_literals(suffixed).is_empty(),
+        "a suffixed literal is still a literal"
+    );
+
+    let array = "container().padding([8.0, 8.0])\n";
+    assert!(
+        !layout_literals(array).is_empty(),
+        "an all-numeric array with a non-zero element must be flagged"
+    );
+}
+
+#[test]
+fn test_layout_guard_ignores_zero_tokens_and_expressions() {
+    let clean = [
+        "container().padding(0)\n",
+        "container().padding(0.0)\n",
+        "container().padding([0.0, 0.0])\n",
+        "container().padding([0, 0])\n",
+        "container().padding(SPACE_MD)\n",
+        "container().spacing(theme::GAP)\n",
+        "container().width(Length::Fill)\n",
+        "container().width(Length::Fixed(8.0))\n",
+        "text(label).size(20)\n",
+        "container().padding(if wide { 12.0 } else { 8.0 })\n",
+        "container().padding(iced::Padding { top: 8.0, right: 22.0 })\n",
+        "container().width(icon_button_box(IconSize::Xl))\n",
+        "// container().width(44)\n",
+    ];
+    for source in clean {
+        assert!(
+            layout_literals(source).is_empty(),
+            "must not flag: {source}"
+        );
+    }
+}
+
+#[test]
+fn test_gui_has_no_layout_literals() {
+    let gui_root = source_root().join("gui");
+    let all_files = rs_files_under(&gui_root);
+    assert!(
+        !all_files.is_empty(),
+        "the layout scan inspected no files under `src/gui/`"
+    );
+    let exempt = gui_root.join("dimensions.rs");
+    assert!(
+        all_files.contains(&exempt),
+        "the exempt token module {} was not in the inspected set, so the exemption proves nothing",
+        exempt.display()
+    );
+    let files: Vec<PathBuf> = all_files
+        .into_iter()
+        .filter(|path| *path != exempt)
+        .collect();
+    assert!(
+        !files.is_empty(),
+        "the layout scan inspected no files besides the exempt token module"
+    );
+    let violations = collect_tree_violations(&files, layout_literals);
+    assert!(
+        violations.is_empty(),
+        "layout measurements belong in `src/gui/dimensions.rs`:\n{}",
+        violations.join("\n")
     );
 }

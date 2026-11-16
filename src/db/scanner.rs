@@ -491,3 +491,7 @@ impl Scanner {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "scanner_tests.rs"]
+mod scanner_tests;

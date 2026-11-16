@@ -3298,50 +3298,28 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 }
             }
 
-            // Single loudness gain point: sum all sources in dB,
-            // convert to linear once, apply before DspChain.
+            // Single loudness gain point: the formula lives in
+            // `audio::loudness`; this scope only hands it the snapshot.
             let gain_linear: f64;
             let vol: f64;
             let fades_enabled: bool;
             let smooth_volume_enabled: bool;
             {
                 let s = state.read();
-                let mut gain_db: f64 = 0.0;
-
-                // 1. ReplayGain base from tags (album + track sum)
-                if s.rg_master_enabled {
-                    if s.replay_gain_track_enabled
-                        && let Some(tg) = s.replay_gain_track
-                    {
-                        gain_db += tg as f64;
-                    }
-                    if s.replay_gain_album_enabled
-                        && let Some(ag) = s.replay_gain_album
-                    {
-                        gain_db += ag as f64;
-                    }
-
-                    // 2. RG offsets per source:
-                    //    Use EMA-smoothed values to avoid clicks.
-                    gain_db += smoothed_rg_offset_album_db;
-                    gain_db += smoothed_rg_offset_track_db;
-
-                    // 3. RT Analysis fallback:
-                    //    Only when no tags AND analyze enabled
-                    let has_tags = s.replay_gain_track.is_some() || s.replay_gain_album.is_some();
-                    if !has_tags && s.rg_analyze_rt_enabled {
-                        gain_db += smoothed_rg_offset_rt_db;
-                    }
-                }
-
-                // 4. Replay gain fijo (applies ALWAYS when enabled, unlike the
-                //    RT-analysis fallback which only acts when no tags exist).
-                if s.rg_fixed_enabled {
-                    gain_db += s.rg_fixed_db as f64;
-                }
-
-                // 5. Clamp to safety ceiling (+12 dB existing)
-                gain_linear = 10.0f64.powf(gain_db.min(12.0) / 20.0);
+                let inputs = super::loudness::LoudnessGainInputs {
+                    rg_track: s.replay_gain_track,
+                    rg_album: s.replay_gain_album,
+                    rg_track_enabled: s.replay_gain_track_enabled,
+                    rg_album_enabled: s.replay_gain_album_enabled,
+                    rg_master_enabled: s.rg_master_enabled,
+                    offset_album_db: smoothed_rg_offset_album_db,
+                    offset_track_db: smoothed_rg_offset_track_db,
+                    offset_rt_db: smoothed_rg_offset_rt_db,
+                    analyze_rt_enabled: s.rg_analyze_rt_enabled,
+                    fixed_enabled: s.rg_fixed_enabled,
+                    fixed_db: s.rg_fixed_db,
+                };
+                gain_linear = super::loudness::gain_linear(&inputs);
                 vol = s.volume as f64;
                 fades_enabled = s.fades_enabled;
                 smooth_volume_enabled = s.smooth_volume_enabled;

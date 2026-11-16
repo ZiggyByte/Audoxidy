@@ -10,6 +10,7 @@ pub mod engine;
 pub mod error;
 #[cfg(test)]
 pub mod integration_tests;
+mod loudness;
 pub mod manager;
 pub mod meter;
 pub mod preset;

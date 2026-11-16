@@ -116,16 +116,7 @@ mod eq_preset_tests {
 #[cfg(test)]
 mod fts_tests {
     use super::*;
-    use std::sync::Arc;
-
-    fn make_song(path: &str, title: &str, artist: &str) -> SongData {
-        SongData {
-            full_file_path: Arc::from(path.to_string().into_boxed_str()),
-            title: Some(Arc::from(title.to_string().into_boxed_str())),
-            artist: Some(Arc::from(artist.to_string().into_boxed_str())),
-            ..Default::default()
-        }
-    }
+    use crate::utils::test_support::make_song;
 
     fn seed_song(db: &mut Database, path: &str, title: &str, artist: &str) {
         let song = make_song(path, title, artist);

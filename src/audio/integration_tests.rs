@@ -3,7 +3,8 @@ mod integration_tests {
     use crate::audio::decoder::{AudioDecoder, DecodeStreamInfo, DecodedPacket};
     use crate::audio::engine::AudioEngine;
     use crate::audio::error::AudioError;
-    use crate::db::database::{Database, SongData, SongMetadataExtended};
+    use crate::db::database::{Database, SongMetadataExtended};
+    use crate::utils::test_support::make_song;
     use std::sync::Arc;
 
     // ── Mock Decoder ──
@@ -115,15 +116,6 @@ mod integration_tests {
     }
 
     // ── 3.4.2: Test de escaneo y consulta en BD ──
-
-    fn make_song(path: &str, title: &str, artist: &str) -> SongData {
-        SongData {
-            full_file_path: Arc::from(path.to_string().into_boxed_str()),
-            title: Some(Arc::from(title.to_string().into_boxed_str())),
-            artist: Some(Arc::from(artist.to_string().into_boxed_str())),
-            ..Default::default()
-        }
-    }
 
     fn make_extended() -> SongMetadataExtended {
         SongMetadataExtended::default()

@@ -8,6 +8,15 @@ pub struct MemoryManager;
 // Marca de tiempo de la última purga global
 static LAST_GLOBAL_PURGE: AtomicU64 = AtomicU64::new(0);
 
+/// Serializa las pruebas que leen o modifican el temporizador de purga global.
+///
+/// Una prueba de otro módulo retrasa el mismo atómico, así que una segunda
+/// prueba sin coordinar puede pasar en falso con la misma facilidad con la que
+/// puede fallar: ambas toman este cerrojo durante todo su cuerpo. Solo existe en
+/// las compilaciones de prueba.
+#[cfg(test)]
+pub(crate) static PURGE_TIMER_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 // Última purga forzada por exceso de RAM (cooldown: evita purgar en cada tick).
 static LAST_RAM_PURGE: AtomicU64 = AtomicU64::new(0);
 

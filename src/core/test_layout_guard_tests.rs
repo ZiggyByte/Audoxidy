@@ -1,19 +1,31 @@
 //! Source-scan convention guards for the test layout.
 //!
-//! The guard here walks the source tree and asserts, with no exclusion list and
-//! no self-skip, that no production file keeps an inline test module: a test
-//! module lives in its own `*_tests.rs` area file and is reached through a
-//! declaration, so the body and its declaration never share a file.
+//! Two guards walk the source tree and assert, with no exclusion list and no
+//! self-skip:
 //!
-//! The guard is a pure predicate over a source string, so it is exercised with
-//! synthetic violating and clean sources; the tree test is a thin wrapper that
-//! feeds real files to the same predicate. Matching is deliberately narrow: only
-//! a `mod <ident> {` line can be a body, so a declaration ending in `;` — the
-//! form every migrated module uses — is structurally impossible to flag, and a
-//! non-test module body is left alone.
+//! 1. no production file keeps an inline test module: a test module lives in its
+//!    own `*_tests.rs` area file and is reached through a declaration, so the
+//!    body and its declaration never share a file; and
+//! 2. every `*_tests.rs` file is named by exactly one declaration that resolves
+//!    to it, so a forgotten declaration fails the suite instead of silently
+//!    dropping the tests it used to run.
+//!
+//! Each guard is a pure predicate over source text and paths, so it is exercised
+//! with synthetic violating and clean sources; the tree tests are thin wrappers
+//! that feed real files to the same predicates. Matching is deliberately narrow:
+//! only a `mod <ident> {` line can be a body, so a declaration ending in `;` —
+//! the form every migrated module uses — is structurally impossible to flag, and
+//! a non-test module body is left alone. The declaration index resolves paths
+//! with the compiler's own rules instead of matching names, because a migrated
+//! module can be named `tests` while its file carries the area name.
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// The area test-file count recorded when this guard landed: the tree carried 66
+/// before it and the guard file itself is the 67th. The floor may rise; a drop
+/// is a coverage loss, so the tree test fails rather than shrinking silently.
+const AREA_TEST_FILE_FLOOR: usize = 67;
 
 /// A single offending source line, located by one-based line number.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -216,6 +228,233 @@ fn gates_on_test(attribute: &str) -> bool {
     false
 }
 
+// ── Guard 2: every area test file is declared exactly once ────────
+
+/// A module declaration found in a source file.
+#[derive(Debug, Clone)]
+struct Declaration {
+    /// The file that carries the declaration.
+    declaring: PathBuf,
+    /// The module name on the declaration line.
+    module: String,
+    /// The `#[path = "…"]` value from the attribute block, when present.
+    path_attribute: Option<String>,
+}
+
+/// Report every `*_tests.rs` file that is not named by exactly one declaration
+/// resolving to it from an accepted owner.
+///
+/// The index is built from the declaration lines themselves and resolved with
+/// the compiler's rules: a module root resolves a natural declaration to a
+/// sibling file or a directory's `mod.rs`, a leaf file resolves it to its
+/// `<stem>/` subdirectory, and `#[path]` resolves against the declaring file's
+/// own directory. Reporting is by resolved path and never by name, so a module
+/// named `tests` whose file carries the area name is resolved correctly.
+///
+/// An accepted owner is the directory the compiler would read the declaration
+/// from — the same directory, or the sibling `<stem>.rs` of a natural leaf
+/// declaration — or a crate root carrying an explicit `#[path]`.
+fn undeclared_area_test_files(sources: &[(PathBuf, String)]) -> Vec<String> {
+    let declarations: Vec<Declaration> = sources
+        .iter()
+        .flat_map(|(path, source)| declarations_in(path, source))
+        .collect();
+
+    let mut reports = Vec::new();
+    for (path, _) in sources {
+        if !is_area_test_file(path) {
+            continue;
+        }
+        let owners: Vec<&Declaration> = declarations
+            .iter()
+            .filter(|declaration| resolves_to(declaration, path))
+            .collect();
+        match owners.len() {
+            0 => reports.push(format!(
+                "{}: no module declaration resolves to this file, so its tests never run",
+                path.display()
+            )),
+            1 => {
+                if !accepted_owner(owners[0], path) {
+                    reports.push(format!(
+                        "{}: declared from {}, which does not own it",
+                        path.display(),
+                        owners[0].declaring.display()
+                    ));
+                }
+            }
+            count => {
+                let places = owners
+                    .iter()
+                    .map(|declaration| declaration.declaring.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                reports.push(format!(
+                    "{}: declared {count} times by {places}",
+                    path.display()
+                ));
+            }
+        }
+    }
+    reports
+}
+
+/// Collect the declarations of one source file.
+fn declarations_in(path: &Path, source: &str) -> Vec<Declaration> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut declarations = Vec::new();
+    for (index, raw_line) in lines.iter().enumerate() {
+        let code = strip_line_comment(raw_line);
+        let Some(module) = declaration_name(code) else {
+            continue;
+        };
+        declarations.push(Declaration {
+            declaring: path.to_path_buf(),
+            module: module.to_string(),
+            path_attribute: path_attribute_above(&lines, index),
+        });
+    }
+    declarations
+}
+
+/// Return the module name of a `mod <ident>;` line, or `None` when the line is
+/// not a declaration.
+fn declaration_name(code: &str) -> Option<&str> {
+    let rest = strip_visibility(code.trim_start());
+    let after_mod = rest.strip_prefix("mod")?;
+    if !after_mod.starts_with(char::is_whitespace) {
+        return None;
+    }
+    let rest = after_mod.trim_start();
+    let name_len = rest.find(|character: char| !is_word_char(character))?;
+    if name_len == 0 {
+        return None;
+    }
+    if rest[name_len..].trim_start().starts_with(';') {
+        Some(&rest[..name_len])
+    } else {
+        None
+    }
+}
+
+/// The `#[path = "…"]` value in the attribute block above line `index`.
+fn path_attribute_above(lines: &[&str], index: usize) -> Option<String> {
+    let mut cursor = index;
+    while cursor > 0 {
+        cursor -= 1;
+        let line = lines[cursor].trim();
+        if line.is_empty() || line.starts_with("//") {
+            continue;
+        }
+        if line.starts_with("#[") {
+            if let Some(value) = path_attribute_value(line) {
+                return Some(value);
+            }
+            continue;
+        }
+        return None;
+    }
+    None
+}
+
+/// The string of a `#[path = "…"]` attribute, or `None` for any other attribute.
+fn path_attribute_value(attribute: &str) -> Option<String> {
+    let body = attribute.strip_prefix("#[path")?.trim_start();
+    let body = body.strip_prefix('=')?.trim_start();
+    let body = body.strip_prefix('"')?;
+    let close = body.find('"')?;
+    Some(body[..close].to_string())
+}
+
+/// True when the file is a module root, so its declarations resolve next to it.
+fn is_module_root(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some("lib.rs" | "main.rs" | "mod.rs")
+    )
+}
+
+/// The files a declaration may resolve to, following the compiler's rules.
+fn declaration_targets(declaration: &Declaration) -> Vec<PathBuf> {
+    let Some(base) = declaration.declaring.parent() else {
+        return Vec::new();
+    };
+    if let Some(attribute) = &declaration.path_attribute {
+        let relative = base.join(attribute);
+        if Path::new(attribute).extension().is_some() {
+            return vec![normalize_path(&relative)];
+        }
+        return vec![normalize_path(&relative.join("mod.rs"))];
+    }
+    if is_module_root(&declaration.declaring) {
+        return vec![
+            normalize_path(&base.join(format!("{}.rs", declaration.module))),
+            normalize_path(&base.join(&declaration.module).join("mod.rs")),
+        ];
+    }
+    let Some(stem) = declaration
+        .declaring
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+    else {
+        return Vec::new();
+    };
+    let directory = base.join(stem);
+    vec![
+        normalize_path(&directory.join(format!("{}.rs", declaration.module))),
+        normalize_path(&directory.join(&declaration.module).join("mod.rs")),
+    ]
+}
+
+/// True when the declaration resolves to `file`.
+fn resolves_to(declaration: &Declaration, file: &Path) -> bool {
+    let target = normalize_path(file);
+    declaration_targets(declaration)
+        .iter()
+        .any(|candidate| *candidate == target)
+}
+
+/// True when the declaring file is an accepted owner of the declared file.
+fn accepted_owner(declaration: &Declaration, file: &Path) -> bool {
+    let declared = normalize_path(file);
+    let declaring = normalize_path(&declaration.declaring);
+    if declaring.parent() == declared.parent() {
+        return true;
+    }
+    let sibling_directory = declaring
+        .file_stem()
+        .zip(declared.parent().and_then(|parent| parent.file_name()))
+        .is_some_and(|(stem, directory)| stem == directory)
+        && declaring
+            .parent()
+            .zip(declared.parent().and_then(|parent| parent.parent()))
+            .is_some_and(|(parent, grandparent)| parent == grandparent);
+    if sibling_directory {
+        return true;
+    }
+    declaration.path_attribute.is_some()
+        && matches!(
+            declaring.file_name().and_then(|name| name.to_str()),
+            Some("lib.rs" | "main.rs")
+        )
+}
+
+/// Resolve `.` and `..` components without touching the filesystem, so two
+/// spellings of the same location compare equal.
+fn normalize_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    normalized
+}
+
 // ── Tests ─────────────────────────────────────────────────────────
 
 #[test]
@@ -291,5 +530,164 @@ fn test_no_inline_test_bodies_outside_area_test_files() {
         violations.is_empty(),
         "test modules belong in `*_tests.rs` area files:\n{}",
         violations.join("\n")
+    );
+}
+
+/// Build a synthetic source set from `(path, source)` pairs.
+fn area_sources(entries: &[(&str, &str)]) -> Vec<(PathBuf, String)> {
+    entries
+        .iter()
+        .map(|(path, source)| (PathBuf::from(path), (*source).to_string()))
+        .collect()
+}
+
+/// Read every file into `(path, source)` pairs, failing on an unreadable file
+/// instead of silently shrinking the inspected tree.
+fn read_sources(files: &[PathBuf]) -> Vec<(PathBuf, String)> {
+    files
+        .iter()
+        .map(|path| {
+            let source = fs::read_to_string(path)
+                .unwrap_or_else(|error| panic!("could not read {}: {error}", path.display()));
+            (path.clone(), source)
+        })
+        .collect()
+}
+
+#[test]
+fn test_area_file_guard_flags_duplicate_missing_and_foreign_declarations() {
+    let duplicate = area_sources(&[
+        (
+            "src/a/mod.rs",
+            "#[cfg(test)]\n#[path = \"foo_tests.rs\"]\nmod first;\n",
+        ),
+        (
+            "src/a/host.rs",
+            "#[cfg(test)]\n#[path = \"foo_tests.rs\"]\nmod second;\n",
+        ),
+        ("src/a/foo_tests.rs", ""),
+    ]);
+    let reports = undeclared_area_test_files(&duplicate);
+    assert_eq!(
+        reports.len(),
+        1,
+        "two declarations of one file must be reported: {reports:?}"
+    );
+    assert!(
+        reports[0].contains("declared 2 times"),
+        "the report must name the duplicate declaration: {}",
+        reports[0]
+    );
+
+    let orphan = area_sources(&[("src/a/orphan_tests.rs", "")]);
+    let reports = undeclared_area_test_files(&orphan);
+    assert_eq!(
+        reports.len(),
+        1,
+        "a file nothing declares must be reported: {reports:?}"
+    );
+    assert!(
+        reports[0].contains("no module declaration resolves"),
+        "the report must say the file is unreachable: {}",
+        reports[0]
+    );
+
+    let elsewhere = area_sources(&[
+        (
+            "src/a/mod.rs",
+            "#[cfg(test)]\n#[path = \"elsewhere/foo_tests.rs\"]\nmod tests;\n",
+        ),
+        ("src/a/foo_tests.rs", ""),
+    ]);
+    let reports = undeclared_area_test_files(&elsewhere);
+    assert_eq!(
+        reports.len(),
+        1,
+        "a path attribute pointing at another directory must leave the file undeclared: {reports:?}"
+    );
+
+    let foreign = area_sources(&[
+        (
+            "src/a/mod.rs",
+            "#[cfg(test)]\n#[path = \"../b/foo_tests.rs\"]\nmod tests;\n",
+        ),
+        ("src/b/foo_tests.rs", ""),
+    ]);
+    let reports = undeclared_area_test_files(&foreign);
+    assert_eq!(
+        reports.len(),
+        1,
+        "a declaration from outside the file's directory must be reported: {reports:?}"
+    );
+    assert!(
+        reports[0].contains("does not own it"),
+        "the report must name the foreign declaration: {}",
+        reports[0]
+    );
+}
+
+#[test]
+fn test_area_file_guard_accepts_every_owner_shape() {
+    let shapes = [
+        (
+            "a module root declaring a sibling area file",
+            area_sources(&[
+                ("src/a/mod.rs", "#[cfg(test)]\nmod foo_tests;\n"),
+                ("src/a/foo_tests.rs", ""),
+            ]),
+        ),
+        (
+            "a leaf file declaring an area file whose module name differs",
+            area_sources(&[
+                (
+                    "src/a/host.rs",
+                    "#[cfg(test)]\n#[path = \"host_tests.rs\"]\nmod area_tests;\n",
+                ),
+                ("src/a/host_tests.rs", ""),
+            ]),
+        ),
+        (
+            "the crate root declaring a file outside the library directory",
+            area_sources(&[
+                (
+                    "src/lib.rs",
+                    "#[cfg(test)]\n#[path = \"gui/widgets_tests.rs\"]\nmod widgets_tests;\n",
+                ),
+                ("src/gui/widgets_tests.rs", ""),
+            ]),
+        ),
+        (
+            "a leaf file resolving its declaration into its own directory",
+            area_sources(&[
+                ("src/a/host.rs", "#[cfg(test)]\nmod host_tests;\n"),
+                ("src/a/host/host_tests.rs", ""),
+            ]),
+        ),
+    ];
+    for (label, sources) in shapes {
+        let reports = undeclared_area_test_files(&sources);
+        assert!(reports.is_empty(), "{label} must be accepted: {reports:?}");
+    }
+}
+
+#[test]
+fn test_every_area_test_file_is_declared_once() {
+    let files = rs_files_under(&source_root());
+    assert!(!files.is_empty(), "the source scan inspected no files");
+    let sources = read_sources(&files);
+    let area_files = sources
+        .iter()
+        .filter(|(path, _)| is_area_test_file(path))
+        .count();
+    assert!(
+        area_files >= AREA_TEST_FILE_FLOOR,
+        "the scan inspected {area_files} area test files, below the recorded floor of \
+         {AREA_TEST_FILE_FLOOR}: a test file that disappeared is a coverage loss"
+    );
+    let reports = undeclared_area_test_files(&sources);
+    assert!(
+        reports.is_empty(),
+        "every `*_tests.rs` file must be declared exactly once by an accepted owner:\n{}",
+        reports.join("\n")
     );
 }

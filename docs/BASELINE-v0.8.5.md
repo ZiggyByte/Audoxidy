@@ -137,7 +137,7 @@ the policy; that section is the procedure.
 **Original measurement: 322 tests, all green** (`test result: ok. 322 passed; 0 failed;
 0 ignored`; the suite also runs two empty targets with 0 tests each).
 
-**Recorded floor — HARD: 632.** The floor is the measured count of the green suite, and it
+**Recorded floor — HARD: 648.** The floor is the measured count of the green suite, and it
 is the only authoritative threshold in this document. The first measurement recorded 322
 tests, taken when the convention guards landed and expected to be approximately 311; the
 measured value was 322, above the expectation, and was recorded as measured. **A future
@@ -147,12 +147,14 @@ measurement below the recorded floor is a finding to report, never a threshold t
 grown past the original measurement. The file — not the historical count above — is the
 source of truth for the floor.
 
-**Amendment (2026-11-16):** the count was raised again to **632** names, the measured suite
-of the current tree. The count gate and the reproducible comparison command below both use
-this value. Every earlier measurement is preserved unchanged as history; the list only ever
-grows.
+**Amendment (2026-11-16):** the count was raised twice as the consolidating work landed:
+to **632** names when the name list was re-based against the measured suite, and to **648**
+names at its close, once the new coverage had landed and the suite was green again. The
+count gate and the reproducible comparison command below both use **648**, the current
+measurement. Every earlier measurement is preserved unchanged as history; the list only
+ever grows.
 
-The authoritative name list is `docs/baseline-tests-v0.8.5.txt`: currently 632 sorted
+The authoritative name list is `docs/baseline-tests-v0.8.5.txt`: currently 648 sorted
 fully-qualified names, one per line, suitable for `diff`. The list is produced from a green
 run of the current tree, so it records every test the suite runs today.
 
@@ -167,7 +169,7 @@ TMPDIR="$HOME/.cache/audoxidy-cargo-tmp" cargo test -- --list 2>/dev/null \
   > "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt"
 
 # 2. Count check — hard floor (raise, never lower)
-test "$(wc -l < "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt")" -ge 632 \
+test "$(wc -l < "$HOME/.cache/audoxidy-cargo-tmp/current-tests.txt")" -ge 648 \
   && echo "floor OK"
 
 # 3. Removed names (must be empty — this is the failure signal)

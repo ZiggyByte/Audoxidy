@@ -710,10 +710,36 @@ fn test_cover_cache_retains_scroll_back_cushion() {
         );
     }
 
-    // Owner decision 2026-11-14: the collection pass trims the covers outside the
-    // window when the library is out of focus, and keeps the window. The behavioral
-    // test above (`test_cover_cache_trim_outside_window_keeps_window`) pins that the
-    // visible window is never dropped.
+    // The collection pass trims the covers outside the window when the library is
+    // out of focus, and keeps the window. The behavioral test above
+    // (`test_cover_cache_trim_outside_window_keeps_window`) pins that the visible
+    // window is never dropped; the gate below pins that the pass runs at all.
+}
+
+/// The collection pass releases the covers the viewport no longer shows.
+///
+/// The budget only evicts once a decode overflows it, so the covers behind the
+/// window stay resident for the whole session unless the collection pass trims
+/// them. It trims only while the library has no focus: a focused scroll is what
+/// reads next, and there the prefetch band and the scroll-back cushion are live.
+///
+/// The handler needs a built application, so this pins the wiring in the source
+/// the way the render gates do.
+#[test]
+fn test_gc_releases_off_window_covers_while_the_library_is_unfocused() {
+    let source = include_str!("../app/update/memory.rs");
+
+    let trim = source
+        .find("cover_store.trim_outside_window()")
+        .expect("the collection pass must release the covers outside the window");
+
+    let branch = source[..trim]
+        .rfind("if !is_library_focused")
+        .expect("the trim must run only while the library has no focus");
+    assert!(
+        !source[branch..trim].contains('}'),
+        "the trim cannot run while the library has the focus"
+    );
 }
 
 #[test]

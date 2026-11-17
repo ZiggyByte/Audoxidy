@@ -1,6 +1,10 @@
 //! VU-meter popup message handlers extracted from the update dispatcher.
 
 use crate::gui::app::{Message, persistence::log_persist};
+use crate::utils::settings_keys::{
+    KEY_METER_ENABLED, KEY_METER_HOLD_TIME_MS, KEY_METER_INFINITE_HOLD, KEY_METER_MS_MODE,
+    KEY_METER_RMS_WINDOW_MS,
+};
 use iced::Task;
 
 /// Duración del hold de pico antes de comenzar el decaimiento (segundos).
@@ -82,9 +86,9 @@ impl crate::gui::app::AudoxidyApp {
                 let clamped = v.clamp(500.0, 5000.0);
                 self.core.set_meter_hold_time_ms(clamped);
                 log_persist(
-                    "meter_hold_time_ms",
+                    KEY_METER_HOLD_TIME_MS,
                     self.core
-                        .persist_audio_setting("meter_hold_time_ms", &format!("{:.0}", clamped)),
+                        .persist_audio_setting(KEY_METER_HOLD_TIME_MS, &format!("{:.0}", clamped)),
                 );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -93,9 +97,9 @@ impl crate::gui::app::AudoxidyApp {
                 let clamped = v.clamp(50.0, 1000.0);
                 self.core.set_meter_rms_window_ms(clamped);
                 log_persist(
-                    "meter_rms_window_ms",
+                    KEY_METER_RMS_WINDOW_MS,
                     self.core
-                        .persist_audio_setting("meter_rms_window_ms", &format!("{:.0}", clamped)),
+                        .persist_audio_setting(KEY_METER_RMS_WINDOW_MS, &format!("{:.0}", clamped)),
                 );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -103,9 +107,9 @@ impl crate::gui::app::AudoxidyApp {
             Message::MeterMsModeToggle(v) => {
                 self.player_ui_state.meter.ms_mode = v;
                 log_persist(
-                    "meter_ms_mode",
+                    KEY_METER_MS_MODE,
                     self.core
-                        .persist_audio_setting("meter_ms_mode", if v { "1" } else { "0" }),
+                        .persist_audio_setting(KEY_METER_MS_MODE, if v { "1" } else { "0" }),
                 );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -113,9 +117,9 @@ impl crate::gui::app::AudoxidyApp {
             Message::MeterInfiniteHoldToggle(v) => {
                 self.core.set_meter_infinite_hold(v);
                 log_persist(
-                    "meter_infinite_hold",
+                    KEY_METER_INFINITE_HOLD,
                     self.core
-                        .persist_audio_setting("meter_infinite_hold", if v { "1" } else { "0" }),
+                        .persist_audio_setting(KEY_METER_INFINITE_HOLD, if v { "1" } else { "0" }),
                 );
                 self.player_ui_state.meter_popup_open = false;
                 Task::none()
@@ -132,9 +136,9 @@ impl crate::gui::app::AudoxidyApp {
             Message::MeterToggleEnabled(v) => {
                 self.core.set_meter_enabled(v);
                 log_persist(
-                    "meter_enabled",
+                    KEY_METER_ENABLED,
                     self.core
-                        .persist_audio_setting("meter_enabled", if v { "1" } else { "0" }),
+                        .persist_audio_setting(KEY_METER_ENABLED, if v { "1" } else { "0" }),
                 );
                 Task::none()
             }

@@ -4,6 +4,7 @@ use crate::gui::app::persistence::log_persist;
 use crate::gui::app::{ActiveDialog, AppFocus, ExportFormat, ExportMode, Message};
 use crate::gui::playlist::PLAYLIST_TABS_SCROLL_ID;
 use crate::utils::observability::PERSISTENCE_TARGET;
+use crate::utils::settings_keys::KEY_LAST_ACTIVE_PLAYLIST_ID;
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -364,9 +365,9 @@ impl crate::gui::app::AudoxidyApp {
                 self.persist_playlist_state();
 
                 log_persist(
-                    "last_active_playlist_id",
+                    KEY_LAST_ACTIVE_PLAYLIST_ID,
                     self.core
-                        .persist_audio_setting("last_active_playlist_id", &id.to_string()),
+                        .persist_audio_setting(KEY_LAST_ACTIVE_PLAYLIST_ID, &id.to_string()),
                 );
 
                 self.playlist_manager.active_playlist_id = id;

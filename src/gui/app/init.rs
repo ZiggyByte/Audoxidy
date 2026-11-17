@@ -7,6 +7,16 @@ use crate::gui::library_filters::LibraryFiltersManager;
 use crate::gui::playlist::PlaylistManager;
 use crate::integrations::control::external_control_channel;
 use crate::integrations::media_controls::SystemMediaControls;
+use crate::utils::settings_keys::{
+    KEY_AUDIO_BIT_DEPTH, KEY_AUDIO_BUFFER_SIZE, KEY_AUDIO_CHANNELS, KEY_AUDIO_DEVICE,
+    KEY_AUDIO_DEVICE_ID, KEY_AUDIO_HOST, KEY_AUDIO_SAMPLE_RATE, KEY_AUDIO_SYSTEM_QUANTUM,
+    KEY_AUDIO_SYSTEM_RATE, KEY_CROSSFADE_AUTO_ENABLED, KEY_CROSSFADE_AUTO_MS,
+    KEY_CROSSFADE_ENABLED, KEY_CROSSFADE_MANUAL_ENABLED, KEY_CROSSFADE_MANUAL_MS,
+    KEY_DSP_REVERB_ENABLED, KEY_EQ_BAND_GAINS_20, KEY_EQ_BAND_GAINS_31, KEY_EQ_BANDS_31,
+    KEY_EQ_ENABLED, KEY_EQ_SELECTED_PRESET, KEY_LAST_ACTIVE_PLAYLIST_ID, KEY_LIBRARY_VIEW_MODE,
+    KEY_METER_ENABLED, KEY_METER_HOLD_TIME_MS, KEY_METER_INFINITE_HOLD, KEY_METER_MS_MODE,
+    KEY_METER_RMS_WINDOW_MS, KEY_PLAYER_VOLUME, KEY_PREAMP_GAIN, KEY_VOL_FADES_ENABLED,
+};
 use iced::Task;
 use std::sync::Arc;
 
@@ -153,7 +163,7 @@ impl AudoxidyApp {
         // layout already uses the chosen mode instead of the default.
         let library_view_mode = crate::gui::library::LibraryViewMode::from_setting_value(
             startup_settings
-                .get("library_view_mode")
+                .get(KEY_LIBRARY_VIEW_MODE)
                 .map(String::as_str),
         );
 
@@ -240,18 +250,18 @@ impl AudoxidyApp {
             // 0. Cargar persistencia de ajustes de audio del reproductor.
             //    En instalación fresca (sin ajustes en DB), aplicar defaults 48000 Hz.
             let host_id = startup_settings
-                .get("audio_host")
+                .get(KEY_AUDIO_HOST)
                 .filter(|s| !s.is_empty())
                 .cloned();
             let device_name = startup_settings
-                .get("audio_device")
+                .get(KEY_AUDIO_DEVICE)
                 .filter(|s| !s.is_empty())
                 .cloned();
             let device_id = startup_settings
-                .get("audio_device_id")
+                .get(KEY_AUDIO_DEVICE_ID)
                 .filter(|s| !s.is_empty())
                 .cloned();
-            let sample_rate = startup_settings.get("audio_sample_rate").and_then(|s| {
+            let sample_rate = startup_settings.get(KEY_AUDIO_SAMPLE_RATE).and_then(|s| {
                 if s == "auto" {
                     None
                 } else {
@@ -260,7 +270,7 @@ impl AudoxidyApp {
             });
             let bit_depth =
                 startup_settings
-                    .get("audio_bit_depth")
+                    .get(KEY_AUDIO_BIT_DEPTH)
                     .and_then(|s| match s.as_str() {
                         "16" => Some(crate::audio::engine::BitDepth::Bits16),
                         "24" => Some(crate::audio::engine::BitDepth::Bits24),
@@ -268,9 +278,9 @@ impl AudoxidyApp {
                         _ => None,
                     });
             let channels_val = startup_settings
-                .get("audio_channels")
+                .get(KEY_AUDIO_CHANNELS)
                 .and_then(|s| s.parse::<u16>().ok());
-            let buffer_size = startup_settings.get("audio_buffer_size").and_then(|s| {
+            let buffer_size = startup_settings.get(KEY_AUDIO_BUFFER_SIZE).and_then(|s| {
                 if s == "auto" {
                     None
                 } else {
@@ -316,11 +326,11 @@ impl AudoxidyApp {
                 }
             };
             let sys_rate = startup_settings
-                .get("audio_system_rate")
+                .get(KEY_AUDIO_SYSTEM_RATE)
                 .map(|s| parse_system_sel(s))
                 .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
             let sys_quantum = startup_settings
-                .get("audio_system_quantum")
+                .get(KEY_AUDIO_SYSTEM_QUANTUM)
                 .map(|s| parse_system_sel(s))
                 .unwrap_or(crate::gui::audio_center::SystemSelection::Default);
 
@@ -329,7 +339,7 @@ impl AudoxidyApp {
                 crate::gui::audio_center::SystemSelection::Automatic => {
                     // Usar la tasa del reproductor si está configurada, sino 48000.
                     startup_settings
-                        .get("audio_sample_rate")
+                        .get(KEY_AUDIO_SAMPLE_RATE)
                         .and_then(|s| {
                             if s == "auto" {
                                 None
@@ -364,7 +374,7 @@ impl AudoxidyApp {
             };
 
             // 1. Cargar última playlist activa
-            if let Some(last_id_str) = startup_settings.get("last_active_playlist_id")
+            if let Some(last_id_str) = startup_settings.get(KEY_LAST_ACTIVE_PLAYLIST_ID)
                 && let Ok(last_id) = last_id_str.parse::<i64>()
             {
                 playlist_manager.active_playlist_id = last_id;
@@ -462,7 +472,7 @@ impl AudoxidyApp {
                     // db-lock: scope de escritura; el guard no cubre ninguna
                     // llamada al gestor de audio.
                     if let Ok(db_lock) = core.database().lock() {
-                        match db_lock.set_setting("audio_device_id", &resolved) {
+                        match db_lock.set_setting(KEY_AUDIO_DEVICE_ID, &resolved) {
                             Ok(()) => tracing::info!(
                                 "Persistido el id estable del dispositivo de salida."
                             ),
@@ -514,7 +524,7 @@ impl AudoxidyApp {
 
         // Cargar persistencia de EQ y DSP al inicio para que se apliquen al audio inmediatamente.
         let player_volume = startup_settings
-            .get("player_volume")
+            .get(KEY_PLAYER_VOLUME)
             .and_then(|vol_str| vol_str.parse::<f32>().ok());
         if let Some(vol) = player_volume {
             core.audio_manager().set_volume(vol.clamp(0.0, 1.0));
@@ -523,7 +533,7 @@ impl AudoxidyApp {
         // Cargar Volumen y Mezcla al inicio (aplicar al motor inmediatamente)
         let startup_state = StartupAudioState {
             fades_enabled: startup_settings
-                .get("vol_fades_enabled")
+                .get(KEY_VOL_FADES_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false),
             smooth_volume_enabled: startup_settings
@@ -600,40 +610,40 @@ impl AudoxidyApp {
                 .unwrap_or(0.0),
             // Mezcla Cruzada / Crossfade: cargar al arranque (aplicar al motor inmediatamente)
             crossfade_enabled: startup_settings
-                .get("crossfade_enabled")
+                .get(KEY_CROSSFADE_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false),
             crossfade_manual_enabled: startup_settings
-                .get("crossfade_manual_enabled")
+                .get(KEY_CROSSFADE_MANUAL_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false),
             crossfade_manual_ms: startup_settings
-                .get("crossfade_manual_ms")
+                .get(KEY_CROSSFADE_MANUAL_MS)
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(1000.0),
             crossfade_auto_enabled: startup_settings
-                .get("crossfade_auto_enabled")
+                .get(KEY_CROSSFADE_AUTO_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false),
             crossfade_auto_ms: startup_settings
-                .get("crossfade_auto_ms")
+                .get(KEY_CROSSFADE_AUTO_MS)
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(250.0),
             // VU Meter — cargar configuración al arranque
             meter_hold_time_ms: startup_settings
-                .get("meter_hold_time_ms")
+                .get(KEY_METER_HOLD_TIME_MS)
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(1500.0),
             meter_rms_window_ms: startup_settings
-                .get("meter_rms_window_ms")
+                .get(KEY_METER_RMS_WINDOW_MS)
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(300.0),
             meter_infinite_hold: startup_settings
-                .get("meter_infinite_hold")
+                .get(KEY_METER_INFINITE_HOLD)
                 .map(|v| v == "1")
                 .unwrap_or(false),
             meter_enabled: startup_settings
-                .get("meter_enabled")
+                .get(KEY_METER_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false),
         };
@@ -675,25 +685,25 @@ impl AudoxidyApp {
         // released before the settings are applied to the audio manager.
         let startup_eq = core.database().lock().ok().map(|db_lock| {
             let eq_enabled = startup_settings
-                .get("eq_enabled")
+                .get(KEY_EQ_ENABLED)
                 .map(|v| v == "1")
                 .unwrap_or(false);
             let eq_bands_31 = startup_settings
-                .get("eq_bands_31")
+                .get(KEY_EQ_BANDS_31)
                 .map(|v| v == "1")
                 .unwrap_or(false);
             let preamp_gain: f32 = startup_settings
-                .get("preamp_gain")
+                .get(KEY_PREAMP_GAIN)
                 .and_then(|v| v.parse::<f32>().ok())
                 .unwrap_or(0.0);
             // EQ band gains (20 y 31)
             let bands_20: Vec<f32> = startup_settings
-                .get("eq_band_gains_20")
+                .get(KEY_EQ_BAND_GAINS_20)
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 20)
                 .unwrap_or_else(|| vec![0.0; 20]);
             let bands_31: Vec<f32> = startup_settings
-                .get("eq_band_gains_31")
+                .get(KEY_EQ_BAND_GAINS_31)
                 .map(|v| v.split(',').filter_map(|s| s.parse::<f32>().ok()).collect())
                 .filter(|v: &Vec<f32>| v.len() == 31)
                 .unwrap_or_else(|| vec![0.0; 31]);
@@ -729,7 +739,7 @@ impl AudoxidyApp {
                         .collect()
                 })
                 .unwrap_or_default();
-            let selected_preset_name = startup_settings.get("eq_selected_preset").cloned();
+            let selected_preset_name = startup_settings.get(KEY_EQ_SELECTED_PRESET).cloned();
 
             StartupEq {
                 eq_enabled,
@@ -807,7 +817,9 @@ impl AudoxidyApp {
             limiter_enabled: startup_settings
                 .get("dsp_limiter_enabled")
                 .map(|v| v == "1"),
-            reverb_enabled: startup_settings.get("dsp_reverb_enabled").map(|v| v == "1"),
+            reverb_enabled: startup_settings
+                .get(KEY_DSP_REVERB_ENABLED)
+                .map(|v| v == "1"),
             sub_bass_gain: startup_settings
                 .get("dsp_sub_bass_gain")
                 .and_then(|v| v.parse::<f32>().ok()),
@@ -923,7 +935,9 @@ impl AudoxidyApp {
         // --- Volumen y Mezcla settings ---
         // Load into AudioCenterManager fields AND apply to AudioState
         let startup_volume = StartupVolume {
-            fades_enabled: startup_settings.get("vol_fades_enabled").map(|v| v == "1"),
+            fades_enabled: startup_settings
+                .get(KEY_VOL_FADES_ENABLED)
+                .map(|v| v == "1"),
             smooth_volume_enabled: startup_settings
                 .get("vol_smooth_volume_enabled")
                 .map(|v| v == "1"),
@@ -1041,7 +1055,7 @@ impl AudoxidyApp {
 
         // VU Meter — cargar modo M/S para PlayerUiState
         let meter_ms_mode = startup_settings
-            .get("meter_ms_mode")
+            .get(KEY_METER_MS_MODE)
             .map(|v| v == "1")
             .unwrap_or(false);
 

@@ -6,6 +6,7 @@ use crate::gui::library::cover_cache::SCROLL_IDLE_MS;
 use crate::gui::library::grid_metrics::anchor_viewport_offset;
 use crate::gui::library::{GridMetrics, LIBRARY_SCROLL_ID};
 use crate::utils::observability::{METRICS_TARGET, PERSISTENCE_TARGET};
+use crate::utils::settings_keys::KEY_LIBRARY_VIEW_MODE;
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -498,9 +499,9 @@ impl crate::gui::app::AudoxidyApp {
                 // survives a restart even when the library data had been
                 // unloaded. Only the mode persists.
                 crate::gui::app::persistence::log_persist(
-                    "library_view_mode",
+                    KEY_LIBRARY_VIEW_MODE,
                     self.core
-                        .persist_audio_setting("library_view_mode", mode.as_setting_value()),
+                        .persist_audio_setting(KEY_LIBRARY_VIEW_MODE, mode.as_setting_value()),
                 );
 
                 self.library_manager.view_menu_open = false;

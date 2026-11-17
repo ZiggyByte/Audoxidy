@@ -49,14 +49,14 @@ mod integration_tests {
             }
             let remaining = self.max_frames - self.frames_generated;
             let frames = remaining.min(CHUNK);
-            let ch = self.channels as usize;
-            let mut data = Vec::with_capacity(frames * ch);
+            let channels = self.channels as usize;
+            let mut data = Vec::with_capacity(frames * channels);
             let base = self.frames_generated;
             for i in 0..frames {
                 let val = (2.0 * std::f64::consts::PI * 440.0 * (base + i) as f64
                     / self.sample_rate as f64)
                     .sin();
-                for _ in 0..ch {
+                for _ in 0..channels {
                     data.push(val * 0.5);
                 }
             }
@@ -64,7 +64,7 @@ mod integration_tests {
             Ok(Some(DecodedPacket {
                 data,
                 frames,
-                channels: ch,
+                channels,
                 sample_rate: self.sample_rate,
             }))
         }
@@ -176,34 +176,40 @@ mod integration_tests {
     fn test_playlist_crud_operations() {
         let mut db = Database::new_memory().expect("Failed to create in-memory DB");
 
-        let id = db.create_playlist("Test Playlist", false).unwrap();
-        assert!(id > 0);
+        let playlist_id = db.create_playlist("Test Playlist", false).unwrap();
+        assert!(playlist_id > 0);
 
         let playlists = db.get_all_playlists().unwrap();
         // 1 nuestra + 2 del sistema = 3
         assert_eq!(playlists.len(), 3);
         assert!(
-            playlists.iter().any(|p| p.name == "Test Playlist"),
+            playlists
+                .iter()
+                .any(|playlist| playlist.name == "Test Playlist"),
             "Playlist should exist"
         );
 
-        db.rename_playlist(id, "Renamed Playlist").unwrap();
+        db.rename_playlist(playlist_id, "Renamed Playlist").unwrap();
         let playlists = db.get_all_playlists().unwrap();
         assert_eq!(playlists.len(), 3);
         assert!(
-            playlists.iter().any(|p| p.name == "Renamed Playlist"),
+            playlists
+                .iter()
+                .any(|playlist| playlist.name == "Renamed Playlist"),
             "Renamed playlist should have new name"
         );
         assert!(
-            !playlists.iter().any(|p| p.name == "Test Playlist"),
+            !playlists
+                .iter()
+                .any(|playlist| playlist.name == "Test Playlist"),
             "Old name should not exist"
         );
 
-        db.delete_playlist(id).unwrap();
+        db.delete_playlist(playlist_id).unwrap();
         let playlists = db.get_all_playlists().unwrap();
         assert_eq!(playlists.len(), 2);
         assert!(
-            !playlists.iter().any(|p| p.id == id),
+            !playlists.iter().any(|playlist| playlist.id == playlist_id),
             "Deleted playlist should not appear"
         );
     }
@@ -223,8 +229,8 @@ mod integration_tests {
         db.delete_playlist(id2).unwrap();
         let remaining = db.get_all_playlists().unwrap();
         assert_eq!(remaining.len(), 4);
-        assert!(remaining.iter().any(|p| p.id == id1));
-        assert!(remaining.iter().any(|p| p.id == id3));
+        assert!(remaining.iter().any(|playlist| playlist.id == id1));
+        assert!(remaining.iter().any(|playlist| playlist.id == id3));
     }
 
     // ── 3.4.1 adicional: Verificar DI de AudioEngine con MockDecoder ──

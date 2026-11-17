@@ -388,14 +388,14 @@ fn test_cover_prefetch_band_targets_one_screen_in_scroll_direction() {
     let row_height = metrics.row_height;
     let viewport_h = row_height * 2.0;
 
-    let down = prefetch_band(&metrics, album_count, None, 0, 0.0, viewport_h, 1.0, 1.0)
+    let downward_band = prefetch_band(&metrics, album_count, None, 0, 0.0, viewport_h, 1.0, 1.0)
         .expect("la banda hacia abajo debe existir");
     assert!(
-        (down - row_height * 2.0).abs() < 0.01,
+        (downward_band - row_height * 2.0).abs() < 0.01,
         "una pantalla hacia abajo cae en la fila 2"
     );
 
-    let up = prefetch_band(
+    let upward_band = prefetch_band(
         &metrics,
         album_count,
         None,
@@ -407,18 +407,18 @@ fn test_cover_prefetch_band_targets_one_screen_in_scroll_direction() {
     )
     .expect("la banda hacia arriba debe existir");
     assert!(
-        (up - row_height * 6.0).abs() < 0.01,
+        (upward_band - row_height * 6.0).abs() < 0.01,
         "una pantalla hacia arriba cae en la fila 6"
     );
     assert!(
-        up < row_height * 8.0,
+        upward_band < row_height * 8.0,
         "la banda queda por encima del viewport"
     );
 
-    let half = prefetch_band(&metrics, album_count, None, 0, 0.0, viewport_h, 1.0, 0.5)
+    let half_screen_band = prefetch_band(&metrics, album_count, None, 0, 0.0, viewport_h, 1.0, 0.5)
         .expect("media pantalla también produce banda");
     assert!(
-        (half - row_height).abs() < 0.01,
+        (half_screen_band - row_height).abs() < 0.01,
         "media pantalla hacia abajo cae en la fila 1"
     );
 
@@ -1716,16 +1716,16 @@ fn test_visible_set_handlers_request_the_cover_window() {
     ];
 
     for (start, end) in arms {
-        let from = library
+        let arm_start = library
             .find(start)
             .unwrap_or_else(|| panic!("no se encontró el brazo {start}"));
-        let to = library
+        let arm_end = library
             .find(end)
             .unwrap_or_else(|| panic!("no se encontró el cierre {end}"));
-        assert!(from < to, "el brazo {start} está antes de {end}");
+        assert!(arm_start < arm_end, "el brazo {start} está antes de {end}");
 
         assert!(
-            library[from..to].contains("self.library_manager.request_cover_window();"),
+            library[arm_start..arm_end].contains("self.library_manager.request_cover_window();"),
             "el brazo {start} debe pedir la ventana de carátulas tras cambiar el conjunto visible"
         );
     }

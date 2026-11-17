@@ -31,28 +31,28 @@ fn make_song(song_id: i64, path: &str) -> std::sync::Arc<PlaylistSongRef> {
 }
 
 fn manager_with_songs(songs: Vec<std::sync::Arc<PlaylistSongRef>>) -> PlaylistManager {
-    let mut pm = PlaylistManager::default();
-    pm.set_groups(vec![PlaylistFolderGroup {
+    let mut manager = PlaylistManager::default();
+    manager.set_groups(vec![PlaylistFolderGroup {
         folder_path: "/".into(),
         folder_name: "Raíz".into(),
         songs,
         total_duration: 0.0,
         first_item_id: 1,
     }]);
-    pm
+    manager
 }
 
 #[test]
 fn test_get_next_song_ref_sequential_skips_disabled() {
     let mut songs = vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")];
     std::sync::Arc::make_mut(&mut songs[0]).enabled = false; // La actual está deshabilitada
-    let pm = manager_with_songs(songs);
+    let manager = manager_with_songs(songs);
     // playing_song_idx apunta a la canción 1 (índice lineal 1: separador + 0)
-    let pm2 = PlaylistManager {
+    let playing_manager = PlaylistManager {
         playing_song_idx: Some(1),
-        ..pm
+        ..manager
     };
-    let next = pm2.get_next_song_ref();
+    let next = playing_manager.get_next_song_ref();
     assert!(next.is_some());
     assert_eq!(next.unwrap().song_id, 2, "Debe saltar la deshabilitada");
 }
@@ -66,16 +66,16 @@ fn test_get_next_song_ref_shuffle_skips_disabled() {
         make_song(3, "/c.flac"),
     ];
     std::sync::Arc::make_mut(&mut songs[0]).enabled = false;
-    let mut pm = manager_with_songs(songs);
-    pm.shuffle_active = true;
-    pm.shuffle_session = Some(ShuffleSession {
+    let mut manager = manager_with_songs(songs);
+    manager.shuffle_active = true;
+    manager.shuffle_session = Some(ShuffleSession {
         session_id: "s1".into(),
         shuffle_order: vec![1, 3, 2],
         current_position: 0,
         history: vec![4], // canción previa
     });
-    pm.playing_song_idx = Some(1); // La canción 1 (índice lineal 1)
-    let next = pm.get_next_song_ref();
+    manager.playing_song_idx = Some(1); // La canción 1 (índice lineal 1)
+    let next = manager.get_next_song_ref();
     assert!(next.is_some());
     assert_eq!(
         next.unwrap().song_id,
@@ -87,54 +87,57 @@ fn test_get_next_song_ref_shuffle_skips_disabled() {
 #[test]
 fn test_get_next_song_ref_shuffle_end_returns_none() {
     let songs = vec![make_song(1, "/a.flac")];
-    let mut pm = manager_with_songs(songs);
-    pm.shuffle_active = true;
-    pm.shuffle_session = Some(ShuffleSession {
+    let mut manager = manager_with_songs(songs);
+    manager.shuffle_active = true;
+    manager.shuffle_session = Some(ShuffleSession {
         session_id: "s1".into(),
         shuffle_order: vec![1],
         current_position: 1, // Ya al final del orden
         history: vec![1],
     });
-    pm.playing_song_idx = Some(1);
-    assert!(pm.get_next_song_ref().is_none());
+    manager.playing_song_idx = Some(1);
+    assert!(manager.get_next_song_ref().is_none());
 }
 
 #[test]
 fn test_filter_with_no_matches_yields_an_empty_active_list() {
-    let mut pm = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
-    pm.search_query = "no-existe".to_string();
-    pm.apply_filter();
+    let mut manager = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
+    manager.search_query = "no-existe".to_string();
+    manager.apply_filter();
 
-    assert!(pm.active_groups().is_empty());
-    assert!(pm.filtered_groups.is_some());
+    assert!(manager.active_groups().is_empty());
+    assert!(manager.filtered_groups.is_some());
 }
 
 #[test]
 fn test_filter_remaps_the_playing_index_by_song_id() {
-    let mut pm = manager_with_songs(vec![
+    let mut manager = manager_with_songs(vec![
         make_song(1, "/a.flac"),
         make_song(2, "/b.flac"),
         make_song(3, "/c.flac"),
     ]);
     // Canción 2: separador + índice 1.
-    pm.playing_song_idx = Some(2);
-    pm.search_query = "Título 2".to_string();
-    pm.apply_filter();
+    manager.playing_song_idx = Some(2);
+    manager.search_query = "Título 2".to_string();
+    manager.apply_filter();
 
-    assert_eq!(pm.playing_song_idx, Some(1));
-    assert_eq!(pm.get_song_at_linear_index(1).map(|s| s.song_id), Some(2));
+    assert_eq!(manager.playing_song_idx, Some(1));
+    assert_eq!(
+        manager.get_song_at_linear_index(1).map(|song| song.song_id),
+        Some(2)
+    );
 }
 
 #[test]
 fn test_filter_clears_positions_that_belong_to_the_previous_list() {
-    let mut pm = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
-    pm.selected_idxs.insert(1);
-    pm.focused_idx = Some(1);
-    pm.selection_pivot = Some(1);
-    pm.search_query = "Título 2".to_string();
-    pm.apply_filter();
+    let mut manager = manager_with_songs(vec![make_song(1, "/a.flac"), make_song(2, "/b.flac")]);
+    manager.selected_idxs.insert(1);
+    manager.focused_idx = Some(1);
+    manager.selection_pivot = Some(1);
+    manager.search_query = "Título 2".to_string();
+    manager.apply_filter();
 
-    assert!(pm.selected_idxs.is_empty());
-    assert_eq!(pm.focused_idx, None);
-    assert_eq!(pm.selection_pivot, None);
+    assert!(manager.selected_idxs.is_empty());
+    assert_eq!(manager.focused_idx, None);
+    assert_eq!(manager.selection_pivot, None);
 }

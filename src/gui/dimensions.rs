@@ -35,30 +35,23 @@
 pub const SPACE_2XS: f32 = 2.0;
 /// Smallest gap between adjacent elements.
 pub const SPACE_XS: f32 = 4.0;
-/// Compact gap between adjacent elements.
+/// Compact gap between adjacent elements, and the compact outer inset between a
+/// region and its container.
 pub const SPACE_SM: f32 = 8.0;
 /// Default gap between adjacent elements inside a group.
 pub const SPACE_MD: f32 = 12.0;
-/// Gap separating two groups of elements.
+/// Gap separating two groups of elements, and the content inset of a bar, panel
+/// or dialog.
 pub const SPACE_LG: f32 = 16.0;
 /// Section-level gap.
 pub const SPACE_XL: f32 = 24.0;
 /// Gap between major sections.
 pub const SPACE_2XL: f32 = 32.0;
 
-/// Compact outer inset between a region and its container.
-pub const MARGIN_SM: f32 = 8.0;
-/// Content inset of a bar, panel or dialog.
-pub const MARGIN_MD: f32 = 16.0;
-/// Outer inset of a major content region.
-pub const MARGIN_LG: f32 = 24.0;
-
 /// Small corner rounding for inputs, cells and chips.
 pub const RADIUS_S: f32 = 4.0;
 /// Medium corner rounding for panels, modals, menus and tooltips.
 pub const RADIUS_M: f32 = 8.0;
-/// Large corner rounding, reserved for large surfaces.
-pub const RADIUS_L: f32 = 12.0;
 /// Fully rounded corner, used by pills and toggle thumbs.
 pub const RADIUS_PILL: f32 = 999.0;
 
@@ -66,8 +59,6 @@ pub const RADIUS_PILL: f32 = 999.0;
 pub const CONTROL_SM: f32 = 24.0;
 /// Medium interactive control height (list rows, context-menu rows, buttons).
 pub const CONTROL_MD: f32 = 32.0;
-/// Large interactive control height (bar action buttons, primary controls).
-pub const CONTROL_LG: f32 = 40.0;
 
 /// Height of the library and filter top bars.
 pub const BAR_TOP: f32 = 40.0;

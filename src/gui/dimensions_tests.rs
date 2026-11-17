@@ -18,16 +18,15 @@ fn test_spacing_scale_matches_the_base_unit() {
 
 #[test]
 fn test_margin_scale_is_fixed() {
-    assert_eq!(MARGIN_SM, 8.0);
-    assert_eq!(MARGIN_MD, 16.0);
-    assert_eq!(MARGIN_LG, 24.0);
+    assert_eq!(SPACE_SM, 8.0);
+    assert_eq!(SPACE_LG, 16.0);
+    assert_eq!(SPACE_XL, 24.0);
 }
 
 #[test]
 fn test_radius_scale_is_fixed() {
     assert_eq!(RADIUS_S, 4.0);
     assert_eq!(RADIUS_M, 8.0);
-    assert_eq!(RADIUS_L, 12.0);
     assert_eq!(RADIUS_PILL, 999.0);
 }
 
@@ -35,7 +34,6 @@ fn test_radius_scale_is_fixed() {
 fn test_control_heights_are_fixed() {
     assert_eq!(CONTROL_SM, 24.0);
     assert_eq!(CONTROL_MD, 32.0);
-    assert_eq!(CONTROL_LG, 40.0);
 }
 
 #[test]

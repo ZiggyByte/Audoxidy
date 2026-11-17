@@ -57,29 +57,29 @@ mod tests {
 
     #[test]
     fn test_eq_new_31_bands() {
-        let eq = Equalizer::new(31);
-        assert_eq!(eq.bands.len(), 31);
+        let equalizer = Equalizer::new(31);
+        assert_eq!(equalizer.bands.len(), 31);
     }
 
     #[test]
     fn test_eq_new_20_bands() {
-        let eq = Equalizer::new(20);
-        assert_eq!(eq.bands.len(), 20);
+        let equalizer = Equalizer::new(20);
+        assert_eq!(equalizer.bands.len(), 20);
     }
 
     #[test]
     fn test_eq_defaults_to_31() {
-        let eq = Equalizer::new(999);
-        assert_eq!(eq.bands.len(), 31);
-        let eq = Equalizer::new(0);
-        assert_eq!(eq.bands.len(), 31);
+        let equalizer = Equalizer::new(999);
+        assert_eq!(equalizer.bands.len(), 31);
+        let equalizer = Equalizer::new(0);
+        assert_eq!(equalizer.bands.len(), 31);
     }
 
     #[test]
     fn test_eq_band_frequencies_monotonic() {
         for num_bands in [20, 31] {
-            let eq = Equalizer::new(num_bands);
-            for window in eq.bands.windows(2) {
+            let equalizer = Equalizer::new(num_bands);
+            for window in equalizer.bands.windows(2) {
                 assert!(
                     window[0].frequency < window[1].frequency,
                     "bands not monotonic at {} bands: {} >= {}",
@@ -93,98 +93,98 @@ mod tests {
 
     #[test]
     fn test_eq_reset_all() {
-        let mut eq = Equalizer::new(31);
-        eq.bands[0].set_gain(6.0);
-        eq.bands[15].set_gain(-3.0);
-        eq.reset_all();
-        for band in &eq.bands {
+        let mut equalizer = Equalizer::new(31);
+        equalizer.bands[0].set_gain(6.0);
+        equalizer.bands[15].set_gain(-3.0);
+        equalizer.reset_all();
+        for band in &equalizer.bands {
             assert!((band.gain - 0.0).abs() < 1e-6);
         }
     }
 
     #[test]
     fn test_eq_set_mode_switch() {
-        let mut eq = Equalizer::new(31);
-        assert_eq!(eq.bands.len(), 31);
-        eq.set_mode(20);
-        assert_eq!(eq.bands.len(), 20);
-        eq.set_mode(31);
-        assert_eq!(eq.bands.len(), 31);
+        let mut equalizer = Equalizer::new(31);
+        assert_eq!(equalizer.bands.len(), 31);
+        equalizer.set_mode(20);
+        assert_eq!(equalizer.bands.len(), 20);
+        equalizer.set_mode(31);
+        assert_eq!(equalizer.bands.len(), 31);
     }
 
     #[test]
     fn test_eq_process_enabled_false() {
-        let mut eq = Equalizer::new(31);
-        eq.enabled = false;
+        let mut equalizer = Equalizer::new(31);
+        equalizer.enabled = false;
         let mut sample = 0.5_f64;
-        eq.process(&mut sample, 0);
+        equalizer.process(&mut sample, 0);
         assert!((sample - 0.5).abs() < f64::EPSILON);
     }
 
     #[test]
     fn test_eq_set_sample_rate() {
-        let mut eq = Equalizer::new(31);
-        eq.set_sample_rate(96000.0);
+        let mut equalizer = Equalizer::new(31);
+        equalizer.set_sample_rate(96000.0);
     }
 
     #[test]
     fn test_apply_preset_gains_updates_active_bands() {
-        let mut eq = Equalizer::new(20);
+        let mut equalizer = Equalizer::new(20);
         let bands_20: Vec<f32> = (0..20).map(|i| i as f32 * 0.5 - 5.0).collect();
         let bands_31: Vec<f32> = vec![0.0; 31];
 
-        eq.apply_preset_gains(&bands_20, &bands_31);
+        equalizer.apply_preset_gains(&bands_20, &bands_31);
 
-        assert_eq!(eq.bands.len(), 20);
-        for (i, band) in eq.bands.iter().enumerate() {
+        assert_eq!(equalizer.bands.len(), 20);
+        for (i, band) in equalizer.bands.iter().enumerate() {
             assert!((band.gain - bands_20[i]).abs() < 0.001);
         }
     }
 
     #[test]
     fn test_apply_preset_gains_preserves_switched_mode() {
-        let mut eq = Equalizer::new(20);
+        let mut equalizer = Equalizer::new(20);
         let bands_20: Vec<f32> = (0..20).map(|i| i as f32 * 0.5 - 5.0).collect();
         let bands_31: Vec<f32> = (0..31).map(|i| i as f32 * 0.3 - 4.0).collect();
 
-        eq.apply_preset_gains(&bands_20, &bands_31);
+        equalizer.apply_preset_gains(&bands_20, &bands_31);
 
         // Switch to 31-band mode — should see bands_31 gains
-        eq.set_mode(31);
-        assert_eq!(eq.bands.len(), 31);
-        for (i, band) in eq.bands.iter().enumerate() {
+        equalizer.set_mode(31);
+        assert_eq!(equalizer.bands.len(), 31);
+        for (i, band) in equalizer.bands.iter().enumerate() {
             assert!((band.gain - bands_31[i]).abs() < 0.001);
         }
 
         // Switch back to 20-band mode — should see bands_20 gains
-        eq.set_mode(20);
-        assert_eq!(eq.bands.len(), 20);
-        for (i, band) in eq.bands.iter().enumerate() {
+        equalizer.set_mode(20);
+        assert_eq!(equalizer.bands.len(), 20);
+        for (i, band) in equalizer.bands.iter().enumerate() {
             assert!((band.gain - bands_20[i]).abs() < 0.001);
         }
     }
 
     #[test]
     fn test_reset_all_clears_saved_bands() {
-        let mut eq = Equalizer::new(20);
+        let mut equalizer = Equalizer::new(20);
         let bands_20: Vec<f32> = vec![3.0; 20];
         let bands_31: Vec<f32> = vec![3.0; 31];
-        eq.apply_preset_gains(&bands_20, &bands_31);
+        equalizer.apply_preset_gains(&bands_20, &bands_31);
 
         // Verify gains were applied
-        assert!((eq.bands[0].gain - 3.0).abs() < 0.001);
+        assert!((equalizer.bands[0].gain - 3.0).abs() < 0.001);
 
-        eq.reset_all();
+        equalizer.reset_all();
 
         // Active bands should be zeroed
-        for band in &eq.bands {
+        for band in &equalizer.bands {
             assert!((band.gain - 0.0).abs() < 0.001);
         }
 
         // Switch to 31 — if saved_bands_31 was reset, bands will be 0.
         // If NOT reset, bands will still have the old 3.0 values.
-        eq.set_mode(31);
-        for band in &eq.bands {
+        equalizer.set_mode(31);
+        for band in &equalizer.bands {
             assert!(
                 (band.gain - 0.0).abs() < 0.001,
                 "saved_bands_31 should have been reset: gain={}",
@@ -193,8 +193,8 @@ mod tests {
         }
 
         // Switch back to 20 — same check for saved_bands_20
-        eq.set_mode(20);
-        for band in &eq.bands {
+        equalizer.set_mode(20);
+        for band in &equalizer.bands {
             assert!(
                 (band.gain - 0.0).abs() < 0.001,
                 "saved_bands_20 should have been reset: gain={}",
@@ -209,54 +209,54 @@ mod tests {
 
     #[test]
     fn test_reverb_new_disabled() {
-        let r = Reverb::new();
-        assert!(!r.enabled);
+        let reverb = Reverb::new();
+        assert!(!reverb.enabled);
     }
 
     #[test]
     fn test_reverb_default_values() {
-        let r = Reverb::new();
-        assert!((r.room_size - 0.5).abs() < 1e-6);
-        assert!((r.wet - 0.5).abs() < 1e-6);
-        assert!((r.dry - 0.5).abs() < 1e-6);
+        let reverb = Reverb::new();
+        assert!((reverb.room_size - 0.5).abs() < 1e-6);
+        assert!((reverb.wet - 0.5).abs() < 1e-6);
+        assert!((reverb.dry - 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn test_reverb_room_size_clamping() {
-        let mut r = Reverb::new();
-        r.set_room_size(1.5);
-        assert!((r.room_size - 1.0).abs() < 1e-6);
-        r.set_room_size(-0.5);
-        assert!((r.room_size - 0.0).abs() < 1e-6);
+        let mut reverb = Reverb::new();
+        reverb.set_room_size(1.5);
+        assert!((reverb.room_size - 1.0).abs() < 1e-6);
+        reverb.set_room_size(-0.5);
+        assert!((reverb.room_size - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_reverb_damping_clamping() {
-        let mut r = Reverb::new();
-        r.set_damping(2.0);
+        let mut reverb = Reverb::new();
+        reverb.set_damping(2.0);
         // set_damping is now a no-op; damping is auto-derived from room_size.
         // Just verify it doesn't panic.
     }
 
     #[test]
     fn test_reverb_wet_clamping() {
-        let mut r = Reverb::new();
-        r.set_wet(1.5);
-        assert!((r.wet - 1.0).abs() < 1e-6);
+        let mut reverb = Reverb::new();
+        reverb.set_wet(1.5);
+        assert!((reverb.wet - 1.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_reverb_process_no_panic() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.process(&mut [0.5]);
-        r.process(&mut [0.5, -0.3]);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.process(&mut [0.5]);
+        reverb.process(&mut [0.5, -0.3]);
     }
 
     #[test]
     fn test_reverb_reset_state() {
-        let mut r = Reverb::new();
-        r.reset_state();
+        let mut reverb = Reverb::new();
+        reverb.reset_state();
     }
 
     // ========================================================================
@@ -265,40 +265,40 @@ mod tests {
 
     #[test]
     fn test_compressor_new_disabled() {
-        let c = Compressor::new();
-        assert!(!c.enabled);
+        let compressor = Compressor::new();
+        assert!(!compressor.enabled);
     }
 
     #[test]
     fn test_compressor_params_defaults() {
-        let c = Compressor::new();
-        assert!((c.threshold - (-3.0)).abs() < 1e-6);
-        assert!((c.intensity - 0.5).abs() < 1e-6);
+        let compressor = Compressor::new();
+        assert!((compressor.threshold - (-3.0)).abs() < 1e-6);
+        assert!((compressor.intensity - 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn test_compressor_direct_field_params() {
-        let mut c = Compressor::new();
-        c.threshold = -20.0;
-        c.intensity = 0.5;
-        c.update_intensity_params();
-        assert!((c.threshold - (-20.0)).abs() < 1e-6);
-        assert!((c.intensity - 0.5).abs() < 1e-6);
+        let mut compressor = Compressor::new();
+        compressor.threshold = -20.0;
+        compressor.intensity = 0.5;
+        compressor.update_intensity_params();
+        assert!((compressor.threshold - (-20.0)).abs() < 1e-6);
+        assert!((compressor.intensity - 0.5).abs() < 1e-6);
     }
 
     #[test]
     fn test_compressor_process_no_panic() {
-        let mut c = Compressor::new();
-        c.enabled = true;
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
         for _ in 0..100 {
-            c.process(&mut [0.5, -0.3]);
+            compressor.process(&mut [0.5, -0.3]);
         }
     }
 
     #[test]
     fn test_compressor_reset_state() {
-        let mut c = Compressor::new();
-        c.reset_state();
+        let mut compressor = Compressor::new();
+        compressor.reset_state();
     }
 
     // ========================================================================
@@ -307,68 +307,77 @@ mod tests {
 
     #[test]
     fn test_compressor_rms_vs_peak() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        c.threshold = -10.0;
-        c.intensity = 0.5;
-        c.update_intensity_params();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        compressor.threshold = -10.0;
+        compressor.intensity = 0.5;
+        compressor.update_intensity_params();
         // Fill lookahead with steady signal
-        for _ in 0..c.lookahead_samples {
-            c.process(&mut [0.01_f64, 0.01_f64]);
+        for _ in 0..compressor.lookahead_samples {
+            compressor.process(&mut [0.01_f64, 0.01_f64]);
         }
         // Feed transient
-        c.process(&mut [0.9_f64, -0.1_f64]);
+        compressor.process(&mut [0.9_f64, -0.1_f64]);
         // RMS envelope should be lower than peak 0.9
-        assert!(c.envelope < 0.9);
+        assert!(compressor.envelope < 0.9);
     }
 
     #[test]
     fn test_compressor_soft_knee_curve() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        c.threshold = -10.0;
-        c.intensity = 0.5;
-        c.update_intensity_params();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        compressor.threshold = -10.0;
+        compressor.intensity = 0.5;
+        compressor.update_intensity_params();
         // Fill lookahead with steady signal at -14dB ≈ 0.2 linear
-        for _ in 0..c.lookahead_samples {
-            c.process(&mut [0.2_f64, 0.2_f64]);
+        for _ in 0..compressor.lookahead_samples {
+            compressor.process(&mut [0.2_f64, 0.2_f64]);
         }
         // After processing, envelope should be around 0.2
-        assert!(c.envelope < 0.3);
+        assert!(compressor.envelope < 0.3);
         // Process should not panic with knee active
     }
 
     #[test]
     fn test_compressor_intensity_mapping() {
-        let mut c0 = Compressor::new();
-        c0.intensity = 0.0;
-        c0.update_intensity_params();
-        assert!(c0.intensity_ratio >= 1.0 && c0.intensity_ratio <= 2.0);
+        let mut compressor_without_intensity = Compressor::new();
+        compressor_without_intensity.intensity = 0.0;
+        compressor_without_intensity.update_intensity_params();
+        assert!(
+            compressor_without_intensity.intensity_ratio >= 1.0
+                && compressor_without_intensity.intensity_ratio <= 2.0
+        );
 
-        let mut c5 = Compressor::new();
-        c5.intensity = 0.5;
-        c5.update_intensity_params();
-        assert!(c5.intensity_ratio >= 3.5 && c5.intensity_ratio <= 4.5);
+        let mut compressor_at_half_intensity = Compressor::new();
+        compressor_at_half_intensity.intensity = 0.5;
+        compressor_at_half_intensity.update_intensity_params();
+        assert!(
+            compressor_at_half_intensity.intensity_ratio >= 3.5
+                && compressor_at_half_intensity.intensity_ratio <= 4.5
+        );
 
-        let mut c1 = Compressor::new();
-        c1.intensity = 1.0;
-        c1.update_intensity_params();
-        assert!(c1.intensity_ratio >= 18.0 && c1.intensity_ratio <= 22.0);
+        let mut compressor_at_full_intensity = Compressor::new();
+        compressor_at_full_intensity.intensity = 1.0;
+        compressor_at_full_intensity.update_intensity_params();
+        assert!(
+            compressor_at_full_intensity.intensity_ratio >= 18.0
+                && compressor_at_full_intensity.intensity_ratio <= 22.0
+        );
     }
 
     #[test]
     fn test_compressor_lookahead_transient() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        c.threshold = -3.0;
-        c.intensity = 0.75;
-        c.update_intensity_params();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        compressor.threshold = -3.0;
+        compressor.intensity = 0.75;
+        compressor.update_intensity_params();
         // Fill lookahead with silence
-        for _ in 0..c.lookahead_samples {
-            c.process(&mut [0.0_f64, 0.0_f64]);
+        for _ in 0..compressor.lookahead_samples {
+            compressor.process(&mut [0.0_f64, 0.0_f64]);
         }
         let mut impulse = [0.98_f64, -0.98_f64];
-        c.process(&mut impulse);
+        compressor.process(&mut impulse);
         assert!(
             impulse[0].abs() < 0.98,
             "Lookahead should compress transient"
@@ -377,34 +386,34 @@ mod tests {
 
     #[test]
     fn test_compressor_zero_threshold_bypass() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        c.threshold = 0.0;
-        c.intensity = 0.5;
-        c.update_intensity_params();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        compressor.threshold = 0.0;
+        compressor.intensity = 0.5;
+        compressor.update_intensity_params();
         // Feed frames at -6dB (well below 0dB threshold) until buffer full + output
-        for _ in 0..c.lookahead_samples + 1 {
+        for _ in 0..compressor.lookahead_samples + 1 {
             let mut frame = [0.5_f64, -0.3_f64];
-            let orig = frame;
-            c.process(&mut frame);
+            let original = frame;
+            compressor.process(&mut frame);
             // Once buffer is full, output should be identical or very close (makeup may apply)
-            assert!((frame[0] - orig[0]).abs() < 1.0); // makeup adds gain but no compression
+            assert!((frame[0] - original[0]).abs() < 1.0); // makeup adds gain but no compression
         }
     }
 
     #[test]
     fn test_compressor_makeup_gain() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        c.threshold = -30.0;
-        c.intensity = 0.5;
-        c.update_intensity_params();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        compressor.threshold = -30.0;
+        compressor.intensity = 0.5;
+        compressor.update_intensity_params();
         // Fill lookahead with above-threshold signal
-        for _ in 0..c.lookahead_samples {
-            c.process(&mut [0.5_f64, 0.5_f64]);
+        for _ in 0..compressor.lookahead_samples {
+            compressor.process(&mut [0.5_f64, 0.5_f64]);
         }
         let mut frame = [0.5_f64, 0.5_f64];
-        c.process(&mut frame);
+        compressor.process(&mut frame);
         assert!(
             frame[0] > 0.0,
             "Makeup gain should produce non-zero output with heavy compression"
@@ -413,12 +422,12 @@ mod tests {
 
     #[test]
     fn test_compressor_nan_guard() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        for _ in 0..c.lookahead_samples {
-            c.process(&mut [f64::NAN, f64::INFINITY]);
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        for _ in 0..compressor.lookahead_samples {
+            compressor.process(&mut [f64::NAN, f64::INFINITY]);
         }
-        c.process(&mut [f64::NAN, f64::INFINITY]);
+        compressor.process(&mut [f64::NAN, f64::INFINITY]);
         // Should not panic and should produce finite output
     }
 
@@ -428,39 +437,39 @@ mod tests {
 
     #[test]
     fn test_stereo_balance_default_centered() {
-        let sb = StereoBalance::default();
-        assert!((sb.balance - 0.0).abs() < 1e-6);
+        let stereo_balance = StereoBalance::default();
+        assert!((stereo_balance.balance - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_stereo_balance_full_left() {
-        let mut sb = StereoBalance::default();
-        sb.enabled = true;
-        sb.balance = -1.0;
+        let mut stereo_balance = StereoBalance::default();
+        stereo_balance.enabled = true;
+        stereo_balance.balance = -1.0;
         let mut frame = [1.0_f64, 1.0_f64];
-        sb.process(&mut frame);
+        stereo_balance.process(&mut frame);
         assert!((frame[0] - 1.0).abs() < 1e-10);
         assert!((frame[1] - 0.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_stereo_balance_full_right() {
-        let mut sb = StereoBalance::default();
-        sb.enabled = true;
-        sb.balance = 1.0;
+        let mut stereo_balance = StereoBalance::default();
+        stereo_balance.enabled = true;
+        stereo_balance.balance = 1.0;
         let mut frame = [1.0_f64, 1.0_f64];
-        sb.process(&mut frame);
+        stereo_balance.process(&mut frame);
         assert!((frame[0] - 0.0).abs() < 1e-10);
         assert!((frame[1] - 1.0).abs() < 1e-10);
     }
 
     #[test]
     fn test_stereo_balance_center_no_change() {
-        let mut sb = StereoBalance::default();
-        sb.enabled = true;
-        sb.balance = 0.0;
+        let mut stereo_balance = StereoBalance::default();
+        stereo_balance.enabled = true;
+        stereo_balance.balance = 0.0;
         let mut frame = [0.5_f64, 0.5_f64];
-        sb.process(&mut frame);
+        stereo_balance.process(&mut frame);
         assert!((frame[0] - 0.5).abs() < 1e-10);
         assert!((frame[1] - 0.5).abs() < 1e-10);
     }
@@ -471,29 +480,29 @@ mod tests {
 
     #[test]
     fn test_limiter_default_disabled() {
-        let l = Limiter::default();
-        assert!(!l.enabled);
+        let limiter = Limiter::default();
+        assert!(!limiter.enabled);
     }
 
     #[test]
     fn test_limiter_ceiling_default() {
-        let l = Limiter::default();
-        assert!((l.ceiling - (-1.0)).abs() < 1e-4);
+        let limiter = Limiter::default();
+        assert!((limiter.ceiling - (-1.0)).abs() < 1e-4);
     }
 
     #[test]
     fn test_limiter_process_no_panic() {
-        let mut l = Limiter::default();
-        l.enabled = true;
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
         for _ in 0..100 {
-            l.process(&mut [0.5, -0.3]);
+            limiter.process(&mut [0.5, -0.3]);
         }
     }
 
     #[test]
     fn test_limiter_reset_state() {
-        let mut l = Limiter::default();
-        l.reset_state();
+        let mut limiter = Limiter::default();
+        limiter.reset_state();
     }
 
     // ========================================================================
@@ -502,14 +511,14 @@ mod tests {
 
     #[test]
     fn test_limiter_oversampling_true_peak() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        l.ceiling = -1.0;
-        for _ in 0..l.lookahead_samples {
-            l.process(&mut [0.5, 0.5]);
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        limiter.ceiling = -1.0;
+        for _ in 0..limiter.lookahead_samples {
+            limiter.process(&mut [0.5, 0.5]);
         }
         let mut frame = [0.95, 0.95];
-        l.process(&mut frame);
+        limiter.process(&mut frame);
         let ceiling_lin = 10.0_f64.powf(-1.0 / 20.0);
         assert!(
             frame[0].abs() <= ceiling_lin + 0.01,
@@ -521,14 +530,14 @@ mod tests {
 
     #[test]
     fn test_limiter_lookahead_transient() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        l.ceiling = -3.0;
-        for _ in 0..l.lookahead_samples {
-            l.process(&mut [0.0, 0.0]);
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        limiter.ceiling = -3.0;
+        for _ in 0..limiter.lookahead_samples {
+            limiter.process(&mut [0.0, 0.0]);
         }
         let mut impulse = [0.98, -0.98];
-        l.process(&mut impulse);
+        limiter.process(&mut impulse);
         let ceiling_lin = 10.0_f64.powf(-3.0 / 20.0);
         assert!(
             impulse[0].abs() <= ceiling_lin + 0.01,
@@ -540,30 +549,30 @@ mod tests {
 
     #[test]
     fn test_limiter_crest_factor() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        for _ in 0..l.lookahead_samples {
-            l.process(&mut [0.5, 0.5]);
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        for _ in 0..limiter.lookahead_samples {
+            limiter.process(&mut [0.5, 0.5]);
         }
-        l.process(&mut [0.5, 0.5]);
+        limiter.process(&mut [0.5, 0.5]);
         // After steady signal, crest factor should be relatively low
         assert!(
-            l.crest_factor_smooth > 0.0,
+            limiter.crest_factor_smooth > 0.0,
             "Crest factor should be valid: {}",
-            l.crest_factor_smooth
+            limiter.crest_factor_smooth
         );
     }
 
     #[test]
     fn test_limiter_zero_ceiling_bypass() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        l.ceiling = 0.0;
-        for _ in 0..l.lookahead_samples {
-            l.process(&mut [0.5, 0.5]);
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        limiter.ceiling = 0.0;
+        for _ in 0..limiter.lookahead_samples {
+            limiter.process(&mut [0.5, 0.5]);
         }
         let mut frame = [0.5, 0.5];
-        l.process(&mut frame);
+        limiter.process(&mut frame);
         // With ceiling=0dB, no limiting occurs; output should not be zero
         assert!(
             frame[0].abs() > 0.0,
@@ -577,12 +586,12 @@ mod tests {
 
     #[test]
     fn test_limiter_nan_guard() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        for _ in 0..l.lookahead_samples {
-            l.process(&mut [f64::NAN, f64::INFINITY]);
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        for _ in 0..limiter.lookahead_samples {
+            limiter.process(&mut [f64::NAN, f64::INFINITY]);
         }
-        l.process(&mut [f64::NAN, f64::INFINITY]);
+        limiter.process(&mut [f64::NAN, f64::INFINITY]);
     }
 
     // ========================================================================
@@ -591,21 +600,21 @@ mod tests {
 
     #[test]
     fn test_noise_gate_default_threshold() {
-        let ng = NoiseGate::default();
-        assert!((ng.threshold - (-60.0)).abs() < 1e-6);
+        let noise_gate = NoiseGate::default();
+        assert!((noise_gate.threshold - (-60.0)).abs() < 1e-6);
     }
 
     #[test]
     fn test_noise_gate_process_no_panic() {
-        let mut ng = NoiseGate::default();
-        ng.enabled = true;
-        ng.process(&mut [0.5, -0.3]);
+        let mut noise_gate = NoiseGate::default();
+        noise_gate.enabled = true;
+        noise_gate.process(&mut [0.5, -0.3]);
     }
 
     #[test]
     fn test_noise_gate_reset_state() {
-        let mut ng = NoiseGate::default();
-        ng.reset_state();
+        let mut noise_gate = NoiseGate::default();
+        noise_gate.reset_state();
     }
 
     // ========================================================================
@@ -614,16 +623,16 @@ mod tests {
 
     #[test]
     fn test_sub_bass_default_values() {
-        let sb = SubBass::default();
-        assert!((sb.freq - 45.0).abs() < 1e-6);
-        assert!((sb.gain - 0.0).abs() < 1e-6);
+        let sub_bass = SubBass::default();
+        assert!((sub_bass.freq - 45.0).abs() < 1e-6);
+        assert!((sub_bass.gain - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_sub_bass_process_no_panic() {
-        let mut sb = SubBass::default();
-        sb.enabled = true;
-        sb.process(&mut [0.5, -0.3]);
+        let mut sub_bass = SubBass::default();
+        sub_bass.enabled = true;
+        sub_bass.process(&mut [0.5, -0.3]);
     }
 
     // ========================================================================
@@ -632,15 +641,15 @@ mod tests {
 
     #[test]
     fn test_mid_bass_default_values() {
-        let mb = MidBass::default();
-        assert!((mb.freq - 100.0).abs() < 1e-6);
-        assert!((mb.gain - 0.0).abs() < 1e-6);
+        let mid_bass = MidBass::default();
+        assert!((mid_bass.freq - 100.0).abs() < 1e-6);
+        assert!((mid_bass.gain - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_mid_bass_set_sample_rate() {
-        let mut mb = MidBass::default();
-        mb.set_sample_rate(48000.0);
+        let mut mid_bass = MidBass::default();
+        mid_bass.set_sample_rate(48000.0);
     }
 
     // ========================================================================
@@ -649,14 +658,14 @@ mod tests {
 
     #[test]
     fn test_voice_boost_default() {
-        let vb = VoiceBoost::default();
-        assert!((vb.gain - 0.0).abs() < 1e-6);
+        let voice_boost = VoiceBoost::default();
+        assert!((voice_boost.gain - 0.0).abs() < 1e-6);
     }
 
     #[test]
     fn test_voice_boost_set_sample_rate() {
-        let mut vb = VoiceBoost::default();
-        vb.set_sample_rate(48000.0);
+        let mut voice_boost = VoiceBoost::default();
+        voice_boost.set_sample_rate(48000.0);
     }
 
     // ========================================================================
@@ -665,24 +674,24 @@ mod tests {
 
     #[test]
     fn test_stereo_expander_default_values() {
-        let exp = MultiBandStereoExpander::default();
-        assert!((exp.width - 1.0).abs() < 1e-6);
-        assert_eq!(exp.mode, ExpanderMode::Hybrid);
+        let expander = MultiBandStereoExpander::default();
+        assert!((expander.width - 1.0).abs() < 1e-6);
+        assert_eq!(expander.mode, ExpanderMode::Hybrid);
     }
 
     #[test]
     fn test_stereo_expander_process_stereo_no_panic() {
-        let mut exp = MultiBandStereoExpander::default();
-        exp.enabled = true;
-        exp.width = 1.5;
+        let mut expander = MultiBandStereoExpander::default();
+        expander.enabled = true;
+        expander.width = 1.5;
         let mut frame = [0.5_f64, -0.3_f64];
-        exp.process(&mut frame);
+        expander.process(&mut frame);
     }
 
     #[test]
     fn test_stereo_expander_reset_state() {
-        let mut exp = MultiBandStereoExpander::default();
-        exp.reset_state();
+        let mut expander = MultiBandStereoExpander::default();
+        expander.reset_state();
     }
 
     // ========================================================================
@@ -691,31 +700,31 @@ mod tests {
 
     #[test]
     fn test_reverb_equal_power_bypass() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_wet(0.0);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_wet(0.0);
         let mut frame = [1.0_f64, -0.8_f64];
         let original = frame;
-        r.process(&mut frame);
-        for (out, orig) in frame.iter().zip(original.iter()) {
+        reverb.process(&mut frame);
+        for (output, original) in frame.iter().zip(original.iter()) {
             assert!(
-                (out - orig).abs() < 1e-6,
+                (output - original).abs() < 1e-6,
                 "wet=0.0 should bypass: out={} orig={}",
-                out,
-                orig
+                output,
+                original
             );
         }
     }
 
     #[test]
     fn test_reverb_equal_power_rms() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_wet(0.5);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_wet(0.5);
         let frame: [f64; 2] = [0.5, -0.3];
         let input_rms = (frame.iter().map(|s| s * s).sum::<f64>() / frame.len() as f64).sqrt();
         let mut out_frame = frame;
-        r.process(&mut out_frame);
+        reverb.process(&mut out_frame);
         let output_rms =
             (out_frame.iter().map(|s| s * s).sum::<f64>() / out_frame.len() as f64).sqrt();
         assert!(output_rms > 0.0, "Reverb wet=0.5 should produce output");
@@ -729,11 +738,11 @@ mod tests {
 
     #[test]
     fn test_reverb_equal_power_full_wet() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_wet(1.0);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_wet(1.0);
         let mut frame = [1.0_f64, -0.5_f64];
-        r.process(&mut frame);
+        reverb.process(&mut frame);
         assert!(
             (frame[0] - 1.0).abs() > 1e-3 || (frame[1] + 0.5).abs() > 1e-3,
             "wet=1.0 should alter the signal (pure wet output, no dry)"
@@ -746,18 +755,20 @@ mod tests {
 
     #[test]
     fn test_reverb_fdn_stability() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_wet(0.5);
-        r.set_room_size(0.99);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_wet(0.5);
+        reverb.set_room_size(0.99);
         // Feed impulse, process 1 second worth of samples
         let mut frame = [1.0_f64, 1.0_f64];
-        r.process(&mut frame);
+        reverb.process(&mut frame);
         let mut max_val = 0.0_f64;
         for _ in 0..(44100 / 2) {
-            let mut f = [0.0_f64, 0.0_f64];
-            r.process(&mut f);
-            max_val = max_val.max(f[0].abs()).max(f[1].abs());
+            let mut silent_frame = [0.0_f64, 0.0_f64];
+            reverb.process(&mut silent_frame);
+            max_val = max_val
+                .max(silent_frame[0].abs())
+                .max(silent_frame[1].abs());
         }
         // After 0.5s with no input, output should be decaying
         assert!(max_val < 5.0, "No runaway feedback: max={}", max_val);
@@ -765,23 +776,23 @@ mod tests {
 
     #[test]
     fn test_reverb_fdn_stereo_decorrelated() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_wet(1.0);
-        r.set_room_size(0.8);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_wet(1.0);
+        reverb.set_room_size(0.8);
         // Feed sustained signal to ensure both channels have energy
         for _ in 0..500 {
-            r.process(&mut [0.5_f64, 0.5_f64]);
+            reverb.process(&mut [0.5_f64, 0.5_f64]);
         }
         // Now L and R should differ after processing same input with different delay lengths
         let mut l_val = 0.0_f64;
         let mut r_val = 0.0_f64;
         let mut diverged = false;
         for _ in 0..500 {
-            let mut f = [0.0_f64, 0.0_f64];
-            r.process(&mut f);
-            l_val = f[0];
-            r_val = f[1];
+            let mut silent_frame = [0.0_f64, 0.0_f64];
+            reverb.process(&mut silent_frame);
+            l_val = silent_frame[0];
+            r_val = silent_frame[1];
             if (l_val - r_val).abs() > 1e-6 {
                 diverged = true;
                 break;
@@ -794,17 +805,17 @@ mod tests {
 
     #[test]
     fn test_reverb_fdn_pre_delay() {
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.set_room_size(0.5);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.set_room_size(0.5);
         let mut frame = [1.0_f64, 0.0_f64];
-        r.process(&mut frame);
+        reverb.process(&mut frame);
         // First few samples should be near-zero due to pre-delay
         let mut first_nonzero_sample = None;
         for i in 0..44100 {
-            let mut f = [0.0_f64, 0.0_f64];
-            r.process(&mut f);
-            if f[0].abs() > 1e-9 && first_nonzero_sample.is_none() {
+            let mut silent_frame = [0.0_f64, 0.0_f64];
+            reverb.process(&mut silent_frame);
+            if silent_frame[0].abs() > 1e-9 && first_nonzero_sample.is_none() {
                 first_nonzero_sample = Some(i);
             }
         }
@@ -826,8 +837,11 @@ mod tests {
         assert!(!chain.limiter.enabled);
 
         // force_limiter_on when disabled → returns false (was disabled), enables limiter
-        let was_enabled = chain.force_limiter_on();
-        assert!(!was_enabled, "Limiter was disabled, should return false");
+        let limiter_was_enabled = chain.force_limiter_on();
+        assert!(
+            !limiter_was_enabled,
+            "Limiter was disabled, should return false"
+        );
         assert!(chain.limiter.enabled, "Limiter should now be enabled");
 
         // restore_limiter(false) → restores to disabled
@@ -839,9 +853,9 @@ mod tests {
 
         // force_limiter_on when already enabled → returns true (was enabled), stays enabled
         chain.limiter.enabled = true;
-        let was_enabled2 = chain.force_limiter_on();
+        let limiter_was_enabled_again = chain.force_limiter_on();
         assert!(
-            was_enabled2,
+            limiter_was_enabled_again,
             "Limiter was already enabled, should return true"
         );
         assert!(chain.limiter.enabled, "Limiter should stay enabled");
@@ -855,8 +869,8 @@ mod tests {
 
         // Force on again after restore to true, then restore to false
         chain.limiter.enabled = false;
-        let was3 = chain.force_limiter_on();
-        assert!(!was3);
+        let limiter_was_enabled_after_restore = chain.force_limiter_on();
+        assert!(!limiter_was_enabled_after_restore);
         chain.restore_limiter(false);
         assert!(!chain.limiter.enabled);
     }
@@ -874,8 +888,8 @@ mod tests {
         assert!((frame[1] + 0.5).abs() < 1e-10);
 
         // force/restore should not affect process_frame behavior
-        let was = chain.force_limiter_on();
-        chain.restore_limiter(was);
+        let limiter_was_enabled = chain.force_limiter_on();
+        chain.restore_limiter(limiter_was_enabled);
 
         // Process again via bypass — frame still unchanged
         let mut frame2 = [0.8_f64, -0.3_f64];
@@ -910,14 +924,14 @@ mod tests {
 
     #[test]
     fn test_compressor_circular_passthrough_when_disabled() {
-        let mut c = Compressor::new();
-        c.enabled = false;
+        let mut compressor = Compressor::new();
+        compressor.enabled = false;
         let input = vec![0.5_f64, -0.4, 0.3, -0.2, 0.6, 0.1];
-        let mut out = input.clone();
-        for frame in out.chunks_mut(2) {
-            c.process(frame);
+        let mut output = input.clone();
+        for frame in output.chunks_mut(2) {
+            compressor.process(frame);
         }
-        for (a, b) in input.iter().zip(out.iter()) {
+        for (a, b) in input.iter().zip(output.iter()) {
             assert!(
                 (a - b).abs() < 1e-12,
                 "disabled compressor must pass through"
@@ -927,19 +941,19 @@ mod tests {
 
     #[test]
     fn test_compressor_circular_applies_gain_reduction() {
-        let mut c = Compressor::new();
-        c.enabled = true;
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
         // Señal muy fuerte y sostenida (muy por encima del umbral) → la reducción
         // de ganancia debe superar al makeup y reducir el nivel.
         let input: Vec<f64> = (0..4000)
             .map(|i| if i % 2 == 0 { 3.0 } else { -3.0 })
             .collect();
-        let mut out = input.clone();
-        for frame in out.chunks_mut(2) {
-            c.process(frame);
+        let mut output = input.clone();
+        for frame in output.chunks_mut(2) {
+            compressor.process(frame);
         }
         let in_rms: f64 = input.iter().map(|s| s * s).sum::<f64>() / input.len() as f64;
-        let out_rms: f64 = out.iter().map(|s| s * s).sum::<f64>() / out.len() as f64;
+        let out_rms: f64 = output.iter().map(|s| s * s).sum::<f64>() / output.len() as f64;
         assert!(in_rms > 1.0, "test signal must be loud");
         assert!(
             out_rms < in_rms * 0.8,
@@ -951,34 +965,34 @@ mod tests {
 
     #[test]
     fn test_compressor_circular_no_nan() {
-        let mut c = Compressor::new();
-        c.enabled = true;
-        let mut out = Vec::new();
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
+        let mut output = Vec::new();
         // Llenar el lookahead con señal limpia y procesar activamente.
         for _ in 0..100 {
             let mut frame = [0.9_f64, -0.9];
-            c.process(&mut frame);
-            out.extend_from_slice(&frame);
+            compressor.process(&mut frame);
+            output.extend_from_slice(&frame);
         }
         // Inyectar NaN/Inf: la cadena de procesamiento debe mantener la salida finita.
         for _ in 0..100 {
             let mut frame = [f64::NAN, f64::INFINITY];
-            c.process(&mut frame);
-            out.extend_from_slice(&frame);
+            compressor.process(&mut frame);
+            output.extend_from_slice(&frame);
         }
-        for s in out.iter() {
+        for s in output.iter() {
             assert!(s.is_finite(), "compressor output must be finite");
         }
     }
 
     #[test]
     fn test_compressor_circular_multichannel_no_panic() {
-        let mut c = Compressor::new();
-        c.enabled = true;
+        let mut compressor = Compressor::new();
+        compressor.enabled = true;
         // 6 canales (5.1) → sin panic y sin NaN.
         let mut frame = [0.5_f64, -0.4, 0.3, -0.2, 0.1, 0.0];
         for _ in 0..500 {
-            c.process(&mut frame);
+            compressor.process(&mut frame);
         }
         for s in frame.iter() {
             assert!(s.is_finite());
@@ -994,12 +1008,12 @@ mod tests {
         // El true-peak inter-sample debe ser >= al pico de muestra y finito.
         let frame = [0.8_f64, 0.95, -0.9, 0.7, 0.99, -0.85];
         let sample_peak = frame.iter().map(|s| s.abs()).fold(0.0, f64::max);
-        let tp = Limiter::true_peak(&frame);
-        assert!(tp.is_finite());
+        let true_peak = Limiter::true_peak(&frame);
+        assert!(true_peak.is_finite());
         assert!(
-            tp >= sample_peak - 1e-9,
+            true_peak >= sample_peak - 1e-9,
             "true_peak (={}) must be >= sample_peak (={})",
-            tp,
+            true_peak,
             sample_peak
         );
     }
@@ -1010,22 +1024,22 @@ mod tests {
         // debe producir un true-peak por encima del pico de muestra en algunos casos.
         // Usamos una señal donde el interpolador revela picos entre muestras.
         let frame = [1.0_f64, -1.0, 1.0, -1.0, 1.0, -1.0];
-        let tp = Limiter::true_peak(&frame);
-        assert!(tp.is_finite());
-        assert!(tp > 0.0);
+        let true_peak = Limiter::true_peak(&frame);
+        assert!(true_peak.is_finite());
+        assert!(true_peak > 0.0);
         // Para una alternancia a Nyquist, la interpolación nunca debe superar
         // excesivamente el pico de muestra (sanity: < 2x).
-        assert!(tp < 2.0 + 1e-9);
+        assert!(true_peak < 2.0 + 1e-9);
     }
 
     #[test]
     fn test_limiter_process_no_nan_and_ceiling() {
-        let mut l = Limiter::default();
-        l.enabled = true;
-        l.ceiling = -1.0; // -1 dBFS
+        let mut limiter = Limiter::default();
+        limiter.enabled = true;
+        limiter.ceiling = -1.0; // -1 dBFS
         let mut frame = [0.99_f64, -0.99];
         for _ in 0..500 {
-            l.process(&mut frame);
+            limiter.process(&mut frame);
         }
         for s in frame.iter() {
             assert!(s.is_finite());
@@ -1041,12 +1055,12 @@ mod tests {
 
     #[test]
     fn test_reverb_multichannel_decorrelated_and_finite() {
-        let mut r = Reverb::new();
-        r.enabled = true;
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
         // 6 canales: todos finitos y sin panic.
         let mut frame = [0.4_f64, -0.3, 0.2, -0.1, 0.5, 0.05];
         for _ in 0..300 {
-            r.process(&mut frame);
+            reverb.process(&mut frame);
         }
         for s in frame.iter() {
             assert!(s.is_finite(), "reverb output must be finite");
@@ -1054,15 +1068,16 @@ mod tests {
         // Decorrelación por canal: con el MISMO input sostenido en todos los canales
         // (suficientes frames para superar las líneas de delay), los canales usan
         // sets FDN distintos y producen salidas distintas.
-        r.reset_state();
-        let mut a = [0.5_f64; 6];
+        reverb.reset_state();
+        let mut sustained_frame = [0.5_f64; 6];
         for _ in 0..3000 {
-            r.process(&mut a);
+            reverb.process(&mut sustained_frame);
         }
         assert!(
-            (a[0] - a[2]).abs() > 1e-6 || (a[0] - a[4]).abs() > 1e-6,
+            (sustained_frame[0] - sustained_frame[2]).abs() > 1e-6
+                || (sustained_frame[0] - sustained_frame[4]).abs() > 1e-6,
             "reverb channels should be decorrelated (got a={:?})",
-            a
+            sustained_frame
         );
     }
 
@@ -1087,9 +1102,10 @@ mod tests {
         let mut frame = [0.0_f64; 6];
         let mut max_out = 0.0_f64;
         for n in 0..2000 {
-            for (c, s) in frame.iter_mut().enumerate() {
+            for (channel, s) in frame.iter_mut().enumerate() {
                 *s = 0.4
-                    * (2.0 * std::f64::consts::PI * 440.0 * (n as f64) / 44100.0 + c as f64).sin();
+                    * (2.0 * std::f64::consts::PI * 440.0 * (n as f64) / 44100.0 + channel as f64)
+                        .sin();
             }
             chain.process_frame(&mut frame);
             for s in frame.iter() {
@@ -1123,8 +1139,8 @@ mod tests {
         let mut max_out = 0.0_f64;
         for n in 0..4000 {
             let x = 0.3 * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / 44100.0).sin();
-            for c in frame.iter_mut() {
-                *c = x;
+            for channel in frame.iter_mut() {
+                *channel = x;
             }
             band.process_frame(&mut frame);
             for s in frame.iter() {
@@ -1151,18 +1167,19 @@ mod tests {
     fn test_biquad_simd_multichannel_no_oscillation() {
         use crate::audio::dsp::BiquadFilterType;
         // SubBass/MidBass/VoiceBoost usan BiquadFilter con la misma ruta SIMD.
-        let mut f = crate::audio::dsp::BiquadFilter::new(BiquadFilterType::Peak, 100.0, 6.0, 0.8);
-        f.resize_channels(4);
-        f.set_sample_rate(44100.0);
+        let mut biquad =
+            crate::audio::dsp::BiquadFilter::new(BiquadFilterType::Peak, 100.0, 6.0, 0.8);
+        biquad.resize_channels(4);
+        biquad.set_sample_rate(44100.0);
 
         let mut frame = [0.0_f64; 4];
         let mut max_out = 0.0_f64;
         for n in 0..4000 {
             let x = 0.3 * (2.0 * std::f64::consts::PI * 200.0 * n as f64 / 44100.0).sin();
-            for c in frame.iter_mut() {
-                *c = x;
+            for channel in frame.iter_mut() {
+                *channel = x;
             }
-            f.process_frame(&mut frame);
+            biquad.process_frame(&mut frame);
             for s in frame.iter() {
                 assert!(
                     s.is_finite(),
@@ -1183,29 +1200,37 @@ mod tests {
     fn test_wide_is_finite_select_pattern() {
         // Patrón del compresor para enmascarar NaN/Inf → 0 (verificado correcto).
         use wide::f64x4;
-        let v = f64x4::new([0.5_f64, f64::NAN, 1.0, f64::INFINITY]);
-        let vf = v.is_finite().select(v, f64x4::splat(0.0));
-        let arr = vf.to_array();
-        for (i, val) in arr.iter().enumerate() {
+        let vector = f64x4::new([0.5_f64, f64::NAN, 1.0, f64::INFINITY]);
+        let finite_vector = vector.is_finite().select(vector, f64x4::splat(0.0));
+        let lanes = finite_vector.to_array();
+        for (i, val) in lanes.iter().enumerate() {
             assert!(
                 val.is_finite(),
                 "is_finite().select produjo no finito en lane {}: {:?}",
                 i,
-                arr
+                lanes
             );
         }
-        assert!((arr[0] - 0.5).abs() < 1e-12, "lane 0 debe pasar: {:?}", arr);
-        assert!(arr[1].abs() < 1e-12, "lane 1 (NaN) debe ser 0: {:?}", arr);
+        assert!(
+            (lanes[0] - 0.5).abs() < 1e-12,
+            "lane 0 debe pasar: {:?}",
+            lanes
+        );
+        assert!(
+            lanes[1].abs() < 1e-12,
+            "lane 1 (NaN) debe ser 0: {:?}",
+            lanes
+        );
     }
 
     #[test]
     fn test_noise_gate_nan_no_panic() {
         // Regresión del crash: NoiseGate hacía partial_cmp(b).unwrap() sobre frames
         // con NaN → panic y cierre del reproductor. Ahora usa f64::max (ignora NaN).
-        let mut ng = NoiseGate::default();
-        ng.enabled = true;
+        let mut noise_gate = NoiseGate::default();
+        noise_gate.enabled = true;
         let mut frame = [f64::NAN, f64::INFINITY, 0.5, -0.3];
-        ng.process(&mut frame); // No debe paniquear.
+        noise_gate.process(&mut frame); // No debe paniquear.
         for s in frame.iter() {
             assert!(s.is_finite(), "noise gate debe emitir valores finitos");
         }
@@ -1241,11 +1266,11 @@ mod tests {
         // La cadena completa debe sanear NaN/±Inf en configuraciones de 4/6/8
         // canales: los guards de cada efecto (noise gate, limitador) limpian lo
         // no finito y la salida nunca debe contener NaN/Inf.
-        for ch in [4usize, 6, 8] {
+        for channels in [4usize, 6, 8] {
             let mut chain = DspChain::default();
             chain.enabled = true;
             chain.set_sample_rate(192000.0);
-            chain.set_channel_count(ch);
+            chain.set_channel_count(channels);
             chain.equalizer.enabled = true;
             chain.noise_gate.enabled = true;
             chain.sub_bass.enabled = true;
@@ -1260,12 +1285,12 @@ mod tests {
                 ("+Inf", f64::INFINITY),
                 ("-Inf", f64::NEG_INFINITY),
             ] {
-                let mut f = vec![value; ch];
-                chain.process_frame(&mut f);
-                for (i, s) in f.iter().enumerate() {
+                let mut frame = vec![value; channels];
+                chain.process_frame(&mut frame);
+                for (i, s) in frame.iter().enumerate() {
                     assert!(
                         s.is_finite(),
-                        "ch={ch}, caso={case}: muestra {i} no finita: {s}"
+                        "ch={channels}, caso={case}: muestra {i} no finita: {s}"
                     );
                 }
             }
@@ -1278,14 +1303,14 @@ mod tests {
         // (canal 2) lleva menos wet. Con el MISMO input en todos los canales, la
         // salida del LFE debe ser exactamente el input (sin modificar) mientras
         // FL/FR sí se procesan.
-        let mut r = Reverb::new();
-        r.enabled = true;
-        r.wet = 1.0;
-        r.set_room_size(0.5);
+        let mut reverb = Reverb::new();
+        reverb.enabled = true;
+        reverb.wet = 1.0;
+        reverb.set_room_size(0.5);
 
         let mut frame = [0.3_f64; 6];
         for _ in 0..100 {
-            r.process(&mut frame);
+            reverb.process(&mut frame);
         }
         // El LFE no debe haber sido procesado: el FDN del LFE nunca recibe entrada,
         // así que su salida permanece = input (0.3) tras el dry/wet con wet del LFE.
@@ -1317,10 +1342,11 @@ mod tests {
             window: WindowFunction::BlackmanHarris2,
         };
         let ratio = 192000.0 / 44100.0;
-        let mut rs = match Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input) {
-            Ok(r) => r,
-            Err(e) => panic!("new_sinc FALLÓ a ratio {}: {:?}", ratio, e),
-        };
+        let mut resampler =
+            match Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input) {
+                Ok(resampler) => resampler,
+                Err(e) => panic!("new_sinc FALLÓ a ratio {}: {:?}", ratio, e),
+            };
         // Alimentar 1024 frames de un seno y procesar.
         let mut input: Vec<Vec<f64>> = vec![vec![0.0; 1024], vec![0.0; 1024]];
         for i in 0..1024 {
@@ -1328,9 +1354,9 @@ mod tests {
             input[0][i] = v;
             input[1][i] = v;
         }
-        let needed = rs.input_frames_next();
+        let needed = resampler.input_frames_next();
         assert_eq!(needed, 1024);
-        let out_frames = rs.output_frames_next();
+        let out_frames = resampler.output_frames_next();
         let mut output: Vec<Vec<f64>> = vec![vec![0.0; out_frames], vec![0.0; out_frames]];
         let input_adapt =
             audioadapter_buffers::direct::SequentialSliceOfVecs::new(&input, 2, needed).unwrap();
@@ -1340,7 +1366,7 @@ mod tests {
             out_frames,
         )
         .unwrap();
-        let res = rs.process_into_buffer(&input_adapt, &mut output_adapt, None);
+        let res = resampler.process_into_buffer(&input_adapt, &mut output_adapt, None);
         assert!(res.is_ok(), "process_into_buffer falló: {:?}", res);
         // La salida debe ser finita y razonable.
         let peak = output[0].iter().map(|s| s.abs()).fold(0.0_f64, f64::max);
@@ -1372,11 +1398,11 @@ mod tests {
             window: WindowFunction::BlackmanHarris2,
         };
         let ratio = 384000.0 / 44100.0;
-        let mut rs = Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input)
+        let mut resampler = Async::<f64>::new_sinc(ratio, 2.0, &params, 1024, 2, FixedAsync::Input)
             .expect("new_sinc ratio 8.7 falló");
         let mut total_out_frames = 0usize;
         for chunk in 0..20 {
-            let needed = rs.input_frames_next();
+            let needed = resampler.input_frames_next();
             assert!(needed > 0, "input_frames_next() == 0 en chunk {}", chunk);
             let mut input: Vec<Vec<f64>> = vec![vec![0.0; needed], vec![0.0; needed]];
             for i in 0..needed {
@@ -1384,7 +1410,7 @@ mod tests {
                 input[0][i] = v;
                 input[1][i] = v;
             }
-            let out_frames = rs.output_frames_next();
+            let out_frames = resampler.output_frames_next();
             assert!(
                 out_frames > 0,
                 "output_frames_next() == 0 en chunk {}",
@@ -1401,7 +1427,8 @@ mod tests {
             )
             .unwrap();
             assert!(
-                rs.process_into_buffer(&in_adapt, &mut out_adapt, None)
+                resampler
+                    .process_into_buffer(&in_adapt, &mut out_adapt, None)
                     .is_ok(),
                 "process_into_buffer falló en chunk {}",
                 chunk

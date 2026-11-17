@@ -2,6 +2,8 @@
 
 use rusqlite::{OptionalExtension, Result, params};
 
+use crate::utils::observability::PERSISTENCE_TARGET;
+
 use super::Database;
 use super::models::{PlaylistData, PlaylistFolderGroup, PlaylistSongRef, ShuffleSession};
 
@@ -562,7 +564,7 @@ impl Database {
             match row {
                 Ok(song) => results.push(song),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila de canción de playlist ilegible"
                 ),
@@ -655,7 +657,7 @@ impl Database {
             match row {
                 Ok(song) => results.push(song),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila de canción de playlist ilegible"
                 ),
@@ -842,7 +844,7 @@ impl Database {
             match row {
                 Ok(song_id) => history.push(song_id),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila del historial de shuffle ilegible"
                 ),
@@ -860,7 +862,7 @@ impl Database {
             match row {
                 Ok(song_id) => shuffle_order.push(song_id),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila del orden de shuffle ilegible"
                 ),
@@ -920,7 +922,7 @@ impl Database {
             match row {
                 Ok(song_id) => results.push(song_id),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila de id de canción de playlist ilegible"
                 ),
@@ -942,7 +944,7 @@ impl Database {
             match row {
                 Ok(song_id) => results.push(song_id),
                 Err(error) => tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %error,
                     "Fila de id de canción de playlist ilegible"
                 ),

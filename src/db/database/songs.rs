@@ -7,6 +7,8 @@ use hex;
 use rusqlite::{OptionalExtension, Result, params};
 use sha2::{Digest, Sha256};
 
+use crate::utils::observability::PERSISTENCE_TARGET;
+
 use super::Database;
 use super::models::{SongData, SongMetadataExtended};
 
@@ -161,7 +163,7 @@ impl Database {
                         needs_processing = true;
                     }
                     Err(error) => tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         album = %album_hash_id,
                         error = %error,
                         "No se pudo componer el nombre de la carátula del álbum"
@@ -218,7 +220,7 @@ impl Database {
                 Ok(file_name) => target_file_name_for_processing = file_name,
                 Err(error) => {
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         song_id,
                         error = %error,
                         "No se pudo componer el nombre de la carátula propia de una canción"
@@ -485,7 +487,7 @@ impl Database {
                         referenced.insert(OsString::from(file_name));
                     }
                     Err(error) => tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         album_hash = %album_hash,
                         error = %error,
                         "No se pudo componer el nombre de la carátula del álbum"
@@ -507,7 +509,7 @@ impl Database {
                         referenced.insert(OsString::from(file_name));
                     }
                     Err(error) => tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         song_id,
                         error = %error,
                         "No se pudo componer el nombre de la carátula propia de una canción"

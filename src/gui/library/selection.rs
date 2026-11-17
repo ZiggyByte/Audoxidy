@@ -10,10 +10,10 @@ impl LibraryManager {
     /// garantizando consistencia absoluta con la estructura visual actual.
     pub fn find_album_id_for_song(&self, song_id: i64) -> Option<String> {
         let (_, v_artists) = self.get_view_structure();
-        for va in v_artists {
-            for alb in va.albums {
+        for virtual_artist in v_artists {
+            for alb in virtual_artist.albums {
                 if alb.songs.iter().any(|(s, _)| s.id == song_id) {
-                    return Some(format!("{}|{}", va.artist_name, alb.album_hash));
+                    return Some(format!("{}|{}", virtual_artist.artist_name, alb.album_hash));
                 }
             }
         }
@@ -666,12 +666,12 @@ impl LibraryManager {
             None
         };
 
-        if let Some(id) = album_id {
-            let is_collapsed = self.collapsed_albums.contains(&id);
+        if let Some(album_id) = album_id {
+            let is_collapsed = self.collapsed_albums.contains(&album_id);
             if (dir == LibraryNavDir::Left && !is_collapsed)
                 || (dir == LibraryNavDir::Right && is_collapsed)
             {
-                return Some(id);
+                return Some(album_id);
             }
         }
         None

@@ -164,8 +164,8 @@ impl crate::gui::app::AudoxidyApp {
                 // not always deliver a rescale event, so the ratio is re-queried
                 // here: without it the decode bucket would stay at the previous
                 // monitor's size.
-                if let Some(id) = self.window_id {
-                    tasks.push(iced::window::scale_factor(id).map(Message::WindowRescaled));
+                if let Some(window_id) = self.window_id {
+                    tasks.push(iced::window::scale_factor(window_id).map(Message::WindowRescaled));
                 }
 
                 if !self.maximized_query_pending {
@@ -193,8 +193,8 @@ impl crate::gui::app::AudoxidyApp {
                 Task::none()
             }
             Message::QueryMaximized => {
-                if let Some(id) = self.window_id {
-                    iced::window::is_maximized(id).map(Message::WindowMaximizedState)
+                if let Some(window_id) = self.window_id {
+                    iced::window::is_maximized(window_id).map(Message::WindowMaximizedState)
                 } else {
                     self.maximized_query_pending = false;
                     Task::none()
@@ -310,28 +310,28 @@ impl crate::gui::app::AudoxidyApp {
                 if self.window_maximized {
                     return Task::none();
                 }
-                if let Some(id) = self.window_id {
-                    iced::window::drag_resize(id, direction).map(|_: ()| Message::NoOp)
+                if let Some(window_id) = self.window_id {
+                    iced::window::drag_resize(window_id, direction).map(|_: ()| Message::NoOp)
                 } else {
                     Task::none()
                 }
             }
             Message::PlayerWindowAction(action) => match action {
                 crate::gui::player::WindowAction::Minimize => {
-                    if let Some(id) = self.window_id {
-                        iced::window::minimize(id, true).map(|_: ()| Message::UiTick)
+                    if let Some(window_id) = self.window_id {
+                        iced::window::minimize(window_id, true).map(|_: ()| Message::UiTick)
                     } else {
                         Task::none()
                     }
                 }
                 crate::gui::player::WindowAction::Maximize => {
-                    if let Some(id) = self.window_id {
+                    if let Some(window_id) = self.window_id {
                         // El toggle del botón es la intención explícita; se
                         // refleja de inmediato y la consulta diferida posterior
                         // confirma o corrige el estado real.
                         self.window_maximized = !self.window_maximized;
                         self.geometry_dirty_at = Some(std::time::Instant::now());
-                        iced::window::toggle_maximize(id).map(|_: ()| Message::NoOp)
+                        iced::window::toggle_maximize(window_id).map(|_: ()| Message::NoOp)
                     } else {
                         Task::none()
                     }
@@ -357,8 +357,8 @@ impl crate::gui::app::AudoxidyApp {
                 {
                     self.window_drag_armed = false;
                     self.window_drag_origin = None;
-                    if let Some(id) = self.window_id {
-                        return iced::window::drag(id).map(|_: ()| Message::NoOp);
+                    if let Some(window_id) = self.window_id {
+                        return iced::window::drag(window_id).map(|_: ()| Message::NoOp);
                     }
                 }
 
@@ -492,9 +492,13 @@ impl crate::gui::app::AudoxidyApp {
                 // aplicó al crear la ventana en `main`. Aquí se sincroniza el
                 // estado maximizado real y se valida que la ventana no haya
                 // quedado fuera del monitor (guard anti fuera-de-pantalla).
-                if let Some(id) = self.window_id {
-                    tasks.push(iced::window::is_maximized(id).map(Message::WindowMaximizedState));
-                    tasks.push(iced::window::monitor_size(id).map(Message::WindowMonitorSize));
+                if let Some(window_id) = self.window_id {
+                    tasks.push(
+                        iced::window::is_maximized(window_id).map(Message::WindowMaximizedState),
+                    );
+                    tasks.push(
+                        iced::window::monitor_size(window_id).map(Message::WindowMonitorSize),
+                    );
                 }
 
                 // Forzar auto-scroll a la canción que se restauró
@@ -515,13 +519,13 @@ impl crate::gui::app::AudoxidyApp {
                 // Si la ventana restaurada quedó completamente fuera del
                 // monitor (por un cambio de resolución o de configuración de
                 // pantallas), se recoloca en la esquina superior izquierda.
-                if let Some(id) = self.window_id {
+                if let Some(window_id) = self.window_id {
                     let off_screen = !self.window_maximized
                         && self.window_position.is_some_and(|pos| {
                             window_fully_off_screen(pos, self.unmaximized_size, monitor)
                         });
                     if off_screen {
-                        return iced::window::move_to(id, iced::Point::new(0.0, 0.0))
+                        return iced::window::move_to(window_id, iced::Point::new(0.0, 0.0))
                             .map(|_: ()| Message::NoOp);
                     }
                 }

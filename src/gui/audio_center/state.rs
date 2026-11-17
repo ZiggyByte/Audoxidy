@@ -3,6 +3,11 @@
 use crate::audio::AudioManager;
 use crate::audio::device_manager::{AudioDeviceInfo, BitDepth};
 use crate::utils::observability::PERSISTENCE_TARGET;
+use crate::utils::settings_keys::{
+    KEY_AUDIO_BIT_DEPTH, KEY_AUDIO_BUFFER_SIZE, KEY_AUDIO_DEVICE, KEY_AUDIO_HOST,
+    KEY_AUDIO_SYSTEM_QUANTUM, KEY_AUDIO_SYSTEM_RATE, KEY_EQ_BAND_GAINS_20, KEY_EQ_BAND_GAINS_31,
+    KEY_EQ_BANDS_31, KEY_EQ_ENABLED, KEY_EQ_SELECTED_PRESET, KEY_PREAMP_GAIN,
+};
 
 use super::messages::SystemSelection;
 
@@ -298,19 +303,22 @@ impl AudioCenterManager {
         // db-lock: persistencia — el guardado se omite si el lock falla
         if let Ok(db_lock) = db.lock() {
             log_persist(
-                "eq_enabled",
-                db_lock.set_setting("eq_enabled", if self.equalizer_enabled { "1" } else { "0" }),
+                KEY_EQ_ENABLED,
+                db_lock.set_setting(
+                    KEY_EQ_ENABLED,
+                    if self.equalizer_enabled { "1" } else { "0" },
+                ),
             );
             log_persist(
-                "eq_bands_31",
+                KEY_EQ_BANDS_31,
                 db_lock.set_setting(
-                    "eq_bands_31",
+                    KEY_EQ_BANDS_31,
                     if self.equalizer_bands_31 { "1" } else { "0" },
                 ),
             );
             log_persist(
-                "preamp_gain",
-                db_lock.set_setting("preamp_gain", &format!("{:.1}", self.preamp_gain)),
+                KEY_PREAMP_GAIN,
+                db_lock.set_setting(KEY_PREAMP_GAIN, &format!("{:.1}", self.preamp_gain)),
             );
             // Save selected preset name
             let preset_name = self
@@ -319,8 +327,8 @@ impl AudioCenterManager {
                 .map(|p| p.name.clone())
                 .unwrap_or_default();
             log_persist(
-                "eq_selected_preset",
-                db_lock.set_setting("eq_selected_preset", &preset_name),
+                KEY_EQ_SELECTED_PRESET,
+                db_lock.set_setting(KEY_EQ_SELECTED_PRESET, &preset_name),
             );
             // Guardar gains de 20 y 31 bandas como CSV
             let bands_20_str = self
@@ -331,8 +339,8 @@ impl AudioCenterManager {
                 .collect::<Vec<_>>()
                 .join(",");
             log_persist(
-                "eq_band_gains_20",
-                db_lock.set_setting("eq_band_gains_20", &bands_20_str),
+                KEY_EQ_BAND_GAINS_20,
+                db_lock.set_setting(KEY_EQ_BAND_GAINS_20, &bands_20_str),
             );
             if self.eq_band_gains.len() > 20 {
                 let bands_31_str = self
@@ -342,8 +350,8 @@ impl AudioCenterManager {
                     .collect::<Vec<_>>()
                     .join(",");
                 log_persist(
-                    "eq_band_gains_31",
-                    db_lock.set_setting("eq_band_gains_31", &bands_31_str),
+                    KEY_EQ_BAND_GAINS_31,
+                    db_lock.set_setting(KEY_EQ_BAND_GAINS_31, &bands_31_str),
                 );
             }
         } else {
@@ -649,12 +657,13 @@ impl AudioCenterManager {
             // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 if self.selected_host.is_none() {
-                    self.selected_host = db.get_setting("audio_host").filter(|s| !s.is_empty());
+                    self.selected_host = db.get_setting(KEY_AUDIO_HOST).filter(|s| !s.is_empty());
                 }
                 if self.selected_device.is_none() {
-                    self.selected_device = db.get_setting("audio_device").filter(|s| !s.is_empty());
+                    self.selected_device =
+                        db.get_setting(KEY_AUDIO_DEVICE).filter(|s| !s.is_empty());
                 }
-                if let Some(bd_str) = db.get_setting("audio_bit_depth")
+                if let Some(bd_str) = db.get_setting(KEY_AUDIO_BIT_DEPTH)
                     && let Some(bd) = match bd_str.as_str() {
                         "16" => Some(BitDepth::Bits16),
                         "24" => Some(BitDepth::Bits24),
@@ -665,7 +674,7 @@ impl AudioCenterManager {
                     self.selected_bit_depth = bd;
                 }
                 if self.system_rate == SystemSelection::Default
-                    && let Some(sr_str) = db.get_setting("audio_system_rate")
+                    && let Some(sr_str) = db.get_setting(KEY_AUDIO_SYSTEM_RATE)
                 {
                     self.system_rate = match sr_str.as_str() {
                         "default" => SystemSelection::Default,
@@ -681,7 +690,7 @@ impl AudioCenterManager {
                     };
                 }
                 if self.system_quantum == SystemSelection::Default
-                    && let Some(sq_str) = db.get_setting("audio_system_quantum")
+                    && let Some(sq_str) = db.get_setting(KEY_AUDIO_SYSTEM_QUANTUM)
                 {
                     self.system_quantum = match sq_str.as_str() {
                         "default" => SystemSelection::Default,
@@ -696,7 +705,7 @@ impl AudioCenterManager {
                         _ => SystemSelection::Default,
                     };
                 }
-                if let Some(buf_str) = db.get_setting("audio_buffer_size") {
+                if let Some(buf_str) = db.get_setting(KEY_AUDIO_BUFFER_SIZE) {
                     self.selected_buffer_size = if buf_str == "auto" {
                         None
                     } else {
@@ -704,18 +713,18 @@ impl AudioCenterManager {
                     };
                 }
                 // Load EQ settings from DB
-                if let Some(val) = db.get_setting("eq_enabled") {
+                if let Some(val) = db.get_setting(KEY_EQ_ENABLED) {
                     self.equalizer_enabled = val == "1";
                 }
-                if let Some(val) = db.get_setting("eq_bands_31") {
+                if let Some(val) = db.get_setting(KEY_EQ_BANDS_31) {
                     self.equalizer_bands_31 = val == "1";
                 }
-                if let Some(val) = db.get_setting("preamp_gain")
+                if let Some(val) = db.get_setting(KEY_PREAMP_GAIN)
                     && let Ok(g) = val.parse::<f32>()
                 {
                     self.preamp_gain = g;
                 }
-                if let Some(val) = db.get_setting("eq_band_gains_20") {
+                if let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_20) {
                     let gains: Vec<f32> = val
                         .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())
@@ -725,7 +734,7 @@ impl AudioCenterManager {
                     }
                 }
                 if self.equalizer_bands_31
-                    && let Some(val) = db.get_setting("eq_band_gains_31")
+                    && let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_31)
                 {
                     let gains: Vec<f32> = val
                         .split(',')
@@ -736,7 +745,7 @@ impl AudioCenterManager {
                     }
                 }
                 // Load selected preset name from DB
-                if let Some(preset_name) = db.get_setting("eq_selected_preset") {
+                if let Some(preset_name) = db.get_setting(KEY_EQ_SELECTED_PRESET) {
                     if !preset_name.is_empty() && preset_name != "Default" {
                         // Find the preset in the unified list and select it
                         let all_presets = self.get_unified_presets();
@@ -763,7 +772,7 @@ impl AudioCenterManager {
         if let Some(ref db_arc) = db_arc_apply {
             // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
-                if let Some(val) = db.get_setting("eq_band_gains_20") {
+                if let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_20) {
                     let g: Vec<f32> = val
                         .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())
@@ -772,7 +781,7 @@ impl AudioCenterManager {
                         bands_20 = Some(g);
                     }
                 }
-                if let Some(val) = db.get_setting("eq_band_gains_31") {
+                if let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_31) {
                     let g: Vec<f32> = val
                         .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())

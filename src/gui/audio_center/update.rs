@@ -2,6 +2,11 @@
 
 use crate::audio::AudioManager;
 use crate::audio::device_manager::{AudioSettings, BitDepth, ChannelConfig};
+use crate::utils::settings_keys::{
+    KEY_AUDIO_BIT_DEPTH, KEY_AUDIO_BUFFER_SIZE, KEY_AUDIO_CHANNELS, KEY_AUDIO_DEVICE,
+    KEY_AUDIO_DEVICE_ID, KEY_AUDIO_HOST, KEY_AUDIO_SAMPLE_RATE, KEY_AUDIO_SYSTEM_QUANTUM,
+    KEY_AUDIO_SYSTEM_RATE,
+};
 
 use super::messages::{AudioCenterMessage, AudioStateToggle, DspEffect, SystemSelection};
 use super::state::{AudioCenterManager, log_persist};
@@ -190,32 +195,32 @@ impl AudioCenterManager {
                     // db-lock: persistencia — el guardado se omite si el lock falla
                     if let Ok(db) = db_arc.lock() {
                         log_persist(
-                            "audio_host",
+                            KEY_AUDIO_HOST,
                             db.set_setting(
-                                "audio_host",
+                                KEY_AUDIO_HOST,
                                 self.selected_host.as_deref().unwrap_or(""),
                             ),
                         );
                         log_persist(
-                            "audio_device",
+                            KEY_AUDIO_DEVICE,
                             db.set_setting(
-                                "audio_device",
+                                KEY_AUDIO_DEVICE,
                                 self.selected_device.as_deref().unwrap_or(""),
                             ),
                         );
                         // Id estable del dispositivo seleccionado: sobrevive a renombrados
                         // y es la clave preferida en la próxima resolución.
                         log_persist(
-                            "audio_device_id",
+                            KEY_AUDIO_DEVICE_ID,
                             db.set_setting(
-                                "audio_device_id",
+                                KEY_AUDIO_DEVICE_ID,
                                 selected_device_id.as_deref().unwrap_or(""),
                             ),
                         );
                         log_persist(
-                            "audio_sample_rate",
+                            KEY_AUDIO_SAMPLE_RATE,
                             db.set_setting(
-                                "audio_sample_rate",
+                                KEY_AUDIO_SAMPLE_RATE,
                                 &self
                                     .selected_sample_rate
                                     .map(|s| s.to_string())
@@ -223,9 +228,9 @@ impl AudioCenterManager {
                             ),
                         );
                         log_persist(
-                            "audio_bit_depth",
+                            KEY_AUDIO_BIT_DEPTH,
                             db.set_setting(
-                                "audio_bit_depth",
+                                KEY_AUDIO_BIT_DEPTH,
                                 match self.selected_bit_depth {
                                     BitDepth::Bits16 => "16",
                                     BitDepth::Bits24 => "24",
@@ -234,16 +239,16 @@ impl AudioCenterManager {
                             ),
                         );
                         log_persist(
-                            "audio_channels",
+                            KEY_AUDIO_CHANNELS,
                             db.set_setting(
-                                "audio_channels",
+                                KEY_AUDIO_CHANNELS,
                                 &self.selected_channels_manual.to_string(),
                             ),
                         );
                         log_persist(
-                            "audio_buffer_size",
+                            KEY_AUDIO_BUFFER_SIZE,
                             db.set_setting(
-                                "audio_buffer_size",
+                                KEY_AUDIO_BUFFER_SIZE,
                                 &self
                                     .selected_buffer_size
                                     .map(|b| b.to_string())
@@ -256,8 +261,8 @@ impl AudioCenterManager {
                             SystemSelection::Fixed(r) => format!("fixed:{}", r),
                         };
                         log_persist(
-                            "audio_system_rate",
-                            db.set_setting("audio_system_rate", &sys_rate_str),
+                            KEY_AUDIO_SYSTEM_RATE,
+                            db.set_setting(KEY_AUDIO_SYSTEM_RATE, &sys_rate_str),
                         );
 
                         let sys_quantum_str = match self.system_quantum {
@@ -266,8 +271,8 @@ impl AudioCenterManager {
                             SystemSelection::Fixed(q) => format!("fixed:{}", q),
                         };
                         log_persist(
-                            "audio_system_quantum",
-                            db.set_setting("audio_system_quantum", &sys_quantum_str),
+                            KEY_AUDIO_SYSTEM_QUANTUM,
+                            db.set_setting(KEY_AUDIO_SYSTEM_QUANTUM, &sys_quantum_str),
                         );
                     } else {
                         tracing::warn!("db-lock: lock no disponible");

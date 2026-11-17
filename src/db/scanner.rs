@@ -345,7 +345,8 @@ impl Scanner {
         let reader = std::io::BufReader::new(file);
 
         let mut paths = Vec::new();
-        for line in reader.lines().filter_map(|l| l.ok()) {
+        for line in reader.lines() {
+            let Ok(line) = line else { continue };
             let line = line.trim();
             if line.is_empty() || line.starts_with('#') {
                 continue;

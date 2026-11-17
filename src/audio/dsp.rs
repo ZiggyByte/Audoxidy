@@ -715,8 +715,8 @@ struct ReverbChannelState {
 /// El canal 0 usa las longitudes L y el canal 1 las R (estéreo sin cambios);
 /// los canales adicionales derivan de L/R con un offset por canal que rompe la
 /// correlación y mantiene la estructura FDN (pares coprimos).
-fn build_reverb_channels(sr: f64) -> Vec<ReverbChannelState> {
-    let scale = sr / 44100.0;
+fn build_reverb_channels(sample_rate: f64) -> Vec<ReverbChannelState> {
+    let scale = sample_rate / 44100.0;
     (0..REVERB_MAX_CHANNELS)
         .map(|ch| {
             let base: &[usize; 16] = if ch % 2 == 0 {
@@ -740,18 +740,18 @@ fn build_reverb_channels(sr: f64) -> Vec<ReverbChannelState> {
 
 impl Reverb {
     pub fn new() -> Self {
-        let sr: f64 = 44100.0;
+        let sample_rate: f64 = 44100.0;
         let mut r = Self {
             enabled: false,
             wet: 0.5,
             room_size: 0.5,
             dry: 0.5,
             gain: 0.12,
-            channels: build_reverb_channels(sr),
+            channels: build_reverb_channels(sample_rate),
             damping_coeff: 0.0,
             pre_delay_samples: 1,
             feedback_gain: 0.0,
-            sample_rate: sr,
+            sample_rate,
         };
         r.update_params();
         r
@@ -942,8 +942,8 @@ pub struct Compressor {
 impl Compressor {
     /// Crea un compresor con valores predeterminados.
     pub fn new() -> Self {
-        let sr: f32 = 44100.0;
-        let ls = (0.001 * sr).round() as usize;
+        let sample_rate: f32 = 44100.0;
+        let ls = (0.001 * sample_rate).round() as usize;
         let cap = ls.max(1) * COMPRESSOR_MAX_CHANNELS;
         let mut c = Self {
             enabled: false,
@@ -956,7 +956,7 @@ impl Compressor {
             makeup_gain: 1.0,
             envelope: 0.0,
             envelope_rms: 0.0,
-            sample_rate: sr,
+            sample_rate,
             lookahead_buf: vec![0.0; cap],
             lookahead_cap_frames: ls.max(1),
             lookahead_head: 0,
@@ -1634,7 +1634,7 @@ pub struct StereoExpanderHybrid {
 
 impl StereoExpanderHybrid {
     pub fn new() -> Self {
-        let sr = 44100.0;
+        let sample_rate = 44100.0;
         let q = std::f32::consts::FRAC_1_SQRT_2; // Butterworth Q for LR4 stages
         Self {
             low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
@@ -1648,7 +1648,7 @@ impl StereoExpanderHybrid {
             high_shelf_side: BiquadFilter::new(BiquadFilterType::HighShelf, 8000.0, 0.0, 0.5), // Frecuencia más alta para "Aire" puro
             side_ap1: AllPassFilter::new(225), // Delay corto para textura
             side_ap2: AllPassFilter::new(556), // Delay medio para profundidad
-            sample_rate: sr,
+            sample_rate,
         }
     }
 }
@@ -1685,7 +1685,7 @@ pub struct StereoExpanderSurround {
 
 impl StereoExpanderSurround {
     pub fn new() -> Self {
-        let sr = 44100.0;
+        let sample_rate = 44100.0;
         let q = std::f32::consts::FRAC_1_SQRT_2;
         Self {
             low_lp1: BiquadFilter::new(BiquadFilterType::LowPass, 250.0, 0.0, q),
@@ -1702,7 +1702,7 @@ impl StereoExpanderSurround {
             side_ap1: AllPassFilter::new(227),
             side_ap2: AllPassFilter::new(337),
             side_ap3: AllPassFilter::new(557),
-            sample_rate: sr,
+            sample_rate,
         }
     }
 }
@@ -2041,14 +2041,14 @@ pub struct Limiter {
 
 impl Default for Limiter {
     fn default() -> Self {
-        let sr: f32 = 44100.0;
-        let ls = (0.002 * sr as f64).round() as usize;
+        let sample_rate: f32 = 44100.0;
+        let ls = (0.002 * sample_rate as f64).round() as usize;
         let cap = ls.max(1) * LIMITER_MAX_CHANNELS;
         Self {
             enabled: false,
             ceiling: -1.0,
             envelope: 0.0,
-            sample_rate: sr,
+            sample_rate,
             lookahead_buf: vec![0.0; cap],
             lookahead_cap_frames: ls.max(1),
             lookahead_head: 0,

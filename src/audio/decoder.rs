@@ -117,8 +117,8 @@ impl AudioDecoder for SymphoniaDecoder {
             .ok_or_else(|| {
                 super::AudioError::UnsupportedFormat("parámetros de audio ausentes".into())
             })?;
-        let sr = audio_params.sample_rate.unwrap_or(44100);
-        let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
+        let sample_rate = audio_params.sample_rate.unwrap_or(44100);
+        let dur = derive_duration_sec(track, sample_rate).unwrap_or(0.0);
         let ch_count = audio_params
             .channels
             .as_ref()
@@ -133,7 +133,7 @@ impl AudioDecoder for SymphoniaDecoder {
         self.decoder = Some(dec);
 
         Ok(DecodeStreamInfo {
-            sample_rate: sr,
+            sample_rate,
             channels: ch_count as u16,
             total_duration_sec: dur,
             channel_count: ch_count,
@@ -168,7 +168,7 @@ impl AudioDecoder for SymphoniaDecoder {
                 let spec = decoded.spec().clone();
                 let frames = decoded.frames();
                 let channels = spec.channels().count();
-                let sr = spec.rate();
+                let sample_rate = spec.rate();
 
                 // Copiar a un pool planar f64 reutilizado: sin asignación por paquete.
                 decoded.copy_to_vecs_planar::<f64>(&mut self.decode_plane_pool);
@@ -184,7 +184,7 @@ impl AudioDecoder for SymphoniaDecoder {
                     data,
                     frames,
                     channels,
-                    sample_rate: sr,
+                    sample_rate,
                 }));
             }
         }
@@ -344,16 +344,16 @@ fn derive_duration_sec(track: &symphonia::core::formats::Track, fallback_rate: u
     {
         return Some(t.as_secs_f64());
     }
-    let sr = track
+    let sample_rate = track
         .codec_params
         .as_ref()
         .and_then(|p| p.audio())
         .and_then(|a| a.sample_rate)
         .unwrap_or(fallback_rate);
-    if sr == 0 {
+    if sample_rate == 0 {
         return None;
     }
-    track.num_frames.map(|f| f as f64 / sr as f64)
+    track.num_frames.map(|f| f as f64 / sample_rate as f64)
 }
 
 /// Calcula la relación de resampleo `out_rate / in_rate`.
@@ -1708,10 +1708,11 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         state.write().audio_notice = Some(msg);
                                         continue;
                                     };
-                                    let sr = audio_params.sample_rate.unwrap_or(44100);
-                                    let dur = derive_duration_sec(track, sr).unwrap_or(0.0);
+                                    let sample_rate = audio_params.sample_rate.unwrap_or(44100);
+                                    let dur =
+                                        derive_duration_sec(track, sample_rate).unwrap_or(0.0);
                                     state.write().total_duration_sec = dur;
-                                    state.write().sample_rate = sr;
+                                    state.write().sample_rate = sample_rate;
 
                                     // --- PURGA MAESTRA DE ESTADO (Anti-Residuos) ---
                                     resampler = None;

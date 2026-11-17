@@ -959,18 +959,18 @@ impl AudioEngine {
         let prev_rate = prev.as_ref().map(|c| c.sample_rate).unwrap_or(44100);
         let prev_channels = prev.as_ref().map(|c| c.channels).unwrap_or(2);
         if prev_rate != stream_config.sample_rate || prev_channels != stream_config.channels {
-            let sr = stream_config.sample_rate as usize;
+            let sample_rate = stream_config.sample_rate as usize;
             let ch = stream_config.channels as usize;
             let dur_secs = if crate::utils::is_low_resource() {
                 0.5
             } else {
                 2.0
             };
-            let rb_size = ((sr * ch) as f64 * dur_secs) as usize;
+            let rb_size = ((sample_rate * ch) as f64 * dur_secs) as usize;
             tracing::info!(
                 "Ringbuf recreado: {} muestras ({} Hz x {} ch x {:.0}s). Anterior: {} Hz x {} ch.",
                 rb_size.max(384_000),
-                sr,
+                sample_rate,
                 ch,
                 dur_secs,
                 prev_rate,

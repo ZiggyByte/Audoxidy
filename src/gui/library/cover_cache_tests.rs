@@ -1597,9 +1597,12 @@ fn test_prefetch_band_offset_uses_the_supplied_content_extent() {
     );
 
     // Scrolling up from the middle keeps the band above the viewport.
-    let up = prefetch_band_offset(viewport_y, viewport_h, list_total, -1.0, 1.0)
+    let upward_band = prefetch_band_offset(viewport_y, viewport_h, list_total, -1.0, 1.0)
         .expect("la banda hacia arriba existe");
-    assert!(up < viewport_y, "la banda hacia arriba queda por encima");
+    assert!(
+        upward_band < viewport_y,
+        "la banda hacia arriba queda por encima"
+    );
 
     // A mode that draws no covers reports no extent.
     assert_eq!(prefetch_band_offset(0.0, viewport_h, 0.0, 1.0, 1.0), None);

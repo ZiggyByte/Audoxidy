@@ -343,7 +343,7 @@ fn test_folder_upsert_is_idempotent() {
 #[test]
 fn test_song_create_read_update_delete() {
     let mut db = seeded();
-    let id = song_id(&db, FIRST_SONG_PATH);
+    let song_id = song_id(&db, FIRST_SONG_PATH);
     let hash = album_hash(&db, FIRST_ALBUM);
 
     // Read: the five song read paths return the seeded row with the same
@@ -362,7 +362,7 @@ fn test_song_create_read_update_delete() {
     for songs in &reads {
         let row = songs
             .iter()
-            .find(|song| song.id == id)
+            .find(|song| song.id == song_id)
             .expect("the seeded song appears in every read path");
         assert_eq!(row.title.as_deref(), Some("Crud One"));
         assert_eq!(row.duration_secs, Some(90.0));
@@ -384,13 +384,13 @@ fn test_song_create_read_update_delete() {
     assert_eq!(songs.len(), 3, "the update did not add a row");
     let row = songs
         .iter()
-        .find(|song| song.id == id)
+        .find(|song| song.id == song_id)
         .expect("the updated song must exist");
     assert_eq!(row.title.as_deref(), Some("Crud One Updated"));
     assert_eq!(row.duration_secs, Some(95.5));
 
     // Delete: the row disappears from the read path and from the path lookup.
-    db.batch_delete_songs(&[id])
+    db.batch_delete_songs(&[song_id])
         .expect("the song must be deleted");
     assert!(
         db.get_song_id_by_path(FIRST_SONG_PATH)
@@ -400,7 +400,7 @@ fn test_song_create_read_update_delete() {
     );
     let remaining = db.get_all_songs().expect("the songs must be read");
     assert_eq!(remaining.len(), 2);
-    assert!(remaining.iter().all(|song| song.id != id));
+    assert!(remaining.iter().all(|song| song.id != song_id));
 }
 
 #[test]

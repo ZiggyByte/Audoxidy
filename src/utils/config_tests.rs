@@ -21,24 +21,24 @@ fn config_error_display_messages_are_stable() {
     );
     assert!(ConfigError::InvalidPath.source().is_none());
 
-    let io = ConfigError::Io {
+    let io_error = ConfigError::Io {
         path: PathBuf::from("/tmp/audoxidy.ron"),
         source: std::io::Error::new(std::io::ErrorKind::NotFound, "no encontrado"),
     };
-    assert_eq!(io.to_string(), "no encontrado");
-    assert_eq!(io.to_string(), io.source().unwrap().to_string());
-    assert!(io.source().is_some());
+    assert_eq!(io_error.to_string(), "no encontrado");
+    assert_eq!(io_error.to_string(), io_error.source().unwrap().to_string());
+    assert!(io_error.source().is_some());
 
-    let serialize = ConfigError::Serialize {
+    let serialize_error = ConfigError::Serialize {
         source: ron::from_str::<AppConfig>("config_version: [")
             .expect_err("RON inválido")
             .into(),
     };
     assert_eq!(
-        serialize.to_string(),
-        serialize.source().unwrap().to_string()
+        serialize_error.to_string(),
+        serialize_error.source().unwrap().to_string()
     );
-    assert!(serialize.source().is_some());
+    assert!(serialize_error.source().is_some());
 }
 
 #[test]
@@ -232,15 +232,15 @@ fn ui_config() -> UiConfig {
 #[test]
 fn test_first_launch_starts_maximized() {
     // No geometry has ever been persisted: the window opens maximized.
-    let ui = ui_config();
-    assert!(ui.starts_maximized());
-    assert_eq!(ui.startup_size(), ui.window_size());
-    assert_eq!(ui.startup_position(), None);
+    let ui_config = ui_config();
+    assert!(ui_config.starts_maximized());
+    assert_eq!(ui_config.startup_size(), ui_config.window_size());
+    assert_eq!(ui_config.startup_position(), None);
 }
 
 #[test]
 fn test_saved_normal_geometry_is_restored() {
-    let ui = UiConfig {
+    let ui_config = UiConfig {
         window_geometry_initialized: true,
         window_x: Some(120.0),
         window_y: Some(80.0),
@@ -248,14 +248,14 @@ fn test_saved_normal_geometry_is_restored() {
         ..ui_config()
     };
 
-    assert!(!ui.starts_maximized());
-    assert_eq!(ui.startup_size(), (1360.0, 880.0));
-    assert_eq!(ui.startup_position(), Some((120.0, 80.0)));
+    assert!(!ui_config.starts_maximized());
+    assert_eq!(ui_config.startup_size(), (1360.0, 880.0));
+    assert_eq!(ui_config.startup_position(), Some((120.0, 80.0)));
 }
 
 #[test]
 fn test_saved_maximized_state_restores_full_screen_size() {
-    let ui = UiConfig {
+    let ui_config = UiConfig {
         window_geometry_initialized: true,
         window_maximized: true,
         window_maximized_width: Some(2560.0),
@@ -263,25 +263,25 @@ fn test_saved_maximized_state_restores_full_screen_size() {
         ..ui_config()
     };
 
-    assert!(ui.starts_maximized());
-    assert_eq!(ui.startup_size(), (2560.0, 1440.0));
+    assert!(ui_config.starts_maximized());
+    assert_eq!(ui_config.startup_size(), (2560.0, 1440.0));
     // A maximized window is centered by the window manager.
-    assert_eq!(ui.startup_position(), None);
+    assert_eq!(ui_config.startup_position(), None);
 }
 
 #[test]
 fn test_maximized_without_known_screen_size_falls_back_to_normal_size() {
     // A maximized state with no recorded full-screen size still opens
     // maximized, using the saved normal size as the creation hint.
-    let ui = UiConfig {
+    let ui_config = UiConfig {
         window_geometry_initialized: true,
         window_maximized: true,
         ..ui_config()
     };
 
-    assert!(ui.starts_maximized());
-    assert_eq!(ui.startup_size(), (1360.0, 880.0));
-    assert_eq!(ui.startup_position(), None);
+    assert!(ui_config.starts_maximized());
+    assert_eq!(ui_config.startup_size(), (1360.0, 880.0));
+    assert_eq!(ui_config.startup_position(), None);
 }
 
 #[test]
@@ -328,16 +328,16 @@ fn test_geometry_fields_survive_ron_round_trip() {
 fn test_legacy_config_without_geometry_fields_uses_defaults() {
     // An older config file that predates the window-shell fields must still
     // deserialize, leaving the geometry in its "never persisted" state.
-    let ui: UiConfig =
+    let ui_config: UiConfig =
         ron::from_str("(window_width: 1280.0, window_height: 800.0)").expect("config heredada");
 
-    assert_eq!(ui.window_x, None);
-    assert_eq!(ui.window_y, None);
-    assert!(!ui.window_maximized);
-    assert!(!ui.window_geometry_initialized);
-    assert_eq!(ui.window_maximized_width, None);
-    assert_eq!(ui.window_maximized_height, None);
+    assert_eq!(ui_config.window_x, None);
+    assert_eq!(ui_config.window_y, None);
+    assert!(!ui_config.window_maximized);
+    assert!(!ui_config.window_geometry_initialized);
+    assert_eq!(ui_config.window_maximized_width, None);
+    assert_eq!(ui_config.window_maximized_height, None);
     // The legacy file predates the persisted geometry, so the first launch
     // after the upgrade opens maximized.
-    assert!(ui.starts_maximized());
+    assert!(ui_config.starts_maximized());
 }

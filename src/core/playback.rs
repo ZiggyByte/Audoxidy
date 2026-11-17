@@ -10,6 +10,8 @@
 
 use std::sync::Arc;
 
+use crate::utils::settings_keys::KEY_PLAYER_VOLUME;
+
 use super::Core;
 use super::error::CoreError;
 
@@ -200,7 +202,7 @@ impl Core {
     /// Persists a player volume setting to the database.
     pub fn persist_volume(&self, volume: f64) -> Result<(), CoreError> {
         let db = self.lock_db()?;
-        db.set_setting("player_volume", &format!("{:.4}", volume))?;
+        db.set_setting(KEY_PLAYER_VOLUME, &format!("{:.4}", volume))?;
         Ok(())
     }
 }

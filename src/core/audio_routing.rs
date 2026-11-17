@@ -4,6 +4,10 @@
 //! is held across audio manager calls. The EQ preset apply acquires the DB
 //! lock to load the preset, releases it, then applies to the audio manager.
 
+use crate::utils::settings_keys::{
+    KEY_AUDIO_BIT_DEPTH, KEY_AUDIO_CHANNELS, KEY_AUDIO_DEVICE, KEY_AUDIO_DEVICE_ID, KEY_AUDIO_HOST,
+};
+
 use super::Core;
 use super::error::CoreError;
 use super::types::AudioSettingsSnapshot;
@@ -100,11 +104,11 @@ impl Core {
         // Read current device settings from the DB.
         let device_settings = {
             let db = self.database.lock().expect("database lock poisoned");
-            let host_id = db.get_setting("audio_host");
-            let device_name = db.get_setting("audio_device");
-            let device_id = db.get_setting("audio_device_id");
-            let bit_depth_str = db.get_setting("audio_bit_depth");
-            let channels_str = db.get_setting("audio_channels");
+            let host_id = db.get_setting(KEY_AUDIO_HOST);
+            let device_name = db.get_setting(KEY_AUDIO_DEVICE);
+            let device_id = db.get_setting(KEY_AUDIO_DEVICE_ID);
+            let bit_depth_str = db.get_setting(KEY_AUDIO_BIT_DEPTH);
+            let channels_str = db.get_setting(KEY_AUDIO_CHANNELS);
 
             let bit_depth = bit_depth_str.and_then(|s| match s.as_str() {
                 "16" => Some(crate::audio::device_manager::BitDepth::Bits16),

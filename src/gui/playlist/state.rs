@@ -7,6 +7,10 @@ pub enum PlaylistItemType {
     Song(usize, usize, i64), // group_idx, song_local_idx, first_item_id
 }
 
+/// Cached visible playlist items shared through `Arc`: the flattened,
+/// collapse-filtered rows as `(item type, local index)`.
+type VisiblePlaylistItems = Arc<Vec<(PlaylistItemType, usize)>>;
+
 // ============================================================
 // Estado del PlaylistManager
 // ============================================================
@@ -63,7 +67,7 @@ pub struct PlaylistManager {
     pub tabs_viewport: Option<iced::Rectangle>,
 
     /// Caché de ítems visibles (aplanados y filtrados por colapso) compartida vía Arc
-    pub cached_visible_items: std::cell::RefCell<Option<Arc<Vec<(PlaylistItemType, usize)>>>>,
+    pub cached_visible_items: std::cell::RefCell<Option<VisiblePlaylistItems>>,
 
     /// Indica si los datos pesados han sido descargados de RAM por inactividad
     pub data_unloaded: bool,

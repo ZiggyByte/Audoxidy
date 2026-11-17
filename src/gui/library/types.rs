@@ -154,3 +154,17 @@ pub enum LibraryVirtualRow {
         global_idx: usize,
     },
 }
+
+/// Window of the detailed list that the current viewport renders:
+/// `(top space, bottom space, total height, rows, sticky artist info)`.
+///
+/// The sticky info carries `(artist name, is collapsed, albums, songs,
+/// duration)`. The cache field and the builder that fills it both name this
+/// type, so the five slots are declared once.
+pub type VisibleElements = (
+    f32,
+    f32,
+    f32,
+    Vec<LibraryVirtualRow>,
+    Option<(String, bool, usize, usize, f64)>,
+);

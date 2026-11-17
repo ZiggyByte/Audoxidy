@@ -7,7 +7,7 @@ use super::grid_metrics::{GridMetrics, grid_rows, song_y_in_row};
 use super::state::{LIBRARY_SCROLL_ID, LibraryManager};
 use super::types::{
     AlbumEntry, LibraryAlbumGroup, LibraryGridElement, LibraryListItem, LibraryViewMode,
-    LibraryVirtualArtist, LibraryVirtualRow,
+    LibraryVirtualArtist, LibraryVirtualRow, VisibleElements,
 };
 use crate::gui::dimensions::{LIST_ROW, LIST_ROW_HEADER};
 
@@ -208,15 +208,7 @@ impl LibraryManager {
 
     /// Obtiene los elementos visibles según el viewport actual (Virtualización)
     #[tracing::instrument(skip(self))]
-    pub fn get_visible_elements(
-        &self,
-    ) -> (
-        f32,
-        f32,
-        f32,
-        Vec<LibraryVirtualRow>,
-        Option<(String, bool, usize, usize, f64)>,
-    ) {
+    pub fn get_visible_elements(&self) -> VisibleElements {
         if let Some((ts, bs, th, ref rows, ref sticky)) = *self.cached_visible_elements.borrow() {
             return (ts, bs, th, rows.clone(), sticky.clone());
         }
@@ -245,20 +237,7 @@ impl LibraryManager {
     /// rows for a viewport that is not the one on screen (the look-ahead band), so
     /// both go through this builder instead of the request path forcing a memo
     /// write for an offset nothing is rendering.
-    // The tuple is the row-window contract the memoized getter returns too; a type
-    // alias would only rename the same five elements.
-    #[allow(clippy::type_complexity)]
-    pub fn visible_rows_at(
-        &self,
-        viewport_y: f32,
-        viewport_h: f32,
-    ) -> (
-        f32,
-        f32,
-        f32,
-        Vec<LibraryVirtualRow>,
-        Option<(String, bool, usize, usize, f64)>,
-    ) {
+    pub fn visible_rows_at(&self, viewport_y: f32, viewport_h: f32) -> VisibleElements {
         let (total_content_h, v_artists) = self.get_view_structure();
         let view_min_raw = viewport_y;
 

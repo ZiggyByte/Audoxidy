@@ -7,7 +7,7 @@ use crate::utils::SortColumn;
 use super::grid_metrics::GridMetrics;
 use super::types::{
     AlbumEntry, ArtistGroup, LibraryListItem, LibrarySource, LibraryStats, LibraryViewMode,
-    LibraryVirtualArtist, LibraryVirtualRow,
+    LibraryVirtualArtist, VisibleElements,
 };
 
 // Contadores de redraw para diagnóstico — se incrementan cada vez que la vista se reconstruye
@@ -99,15 +99,7 @@ pub struct LibraryManager {
 
     // Caché de virtualización (Interior Mutability para permitir actualización en view)
     pub cached_detailed_view: std::cell::RefCell<Option<(f32, Vec<LibraryVirtualArtist>)>>,
-    pub cached_visible_elements: std::cell::RefCell<
-        Option<(
-            f32,
-            f32,
-            f32,
-            Vec<LibraryVirtualRow>,
-            Option<(String, bool, usize, usize, f64)>,
-        )>,
-    >, // (top_space, bottom_space, total_h, rows, sticky_info)
+    pub cached_visible_elements: std::cell::RefCell<Option<VisibleElements>>,
     /// Handles minted by the decode workers, indexed by cover path and bucket.
     ///
     /// It is a plain field with no lock: the update handlers mutate it and the

@@ -64,7 +64,7 @@ impl crate::gui::app::AudoxidyApp {
                 // (el decoder mezcla la pista actual con la siguiente pre-cargada).
                 // The condition, the preload dedup and the preload→crossfade order
                 // live in the Core domain.
-                let st = self.core.audio_state();
+                let audio_state = self.core.audio_state();
                 if let Some(next_song) = self.playlist_manager.get_next_song_ref() {
                     let next_info = crate::core::NextSongInfo {
                         file_path: Some(next_song.file_path.to_string()),
@@ -75,9 +75,9 @@ impl crate::gui::app::AudoxidyApp {
                     };
                     let triggered = crate::core::playback::manual_next_crossfade(
                         self.core.audio_manager(),
-                        st.crossfade_enabled,
-                        st.crossfade_manual_enabled,
-                        st.crossfade_manual_ms,
+                        audio_state.crossfade_enabled,
+                        audio_state.crossfade_manual_enabled,
+                        audio_state.crossfade_manual_ms,
                         &next_info,
                         self.player_ui_state.preloaded_next_path.as_deref(),
                     );

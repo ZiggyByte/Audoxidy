@@ -577,10 +577,10 @@ pub fn view<'a>(
     .height(Length::Fixed(BAR_SUB))
     .padding(0)
     .style(move |_t: &Theme, _s: button::Status| {
-        let mut st = button::Style::default().with_background(COLOR_BG);
-        st.border.radius = 0.0.into();
-        st.text_color = COLOR_TEXT_SECONDARY;
-        st
+        let mut style = button::Style::default().with_background(COLOR_BG);
+        style.border.radius = 0.0.into();
+        style.text_color = COLOR_TEXT_SECONDARY;
+        style
     })
     .on_press(Message::ToggleFilterMenu);
 
@@ -746,15 +746,15 @@ pub fn view<'a>(
             .height(IconSize::S.px())
             .padding(0)
             .style(move |_t: &Theme, _s: button::Status| {
-                let mut st = button::Style::default().with_background(Color::TRANSPARENT);
+                let mut style = button::Style::default().with_background(Color::TRANSPARENT);
                 if _s == button::Status::Pressed {
-                    st.background = Some(iced::Background::Color(COLOR_ACCENT));
-                    st.text_color = COLOR_TEXT_PRIMARY;
-                    st.border.radius = 18.0.into();
+                    style.background = Some(iced::Background::Color(COLOR_ACCENT));
+                    style.text_color = COLOR_TEXT_PRIMARY;
+                    style.border.radius = 18.0.into();
                 } else {
-                    st.text_color = COLOR_TEXT_SECONDARY;
+                    style.text_color = COLOR_TEXT_SECONDARY;
                 }
-                st
+                style
             })
             .on_press(Message::SelectSubfilter(None));
 
@@ -794,14 +794,14 @@ pub fn view<'a>(
                 .height(Length::Fixed(char_width))
                 .padding(0)
                 .style(move |_t: &Theme, _s: button::Status| {
-                    let mut st = button::Style::default();
+                    let mut style = button::Style::default();
                     if is_selected {
-                        st.background = Some(iced::Background::Color(COLOR_ACCENT));
-                        st.border.radius = 18.0.into();
+                        style.background = Some(iced::Background::Color(COLOR_ACCENT));
+                        style.border.radius = 18.0.into();
                     } else {
-                        st.background = Some(iced::Background::Color(Color::TRANSPARENT));
+                        style.background = Some(iced::Background::Color(Color::TRANSPARENT));
                     }
-                    st
+                    style
                 })
                 .on_press(Message::SelectSubfilter(Some(c.clone())));
 
@@ -869,13 +869,13 @@ pub fn view<'a>(
             )
             .width(Length::Fill)
             .style(move |_t: &Theme, _s: button::Status| {
-                let mut st = button::Style::default();
+                let mut style = button::Style::default();
                 if is_active || _s == button::Status::Hovered {
-                    st.background = Some(iced::Background::Color(COLOR_CONTRAST));
+                    style.background = Some(iced::Background::Color(COLOR_CONTRAST));
                 } else {
-                    st.background = Some(iced::Background::Color(Color::TRANSPARENT));
+                    style.background = Some(iced::Background::Color(Color::TRANSPARENT));
                 }
-                st
+                style
             })
             .on_press(Message::SelectTreeNode(item.id));
 

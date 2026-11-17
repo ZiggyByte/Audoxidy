@@ -350,15 +350,15 @@ pub fn view<'a>(
         })
         .step(0.001_f32)
         .style(move |theme: &Theme, status| {
-            let mut st = iced::widget::slider::default(theme, status);
-            st.handle.background = Color::TRANSPARENT.into();
-            st.handle.border_color = Color::TRANSPARENT;
-            if let iced::widget::slider::HandleShape::Circle { radius } = &mut st.handle.shape {
+            let mut style = iced::widget::slider::default(theme, status);
+            style.handle.background = Color::TRANSPARENT.into();
+            style.handle.border_color = Color::TRANSPARENT;
+            if let iced::widget::slider::HandleShape::Circle { radius } = &mut style.handle.shape {
                 *radius = 0.0;
             }
-            st.rail.width = SPACE_XS;
-            st.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
-            st
+            style.rail.width = SPACE_XS;
+            style.rail.backgrounds = (Color::WHITE.into(), COLOR_CONTRAST.into());
+            style
         })
         .into()
     } else {

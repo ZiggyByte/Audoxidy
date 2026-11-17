@@ -115,16 +115,29 @@ fn drain_consumer(consumer_mutex: &Mutex<Option<HeapConsumer<f32>>>) {
     }
 }
 
-/// Mapa que asigna índices de canales físicos a roles (FL, FR, C, LFE, SL, SR, SBL, SBR).
+/// Maps physical channel indices to the reproduction roles of a channel layout.
+///
+/// Each field holds the index of the sample plane that carries its role, or
+/// `None` when the layout lacks that position. Built by
+/// [`AudioEngine::get_channel_map`] from the positioned layout the decoder
+/// reports, so the mixer can address a role instead of a raw plane index.
 #[derive(Default, Clone, Copy, Debug)]
 pub struct ChannelMap {
+    /// Front left.
     pub fl: Option<usize>,
+    /// Front right.
     pub fr: Option<usize>,
+    /// Front centre.
     pub c: Option<usize>,
+    /// Low-frequency effects.
     pub lfe: Option<usize>,
+    /// Surround left.
     pub sl: Option<usize>,
+    /// Surround right.
     pub sr: Option<usize>,
+    /// Surround back left.
     pub sbl: Option<usize>,
+    /// Surround back right.
     pub sbr: Option<usize>,
 }
 

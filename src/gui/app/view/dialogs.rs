@@ -6,8 +6,7 @@ use crate::gui::dimensions::{
     DIALOG_EDGE_MARGIN, DIALOG_FALLBACK_POS, DIVIDER_THIN, EQ_DIALOG_HEIGHT, EQ_DIALOG_PADDING,
     EQ_DIALOG_VERTICAL_OFFSET, EQ_DIALOG_WIDTH, EQ_PRESET_PANEL_HEIGHT, EQ_PRESET_SCROLL_HEIGHT,
     EQ_SAVE_BUTTON_WIDTH, EQ_SAVE_DIALOG_HEIGHT, EQ_SAVE_DIALOG_TOP, EQ_SAVE_DIALOG_WIDTH,
-    MARGIN_MD, PRESET_LIST_WIDTH, RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
-    STROKE_HAIRLINE,
+    PRESET_LIST_WIDTH, RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
 };
 use crate::gui::theme::{
     COLOR_ACCENT, COLOR_BG, COLOR_CONTRAST, COLOR_TEXT_PRIMARY, COLOR_TEXT_SECONDARY,
@@ -510,7 +509,7 @@ impl AudoxidyApp {
                     )
                     .width(EQ_SAVE_DIALOG_WIDTH)
                     .height(EQ_SAVE_DIALOG_HEIGHT)
-                    .padding(MARGIN_MD)
+                    .padding(SPACE_LG)
                     .style(|_t: &iced::Theme| iced::widget::container::Style::default()
                         .background(iced::Background::Color(COLOR_BG))
                         .border(iced::Border {

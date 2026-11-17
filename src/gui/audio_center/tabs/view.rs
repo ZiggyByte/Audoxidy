@@ -2,8 +2,8 @@
 
 use crate::audio::AudioManager;
 use crate::gui::dimensions::{
-    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, BAR_TAB, DIVIDER_THIN, IconSize, MARGIN_MD, MARGIN_SM,
-    RADIUS_M, RADIUS_S, SPACE_LG, SPACE_MD, SPACE_XS,
+    AUDIO_CENTER_HEIGHT, AUDIO_CENTER_WIDTH, BAR_TAB, DIVIDER_THIN, IconSize, RADIUS_M, RADIUS_S,
+    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{IconState, IconVariant, icon_button};
@@ -75,9 +75,9 @@ pub fn view<'a>(
         .align_y(Alignment::Center)
         .padding(iced::Padding {
             top: 0.0,
-            right: MARGIN_SM,
+            right: SPACE_SM,
             bottom: 0.0,
-            left: MARGIN_MD,
+            left: SPACE_LG,
         });
 
     let centered_title = container(
@@ -187,9 +187,9 @@ pub fn view<'a>(
     let inner_content = column![tab_row, divider, content,]
         .padding(iced::Padding {
             top: 0.0,
-            right: MARGIN_MD,
-            bottom: MARGIN_MD,
-            left: MARGIN_MD,
+            right: SPACE_LG,
+            bottom: SPACE_LG,
+            left: SPACE_LG,
         })
         .width(Length::Fill)
         .height(Length::Fill);

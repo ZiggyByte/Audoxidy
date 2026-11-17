@@ -1,8 +1,8 @@
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
     BAR_BOTTOM, BAR_SUB, BAR_TOP, DIVIDER_THIN, FILTER_DROPDOWN_ICON, FILTER_DROPDOWN_WIDTH,
-    FILTER_MENU_ICON, FILTER_OVERLAY_TOP, FILTER_PANEL_WIDTH, IconSize, LIST_ROW_HEADER, MARGIN_MD,
-    RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    FILTER_MENU_ICON, FILTER_OVERLAY_TOP, FILTER_PANEL_WIDTH, IconSize, LIST_ROW_HEADER, RADIUS_M,
+    SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{chevron_btn_sized, standard_scrollable, standard_scrollbar};
@@ -569,7 +569,7 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: MARGIN_MD,
+            left: SPACE_LG,
             right: SPACE_SM,
         }),
     )
@@ -912,8 +912,8 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: MARGIN_MD,
-            right: MARGIN_MD,
+            left: SPACE_LG,
+            right: SPACE_LG,
         })
         .style(|_t: &Theme| container::Style::default().background(COLOR_CONTRAST));
 

@@ -1,8 +1,8 @@
 use super::*;
 
 use crate::gui::dimensions::{
-    CONTEXT_MENU_MIN_WIDTH, CONTROL_MD, DIVIDER_THIN, IconSize, MARGIN_MD, MODAL_MIN_WIDTH,
-    RADIUS_M, RADIUS_S, SPACE_MD, SPACE_XS, STROKE_HAIRLINE,
+    CONTEXT_MENU_MIN_WIDTH, CONTROL_MD, DIVIDER_THIN, IconSize, MODAL_MIN_WIDTH, RADIUS_M,
+    RADIUS_S, SPACE_LG, SPACE_MD, SPACE_XS, STROKE_HAIRLINE,
 };
 
 use iced::widget::column;
@@ -236,7 +236,7 @@ pub fn standard_modal<'a, Message: Clone + 'a>(
         .align_x(Alignment::Center)
         .width(Length::Shrink),
     )
-    .padding(MARGIN_MD)
+    .padding(SPACE_LG)
     .width(Length::Shrink)
     .style(|_t: &Theme| container::Style {
         background: Some(COLOR_BG.into()),

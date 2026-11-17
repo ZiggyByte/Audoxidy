@@ -7,7 +7,7 @@ use crate::gui::dimensions::{
     ALBUM_CARD_LINE_HEIGHT, ALBUM_CARD_PADDING_BOTTOM, ALBUM_CARD_PADDING_SIDE,
     ALBUM_CARD_PADDING_TOP, ALBUM_CARD_SELECTION_RADIUS, ALBUM_CARD_TEXT_SIZE,
     ALBUM_EXPANDED_BOTTOM_INSET, ALBUM_EXPANDED_PADDING, BAR_BOTTOM, BAR_TOP, IconSize, LIST_ROW,
-    LIST_ROW_HEADER, MARGIN_MD, RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
+    LIST_ROW_HEADER, RADIUS_M, SPACE_LG, SPACE_MD, SPACE_SM, SPACE_XS, STROKE_HAIRLINE,
     WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
@@ -708,8 +708,8 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: MARGIN_MD,
-            right: MARGIN_MD,
+            left: SPACE_LG,
+            right: SPACE_LG,
         })
         .height(Length::Fill)
         .align_y(Alignment::Center)
@@ -727,8 +727,8 @@ pub fn view<'a>(
         .padding(iced::Padding {
             top: 0.0,
             bottom: 0.0,
-            left: MARGIN_MD,
-            right: MARGIN_MD,
+            left: SPACE_LG,
+            right: SPACE_LG,
         })
         .height(Length::Fill)
         .align_y(Alignment::Center)

@@ -4,7 +4,7 @@ use iced::{
 };
 
 use crate::gui::dimensions::{
-    ALBUM_CARD_COVER_TEXT_GAP, LIST_ROW, LIST_ROW_HEADER, MARGIN_MD, SPACE_2XS, SPACE_MD, SPACE_XL,
+    ALBUM_CARD_COVER_TEXT_GAP, LIST_ROW, LIST_ROW_HEADER, SPACE_2XS, SPACE_LG, SPACE_MD, SPACE_XL,
     SPACE_XS,
 };
 use crate::gui::theme::{
@@ -203,7 +203,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
         let pad_left = if col == SortColumn::TrackNumber {
             0.0
         } else {
-            MARGIN_MD
+            SPACE_LG
         };
         container(content)
             .width(Length::Fixed(w))
@@ -465,7 +465,7 @@ where
 
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
         left: SPACE_MD,
-        right: MARGIN_MD,
+        right: SPACE_LG,
         top: 0.0,
         bottom: 0.0,
     }))
@@ -518,7 +518,7 @@ where
             .height(Length::Fixed(header_h))
             .padding(Padding {
                 left: SPACE_MD,
-                right: MARGIN_MD,
+                right: SPACE_LG,
                 top: 0.0,
                 bottom: 0.0,
             })
@@ -792,7 +792,7 @@ where
 
     let list_container = mouse_area(container(list_col).width(Length::Fill).padding(Padding {
         left: SPACE_MD,
-        right: MARGIN_MD,
+        right: SPACE_LG,
         top: 0.0,
         bottom: 0.0,
     }))
@@ -845,7 +845,7 @@ where
             .height(Length::Fixed(LIST_ROW_HEADER))
             .padding(Padding {
                 left: SPACE_MD,
-                right: MARGIN_MD,
+                right: SPACE_LG,
                 top: 0.0,
                 bottom: 0.0,
             })

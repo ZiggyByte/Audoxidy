@@ -2,8 +2,8 @@ use crate::audio::AudioManager;
 use crate::db::database::PlaylistSongRef;
 use crate::gui::app::Message;
 use crate::gui::dimensions::{
-    BAR_BOTTOM, BAR_TAB, IconSize, MARGIN_MD, PLAYLIST_GROUP_HEADER_INSET, PLAYLIST_PANEL_WIDTH,
-    PLAYLIST_ROW, SPACE_2XS, SPACE_MD, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
+    BAR_BOTTOM, BAR_TAB, IconSize, PLAYLIST_GROUP_HEADER_INSET, PLAYLIST_PANEL_WIDTH, PLAYLIST_ROW,
+    SPACE_2XS, SPACE_LG, SPACE_MD, SPACE_XS, STROKE_HAIRLINE, WIDTH_SEARCH,
 };
 use crate::gui::theme::*;
 use crate::gui::widgets::{
@@ -275,7 +275,7 @@ fn build_song_list<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
             .height(Length::Fill)
             .center_x(Length::Fill)
             .center_y(Length::Fill)
-            .padding(MARGIN_MD),
+            .padding(SPACE_LG),
         )
         .on_enter(Message::PlaylistMouseOver(true))
         .on_exit(Message::PlaylistMouseOver(false))
@@ -719,7 +719,7 @@ fn build_bottom_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         Space::new().width(Length::Fill),
         container(icons_group).center_y(Length::Fill)
     ]
-    .padding([0.0, MARGIN_MD])
+    .padding([0.0, SPACE_LG])
     .spacing(SPACE_MD)
     .align_y(Alignment::Center);
 

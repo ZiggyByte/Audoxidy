@@ -8,6 +8,9 @@ use rusqlite::Result;
 
 use super::Database;
 
+/// Raw EQ preset row: `(name, preamp gain, 20-band blob, 31-band blob)`.
+type RawEqPresetRow = (String, f32, Option<Vec<u8>>, Option<Vec<u8>>);
+
 impl Database {
     /// Saves or overwrites a preset using raw f32 parameters.
     pub fn save_eq_preset_raw(
@@ -26,9 +29,7 @@ impl Database {
 
     /// Loads all presets as raw tuples of (name, preamp_gain, bands_20_blob,
     /// bands_31_blob), ordered alphabetically.
-    pub fn load_eq_presets_raw(
-        &self,
-    ) -> Result<Vec<(String, f32, Option<Vec<u8>>, Option<Vec<u8>>)>> {
+    pub fn load_eq_presets_raw(&self) -> Result<Vec<RawEqPresetRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT name, preamp_gain, bands_20, bands_31 FROM eq_presets ORDER BY name COLLATE NOCASE"
         )?;

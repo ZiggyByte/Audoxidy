@@ -16,6 +16,21 @@ use super::super::state::AudioCenterManager;
 // VISTA: PESTAÑA 3 - EFECTOS DE AUDIO
 // ==========================================
 
+/// Optional secondary control rendered beside the primary parameter:
+/// `(value, range, change handler, reset message, label, step size, format)`.
+///
+/// The label, the format and the boxed handler borrow from the caller's widget
+/// lifetime, so the type carries it too.
+type SecondaryControl<'a> = (
+    f32,
+    std::ops::RangeInclusive<f32>,
+    Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>,
+    crate::gui::app::Message,
+    &'a str,
+    f32,
+    &'a str,
+);
+
 pub(super) fn view_audio_effects<'a>(
     _manager: &'a AudioCenterManager,
     audio_manager: &'a AudioManager,
@@ -64,15 +79,7 @@ pub(super) fn view_audio_effects<'a>(
         on_reset: crate::gui::app::Message,
         extra_widget: Option<Element<'a, crate::gui::app::Message>>,
         fixed_height: Option<f32>,
-        secondary: Option<(
-            f32,
-            std::ops::RangeInclusive<f32>,
-            Box<dyn Fn(f32) -> crate::gui::app::Message + 'a>,
-            crate::gui::app::Message,
-            &'a str,
-            f32,
-            &'a str,
-        )>,
+        secondary: Option<SecondaryControl<'a>>,
         primary_step_size: f32,
         primary_fmt: &'a str,
         extra_padding_top: f32,

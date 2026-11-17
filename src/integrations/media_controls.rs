@@ -27,7 +27,7 @@ pub struct SystemMediaControls {
     /// Últimos metadatos publicados `(title, artist, album, cover_url)`.
     /// Evita reenviar `set_metadata` en cada mensaje: en Windows souvlaki vuelve
     /// a leer el archivo de la carátula en disco en cada llamada.
-    last_metadata: Mutex<Option<(String, String, String, Option<String>)>>,
+    last_metadata: Mutex<Option<MetadataKey>>,
     // The playback publish is change-driven, so the D-Bus call never rides the
     // caller's cadence: an unchanged published identity publishes nothing.
     last_playback: Mutex<Option<PlaybackKey>>,
@@ -201,6 +201,12 @@ impl SystemMediaControls {
         }
     }
 }
+
+/// Published metadata identity `(title, artist, album, cover url)`.
+///
+/// Re-sending `set_metadata` for an unchanged identity is what this key avoids:
+/// on Windows souvlaki re-reads the cover file from disk on every call.
+type MetadataKey = (String, String, String, Option<String>);
 
 /// Published playback identity `(is_playing, position_bucket_secs, title,
 /// artist, album, cover_url)`.

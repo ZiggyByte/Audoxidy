@@ -12,6 +12,13 @@ use crate::utils::observability::PERSISTENCE_TARGET;
 use super::Database;
 use super::models::{SongData, SongMetadataExtended};
 
+/// Album identity of one song:
+/// `(album hash, album cover hash, raw override hash, song id)`.
+///
+/// Both cover values are content hashes, never paths; the caller composes the
+/// file names from them.
+type AlbumIdentityRow = (Option<String>, Option<String>, Option<String>, i64);
+
 impl Database {
     // --- Helpers de Hashing para Identidad Basada en Rutas ---
 
@@ -376,10 +383,7 @@ impl Database {
     /// caller composes the file names from them. Reading the references before a
     /// delete transaction commits is what lets the caller know which files the
     /// disappearing rows still contributed.
-    pub fn cover_refs_for_songs(
-        &self,
-        ids: &[i64],
-    ) -> Result<Vec<(Option<String>, Option<String>, Option<String>, i64)>> {
+    pub fn cover_refs_for_songs(&self, ids: &[i64]) -> Result<Vec<AlbumIdentityRow>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }

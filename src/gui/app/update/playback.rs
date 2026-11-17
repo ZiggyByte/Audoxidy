@@ -4,6 +4,7 @@ use crate::gui::app::{
     Message, fine_seek_enabled, persistence::log_persist, subscription::external_control_to_message,
 };
 use crate::integrations::control::ExternalControlEvent;
+use crate::utils::settings_keys::KEY_PLAYER_VOLUME;
 use iced::Task;
 
 /// Salto fijo (segundos) que aplican los eventos `Seek` sin desplazamiento.
@@ -152,7 +153,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::VolumeChanged(vol) => {
                 self.core.set_volume(vol);
                 // Persistir el volumen entre reinicios
-                log_persist("player_volume", self.core.persist_volume(vol as f64));
+                log_persist(KEY_PLAYER_VOLUME, self.core.persist_volume(vol as f64));
                 Task::none()
             }
             Message::SeekTo(pos) => {

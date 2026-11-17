@@ -1,9 +1,11 @@
-//! Persisted setting keys of the `settings` table.
+//! Persisted setting keys shared by the surfaces that read them.
 //!
-//! Every key the `settings` table stores is declared here once, so the Core
-//! settings facade, the audio-routing facade, the playback facade, the
-//! audio-center state and update handlers, the startup loader and the audio
-//! integration test read one declaration instead of repeating the same string.
+//! The keys the Core settings facade, the audio-routing facade, the playback
+//! facade, the audio-center state and update handlers and the audio integration
+//! test read are declared here once, so those surfaces read one declaration
+//! instead of repeating the same string. This is a catalog of the keys it lists,
+//! not an exhaustive index of the `settings` table: the volume-fade and DSP
+//! effect keys the startup loader reads are still literals beside it.
 //!
 //! The string values are a persisted format, not a naming choice: each one is
 //! already a row in every installation's database, so a changed value silently

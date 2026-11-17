@@ -3,6 +3,7 @@
 use crate::gui::app::persistence::log_persist;
 use crate::gui::app::{AppFocus, AudoxidyApp, Message};
 use crate::gui::dimensions::{ALBUM_SCROLLBAR_RAIL, LIBRARY_CONTENT_X_ORIGIN};
+use crate::utils::settings_keys::KEY_PLAYER_VOLUME;
 use iced::Task;
 
 /// Squared distance (in px²) the pointer must travel while pressed on a bar
@@ -262,7 +263,7 @@ impl crate::gui::app::AudoxidyApp {
                 self.core.set_volume(new_vol_percent / 100.0);
                 // Persist volume immediately
                 log_persist(
-                    "player_volume",
+                    KEY_PLAYER_VOLUME,
                     self.core.persist_volume((new_vol_percent / 100.0) as f64),
                 );
                 self.player_ui_state.showing_volume = Some(new_vol_percent);

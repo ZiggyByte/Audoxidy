@@ -65,6 +65,6 @@ fn source_is_present_only_for_io_error() {
 
 #[test]
 fn from_io_error_converts() {
-    let e: AudioError = std::io::Error::other("x").into();
-    assert!(matches!(e, AudioError::IoError(_)));
+    let error: AudioError = std::io::Error::other("x").into();
+    assert!(matches!(error, AudioError::IoError(_)));
 }

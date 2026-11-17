@@ -46,9 +46,9 @@ fn write_pcm_wav_code(path: &str, rate: u32, channels: u16, seconds: f64, code: 
     wav.extend_from_slice(&bits.to_le_bytes());
     wav.extend_from_slice(b"data");
     wav.extend_from_slice(&data_len.to_le_bytes());
-    let b = code.to_le_bytes();
+    let bytes = code.to_le_bytes();
     for _ in 0..(frames * channels as u32) {
-        wav.extend_from_slice(&b[..bytes_per_sample]);
+        wav.extend_from_slice(&bytes[..bytes_per_sample]);
     }
     std::fs::write(path, wav).unwrap();
 }
@@ -64,13 +64,13 @@ fn open_wav_chain(
     ChannelMap,
 ) {
     let source = super::open_audio_source(path).unwrap();
-    let mss = MediaSourceStream::new(source, Default::default());
+    let media_source = MediaSourceStream::new(source, Default::default());
     let hint = Hint::new();
     let metadata_opts = MetadataOptions::default()
         .limit_tag_bytes(Limit::Maximum(0))
         .limit_visual_bytes(Limit::Maximum(0));
     let format = symphonia::default::get_probe()
-        .probe(&hint, mss, FormatOptions::default(), metadata_opts)
+        .probe(&hint, media_source, FormatOptions::default(), metadata_opts)
         .unwrap();
     let track = format.default_track(TrackType::Audio).unwrap();
     let id = track.id;
@@ -205,10 +205,10 @@ fn setup_tail_chain(
     ChannelMap,
     VecDeque<f64>,
 ) {
-    let (fmt, dec, track_id, ch_map) = open_wav_chain(path);
+    let (format, decoder, track_id, channel_map) = open_wav_chain(path);
     (
-        fmt,
-        dec,
+        format,
+        decoder,
         track_id,
         Vec::new(),
         None,
@@ -216,7 +216,7 @@ fn setup_tail_chain(
         Vec::new(),
         Vec::new(),
         Vec::new(),
-        ch_map,
+        channel_map,
         VecDeque::new(),
     )
 }
@@ -245,7 +245,7 @@ fn tail_decode_batch_fills_buffer_in_single_call() {
     ) = setup_tail_chain(path.to_str().unwrap());
     let cap = tail_buffer_cap_for(44100, 2);
 
-    let ok = tail_decode_batch(
+    let result = tail_decode_batch(
         &mut fmt,
         &mut dec,
         &mut track_id,
@@ -262,7 +262,7 @@ fn tail_decode_batch_fills_buffer_in_single_call() {
         2,
     );
 
-    assert!(ok, "quedan ~1.8s de audio por decodificar");
+    assert!(result, "quedan ~1.8s de audio por decodificar");
     assert!(
         tail.len() >= cap,
         "una sola llamada debe llenar al menos la capacidad (~200ms): got {}",
@@ -272,7 +272,7 @@ fn tail_decode_batch_fills_buffer_in_single_call() {
     // Consumo simulado de la mezcla (mitad del buffer) y recarga: la
     // siguiente llamada rellena SOLO el déficit hasta la capacidad.
     tail.drain(..(cap / 2));
-    let ok2 = tail_decode_batch(
+    let second_result = tail_decode_batch(
         &mut fmt,
         &mut dec,
         &mut track_id,
@@ -288,7 +288,7 @@ fn tail_decode_batch_fills_buffer_in_single_call() {
         44100,
         2,
     );
-    assert!(ok2);
+    assert!(second_result);
     assert!(
         tail.len() >= cap,
         "recarga al menos hasta la capacidad tras el consumo: got {}",
@@ -319,7 +319,7 @@ fn tail_decode_batch_stops_at_eof_before_cap() {
     ) = setup_tail_chain(path.to_str().unwrap());
     let cap = tail_buffer_cap_for(44100, 2);
 
-    let ok = tail_decode_batch(
+    let result = tail_decode_batch(
         &mut fmt,
         &mut dec,
         &mut track_id,
@@ -336,13 +336,13 @@ fn tail_decode_batch_stops_at_eof_before_cap() {
         2,
     );
 
-    assert!(!ok, "el EOF de la canción anterior acorta la mezcla");
+    assert!(!result, "el EOF de la canción anterior acorta la mezcla");
     let expected = (0.05 * 44100.0) as usize * 2;
     assert_eq!(tail.len(), expected);
     assert!(tail.len() < cap);
 
     // El EOF persiste: una llamada posterior también lo reporta.
-    let ok2 = tail_decode_batch(
+    let second_result = tail_decode_batch(
         &mut fmt,
         &mut dec,
         &mut track_id,
@@ -358,7 +358,7 @@ fn tail_decode_batch_stops_at_eof_before_cap() {
         44100,
         2,
     );
-    assert!(!ok2);
+    assert!(!second_result);
 }
 
 #[test]
@@ -411,14 +411,14 @@ fn promotion_eof_flag_is_preserved() {
     // cambio manual) y el fin de pista natural con `true`; el helper debe
     // escribir exactamente el valor recibido.
     let mut crossfade_state = AudioState::default();
-    let (mut t, mut ar, mut al, mut cv, mut p) = (None, None, None, None, None);
+    let (mut title, mut artist, mut album, mut cover, mut path) = (None, None, None, None, None);
     apply_promotion_metadata(
         &mut crossfade_state,
-        &mut t,
-        &mut ar,
-        &mut al,
-        &mut cv,
-        &mut p,
+        &mut title,
+        &mut artist,
+        &mut album,
+        &mut cover,
+        &mut path,
         (None, None),
         0.0,
         0,
@@ -427,14 +427,15 @@ fn promotion_eof_flag_is_preserved() {
     assert!(!crossfade_state.eof_reached);
 
     let mut eof_state = AudioState::default();
-    let (mut t2, mut ar2, mut al2, mut cv2, mut p2) = (None, None, None, None, None);
+    let (mut eof_title, mut eof_artist, mut eof_album, mut eof_cover, mut eof_path) =
+        (None, None, None, None, None);
     apply_promotion_metadata(
         &mut eof_state,
-        &mut t2,
-        &mut ar2,
-        &mut al2,
-        &mut cv2,
-        &mut p2,
+        &mut eof_title,
+        &mut eof_artist,
+        &mut eof_album,
+        &mut eof_cover,
+        &mut eof_path,
         (None, None),
         0.0,
         0,
@@ -566,8 +567,11 @@ fn test_derive_duration_sec_prefers_time_base() {
     track.time_base = TimeBase::try_from_recip(48_000);
     track.duration = Some(Duration::new(96_000));
 
-    let dur = derive_duration_sec(&track, 48_000).expect("time_base utilizable");
-    assert!((dur - 2.0).abs() < 1e-9, "duración del contenedor: {dur}");
+    let duration = derive_duration_sec(&track, 48_000).expect("time_base utilizable");
+    assert!(
+        (duration - 2.0).abs() < 1e-9,
+        "duración del contenedor: {duration}"
+    );
 }
 
 #[test]

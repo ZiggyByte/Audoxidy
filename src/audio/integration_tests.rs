@@ -4,6 +4,10 @@ mod integration_tests {
     use crate::audio::engine::AudioEngine;
     use crate::audio::error::AudioError;
     use crate::db::database::{Database, SongMetadataExtended};
+    use crate::utils::settings_keys::{
+        KEY_CROSSFADE_AUTO_ENABLED, KEY_CROSSFADE_AUTO_MS, KEY_CROSSFADE_ENABLED,
+        KEY_CROSSFADE_MANUAL_ENABLED, KEY_CROSSFADE_MANUAL_MS,
+    };
     use crate::utils::test_support::make_song;
     use std::sync::Arc;
 
@@ -248,26 +252,29 @@ mod integration_tests {
         let mut db = Database::new_memory().expect("Failed to create in-memory DB");
 
         // Guardar las 5 claves de crossfade (espejo de save_crossfade_settings_to_db).
-        let _ = db.set_setting("crossfade_enabled", "1");
-        let _ = db.set_setting("crossfade_manual_enabled", "1");
-        let _ = db.set_setting("crossfade_manual_ms", "1300");
-        let _ = db.set_setting("crossfade_auto_enabled", "0");
-        let _ = db.set_setting("crossfade_auto_ms", "450");
+        let _ = db.set_setting(KEY_CROSSFADE_ENABLED, "1");
+        let _ = db.set_setting(KEY_CROSSFADE_MANUAL_ENABLED, "1");
+        let _ = db.set_setting(KEY_CROSSFADE_MANUAL_MS, "1300");
+        let _ = db.set_setting(KEY_CROSSFADE_AUTO_ENABLED, "0");
+        let _ = db.set_setting(KEY_CROSSFADE_AUTO_MS, "450");
 
         // Recuperar y verificar.
-        assert_eq!(db.get_setting("crossfade_enabled").as_deref(), Some("1"));
+        assert_eq!(db.get_setting(KEY_CROSSFADE_ENABLED).as_deref(), Some("1"));
         assert_eq!(
-            db.get_setting("crossfade_manual_enabled").as_deref(),
+            db.get_setting(KEY_CROSSFADE_MANUAL_ENABLED).as_deref(),
             Some("1")
         );
         assert_eq!(
-            db.get_setting("crossfade_manual_ms").as_deref(),
+            db.get_setting(KEY_CROSSFADE_MANUAL_MS).as_deref(),
             Some("1300")
         );
         assert_eq!(
-            db.get_setting("crossfade_auto_enabled").as_deref(),
+            db.get_setting(KEY_CROSSFADE_AUTO_ENABLED).as_deref(),
             Some("0")
         );
-        assert_eq!(db.get_setting("crossfade_auto_ms").as_deref(), Some("450"));
+        assert_eq!(
+            db.get_setting(KEY_CROSSFADE_AUTO_MS).as_deref(),
+            Some("450")
+        );
     }
 }

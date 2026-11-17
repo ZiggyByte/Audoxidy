@@ -83,6 +83,10 @@ pub struct SymphoniaDecoder {
 
 impl SymphoniaDecoder {
     /// Crea un nuevo decodificador Symphonia sin estado interno.
+    // A decoder is a state machine whose only legal path is construction followed by
+    // `open`; an all-`None` value carrying a sentinel track id would advertise a
+    // constructor for an instance that is useless until it is opened.
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
             format: None,
@@ -533,10 +537,11 @@ fn open_preload_track_blocking(
     let channel_map = if let Some(channels) = audio_params.channels.as_ref() {
         AudioEngine::get_channel_map(channels.clone())
     } else {
-        let mut map = ChannelMap::default();
-        map.fl = Some(0);
-        map.fr = Some(1);
-        map
+        ChannelMap {
+            fl: Some(0),
+            fr: Some(1),
+            ..ChannelMap::default()
+        }
     };
 
     Ok(OpenedPreload {

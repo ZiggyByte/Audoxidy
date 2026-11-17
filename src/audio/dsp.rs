@@ -1221,6 +1221,12 @@ impl Compressor {
     }
 }
 
+impl Default for Compressor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 // --- Biquad General Filter ---
 
 /// Tipo de filtro biquad disponible en el DSP.

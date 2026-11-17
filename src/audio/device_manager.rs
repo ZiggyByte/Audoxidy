@@ -739,6 +739,12 @@ impl AudioDeviceManager {
     }
 }
 
+impl Default for AudioDeviceManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 #[path = "device_manager_tests.rs"]
 mod tests;

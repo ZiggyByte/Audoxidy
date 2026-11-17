@@ -63,6 +63,12 @@ impl MeterData {
     }
 }
 
+impl Default for MeterData {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[cfg(test)]
 #[path = "meter_tests.rs"]
 mod tests;

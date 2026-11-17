@@ -276,35 +276,35 @@ impl LibraryManager {
             LIST_ROW_HEADER
         };
 
-        for va in v_artists {
-            let a_end = va.top_y + va.height;
+        for virtual_artist in v_artists {
+            let a_end = virtual_artist.top_y + virtual_artist.height;
 
             // Sticky Header: umbral +31px (como en widgets.rs)
             let sticky_threshold = header_h - 1.0;
-            if va.top_y <= view_min + sticky_threshold {
+            if virtual_artist.top_y <= view_min + sticky_threshold {
                 sticky_artist_info = Some((
-                    va.artist_name.clone(),
-                    va.is_collapsed,
-                    va.albums_count,
-                    va.songs_count,
-                    va.duration_secs,
+                    virtual_artist.artist_name.clone(),
+                    virtual_artist.is_collapsed,
+                    virtual_artist.albums_count,
+                    virtual_artist.songs_count,
+                    virtual_artist.duration_secs,
                 ));
             }
 
             if a_end < render_min {
-                top_space += va.height;
-            } else if va.top_y > render_max {
-                bottom_space += va.height;
+                top_space += virtual_artist.height;
+            } else if virtual_artist.top_y > render_max {
+                bottom_space += virtual_artist.height;
             } else {
                 // Header del Artista
-                let ah_end = va.top_y + header_h;
-                if ah_end >= render_min && va.top_y <= render_max {
+                let ah_end = virtual_artist.top_y + header_h;
+                if ah_end >= render_min && virtual_artist.top_y <= render_max {
                     visible_elements.push(LibraryVirtualRow::ArtistHeader {
-                        name: va.artist_name.clone(),
-                        is_collapsed: va.is_collapsed,
-                        albums_count: va.albums_count,
-                        songs_count: va.songs_count,
-                        duration_secs: va.duration_secs,
+                        name: virtual_artist.artist_name.clone(),
+                        is_collapsed: virtual_artist.is_collapsed,
+                        albums_count: virtual_artist.albums_count,
+                        songs_count: virtual_artist.songs_count,
+                        duration_secs: virtual_artist.duration_secs,
                     });
                 } else if ah_end < render_min {
                     top_space += header_h;
@@ -312,10 +312,11 @@ impl LibraryManager {
                     bottom_space += header_h;
                 }
 
-                if !va.is_collapsed {
-                    let mut current_y = va.top_y + header_h;
-                    for alb in &va.albums {
-                        let composite_id = format!("{}|{}", va.artist_name, alb.album_hash);
+                if !virtual_artist.is_collapsed {
+                    let mut current_y = virtual_artist.top_y + header_h;
+                    for alb in &virtual_artist.albums {
+                        let composite_id =
+                            format!("{}|{}", virtual_artist.artist_name, alb.album_hash);
                         let is_album_expanded = !self.collapsed_albums.contains(&composite_id);
                         let card_h: f32 = if self.view_mode == LibraryViewMode::DetailedList
                             && is_album_expanded
@@ -348,7 +349,7 @@ impl LibraryManager {
                                     visible_elements.push(LibraryVirtualRow::AlbumBlock {
                                         album_name: alb.album_name.clone(),
                                         album_hash: alb.album_hash.clone(),
-                                        artist_name: va.artist_name.clone(),
+                                        artist_name: virtual_artist.artist_name.clone(),
                                         cover_path: alb.cover_path.clone(),
                                         genre: String::new(),
                                         year: String::new(), // No se usan en este modo
@@ -397,7 +398,7 @@ impl LibraryManager {
                                 visible_elements.push(LibraryVirtualRow::AlbumBlock {
                                     album_name: alb.album_name.clone(),
                                     album_hash: alb.album_hash.clone(),
-                                    artist_name: va.artist_name.clone(),
+                                    artist_name: virtual_artist.artist_name.clone(),
                                     cover_path: alb.cover_path.clone(),
                                     genre,
                                     year,
@@ -916,8 +917,8 @@ impl LibraryManager {
             LibraryListItem::Artist(name) => {
                 v_artists
                     .iter()
-                    .find(|va| va.artist_name == *name)
-                    .map(|va| (va.top_y, header_h)) // El rango del header
+                    .find(|virtual_artist| virtual_artist.artist_name == *name)
+                    .map(|virtual_artist| (virtual_artist.top_y, header_h)) // El rango del header
             }
             LibraryListItem::Album(composite_id) => {
                 // composite_id format: "Artist|AlbumHash"
@@ -928,13 +929,16 @@ impl LibraryManager {
                 let artist_name = parts[0];
                 let album_hash = parts[1];
 
-                let va = v_artists.iter().find(|va| va.artist_name == artist_name)?;
-                let mut current_y = va.top_y + header_h;
+                let virtual_artist = v_artists
+                    .iter()
+                    .find(|virtual_artist| virtual_artist.artist_name == artist_name)?;
+                let mut current_y = virtual_artist.top_y + header_h;
 
-                for alb in &va.albums {
-                    let is_album_expanded = !self
-                        .collapsed_albums
-                        .contains(&format!("{}|{}", va.artist_name, alb.album_hash));
+                for alb in &virtual_artist.albums {
+                    let is_album_expanded = !self.collapsed_albums.contains(&format!(
+                        "{}|{}",
+                        virtual_artist.artist_name, alb.album_hash
+                    ));
                     let card_h: f32 =
                         if self.view_mode == LibraryViewMode::DetailedList && is_album_expanded {
                             323.0
@@ -960,13 +964,14 @@ impl LibraryManager {
                 None
             }
             LibraryListItem::Song(song_id) => {
-                for va in &v_artists {
-                    if va.is_collapsed {
+                for virtual_artist in &v_artists {
+                    if virtual_artist.is_collapsed {
                         continue;
                     }
-                    let mut current_y = va.top_y + header_h;
-                    for alb in &va.albums {
-                        let composite_id = format!("{}|{}", va.artist_name, alb.album_hash);
+                    let mut current_y = virtual_artist.top_y + header_h;
+                    for alb in &virtual_artist.albums {
+                        let composite_id =
+                            format!("{}|{}", virtual_artist.artist_name, alb.album_hash);
                         let is_album_expanded = !self.collapsed_albums.contains(&composite_id);
 
                         let card_h: f32 = if self.view_mode == LibraryViewMode::DetailedList
@@ -1047,19 +1052,20 @@ impl LibraryManager {
 
         if self.is_list_mode() {
             let (_total_h, v_artists) = self.get_view_structure();
-            for va in v_artists {
+            for virtual_artist in v_artists {
                 items.push((
-                    LibraryListItem::Artist(va.artist_name.clone()),
+                    LibraryListItem::Artist(virtual_artist.artist_name.clone()),
                     iced::Rectangle::new(
-                        iced::Point::new(0.0, va.top_y),
+                        iced::Point::new(0.0, virtual_artist.top_y),
                         iced::Size::new(lib_width, header_h),
                     ),
                 ));
 
-                if !va.is_collapsed {
-                    let mut current_y = va.top_y + header_h;
-                    for alb in va.albums {
-                        let composite_id = format!("{}|{}", va.artist_name, alb.album_hash);
+                if !virtual_artist.is_collapsed {
+                    let mut current_y = virtual_artist.top_y + header_h;
+                    for alb in virtual_artist.albums {
+                        let composite_id =
+                            format!("{}|{}", virtual_artist.artist_name, alb.album_hash);
                         let is_album_expanded = !self.collapsed_albums.contains(&composite_id);
 
                         let card_h: f32 = if self.view_mode == LibraryViewMode::DetailedList
@@ -1176,11 +1182,12 @@ impl LibraryManager {
         let mut items = Vec::new();
         if self.is_list_mode() {
             let (_total_h, v_artists) = self.get_view_structure();
-            for va in v_artists {
-                items.push(LibraryListItem::Artist(va.artist_name.clone()));
-                if !va.is_collapsed {
-                    for alb in va.albums {
-                        let composite_id = format!("{}|{}", va.artist_name, alb.album_hash);
+            for virtual_artist in v_artists {
+                items.push(LibraryListItem::Artist(virtual_artist.artist_name.clone()));
+                if !virtual_artist.is_collapsed {
+                    for alb in virtual_artist.albums {
+                        let composite_id =
+                            format!("{}|{}", virtual_artist.artist_name, alb.album_hash);
                         items.push(LibraryListItem::Album(composite_id.clone()));
                         if !self.collapsed_albums.contains(&composite_id) {
                             for (song, _) in alb.songs {

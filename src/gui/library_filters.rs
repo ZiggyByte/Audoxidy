@@ -215,8 +215,8 @@ impl LibraryFiltersManager {
 
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db) = db_m.lock() {
-            for ft in &all_types {
-                let filter_str = match ft {
+            for filter_type in &all_types {
+                let filter_str = match filter_type {
                     FilterType::Genre => "Genre",
                     FilterType::Artist => "Artist",
                     FilterType::Album => "Album",
@@ -253,15 +253,15 @@ impl LibraryFiltersManager {
                             let mut l3_ids: Vec<FilterNodeId> = l3_set
                                 .into_iter()
                                 .map(|l3_label| {
-                                    let id = nodes.len() as FilterNodeId;
+                                    let node_id = nodes.len() as FilterNodeId;
                                     nodes.push(FilterNode {
                                         label: l3_label,
                                         parent: NO_PARENT,
                                         children: Vec::new(),
                                         depth: 2,
-                                        filter: *ft,
+                                        filter: *filter_type,
                                     });
-                                    id
+                                    node_id
                                 })
                                 .collect();
                             Self::sort_node_ids(&mut l3_ids, &nodes);
@@ -273,7 +273,7 @@ impl LibraryFiltersManager {
                                 parent: NO_PARENT,
                                 children: l3_ids,
                                 depth: 1,
-                                filter: *ft,
+                                filter: *filter_type,
                             });
                             for child in l3_children {
                                 nodes[child as usize].parent = id2;
@@ -290,7 +290,7 @@ impl LibraryFiltersManager {
                             parent: NO_PARENT,
                             children: l2_ids,
                             depth: 0,
-                            filter: *ft,
+                            filter: *filter_type,
                         });
                         for child in l2_children {
                             nodes[child as usize].parent = id1;
@@ -299,11 +299,11 @@ impl LibraryFiltersManager {
                     }
 
                     Self::sort_node_ids(&mut root_ids, &nodes);
-                    roots.insert(*ft, root_ids);
+                    roots.insert(*filter_type, root_ids);
 
                     let mut chars: Vec<String> = char_sets.into_iter().collect();
                     Self::sort_subfilters(&mut chars);
-                    subfilters.insert(*ft, chars);
+                    subfilters.insert(*filter_type, chars);
                 }
             }
         }

@@ -210,14 +210,14 @@ impl LibraryManager {
 
     /// Ordena todos los datos cargados en memoria basándose en el estado actual de ordenamiento.
     pub fn sort_all_data(&mut self) {
-        let sc = self.sort_column;
-        let sa = self.sort_ascending;
+        let sort_column = self.sort_column;
+        let sort_ascending = self.sort_ascending;
 
         if let Some(songs) = self.cached_all_songs.as_mut() {
-            Self::sort_songs_static(songs, sc, sa);
+            Self::sort_songs_static(songs, sort_column, sort_ascending);
         }
         if let Some(albums) = self.cached_albums.as_mut() {
-            Self::sort_albums_static(albums, sc, sa);
+            Self::sort_albums_static(albums, sort_column, sort_ascending);
         }
     }
 

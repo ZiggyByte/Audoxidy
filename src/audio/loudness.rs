@@ -48,14 +48,14 @@ pub(crate) fn gain_linear(inputs: &LoudnessGainInputs) -> f64 {
     if inputs.rg_master_enabled {
         // 1. ReplayGain base from tags (album + track sum).
         if inputs.rg_track_enabled
-            && let Some(tg) = inputs.rg_track
+            && let Some(track_gain) = inputs.rg_track
         {
-            gain_db += tg as f64;
+            gain_db += track_gain as f64;
         }
         if inputs.rg_album_enabled
-            && let Some(ag) = inputs.rg_album
+            && let Some(album_gain) = inputs.rg_album
         {
-            gain_db += ag as f64;
+            gain_db += album_gain as f64;
         }
 
         // 2. RG offsets per source: the EMA-smoothed values avoid clicks.

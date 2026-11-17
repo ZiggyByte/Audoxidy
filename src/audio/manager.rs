@@ -111,22 +111,21 @@ impl AudioManager {
         artist: impl Into<String>,
         album: impl Into<String>,
         cover_path: Option<String>,
-        track_gain: Option<f64>,
-        album_gain: Option<f64>,
+        mut track_gain: Option<f64>,
+        mut album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
-        let (mut tg, mut ag) = (track_gain, album_gain);
-
         // Si no se pasaron ganancias (ej. desde el módulo Playlist), intentamos buscarlas nosotros en la BD
-        if tg.is_none()
-            && ag.is_none()
+        if track_gain.is_none()
+            && album_gain.is_none()
             && let Some(db_arc) = &*self.database.lock()
         {
             // Usamos try_lock para evitar Deadlocks si el llamador ya tiene la BD bloqueada (ej. en el inicio de la App)
             if let Ok(db) = db_arc.try_lock()
-                && let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path)
+                && let Ok((database_track_gain, database_album_gain)) =
+                    db.get_replay_gain_by_path(path)
             {
-                tg = db_tg;
-                ag = db_ag;
+                track_gain = database_track_gain;
+                album_gain = database_album_gain;
             }
         }
 
@@ -136,8 +135,8 @@ impl AudioManager {
             artist.into(),
             album.into(),
             cover_path,
-            tg,
-            ag,
+            track_gain,
+            album_gain,
         )
     }
 
@@ -152,18 +151,17 @@ impl AudioManager {
         artist: impl Into<String>,
         album: impl Into<String>,
         cover_path: Option<String>,
-        track_gain: Option<f64>,
-        album_gain: Option<f64>,
+        mut track_gain: Option<f64>,
+        mut album_gain: Option<f64>,
     ) -> Result<(), AudioError> {
-        let (mut tg, mut ag) = (track_gain, album_gain);
-        if tg.is_none()
-            && ag.is_none()
+        if track_gain.is_none()
+            && album_gain.is_none()
             && let Some(db_arc) = &*self.database.lock()
             && let Ok(db) = db_arc.try_lock()
-            && let Ok((db_tg, db_ag)) = db.get_replay_gain_by_path(path)
+            && let Ok((database_track_gain, database_album_gain)) = db.get_replay_gain_by_path(path)
         {
-            tg = db_tg;
-            ag = db_ag;
+            track_gain = database_track_gain;
+            album_gain = database_album_gain;
         }
         self.engine.preload_file(
             path,
@@ -171,8 +169,8 @@ impl AudioManager {
             artist.into(),
             album.into(),
             cover_path,
-            tg,
-            ag,
+            track_gain,
+            album_gain,
         )
     }
 

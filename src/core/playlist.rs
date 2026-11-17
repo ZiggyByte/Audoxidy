@@ -5,6 +5,7 @@
 //! data or a typed core error. No lock is held across an audio manager call.
 
 use crate::db::database::{PlaylistData, PlaylistFolderGroup, PlaylistSongRef, ShuffleSession};
+use crate::utils::observability::PERSISTENCE_TARGET;
 
 use super::Core;
 use super::error::CoreError;
@@ -217,7 +218,7 @@ impl Core {
             && let Err(e) = db.add_songs_to_playlist(new_id, song_ids)
         {
             tracing::warn!(
-                target: "audoxidy::persistence",
+                target: PERSISTENCE_TARGET,
                 playlist_id = new_id,
                 count = song_ids.len(),
                 error = %e,
@@ -235,7 +236,7 @@ impl Core {
             && let Err(e) = db.add_songs_to_playlist(new_id, &all_songs)
         {
             tracing::warn!(
-                target: "audoxidy::persistence",
+                target: PERSISTENCE_TARGET,
                 playlist_id = new_id,
                 count = all_songs.len(),
                 error = %e,

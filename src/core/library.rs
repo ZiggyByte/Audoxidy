@@ -302,7 +302,7 @@ impl Core {
                             }
                         }
                         Err(error) => tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             song_id,
                             error = %error,
                             "No se pudo componer el nombre de la carátula propia de una canción"
@@ -313,14 +313,14 @@ impl Core {
 
             if let Err(e) = db.begin_transaction() {
                 tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %e,
                     "No se pudo iniciar la transacción de borrado de canciones"
                 );
             }
             if let Err(e) = db.batch_delete_songs(ids) {
                 tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     count = ids.len(),
                     error = %e,
                     "No se pudieron borrar las canciones en lote"
@@ -328,14 +328,14 @@ impl Core {
             }
             if let Err(e) = db.cleanup_empty_metadata() {
                 tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %e,
                     "No se pudieron limpiar los metadatos vacíos"
                 );
             }
             if let Err(e) = db.commit_transaction() {
                 tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     error = %e,
                     "No se pudo confirmar la transacción de borrado de canciones"
                 );
@@ -362,7 +362,7 @@ impl Core {
                         }),
                         Ok(true) => {}
                         Err(error) => tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             file = %file_name,
                             error = %error,
                             "No se pudo comprobar si una carátula de álbum sigue referenciada"
@@ -380,7 +380,7 @@ impl Core {
                         }),
                         Ok(true) => {}
                         Err(error) => tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             song_id,
                             error = %error,
                             "No se pudo comprobar si una carátula propia sigue referenciada"
@@ -400,7 +400,7 @@ impl Core {
             let path = self.paths.cover_cache_dir.join(&file_name);
             if let Err(error) = std::fs::remove_file(&path) {
                 tracing::warn!(
-                    target: "audoxidy::persistence",
+                    target: PERSISTENCE_TARGET,
                     file = %path.display(),
                     error = %error,
                     "No se pudo eliminar una carátula que ya no está referenciada"
@@ -417,7 +417,7 @@ impl Core {
                 Ok(db) => db,
                 Err(error) => {
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         file = %path.display(),
                         error = %error,
                         "No se pudo recomprobar la referencia de una carátula borrada"
@@ -435,7 +435,7 @@ impl Core {
                     Ok(true) => {
                         if let Err(error) = db.clear_album_cover_hash(album_hash, cover_hash) {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 album_hash = %album_hash,
                                 error = %error,
                                 "No se pudo limpiar una referencia de carátula reinsertada"
@@ -444,7 +444,7 @@ impl Core {
                     }
                     Ok(false) => {}
                     Err(error) => tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         album_hash = %album_hash,
                         error = %error,
                         "No se pudo recomprobar una carátula de álbum borrada"
@@ -458,7 +458,7 @@ impl Core {
                     Ok(true) => {
                         if let Err(error) = db.clear_song_cover_override(*song_id, cover_hash) {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 song_id,
                                 error = %error,
                                 "No se pudo limpiar una referencia de carátula propia reinsertada"
@@ -467,7 +467,7 @@ impl Core {
                     }
                     Ok(false) => {}
                     Err(error) => tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         song_id,
                         error = %error,
                         "No se pudo recomprobar una carátula propia borrada"

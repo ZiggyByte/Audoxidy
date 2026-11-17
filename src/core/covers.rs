@@ -11,6 +11,8 @@
 
 use std::path::PathBuf;
 
+use crate::utils::observability::PERSISTENCE_TARGET;
+
 use super::Core;
 use super::error::CoreError;
 
@@ -129,7 +131,7 @@ impl Core {
                 Ok(entry) => entry,
                 Err(error) => {
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         error = %error,
                         "No se pudo leer una entrada del directorio de carátulas"
                     );
@@ -144,7 +146,7 @@ impl Core {
                 Ok(_) => continue,
                 Err(error) => {
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         error = %error,
                         "No se pudo leer el tipo de una entrada de carátulas"
                     );
@@ -169,7 +171,7 @@ impl Core {
                 Err(error) => {
                     failed += 1;
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         path = %path.display(),
                         error = %error,
                         "No se pudo eliminar una carátula sin referencias"

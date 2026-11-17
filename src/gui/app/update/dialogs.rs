@@ -249,8 +249,8 @@ impl crate::gui::app::AudoxidyApp {
 
                 // Usamos perform para no bloquear la UI si el M3U es muy grande
                 Task::perform(async move { core.import_m3u(&path_clone) }, |playlist_id| {
-                    if let Some(id) = playlist_id {
-                        Message::SwitchPlaylist(id, true)
+                    if let Some(imported_playlist_id) = playlist_id {
+                        Message::SwitchPlaylist(imported_playlist_id, true)
                     } else {
                         Message::NoOp
                     }

@@ -65,7 +65,8 @@ impl PlaylistManager {
 
     /// Re-resolves the position-dependent state after the active list changed.
     fn restore_active_indices(&mut self, playing_id: Option<i64>) {
-        self.playing_song_idx = playing_id.and_then(|id| self.get_linear_index_by_song_id(id));
+        self.playing_song_idx =
+            playing_id.and_then(|song_id| self.get_linear_index_by_song_id(song_id));
         self.selected_idxs.clear();
         self.focused_idx = None;
         self.selection_pivot = None;

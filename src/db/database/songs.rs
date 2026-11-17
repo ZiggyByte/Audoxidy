@@ -354,8 +354,8 @@ impl Database {
             return Ok(());
         }
         let mut stmt = self.conn.prepare("DELETE FROM SONGS WHERE id = ?1")?;
-        for id in ids {
-            stmt.execute([id])?;
+        for song_id in ids {
+            stmt.execute([song_id])?;
         }
         Ok(())
     }
@@ -396,9 +396,9 @@ impl Database {
         )?;
 
         let mut references = Vec::with_capacity(ids.len());
-        for id in ids {
+        for song_id in ids {
             let reference = stmt
-                .query_row([id], |row| {
+                .query_row([song_id], |row| {
                     Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
                 })
                 .optional()?;

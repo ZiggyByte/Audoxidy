@@ -792,8 +792,8 @@ impl Reverb {
         let room_size = self.room_size as f64;
         self.damping_coeff = 0.05 + room_size * 0.3;
         self.pre_delay_samples = (room_size * 0.040 * self.sample_rate).round() as usize;
-        for st in self.channels.iter_mut() {
-            st.pre_delay = DelayLine::new(self.pre_delay_samples.max(1));
+        for channel_state in self.channels.iter_mut() {
+            channel_state.pre_delay = DelayLine::new(self.pre_delay_samples.max(1));
         }
         self.feedback_gain = 0.7 + room_size * 0.25;
     }
@@ -842,9 +842,9 @@ impl Reverb {
         }
 
         // Normalización 0.25 (coherente con la Hadamard 16×16) fusionada con la ganancia.
-        let fb = feedback_gain * 0.25;
+        let feedback = feedback_gain * 0.25;
         for i in 0..16 {
-            delay_lines[i].write(fdn_input + delayed[i] * fb);
+            delay_lines[i].write(fdn_input + delayed[i] * feedback);
         }
 
         let reverb_out = delay_outs.iter().sum::<f64>() / 8.0;
@@ -877,13 +877,13 @@ impl Reverb {
                 2 => 0.7,      // Centro: reverb reducido
                 _ => 1.0,
             };
-            let Some(st) = self.channels.get_mut(channel) else {
+            let Some(channel_state) = self.channels.get_mut(channel) else {
                 break;
             };
             Self::process_channel(
-                &mut st.delay_lines,
-                &mut st.damping_states,
-                &mut st.pre_delay,
+                &mut channel_state.delay_lines,
+                &mut channel_state.damping_states,
+                &mut channel_state.pre_delay,
                 self.damping_coeff,
                 self.feedback_gain,
                 sample,
@@ -894,12 +894,12 @@ impl Reverb {
     }
 
     pub fn reset_state(&mut self) {
-        for st in self.channels.iter_mut() {
-            for dl in st.delay_lines.iter_mut() {
-                dl.reset();
+        for channel_state in self.channels.iter_mut() {
+            for delay_line in channel_state.delay_lines.iter_mut() {
+                delay_line.reset();
             }
-            st.pre_delay.reset();
-            for s in st.damping_states.iter_mut() {
+            channel_state.pre_delay.reset();
+            for s in channel_state.damping_states.iter_mut() {
                 *s = 0.0;
             }
         }
@@ -951,8 +951,8 @@ impl Compressor {
     /// Crea un compresor con valores predeterminados.
     pub fn new() -> Self {
         let sample_rate: f32 = 44100.0;
-        let ls = (0.001 * sample_rate).round() as usize;
-        let cap = ls.max(1) * COMPRESSOR_MAX_CHANNELS;
+        let lookahead_samples = (0.001 * sample_rate).round() as usize;
+        let cap = lookahead_samples.max(1) * COMPRESSOR_MAX_CHANNELS;
         let mut c = Self {
             enabled: false,
             threshold: -3.0,
@@ -966,11 +966,11 @@ impl Compressor {
             envelope_rms: 0.0,
             sample_rate,
             lookahead_buf: vec![0.0; cap],
-            lookahead_cap_frames: ls.max(1),
+            lookahead_cap_frames: lookahead_samples.max(1),
             lookahead_head: 0,
             lookahead_filled: 0,
             lookahead_channels: 2,
-            lookahead_samples: ls,
+            lookahead_samples,
         };
         c.update_intensity_params();
         c
@@ -1193,9 +1193,9 @@ impl Compressor {
         let n = seg.len();
         while i + 4 <= n {
             let block = f64x4::new([seg[i], seg[i + 1], seg[i + 2], seg[i + 3]]);
-            let vf = block.is_finite().select(block, f64x4::splat(0.0));
-            acc = vf.mul_add(vf, acc);
-            let a = vf.abs();
+            let finite_block = block.is_finite().select(block, f64x4::splat(0.0));
+            acc = finite_block.mul_add(finite_block, acc);
+            let a = finite_block.abs();
             let [a0, a1, a2, a3] = a.to_array();
             let m = a0.max(a1).max(a2).max(a3);
             if m > *peak {
@@ -1205,9 +1205,9 @@ impl Compressor {
         }
         let mut sum = acc.reduce_add();
         for &s in &seg[i..] {
-            let sf = if s.is_finite() { s } else { 0.0 };
-            sum += sf * sf;
-            let a = sf.abs();
+            let finite_sample = if s.is_finite() { s } else { 0.0 };
+            sum += finite_sample * finite_sample;
+            let a = finite_sample.abs();
             if a > *peak {
                 *peak = a;
             }
@@ -2056,19 +2056,19 @@ pub struct Limiter {
 impl Default for Limiter {
     fn default() -> Self {
         let sample_rate: f32 = 44100.0;
-        let ls = (0.002 * sample_rate as f64).round() as usize;
-        let cap = ls.max(1) * LIMITER_MAX_CHANNELS;
+        let lookahead_samples = (0.002 * sample_rate as f64).round() as usize;
+        let cap = lookahead_samples.max(1) * LIMITER_MAX_CHANNELS;
         Self {
             enabled: false,
             ceiling: -1.0,
             envelope: 0.0,
             sample_rate,
             lookahead_buf: vec![0.0; cap],
-            lookahead_cap_frames: ls.max(1),
+            lookahead_cap_frames: lookahead_samples.max(1),
             lookahead_head: 0,
             lookahead_filled: 0,
             lookahead_channels: 2,
-            lookahead_samples: ls,
+            lookahead_samples,
             rms_state: 0.0,
             crest_factor_smooth: 1.0,
         }

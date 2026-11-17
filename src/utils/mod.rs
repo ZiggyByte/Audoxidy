@@ -211,11 +211,11 @@ pub fn truncate_text(text: &str, limit: usize) -> String {
 pub fn format_duration(seconds: f64) -> String {
     let secs = seconds.max(0.0) as u64;
     let days = secs / 86400;
-    let rh = secs % 86400;
-    let hours = rh / 3600;
-    let rm = rh % 3600;
-    let minutes = rm / 60;
-    let secs_rem = rm % 60;
+    let secs_in_day = secs % 86400;
+    let hours = secs_in_day / 3600;
+    let secs_in_hour = secs_in_day % 3600;
+    let minutes = secs_in_hour / 60;
+    let secs_rem = secs_in_hour % 60;
 
     if days > 0 {
         format!("{:02}:{:02}:{:02}:{:02}", days, hours, minutes, secs_rem)

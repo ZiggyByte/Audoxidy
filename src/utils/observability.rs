@@ -61,11 +61,11 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
     if let Ok(meta) = std::fs::metadata(&log_path)
         && meta.len() > max_bytes
     {
-        let ts = std::time::SystemTime::now()
+        let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
             .as_secs();
-        let rotated = log_dir.join(format!("audoxidy.{}.log", ts));
+        let rotated = log_dir.join(format!("audoxidy.{}.log", timestamp));
         std::fs::rename(&log_path, &rotated).ok();
         cleanup_old_logs(&log_dir, config.max_history_files);
     }

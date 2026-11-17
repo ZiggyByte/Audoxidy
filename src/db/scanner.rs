@@ -373,7 +373,7 @@ impl Scanner {
             if let Err(e) = db.begin_transaction() {
                 tracing::warn!("No se pudo iniciar la transacción del escáner: {}", e);
             }
-            let id = db.create_playlist(&playlist_name, false).ok()?;
+            let playlist_id = db.create_playlist(&playlist_name, false).ok()?;
 
             let mut enqueued_covers = std::collections::HashSet::new();
             for p in paths.iter() {
@@ -393,11 +393,11 @@ impl Scanner {
                     db.get_song_id_by_path(&p_str).ok().flatten()?
                 };
 
-                if let Err(e) = db.add_song_to_playlist(id, song_id) {
+                if let Err(e) = db.add_song_to_playlist(playlist_id, song_id) {
                     tracing::warn!(
                         "No se pudo añadir la canción {} a la playlist {}: {}",
                         song_id,
-                        id,
+                        playlist_id,
                         e
                     );
                 }
@@ -414,7 +414,7 @@ impl Scanner {
                     e
                 );
             }
-            id
+            playlist_id
         };
 
         Some(playlist_id)

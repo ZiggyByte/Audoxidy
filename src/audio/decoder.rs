@@ -406,8 +406,8 @@ enum FadeState {
 // Volumen smoothing: waits for the user to finish adjusting the
 // volume (debounce), then ramps from the current applied level to the target.
 // Debounce = 400ms of inactivity; ramp = 1500ms linear.
-const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
-const SMOOTH_DURATION_SECS: f64 = 1.5;
+pub(in crate::audio) const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
+pub(in crate::audio) const SMOOTH_DURATION_SECS: f64 = 1.5;
 
 #[derive(Debug, Clone, Copy)]
 struct SmoothRamp {

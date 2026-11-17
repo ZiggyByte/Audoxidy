@@ -2,9 +2,11 @@
 //!
 //! Pins the equal-power fade curve, the +3 dB hysteresis of the silence gate and
 //! the debounce-then-ramp schedule the decoder follows when a slider moves. The
-//! schedule constants are restated here as the values the decoder is expected to
-//! follow. No audio device is opened, no playback happens and no database is
-//! touched.
+//! schedule constants are read from the decoder, so the simulation tracks the
+//! values production applies instead of copying them. No audio device is opened,
+//! no playback happens and no database is touched.
+
+use crate::audio::decoder::{SMOOTH_DEBOUNCE_SECS, SMOOTH_DURATION_SECS};
 
 // --- Silence detection tests ---
 
@@ -96,12 +98,9 @@ fn test_fade_equal_power_curve() {
 
 // --- Volume smoothing with debounce ---
 // The smoothing holds applied_vol frozen while the user adjusts; after the
-// debounce window a 1500ms linear ramp moves applied_vol to the target.
-// This mirrors decoder.rs's smooth logic (SMOOTH_DEBOUNCE_SECS = 0.4,
-// SMOOTH_DURATION_SECS = 1.5).
-
-const SMOOTH_DEBOUNCE_SECS: f64 = 0.4;
-const SMOOTH_DURATION_SECS: f64 = 1.5;
+// debounce window the ramp moves applied_vol to the target. The two schedule
+// constants are read from the decoder, so this simulation cannot drift from the
+// schedule production follows.
 
 #[test]
 fn test_smoothing_frozen_during_adjustment() {

@@ -750,8 +750,8 @@ impl AudioEngine {
     ) where
         T: cpal::Sample + cpal::FromSample<f32>,
     {
-        if channels > 0 {
-            let current_frames = (output.len() / channels) as u32;
+        if let Some(frames) = output.len().checked_div(channels) {
+            let current_frames = frames as u32;
             if current_frames > 0 && buffer_size.load(Ordering::Relaxed) != current_frames {
                 buffer_size.store(current_frames, Ordering::Relaxed);
             }
@@ -1069,7 +1069,7 @@ impl AudioEngine {
     }
 
     pub fn mix_channels_planar(
-        input: &Vec<Vec<f64>>,
+        input: &[Vec<f64>],
         frames: usize,
         in_channels: usize,
         out_channels: usize,

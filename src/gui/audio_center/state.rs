@@ -5,8 +5,11 @@ use crate::audio::device_manager::{AudioDeviceInfo, BitDepth};
 use crate::utils::observability::PERSISTENCE_TARGET;
 use crate::utils::settings_keys::{
     KEY_AUDIO_BIT_DEPTH, KEY_AUDIO_BUFFER_SIZE, KEY_AUDIO_DEVICE, KEY_AUDIO_HOST,
-    KEY_AUDIO_SYSTEM_QUANTUM, KEY_AUDIO_SYSTEM_RATE, KEY_EQ_BAND_GAINS_20, KEY_EQ_BAND_GAINS_31,
+    KEY_AUDIO_SYSTEM_QUANTUM, KEY_AUDIO_SYSTEM_RATE, KEY_CROSSFADE_AUTO_ENABLED,
+    KEY_CROSSFADE_AUTO_MS, KEY_CROSSFADE_ENABLED, KEY_CROSSFADE_MANUAL_ENABLED,
+    KEY_CROSSFADE_MANUAL_MS, KEY_DSP_REVERB_ENABLED, KEY_EQ_BAND_GAINS_20, KEY_EQ_BAND_GAINS_31,
     KEY_EQ_BANDS_31, KEY_EQ_ENABLED, KEY_EQ_SELECTED_PRESET, KEY_PREAMP_GAIN,
+    KEY_VOL_FADES_ENABLED,
 };
 
 use super::messages::SystemSelection;
@@ -408,7 +411,7 @@ impl AudioCenterManager {
                         (if dsp.limiter.enabled { "1" } else { "0" }).to_string(),
                     ),
                     (
-                        "dsp_reverb_enabled",
+                        KEY_DSP_REVERB_ENABLED,
                         (if dsp.reverb.enabled { "1" } else { "0" }).to_string(),
                     ),
                     ("dsp_sub_bass_gain", format!("{:.1}", dsp.sub_bass.gain)),
@@ -523,7 +526,7 @@ impl AudioCenterManager {
             let s = state.read();
             vec![
                 (
-                    "vol_fades_enabled",
+                    KEY_VOL_FADES_ENABLED,
                     (if s.fades_enabled { "1" } else { "0" }).to_string(),
                 ),
                 (
@@ -625,22 +628,22 @@ impl AudioCenterManager {
             let s = state.read();
             vec![
                 (
-                    "crossfade_enabled",
+                    KEY_CROSSFADE_ENABLED,
                     (if s.crossfade_enabled { "1" } else { "0" }).to_string(),
                 ),
                 (
-                    "crossfade_manual_enabled",
+                    KEY_CROSSFADE_MANUAL_ENABLED,
                     (if s.crossfade_manual_enabled { "1" } else { "0" }).to_string(),
                 ),
                 (
-                    "crossfade_manual_ms",
+                    KEY_CROSSFADE_MANUAL_MS,
                     format!("{:.0}", s.crossfade_manual_ms),
                 ),
                 (
-                    "crossfade_auto_enabled",
+                    KEY_CROSSFADE_AUTO_ENABLED,
                     (if s.crossfade_auto_enabled { "1" } else { "0" }).to_string(),
                 ),
-                ("crossfade_auto_ms", format!("{:.0}", s.crossfade_auto_ms)),
+                (KEY_CROSSFADE_AUTO_MS, format!("{:.0}", s.crossfade_auto_ms)),
             ]
         };
 
@@ -823,7 +826,7 @@ impl AudioCenterManager {
                     dsp_compressor_intensity: f32_setting("dsp_compressor_intensity"),
                     dsp_limiter_enabled: bool_setting("dsp_limiter_enabled"),
                     dsp_limiter_ceiling: f32_setting("dsp_limiter_ceiling"),
-                    dsp_reverb_enabled: bool_setting("dsp_reverb_enabled"),
+                    dsp_reverb_enabled: bool_setting(KEY_DSP_REVERB_ENABLED),
                     dsp_reverb_wet: f32_setting("dsp_reverb_wet"),
                     dsp_reverb_room_size: f32_setting("dsp_reverb_room_size"),
                     audio_downmix_center_enabled: bool_setting("audio_downmix_center_enabled"),
@@ -832,7 +835,7 @@ impl AudioCenterManager {
                     audio_downmix_center: f32_setting("audio_downmix_center"),
                     audio_downmix_lfe: f32_setting("audio_downmix_lfe"),
                     audio_downmix_surround: f32_setting("audio_downmix_surround"),
-                    vol_fades_enabled: bool_setting("vol_fades_enabled"),
+                    vol_fades_enabled: bool_setting(KEY_VOL_FADES_ENABLED),
                     vol_smooth_volume_enabled: bool_setting("vol_smooth_volume_enabled"),
                     vol_fade_in_ms: f64_setting("vol_fade_in_ms"),
                     vol_fade_out_ms: f64_setting("vol_fade_out_ms"),
@@ -851,11 +854,11 @@ impl AudioCenterManager {
                     vol_rg_offset_album_db: f64_setting("vol_rg_offset_album_db"),
                     vol_rg_offset_track_db: f64_setting("vol_rg_offset_track_db"),
                     vol_rg_offset_rt_db: f64_setting("vol_rg_offset_rt_db"),
-                    crossfade_enabled: bool_setting("crossfade_enabled"),
-                    crossfade_manual_enabled: bool_setting("crossfade_manual_enabled"),
-                    crossfade_manual_ms: f64_setting("crossfade_manual_ms"),
-                    crossfade_auto_enabled: bool_setting("crossfade_auto_enabled"),
-                    crossfade_auto_ms: f64_setting("crossfade_auto_ms"),
+                    crossfade_enabled: bool_setting(KEY_CROSSFADE_ENABLED),
+                    crossfade_manual_enabled: bool_setting(KEY_CROSSFADE_MANUAL_ENABLED),
+                    crossfade_manual_ms: f64_setting(KEY_CROSSFADE_MANUAL_MS),
+                    crossfade_auto_enabled: bool_setting(KEY_CROSSFADE_AUTO_ENABLED),
+                    crossfade_auto_ms: f64_setting(KEY_CROSSFADE_AUTO_MS),
                 }
             })
         });

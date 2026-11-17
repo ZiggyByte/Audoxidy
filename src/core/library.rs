@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::db::database::{LibrarySearchParams, SongData};
+use crate::utils::observability::PERSISTENCE_TARGET;
 
 use super::Core;
 use super::error::CoreError;
@@ -281,7 +282,7 @@ impl Core {
                             }
                         }
                         Err(error) => tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             album_hash = %album_hash,
                             error = %error,
                             "No se pudo componer el nombre de la carátula del álbum"

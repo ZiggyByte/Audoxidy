@@ -17,7 +17,16 @@ use tracing_subscriber::layer::{Layer, SubscriberExt};
 use tracing_subscriber::util::SubscriberInitExt;
 
 /// Identificador de `target` que enruta los eventos hacia `MetricsLayer`.
-const METRICS_TARGET: &str = "audoxidy::metrics";
+pub(crate) const METRICS_TARGET: &str = "audoxidy::metrics";
+
+/// Tracing target for persistence events: store reads, writes and failures.
+pub(crate) const PERSISTENCE_TARGET: &str = "audoxidy::persistence";
+
+/// Tracing target for cover-cache events: hits, misses, decodes and evictions.
+// The cache events are emitted from the GUI store, which is the only layer that
+// decides what the viewport shows; this module declares the routing key alone.
+#[allow(dead_code)]
+pub(crate) const COVERS_TARGET: &str = "audoxidy::covers";
 
 /// Inicializa el sistema de logging estructurado con tracing.
 /// - Niveles configurables por módulo

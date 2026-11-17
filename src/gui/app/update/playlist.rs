@@ -3,6 +3,7 @@
 use crate::gui::app::persistence::log_persist;
 use crate::gui::app::{ActiveDialog, AppFocus, ExportFormat, ExportMode, Message};
 use crate::gui::playlist::PLAYLIST_TABS_SCROLL_ID;
+use crate::utils::observability::PERSISTENCE_TARGET;
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -16,7 +17,7 @@ impl crate::gui::app::AudoxidyApp {
                     async move {
                         if let Err(e) = core.add_song_to_playlist(active_id, song.id) {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 playlist_id = active_id,
                                 song_id = song.id,
                                 error = %e,
@@ -36,7 +37,7 @@ impl crate::gui::app::AudoxidyApp {
                     async move {
                         if let Err(e) = core.add_songs_to_playlist(active_id, &song_ids) {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 playlist_id = active_id,
                                 count = song_ids.len(),
                                 error = %e,
@@ -78,7 +79,7 @@ impl crate::gui::app::AudoxidyApp {
                     .clear_playlist(self.playlist_manager.active_playlist_id)
                 {
                     tracing::warn!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         playlist_id = self.playlist_manager.active_playlist_id,
                         error = %e,
                         "No se pudo vaciar la playlist"
@@ -115,7 +116,7 @@ impl crate::gui::app::AudoxidyApp {
                                 .set_song_enabled_in_playlist(playlist_id, song_id, state)
                         {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 playlist_id,
                                 song_id,
                                 error = %e,
@@ -127,7 +128,7 @@ impl crate::gui::app::AudoxidyApp {
                         .toggle_song_enabled_in_playlist(playlist_id, song_id)
                     {
                         tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             playlist_id,
                             song_id,
                             error = %e,
@@ -167,7 +168,7 @@ impl crate::gui::app::AudoxidyApp {
                                 .set_folder_enabled_in_playlist(playlist_id, &path, state)
                         {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 playlist_id,
                                 path = %path,
                                 error = %e,
@@ -179,7 +180,7 @@ impl crate::gui::app::AudoxidyApp {
                         .toggle_folder_enabled_in_playlist(playlist_id, &path)
                     {
                         tracing::warn!(
-                            target: "audoxidy::persistence",
+                            target: PERSISTENCE_TARGET,
                             playlist_id,
                             path = %path,
                             error = %e,
@@ -863,7 +864,7 @@ impl crate::gui::app::AudoxidyApp {
                                     &target_songs,
                                 ) {
                                     tracing::warn!(
-                                        target: "audoxidy::persistence",
+                                        target: PERSISTENCE_TARGET,
                                         playlist_id = active_playlist_id,
                                         count = target_songs.len(),
                                         error = %e,
@@ -923,7 +924,7 @@ impl crate::gui::app::AudoxidyApp {
                             core.swap_playlist_item_order(playlist_id, first_id, second_id)
                         {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 playlist_id,
                                 error = %error,
                                 "No se pudo reordenar la canción en la playlist"
@@ -1092,7 +1093,7 @@ impl crate::gui::app::AudoxidyApp {
                                 core.add_songs_to_playlist(target_playlist_id, &target_songs)
                             {
                                 tracing::warn!(
-                                    target: "audoxidy::persistence",
+                                    target: PERSISTENCE_TARGET,
                                     playlist_id = target_playlist_id,
                                     count = target_songs.len(),
                                     error = %e,
@@ -1242,7 +1243,7 @@ impl crate::gui::app::AudoxidyApp {
                                 target_enabled,
                             ) {
                                 tracing::warn!(
-                                    target: "audoxidy::persistence",
+                                    target: PERSISTENCE_TARGET,
                                     playlist_id,
                                     error = %e,
                                     "No se pudo cambiar el estado de las canciones en bloque"
@@ -1337,7 +1338,7 @@ impl crate::gui::app::AudoxidyApp {
             s_id,
         ) {
             tracing::warn!(
-                target: "audoxidy::persistence",
+                target: PERSISTENCE_TARGET,
                 playlist_id,
                 error = %e,
                 "No se pudo guardar el estado de reproducción de la playlist"

@@ -5,6 +5,7 @@ use crate::gui::dimensions::LIBRARY_CONTENT_X_ORIGIN;
 use crate::gui::library::cover_cache::SCROLL_IDLE_MS;
 use crate::gui::library::grid_metrics::anchor_viewport_offset;
 use crate::gui::library::{GridMetrics, LIBRARY_SCROLL_ID};
+use crate::utils::observability::PERSISTENCE_TARGET;
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -697,7 +698,7 @@ impl crate::gui::app::AudoxidyApp {
                     async move {
                         if let Err(e) = core.delete_songs_with_transaction(&ids_to_delete) {
                             tracing::warn!(
-                                target: "audoxidy::persistence",
+                                target: PERSISTENCE_TARGET,
                                 error = %e,
                                 "No se pudo completar el borrado de canciones"
                             );
@@ -709,12 +710,12 @@ impl crate::gui::app::AudoxidyApp {
             Message::FtsRebuildFinished(rebuilt) => {
                 if rebuilt {
                     tracing::info!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         "índice de búsqueda reconstruido al iniciar"
                     );
                 } else {
                     tracing::debug!(
-                        target: "audoxidy::persistence",
+                        target: PERSISTENCE_TARGET,
                         "índice de búsqueda verificado al iniciar"
                     );
                 }

@@ -1293,10 +1293,10 @@ impl AudioEngine {
                 out.push(sr); // Side Right
             }
             _ => {
-                let l = fl + c * 0.7 + sl + sbl;
-                let r = fr + c * 0.7 + sr + sbr;
-                out.push(l);
-                out.push(r);
+                let left = fl + c * 0.7 + sl + sbl;
+                let right = fr + c * 0.7 + sr + sbr;
+                out.push(left);
+                out.push(right);
                 for _ in 2..dst_ch {
                     out.push(0.0);
                 }

@@ -745,7 +745,7 @@ fn build_reverb_channels(sample_rate: f64) -> Vec<ReverbChannelState> {
 impl Reverb {
     pub fn new() -> Self {
         let sample_rate: f64 = 44100.0;
-        let mut r = Self {
+        let mut reverb = Self {
             enabled: false,
             wet: 0.5,
             room_size: 0.5,
@@ -757,8 +757,8 @@ impl Reverb {
             feedback_gain: 0.0,
             sample_rate,
         };
-        r.update_params();
-        r
+        reverb.update_params();
+        reverb
     }
 
     pub fn set_sample_rate(&mut self, sample_rate: f32) {
@@ -827,15 +827,15 @@ impl Reverb {
 
         // FWHT: mismo mapa lineal que la Hadamard ±1 en 4 etapas de sumas/restas
         // (64 ops) en lugar de la multiplicación densa 16×16 (256 mult).
-        let mut v = delay_outs;
+        let mut delayed = delay_outs;
         let mut step = 1;
         while step < 16 {
             for i in (0..16).step_by(step * 2) {
                 for j in i..i + step {
-                    let a = v[j];
-                    let b = v[j + step];
-                    v[j] = a + b;
-                    v[j + step] = a - b;
+                    let a = delayed[j];
+                    let b = delayed[j + step];
+                    delayed[j] = a + b;
+                    delayed[j + step] = a - b;
                 }
             }
             step *= 2;
@@ -844,7 +844,7 @@ impl Reverb {
         // Normalización 0.25 (coherente con la Hadamard 16×16) fusionada con la ganancia.
         let fb = feedback_gain * 0.25;
         for i in 0..16 {
-            delay_lines[i].write(fdn_input + v[i] * fb);
+            delay_lines[i].write(fdn_input + delayed[i] * fb);
         }
 
         let reverb_out = delay_outs.iter().sum::<f64>() / 8.0;
@@ -1192,8 +1192,8 @@ impl Compressor {
         let mut i = 0;
         let n = seg.len();
         while i + 4 <= n {
-            let v = f64x4::new([seg[i], seg[i + 1], seg[i + 2], seg[i + 3]]);
-            let vf = v.is_finite().select(v, f64x4::splat(0.0));
+            let block = f64x4::new([seg[i], seg[i + 1], seg[i + 2], seg[i + 3]]);
+            let vf = block.is_finite().select(block, f64x4::splat(0.0));
             acc = vf.mul_add(vf, acc);
             let a = vf.abs();
             let [a0, a1, a2, a3] = a.to_array();

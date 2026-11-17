@@ -472,17 +472,17 @@ impl Scanner {
             } else if path.is_dir() {
                 // Si es un directorio, escaneamos recursivamente
                 for entry in WalkDir::new(path).into_iter().filter_map(|e| e.ok()) {
-                    let p = entry.path();
-                    if p.is_file() {
-                        let ext = p
+                    let path = entry.path();
+                    if path.is_file() {
+                        let ext = path
                             .extension()
                             .and_then(|e| e.to_str())
                             .unwrap_or("")
                             .to_lowercase();
                         if supported_extensions.contains(&ext.as_str()) {
-                            Self::process_file(db_m, p, "", 0, &mut enqueued_covers, true);
+                            Self::process_file(db_m, path, "", 0, &mut enqueued_covers, true);
                             if let Ok(db) = db_m.lock() {
-                                let path_str = p.to_string_lossy();
+                                let path_str = path.to_string_lossy();
                                 if let Ok(Some(song_id)) = db.get_song_id_by_path(&path_str)
                                     && let Err(e) = db.add_song_to_playlist(playlist_id, song_id)
                                 {

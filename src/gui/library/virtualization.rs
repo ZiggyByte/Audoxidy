@@ -1317,7 +1317,7 @@ impl LibraryManager {
                 let margin_bottom: f32 = 0.0;
 
                 let y = bounds.y;
-                let h = bounds.height;
+                let height = bounds.height;
 
                 if force_top {
                     return iced::widget::operation::scroll_to(
@@ -1332,7 +1332,7 @@ impl LibraryManager {
                 if let Some(viewport_rect) = &self.last_viewport {
                     let view_min = self.scroll_offset.y;
                     let view_max = view_min + viewport_rect.height;
-                    let bottom = y + h;
+                    let bottom = y + height;
 
                     if y < view_min + effective_margin_top {
                         return iced::widget::operation::scroll_to(

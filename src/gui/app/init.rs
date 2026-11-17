@@ -1119,9 +1119,9 @@ impl AudoxidyApp {
                 library_manager,
                 audio_center_manager,
                 player_ui_state: {
-                    let mut p = crate::gui::player::PlayerUiState::default();
-                    p.meter.ms_mode = meter_ms_mode;
-                    p
+                    let mut player_ui_state = crate::gui::player::PlayerUiState::default();
+                    player_ui_state.meter.ms_mode = meter_ms_mode;
+                    player_ui_state
                 },
                 window_id: None,
                 last_artist_header_click: None,

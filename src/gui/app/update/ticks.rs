@@ -509,16 +509,16 @@ impl crate::gui::app::AudoxidyApp {
         let current_path = state.path.clone();
         let infinite_hold = state.meter_infinite_hold;
 
-        let m = &mut self.player_ui_state.meter;
+        let meter = &mut self.player_ui_state.meter;
 
         // Track change reset — also resets infinite hold values
-        if current_path != m.last_track_path {
-            let ms_mode = m.ms_mode;
-            let show_numeric = m.show_numeric;
-            *m = crate::gui::player::MeterUiState::default();
-            m.last_track_path = current_path;
-            m.ms_mode = ms_mode;
-            m.show_numeric = show_numeric;
+        if current_path != meter.last_track_path {
+            let ms_mode = meter.ms_mode;
+            let show_numeric = meter.show_numeric;
+            *meter = crate::gui::player::MeterUiState::default();
+            meter.last_track_path = current_path;
+            meter.ms_mode = ms_mode;
+            meter.show_numeric = show_numeric;
             return;
         }
 
@@ -530,7 +530,7 @@ impl crate::gui::app::AudoxidyApp {
         let raw_rms_r = meter_data.read_rms_r();
 
         // ── M/S computation: Mid = (L+R)/2, Side = (L-R)/2 ──
-        let (display_peak_l, display_peak_r, _display_rms_l, _display_rms_r) = if m.ms_mode {
+        let (display_peak_l, display_peak_r, _display_rms_l, _display_rms_r) = if meter.ms_mode {
             let mid_peak = (raw_peak_l + raw_peak_r) / 2.0;
             let side_peak = (raw_peak_l - raw_peak_r) / 2.0;
             let mid_rms = (raw_rms_l + raw_rms_r) / 2.0;
@@ -541,49 +541,49 @@ impl crate::gui::app::AudoxidyApp {
         };
 
         if is_playing {
-            m.is_fading_out = false;
+            meter.is_fading_out = false;
 
             // Peak hold state machine per channel
             if infinite_hold {
                 // Infinite hold: hold values only increase, never decay
-                m.peak_hold_l = m.peak_hold_l.max(display_peak_l);
-                m.peak_hold_r = m.peak_hold_r.max(display_peak_r);
-                m.peak_hold_start_l = None;
-                m.peak_hold_start_r = None;
-                m.peak_decay_l = 0.0;
-                m.peak_decay_r = 0.0;
+                meter.peak_hold_l = meter.peak_hold_l.max(display_peak_l);
+                meter.peak_hold_r = meter.peak_hold_r.max(display_peak_r);
+                meter.peak_hold_start_l = None;
+                meter.peak_hold_start_r = None;
+                meter.peak_decay_l = 0.0;
+                meter.peak_decay_r = 0.0;
             } else {
                 // Normal hold: existing hold timer + decay logic
                 let (new_hold_l, new_start_l, new_decay_l) = peak_hold_step(
-                    m.peak_hold_l,
-                    m.peak_hold_start_l,
-                    m.peak_decay_l,
+                    meter.peak_hold_l,
+                    meter.peak_hold_start_l,
+                    meter.peak_decay_l,
                     display_peak_l,
                 );
-                m.peak_hold_l = new_hold_l;
-                m.peak_hold_start_l = new_start_l;
-                m.peak_decay_l = new_decay_l;
+                meter.peak_hold_l = new_hold_l;
+                meter.peak_hold_start_l = new_start_l;
+                meter.peak_decay_l = new_decay_l;
 
                 let (new_hold_r, new_start_r, new_decay_r) = peak_hold_step(
-                    m.peak_hold_r,
-                    m.peak_hold_start_r,
-                    m.peak_decay_r,
+                    meter.peak_hold_r,
+                    meter.peak_hold_start_r,
+                    meter.peak_decay_r,
                     display_peak_r,
                 );
-                m.peak_hold_r = new_hold_r;
-                m.peak_hold_start_r = new_start_r;
-                m.peak_decay_r = new_decay_r;
+                meter.peak_hold_r = new_hold_r;
+                meter.peak_hold_start_r = new_start_r;
+                meter.peak_decay_r = new_decay_r;
             }
 
             // Asymmetric ballistics — target is max of raw peak and held peak
-            let target_l = display_peak_l.max(m.peak_hold_l);
-            let target_r = display_peak_r.max(m.peak_hold_r);
-            m.display_l = ballistic_step(m.display_l, target_l);
-            m.display_r = ballistic_step(m.display_r, target_r);
+            let target_l = display_peak_l.max(meter.peak_hold_l);
+            let target_r = display_peak_r.max(meter.peak_hold_r);
+            meter.display_l = ballistic_step(meter.display_l, target_l);
+            meter.display_r = ballistic_step(meter.display_r, target_r);
 
             // ── Phase correlation: corr = (L·R) / (|L|·|R|) ──
             // Use RMS-weighted correlation for smoother readout
-            m.phase_corr = if raw_rms_l.abs() > 0.001 && raw_rms_r.abs() > 0.001 {
+            meter.phase_corr = if raw_rms_l.abs() > 0.001 && raw_rms_r.abs() > 0.001 {
                 let corr = (raw_rms_l * raw_rms_r) / (raw_rms_l.abs() * raw_rms_r.abs());
                 corr.clamp(-1.0, 1.0)
             } else {
@@ -591,39 +591,39 @@ impl crate::gui::app::AudoxidyApp {
             };
 
             // ── Crest factor: peak_dBFS - RMS_dBFS ──
-            m.crest_l = if raw_rms_l > crate::gui::widgets::METER_MIN_DB + 1.0 {
+            meter.crest_l = if raw_rms_l > crate::gui::widgets::METER_MIN_DB + 1.0 {
                 raw_peak_l - raw_rms_l
             } else {
                 0.0
             };
-            m.crest_r = if raw_rms_r > crate::gui::widgets::METER_MIN_DB + 1.0 {
+            meter.crest_r = if raw_rms_r > crate::gui::widgets::METER_MIN_DB + 1.0 {
                 raw_peak_r - raw_rms_r
             } else {
                 0.0
             };
-        } else if !m.is_fading_out {
+        } else if !meter.is_fading_out {
             // Transition to pause — capture current display values
-            m.last_playing_l = m.display_l;
-            m.last_playing_r = m.display_r;
-            m.is_fading_out = true;
-            m.fade_out_start = Some(std::time::Instant::now());
+            meter.last_playing_l = meter.display_l;
+            meter.last_playing_r = meter.display_r;
+            meter.is_fading_out = true;
+            meter.fade_out_start = Some(std::time::Instant::now());
         }
         // Note: fade-out animation continues even when !is_playing,
         // because the subscription stays active while is_fading_out == true.
 
         // Pause fade animation
-        if m.is_fading_out
-            && let Some(start) = m.fade_out_start
+        if meter.is_fading_out
+            && let Some(start) = meter.fade_out_start
         {
             let elapsed = start.elapsed().as_secs_f32();
             let fade_secs = METER_FADE_OUT_SECS;
             let factor = (1.0 - elapsed / fade_secs).clamp(0.0, 1.0);
-            m.display_l = m.last_playing_l * factor;
-            m.display_r = m.last_playing_r * factor;
+            meter.display_l = meter.last_playing_l * factor;
+            meter.display_r = meter.last_playing_r * factor;
             if factor <= 0.0 {
-                m.is_fading_out = false;
-                m.display_l = 0.0;
-                m.display_r = 0.0;
+                meter.is_fading_out = false;
+                meter.display_l = 0.0;
+                meter.display_r = 0.0;
             }
         }
     }

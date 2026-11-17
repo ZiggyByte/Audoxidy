@@ -776,21 +776,21 @@ impl AudioCenterManager {
             // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
             if let Ok(db) = db_arc.try_lock() {
                 if let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_20) {
-                    let g: Vec<f32> = val
+                    let gains: Vec<f32> = val
                         .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())
                         .collect();
-                    if g.len() == 20 {
-                        bands_20 = Some(g);
+                    if gains.len() == 20 {
+                        bands_20 = Some(gains);
                     }
                 }
                 if let Some(val) = db.get_setting(KEY_EQ_BAND_GAINS_31) {
-                    let g: Vec<f32> = val
+                    let gains: Vec<f32> = val
                         .split(',')
                         .filter_map(|s| s.parse::<f32>().ok())
                         .collect();
-                    if g.len() == 31 {
-                        bands_31 = Some(g);
+                    if gains.len() == 31 {
+                        bands_31 = Some(gains);
                     }
                 }
             }

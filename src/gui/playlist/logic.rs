@@ -46,10 +46,10 @@ impl PlaylistManager {
                     .collect();
 
                 if !matching_songs.is_empty() {
-                    let mut g = group.clone();
-                    g.songs = matching_songs;
-                    g.total_duration = g.songs.iter().map(|s| s.duration).sum();
-                    Some(g)
+                    let mut group = group.clone();
+                    group.songs = matching_songs;
+                    group.total_duration = group.songs.iter().map(|s| s.duration).sum();
+                    Some(group)
                 } else {
                     None
                 }

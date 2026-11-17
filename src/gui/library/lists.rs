@@ -162,8 +162,8 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     let is_playing = song.full_file_path.as_ref() == playing_path;
 
     let get_col = |col: SortColumn| -> Element<'a, Message> {
-        let w = *column_widths.get(&col).unwrap_or(&100) as f32;
-        let max_chars = ((w - 10.0) / 7.0).max(1.0) as usize;
+        let column_width = *column_widths.get(&col).unwrap_or(&100) as f32;
+        let max_chars = ((column_width - 10.0) / 7.0).max(1.0) as usize;
         let val = format_metadata(song, &col);
         let truncated = truncate_text(&val, max_chars);
 
@@ -210,7 +210,7 @@ pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
             SPACE_LG
         };
         container(content)
-            .width(Length::Fixed(w))
+            .width(Length::Fixed(column_width))
             .height(Length::Fill)
             .center_y(Length::Fill)
             .padding(Padding {

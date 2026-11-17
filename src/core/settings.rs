@@ -4,6 +4,16 @@
 //! they acquire the database lock, read/write data, release the lock,
 //! and return plain data. No lock is held across audio manager calls.
 
+use crate::utils::settings_keys::{
+    KEY_COMPRESSOR_ATTACK_MS, KEY_COMPRESSOR_RATIO, KEY_COMPRESSOR_RELEASE_MS,
+    KEY_COMPRESSOR_THRESHOLD, KEY_CROSSFADE_AUTO_ENABLED, KEY_CROSSFADE_AUTO_MS,
+    KEY_CROSSFADE_ENABLED, KEY_CROSSFADE_MANUAL_ENABLED, KEY_CROSSFADE_MANUAL_MS,
+    KEY_EQ_PRESET_NAME, KEY_FADE_IN_MS, KEY_FADE_OUT_MS, KEY_MID_BASS_CUTOFF, KEY_MID_BASS_GAIN,
+    KEY_PREAMP_GAIN, KEY_REVERB_DAMPING, KEY_REVERB_MIX, KEY_REVERB_ROOM_SIZE, KEY_REVERB_WIDTH,
+    KEY_SUB_BASS_CUTOFF, KEY_SUB_BASS_GAIN, KEY_VOICE_BOOST_CUTOFF, KEY_VOICE_BOOST_GAIN,
+    KEY_VOLUME,
+};
+
 use super::Core;
 use super::error::CoreError;
 use super::types::EqPresetSnapshot;
@@ -43,73 +53,73 @@ impl Core {
 
         let db = self.database.lock().expect("database lock poisoned");
         AudioSettingsSnapshot {
-            eq_preset_name: db.get_setting("eq_preset_name"),
+            eq_preset_name: db.get_setting(KEY_EQ_PRESET_NAME),
             preamp_gain: db
-                .get_setting("preamp_gain")
+                .get_setting(KEY_PREAMP_GAIN)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
             compressor_threshold: db
-                .get_setting("compressor_threshold")
+                .get_setting(KEY_COMPRESSOR_THRESHOLD)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(-20.0),
             compressor_ratio: db
-                .get_setting("compressor_ratio")
+                .get_setting(KEY_COMPRESSOR_RATIO)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(4.0),
             compressor_attack_ms: db
-                .get_setting("compressor_attack_ms")
+                .get_setting(KEY_COMPRESSOR_ATTACK_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10.0),
             compressor_release_ms: db
-                .get_setting("compressor_release_ms")
+                .get_setting(KEY_COMPRESSOR_RELEASE_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100.0),
             reverb_room_size: db
-                .get_setting("reverb_room_size")
+                .get_setting(KEY_REVERB_ROOM_SIZE)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
             reverb_damping: db
-                .get_setting("reverb_damping")
+                .get_setting(KEY_REVERB_DAMPING)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
             reverb_width: db
-                .get_setting("reverb_width")
+                .get_setting(KEY_REVERB_WIDTH)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1.0),
             reverb_mix: db
-                .get_setting("reverb_mix")
+                .get_setting(KEY_REVERB_MIX)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.3),
             volume: db
-                .get_setting("volume")
+                .get_setting(KEY_VOLUME)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.8),
             fade_in_ms: db
-                .get_setting("fade_in_ms")
+                .get_setting(KEY_FADE_IN_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1000),
             fade_out_ms: db
-                .get_setting("fade_out_ms")
+                .get_setting(KEY_FADE_OUT_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2000),
             crossfade_enabled: db
-                .get_setting("crossfade_enabled")
+                .get_setting(KEY_CROSSFADE_ENABLED)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
             crossfade_manual_enabled: db
-                .get_setting("crossfade_manual_enabled")
+                .get_setting(KEY_CROSSFADE_MANUAL_ENABLED)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(false),
             crossfade_manual_ms: db
-                .get_setting("crossfade_manual_ms")
+                .get_setting(KEY_CROSSFADE_MANUAL_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000),
             crossfade_auto_enabled: db
-                .get_setting("crossfade_auto_enabled")
+                .get_setting(KEY_CROSSFADE_AUTO_ENABLED)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(true),
             crossfade_auto_ms: db
-                .get_setting("crossfade_auto_ms")
+                .get_setting(KEY_CROSSFADE_AUTO_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000),
         }
@@ -129,59 +139,59 @@ impl Core {
         let db = self.database.lock().expect("database lock poisoned");
         DspEffectsSnapshot {
             compressor_threshold: db
-                .get_setting("compressor_threshold")
+                .get_setting(KEY_COMPRESSOR_THRESHOLD)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(-20.0),
             compressor_ratio: db
-                .get_setting("compressor_ratio")
+                .get_setting(KEY_COMPRESSOR_RATIO)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(4.0),
             compressor_attack_ms: db
-                .get_setting("compressor_attack_ms")
+                .get_setting(KEY_COMPRESSOR_ATTACK_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(10.0),
             compressor_release_ms: db
-                .get_setting("compressor_release_ms")
+                .get_setting(KEY_COMPRESSOR_RELEASE_MS)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(100.0),
             reverb_room_size: db
-                .get_setting("reverb_room_size")
+                .get_setting(KEY_REVERB_ROOM_SIZE)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
             reverb_damping: db
-                .get_setting("reverb_damping")
+                .get_setting(KEY_REVERB_DAMPING)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.5),
             reverb_width: db
-                .get_setting("reverb_width")
+                .get_setting(KEY_REVERB_WIDTH)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(1.0),
             reverb_mix: db
-                .get_setting("reverb_mix")
+                .get_setting(KEY_REVERB_MIX)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.3),
             sub_bass_cutoff: db
-                .get_setting("sub_bass_cutoff")
+                .get_setting(KEY_SUB_BASS_CUTOFF)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(80.0),
             sub_bass_gain: db
-                .get_setting("sub_bass_gain")
+                .get_setting(KEY_SUB_BASS_GAIN)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
             mid_bass_cutoff: db
-                .get_setting("mid_bass_cutoff")
+                .get_setting(KEY_MID_BASS_CUTOFF)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200.0),
             mid_bass_gain: db
-                .get_setting("mid_bass_gain")
+                .get_setting(KEY_MID_BASS_GAIN)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
             voice_boost_cutoff: db
-                .get_setting("voice_boost_cutoff")
+                .get_setting(KEY_VOICE_BOOST_CUTOFF)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(3000.0),
             voice_boost_gain: db
-                .get_setting("voice_boost_gain")
+                .get_setting(KEY_VOICE_BOOST_GAIN)
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0.0),
         }

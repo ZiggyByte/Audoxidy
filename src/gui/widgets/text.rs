@@ -109,7 +109,7 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
             truncate_text(&content, max_chars)
         };
 
-        let mut r = row![
+        let mut row_element = row![
             text(display_text)
                 .size(size)
                 .font(font)
@@ -123,7 +123,7 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
         .spacing(0);
 
         if !suffix_s.is_empty() {
-            r = r.push(
+            row_element = row_element.push(
                 text(suffix_s)
                     .size(size)
                     .font(font)
@@ -135,7 +135,7 @@ pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
             );
         }
 
-        container(r)
+        container(row_element)
             .width(Length::Fill)
             .height(Length::Shrink)
             .align_x(align_x)

@@ -980,11 +980,11 @@ where
         if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
             && cursor.is_over(layout.bounds())
         {
-            let d = match delta {
+            let delta = match delta {
                 mouse::ScrollDelta::Lines { y, .. } => *y,
                 mouse::ScrollDelta::Pixels { y, .. } => *y / 10.0,
             };
-            shell.publish((self.on_scroll)(d));
+            shell.publish((self.on_scroll)(delta));
             return;
         }
         self.content.as_widget_mut().update(

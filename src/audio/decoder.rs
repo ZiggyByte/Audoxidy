@@ -22,6 +22,18 @@ use symphonia::core::meta::MetadataOptions;
 /// Umbral para usar memoria mapeada en lugar de File normal (> 10 MB)
 const MEMMAP_THRESHOLD: u64 = 10 * 1024 * 1024;
 
+/// Preload request queued until the decoder loop opens the file:
+/// `(path, title, artist, album, cover path, track gain, album gain)`.
+type PendingPreload = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    Option<f64>,
+    Option<f64>,
+);
+
 /// Información técnica del stream de audio decodificado.
 #[derive(Clone, Debug)]
 pub struct DecodeStreamInfo {
@@ -1271,15 +1283,7 @@ fn begin_forward_crossfade(
     preload_album: &mut Option<String>,
     preload_cover: &mut Option<Option<String>>,
     preload_rg: &mut (Option<f32>, Option<f32>),
-    preload_pending: &mut Option<(
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<f64>,
-        Option<f64>,
-    )>,
+    preload_pending: &mut Option<PendingPreload>,
     preloaded_pending: &mut std::collections::VecDeque<f64>,
     fade_state: &mut FadeState,
     silence_samples: &mut usize,
@@ -1484,15 +1488,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
     // Solicitud de pre-carga pendiente: la apertura del archivo (probe de symphonia)
     // NO se hace en el handler del comando (bloquearía la reproducción) sino en el
     // tiempo idle del loop, donde no interrumpe el flujo de audio.
-    let mut preload_pending: Option<(
-        String,
-        String,
-        String,
-        String,
-        Option<String>,
-        Option<f64>,
-        Option<f64>,
-    )> = None;
+    let mut preload_pending: Option<PendingPreload> = None;
     let mut preload_open_rx: Option<crossbeam::channel::Receiver<Result<OpenedPreload, String>>> =
         None;
     let mut predecode_buffer: std::collections::VecDeque<f64> = std::collections::VecDeque::new();

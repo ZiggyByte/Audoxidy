@@ -7,6 +7,19 @@ use super::Database;
 use super::fts5_match_query;
 use super::models::{LibrarySearchParams, SongData};
 
+/// One album row of the grid and list queries:
+/// `(hash id, title, artist, genre, year, cover path)`.
+///
+/// The last slot is the file path resolved from the album's cover hash, not the
+/// hash itself.
+type AlbumSummaryRow = (String, String, String, String, String, Option<String>);
+
+/// One filter-hierarchy row: `(level 1, level 2, level 3)`.
+///
+/// The keys are the interned strings the query already returns; the third level
+/// is absent when the filter type has only two.
+type FilterOptionRow = (Arc<str>, Arc<str>, Option<Arc<str>>);
+
 impl Database {
     // --- Consultas de Alto Rendimiento ---
 
@@ -167,9 +180,7 @@ impl Database {
     }
 
     /// Obtiene todos los álbumes de la biblioteca con metadatos básicos.
-    pub fn get_all_albums(
-        &self,
-    ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
+    pub fn get_all_albums(&self) -> Result<Vec<AlbumSummaryRow>> {
         let mut stmt = self.conn.prepare("
             SELECT DISTINCT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_hash
             FROM ALBUMS al
@@ -205,9 +216,7 @@ impl Database {
 
     /// Obtiene álbumes para la vista Grid, agrupados correctamente para evitar duplicados en compilaciones
     /// Obtiene álbumes para la vista Grid, agrupados por artista sin duplicados.
-    pub fn get_grid_items_by_artist(
-        &self,
-    ) -> Result<Vec<(String, String, String, String, String, Option<String>)>> {
+    pub fn get_grid_items_by_artist(&self) -> Result<Vec<AlbumSummaryRow>> {
         let mut stmt = self.conn.prepare("
             SELECT al.hash_id, al.title, ar.name, al.genre, al.year, al.cover_hash
             FROM ALBUMS al
@@ -557,16 +566,7 @@ impl Database {
     /// Obtiene los datos necesarios para construir el árbol de filtros de forma eficiente.
     /// Retorna una lista de tuplas (L1, L2, L3) según el tipo de filtro solicitado.
     /// Obtiene la jerarquía de filtros (L1, L2, L3) para el árbol de navegación.
-    pub fn get_filter_hierarchy(
-        &self,
-        filter_type: &str,
-    ) -> Result<
-        Vec<(
-            std::sync::Arc<str>,
-            std::sync::Arc<str>,
-            Option<std::sync::Arc<str>>,
-        )>,
-    > {
+    pub fn get_filter_hierarchy(&self, filter_type: &str) -> Result<Vec<FilterOptionRow>> {
         let query = match filter_type {
             "Genre" => {
                 "

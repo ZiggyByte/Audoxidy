@@ -597,13 +597,13 @@ impl<Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeter
         // ── Draw scale ticks and labels ──
         let tick_font_size = 7.0;
         for &(db, _is_major) in METER_TICKS {
-            let tx = Self::db_to_x(db, bar_left, bar_width);
+            let tick_x = Self::db_to_x(db, bar_left, bar_width);
 
             // Tick line: 4px tall
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: iced::Rectangle::new(
-                        iced::Point::new(tx, scale_y),
+                        iced::Point::new(tick_x, scale_y),
                         iced::Size::new(1.0, 4.0),
                     ),
                     border: iced::Border::default(),
@@ -626,10 +626,10 @@ impl<Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeter
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::advanced::text::Wrapping::None,
                 },
-                iced::Point::new(tx - 10.0, scale_y + 4.0),
+                iced::Point::new(tick_x - 10.0, scale_y + 4.0),
                 COLOR_TEXT_SECONDARY,
                 iced::Rectangle::new(
-                    iced::Point::new(tx - 10.0, scale_y + 4.0),
+                    iced::Point::new(tick_x - 10.0, scale_y + 4.0),
                     iced::Size::new(20.0, 7.0),
                 ),
             );

@@ -84,14 +84,14 @@ pub fn cover_writes_in_flight() -> usize {
 /// `file_name` is the complete name the writer stores the cover under; it is
 /// forwarded untouched, so the gateway channel carries no other representation.
 pub fn enqueue_cover_job(data: Vec<u8>, file_name: String) {
-    let tx = COVER_GATEWAY.get_or_init(|| {
-        let (tx, rx) = crossbeam::channel::bounded::<(Vec<u8>, String)>(16);
+    let sender = COVER_GATEWAY.get_or_init(|| {
+        let (sender, receiver) = crossbeam::channel::bounded::<(Vec<u8>, String)>(16);
 
         let pool = get_cover_pool();
 
         // Spawn persistent worker threads in the pool that consume from the channel.
         for _ in 0..pool.current_num_threads() {
-            let rx_worker = rx.clone();
+            let rx_worker = receiver.clone();
             pool.spawn(move || {
                 while let Ok((pic, name)) = rx_worker.recv() {
                     let _ = std::panic::catch_unwind(move || {
@@ -108,11 +108,11 @@ pub fn enqueue_cover_job(data: Vec<u8>, file_name: String) {
             });
         }
 
-        tx
+        sender
     });
 
     COVER_WRITES_IN_FLIGHT.fetch_add(1, Ordering::Relaxed);
-    if tx.send((data, file_name)).is_err() {
+    if sender.send((data, file_name)).is_err() {
         // Nothing will be written, so the queue depth must not keep the sweep away.
         COVER_WRITES_IN_FLIGHT.fetch_sub(1, Ordering::Relaxed);
     }

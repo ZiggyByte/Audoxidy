@@ -2037,10 +2037,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 ),
                                 Err(e) => tracing::error!("Pre-carga falló: {}", e),
                             }
-                        } else if let Some(rx) = preload_open_rx.take() {
+                        } else if let Some(receiver) = preload_open_rx.take() {
                             // The helper thread is opening the next track; block for
                             // its result instead of dropping the mix.
-                            match rx.recv_timeout(std::time::Duration::from_secs(2)) {
+                            match receiver.recv_timeout(std::time::Duration::from_secs(2)) {
                                 Ok(Ok(opened)) => install_opened_preload(
                                     opened,
                                     &mut preload_format,
@@ -2315,18 +2315,18 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             // this preload instead of allocating a second one.
             reuse_drained_preload_buffer(&mut preloaded_pending, &mut predecode_buffer);
             if let Some(request) = preload_pending.take() {
-                let (tx, rx) = crossbeam::channel::bounded(1);
+                let (sender, receiver) = crossbeam::channel::bounded(1);
                 std::thread::spawn(move || {
                     let opened =
                         open_preload_track_blocking(request).map_err(|error| error.to_string());
-                    let _ = tx.send(opened);
+                    let _ = sender.send(opened);
                 });
-                preload_open_rx = Some(rx);
+                preload_open_rx = Some(receiver);
             }
         }
 
-        if let Some(rx) = preload_open_rx.take() {
-            match rx.try_recv() {
+        if let Some(receiver) = preload_open_rx.take() {
+            match receiver.try_recv() {
                 Ok(Ok(opened)) => {
                     let (out_rate_now, out_channels_now) = {
                         let s = state.read();
@@ -2364,7 +2364,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     tracing::error!("Pre-carga falló: {}", error);
                 }
                 Err(crossbeam::channel::TryRecvError::Empty) => {
-                    preload_open_rx = Some(rx);
+                    preload_open_rx = Some(receiver);
                 }
                 Err(crossbeam::channel::TryRecvError::Disconnected) => {
                     tracing::error!("Pre-carga: el hilo de apertura terminó sin resultado");

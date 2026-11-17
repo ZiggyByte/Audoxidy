@@ -188,9 +188,9 @@ impl Database {
             return Ok(0);
         }
 
-        let tx = self.conn.transaction()?;
+        let transaction = self.conn.transaction()?;
 
-        let max_seq: Option<f64> = tx
+        let max_seq: Option<f64> = transaction
             .query_row(
                 "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
                 [playlist_id],
@@ -203,7 +203,7 @@ impl Database {
         let mut count = 0;
 
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = transaction.prepare_cached(
                 "INSERT OR IGNORE INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)"
             )?;
 
@@ -216,7 +216,7 @@ impl Database {
             }
         }
 
-        tx.commit()?;
+        transaction.commit()?;
         Ok(count)
     }
 
@@ -238,16 +238,16 @@ impl Database {
         if song_ids.is_empty() {
             return Ok(());
         }
-        let tx = self.conn.transaction()?;
+        let transaction = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = transaction.prepare_cached(
                 "DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
             )?;
             for &song_id in song_ids {
                 stmt.execute(params![playlist_id, song_id])?;
             }
         }
-        tx.commit()?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -309,16 +309,16 @@ impl Database {
         }
 
         let val = if enabled { 1 } else { 0 };
-        let tx = self.conn.transaction()?;
+        let transaction = self.conn.transaction()?;
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = transaction.prepare_cached(
                 "UPDATE PLAYLIST_ITEMS SET enabled = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
             )?;
             for song_id in song_ids {
                 stmt.execute(params![val, playlist_id, song_id])?;
             }
         }
-        tx.commit()?;
+        transaction.commit()?;
         Ok(song_ids.len())
     }
 
@@ -370,25 +370,25 @@ impl Database {
         first_song_id: i64,
         second_song_id: i64,
     ) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        let first_order: f64 = tx.query_row(
+        let transaction = self.conn.transaction()?;
+        let first_order: f64 = transaction.query_row(
             "SELECT sequence_order FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
             params![playlist_id, first_song_id],
             |row| row.get(0),
         )?;
-        let second_order: f64 = tx.query_row(
+        let second_order: f64 = transaction.query_row(
             "SELECT sequence_order FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
             params![playlist_id, second_song_id],
             |row| row.get(0),
         )?;
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = transaction.prepare_cached(
                 "UPDATE PLAYLIST_ITEMS SET sequence_order = ?1 WHERE playlist_id = ?2 AND song_id = ?3",
             )?;
             stmt.execute(params![second_order, playlist_id, first_song_id])?;
             stmt.execute(params![first_order, playlist_id, second_song_id])?;
         }
-        tx.commit()?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -453,9 +453,9 @@ impl Database {
         if song_ids.is_empty() {
             return Ok(());
         }
-        let tx = self.conn.transaction()?;
+        let transaction = self.conn.transaction()?;
 
-        let max_seq: Option<f64> = tx
+        let max_seq: Option<f64> = transaction
             .query_row(
                 "SELECT MAX(sequence_order) FROM PLAYLIST_ITEMS WHERE playlist_id = ?1",
                 [to_playlist_id],
@@ -466,10 +466,10 @@ impl Database {
         let mut next_seq = max_seq.map(|s| s + 1.0).unwrap_or(1.0);
 
         {
-            let mut stmt_del = tx.prepare_cached(
+            let mut stmt_del = transaction.prepare_cached(
                 "DELETE FROM PLAYLIST_ITEMS WHERE playlist_id = ?1 AND song_id = ?2",
             )?;
-            let mut stmt_ins = tx.prepare_cached("INSERT INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)")?;
+            let mut stmt_ins = transaction.prepare_cached("INSERT INTO PLAYLIST_ITEMS (playlist_id, song_id, sequence_order) VALUES (?1, ?2, ?3)")?;
 
             for &song_id in song_ids {
                 stmt_del.execute(params![from_playlist_id, song_id])?;
@@ -478,7 +478,7 @@ impl Database {
             }
         }
 
-        tx.commit()?;
+        transaction.commit()?;
         Ok(())
     }
 
@@ -771,16 +771,16 @@ impl Database {
         playlist_id: i64,
         session: &ShuffleSession,
     ) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let transaction = self.conn.transaction()?;
 
         // Limpiar sesión previa del mismo playlist (si existe)
-        tx.execute(
+        transaction.execute(
             "DELETE FROM PLAYLIST_SHUFFLE_HISTORY WHERE playlist_id = ?1",
             [playlist_id],
         )?;
 
         {
-            let mut stmt = tx.prepare_cached(
+            let mut stmt = transaction.prepare_cached(
                 "INSERT INTO PLAYLIST_SHUFFLE_HISTORY (playlist_id, session_id, song_id, play_order) VALUES (?1, ?2, ?3, ?4)"
             )?;
 
@@ -804,7 +804,7 @@ impl Database {
         }
 
         // Actualizar también en la tabla PLAYLISTS
-        tx.execute(
+        transaction.execute(
             "UPDATE PLAYLISTS SET shuffle_pos = ?1, shuffle_id = ?2 WHERE id = ?3",
             params![
                 session.current_position as i64,
@@ -813,7 +813,7 @@ impl Database {
             ],
         )?;
 
-        tx.commit()?;
+        transaction.commit()?;
         Ok(())
     }
 

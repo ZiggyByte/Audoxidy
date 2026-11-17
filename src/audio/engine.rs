@@ -179,11 +179,11 @@ pub enum AudioCommand {
 /// Intenta el envío no bloqueante y, si la cola está llena, recurre al envío
 /// bloqueante. El decoder drena en cada iteración, así que con la capacidad
 /// acotada la espera es breve; los comandos de control nunca se descartan.
-fn send_control(tx: &Sender<AudioCommand>, cmd: AudioCommand) {
-    match tx.try_send(cmd) {
+fn send_control(sender: &Sender<AudioCommand>, cmd: AudioCommand) {
+    match sender.try_send(cmd) {
         Ok(()) => {}
         Err(TrySendError::Full(cmd)) => {
-            if let Err(e) = tx.send(cmd) {
+            if let Err(e) = sender.send(cmd) {
                 tracing::warn!("command channel disconnected: {e}");
             }
         }
@@ -197,8 +197,8 @@ fn send_control(tx: &Sender<AudioCommand>, cmd: AudioCommand) {
 ///
 /// El decoder ya reemplaza una pre-carga pendiente por la más reciente, así que
 /// perderla solo degrada a una transición sin crossfade.
-fn send_preload(tx: &Sender<AudioCommand>, cmd: AudioCommand) {
-    if let Err(TrySendError::Full(_)) = tx.try_send(cmd) {
+fn send_preload(sender: &Sender<AudioCommand>, cmd: AudioCommand) {
+    if let Err(TrySendError::Full(_)) = sender.try_send(cmd) {
         tracing::debug!("preload command dropped (queue full; preload is best-effort)");
     }
 }

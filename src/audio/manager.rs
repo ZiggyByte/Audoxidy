@@ -104,6 +104,10 @@ impl AudioManager {
     ///
     /// Si no se proporcionan ganancias ReplayGain, se consultan en la BD
     /// si está disponible.
+    // One track's metadata plus its two replay-gain values, forwarded positionally to the
+    // engine; the gains are also resolved from the database just above, so a wrapper type
+    // would hide the two fields this body mutates in place.
+    #[allow(clippy::too_many_arguments)]
     pub fn load_file(
         &self,
         path: &str,
@@ -144,6 +148,9 @@ impl AudioManager {
     ///
     /// Igual que `load_file` pero envía un comando de pre-carga (la canción se decodifica
     /// por adelantado y se promueve sin pausa cuando termina la actual).
+    // The metadata and replay-gain pair `load_file` takes, preloaded rather than played;
+    // both entry points forward the same list to the engine in the same order.
+    #[allow(clippy::too_many_arguments)]
     pub fn preload_next(
         &self,
         path: &str,

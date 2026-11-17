@@ -995,6 +995,10 @@ impl AudioEngine {
     /// Encola un archivo para decodificación en el hilo de fondo.
     ///
     /// Envía un comando `AudioCommand::Load` al canal `crossbeam`.
+    // The arguments are the fields of the `AudioCommand::Load` this method builds, in the
+    // same order; a parameter struct would be constructed here and taken apart one line
+    // later.
+    #[allow(clippy::too_many_arguments)]
     pub fn decode_file(
         &self,
         path: &str,
@@ -1023,6 +1027,9 @@ impl AudioEngine {
     /// Pre-carga la siguiente canción en el hilo decodificador para transiciones sin cortes.
     ///
     /// Envía un comando `AudioCommand::PreloadNext` al canal `crossbeam`.
+    // The same metadata and replay-gain pair `decode_file` carries, preloaded instead of
+    // played; grouping them would only move the list into a type both entry points share.
+    #[allow(clippy::too_many_arguments)]
     pub fn preload_file(
         &self,
         path: &str,
@@ -1198,6 +1205,10 @@ impl AudioEngine {
         map
     }
 
+    // Twelve sample values cross this boundary as separate arguments so each one stays in
+    // a register: the caller reads them out of the input planes in the frame loop, and a
+    // struct would be written to memory and read back through a pointer per sample.
+    #[allow(clippy::too_many_arguments)]
     fn mix_sample_into_vec(
         out: &mut Vec<f64>,
         dst_ch: usize,

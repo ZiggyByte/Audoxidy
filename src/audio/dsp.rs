@@ -798,6 +798,10 @@ impl Reverb {
         self.feedback_gain = 0.7 + room_size * 0.25;
     }
 
+    // Runs once per output channel of every frame: the three mutable borrows point at the
+    // per-channel arrays in `self.channels` and the scalars come from the shared reverb
+    // state, so a wrapper would be rebuilt for every channel of every frame.
+    #[allow(clippy::too_many_arguments)]
     fn process_channel(
         delay_lines: &mut [DelayLine],
         damping_states: &mut [f64],

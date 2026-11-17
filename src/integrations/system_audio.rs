@@ -23,10 +23,10 @@ pub fn is_pipewire_active() -> bool {
 /// (su callback sigue drenando el ringbuf pero el audio no llega al dispositivo).
 pub fn apply_pipewire_clock(rate: Option<u32>, quantum: Option<u32>) {
     let rate_str = rate
-        .map(|r| r.to_string())
+        .map(|sample_rate| sample_rate.to_string())
         .unwrap_or_else(|| "0".to_string());
     let quantum_str = quantum
-        .map(|q| q.to_string())
+        .map(|quantum_frames| quantum_frames.to_string())
         .unwrap_or_else(|| "0".to_string());
 
     let rate_result = std::process::Command::new("pw-metadata")
@@ -78,8 +78,8 @@ pub fn persist_pipewire_conf(rate: Option<u32>, quantum: Option<u32>) {
                 sample_rate
             ));
         }
-        if let Some(q) = quantum {
-            content.push_str(&format!("    default.clock.quantum = {}\n", q));
+        if let Some(quantum_frames) = quantum {
+            content.push_str(&format!("    default.clock.quantum = {}\n", quantum_frames));
         }
         content.push_str("}\n");
         if let Err(e) = std::fs::write(&file_path, content) {
@@ -126,9 +126,10 @@ pub fn persist_pulse_conf(rate: Option<u32>, quantum: Option<u32>) {
                 lines.push(format!("default-sample-rate = {}", sample_rate));
                 lines.push(format!("alternate-sample-rate = {}", sample_rate));
             }
-            if let Some(q) = quantum {
+            if let Some(quantum_frames) = quantum {
                 let sample_rate = rate.unwrap_or(48000);
-                let msec = ((q as f64 / sample_rate as f64) * 1000.0 / 2.0).max(1.0) as u32;
+                let msec =
+                    ((quantum_frames as f64 / sample_rate as f64) * 1000.0 / 2.0).max(1.0) as u32;
                 lines.push("default-fragments = 2".to_string());
                 lines.push(format!("default-fragment-size-msec = {}", msec));
             }
@@ -221,9 +222,9 @@ pub fn system_sound_status() -> (String, String) {
             sys_rate.clone()
         };
 
-        let active_sys_quantum = if let Some(ref fq) = sys_force_quantum {
-            if fq != "0" {
-                Some(fq.clone())
+        let active_sys_quantum = if let Some(ref forced_quantum) = sys_force_quantum {
+            if forced_quantum != "0" {
+                Some(forced_quantum.clone())
             } else {
                 sys_quantum.clone()
             }
@@ -232,16 +233,17 @@ pub fn system_sound_status() -> (String, String) {
         };
 
         let status = match (active_sys_rate.clone(), active_sys_quantum.clone()) {
-            (Some(r), Some(q)) => format!("{} Hz | {}", r, q),
-            (Some(r), None) => format!("{} Hz | --", r),
-            (None, Some(q)) => format!("-- | {}", q),
+            (Some(sample_rate), Some(quantum)) => format!("{} Hz | {}", sample_rate, quantum),
+            (Some(sample_rate), None) => format!("{} Hz | --", sample_rate),
+            (None, Some(quantum)) => format!("-- | {}", quantum),
             _ => "--".to_string(),
         };
         let lat = match (active_sys_rate, active_sys_quantum) {
             (Some(r_str), Some(q_str)) => {
-                if let (Ok(r), Ok(q)) = (r_str.parse::<f64>(), q_str.parse::<f64>()) {
-                    if r > 0.0 {
-                        format!("Latencia: {:.2} ms", (q / r) * 1000.0)
+                if let (Ok(sample_rate), Ok(quantum)) = (r_str.parse::<f64>(), q_str.parse::<f64>())
+                {
+                    if sample_rate > 0.0 {
+                        format!("Latencia: {:.2} ms", (quantum / sample_rate) * 1000.0)
                     } else {
                         "Latencia: -- ms".to_string()
                     }
@@ -283,16 +285,16 @@ pub fn system_sound_status() -> (String, String) {
         }
 
         let status = match (pulse_rate.clone(), pulse_quantum.clone()) {
-            (Some(r), Some(q)) => format!("{} Hz | {} ms", r, q),
-            (Some(r), None) => format!("{} Hz | --", r),
-            (None, Some(q)) => format!("-- | {} ms", q),
+            (Some(sample_rate), Some(quantum)) => format!("{} Hz | {} ms", sample_rate, quantum),
+            (Some(sample_rate), None) => format!("{} Hz | --", sample_rate),
+            (None, Some(quantum)) => format!("-- | {} ms", quantum),
             _ => "--".to_string(),
         };
-        let lat = if let Some(q) = pulse_quantum {
-            if let Ok(q_f) = q.parse::<f64>() {
+        let lat = if let Some(quantum) = pulse_quantum {
+            if let Ok(q_f) = quantum.parse::<f64>() {
                 format!("Latencia: {:.2} ms", q_f)
             } else {
-                format!("Latencia: {} ms", q)
+                format!("Latencia: {} ms", quantum)
             }
         } else {
             "Latencia: -- ms".to_string()

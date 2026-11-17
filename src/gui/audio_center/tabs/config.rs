@@ -178,10 +178,10 @@ pub(super) fn view_audio_config<'a>(
         OptionWrapper::new("Automatico", SystemSelection::Automatic),
     ];
     let sys_quantums = [256, 512, 1024, 2048, 4096, 8192];
-    for &q in &sys_quantums {
+    for &quantum in &sys_quantums {
         system_quantum_options.push(OptionWrapper::new(
-            format!("{}", q),
-            SystemSelection::Fixed(q),
+            format!("{}", quantum),
+            SystemSelection::Fixed(quantum),
         ));
     }
     let selected_sys_quantum_opt = Some(OptionWrapper::new(

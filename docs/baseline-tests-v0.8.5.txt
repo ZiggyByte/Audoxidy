@@ -35,6 +35,7 @@ audio::decoder::preload_handoff_tests::test_preload_batch_is_never_truncated_at_
 audio::decoder::preload_send_tests::test_opened_preload_is_send
 audio::device_manager::tests::linux_base_latency_is_10ms
 audio::device_manager::tests::test_cpal_format_mapping_exhaustive
+audio::device_manager::tests::test_default_audio_device_manager_matches_new
 audio::device_manager::tests::test_resolve_device_id_prefers_stable
 audio::dsp::fwht_tests::test_fwht_equals_dense_hadamard
 audio::dsp::fwht_tests::test_reverb_process_fwht_matches_dense_reference
@@ -66,6 +67,7 @@ audio::integration_tests::integration_tests::test_playlist_crud_operations
 audio::integration_tests::integration_tests::test_playlist_multiple_crud
 audio::meter::tests::test_atomic_roundtrip
 audio::meter::tests::test_clipping_value_roundtrip
+audio::meter::tests::test_default_meter_data_matches_new
 audio::meter::tests::test_positive_value_roundtrip
 audio::meter::tests::test_silence_initial_value
 audio::meter::tests::test_zero_roundtrip
@@ -307,6 +309,7 @@ dsp_tests::tests::test_compressor_reset_state
 dsp_tests::tests::test_compressor_rms_vs_peak
 dsp_tests::tests::test_compressor_soft_knee_curve
 dsp_tests::tests::test_compressor_zero_threshold_bypass
+dsp_tests::tests::test_default_compressor_matches_new
 dsp_tests::tests::test_dsp_chain_default_enabled
 dsp_tests::tests::test_dsp_chain_multichannel_no_garbage
 dsp_tests::tests::test_dsp_chain_nan_inf_stress_multichannel

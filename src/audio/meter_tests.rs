@@ -16,6 +16,18 @@ fn test_silence_initial_value() {
     assert_eq!(meter.read_rms_r(), f32::NEG_INFINITY);
 }
 
+/// `Default` delegates to `new()` instead of deriving: a derived default would
+/// leave every atomic at zero, which reads as 0.0 dBFS — full scale — where the
+/// meter expects silence.
+#[test]
+fn test_default_meter_data_matches_new() {
+    let defaulted = MeterData::default();
+    assert_eq!(defaulted.read_peak_l(), f32::NEG_INFINITY);
+    assert_eq!(defaulted.read_rms_l(), f32::NEG_INFINITY);
+    assert_eq!(defaulted.read_peak_r(), f32::NEG_INFINITY);
+    assert_eq!(defaulted.read_rms_r(), f32::NEG_INFINITY);
+}
+
 #[test]
 fn test_atomic_roundtrip() {
     let meter = MeterData::new();

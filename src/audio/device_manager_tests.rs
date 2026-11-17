@@ -93,3 +93,19 @@ fn test_resolve_device_id_prefers_stable() {
         DeviceLookup::Default
     );
 }
+
+/// `Default` delega en `new()`: ninguno de los dos constructores selecciona salida,
+/// así que no hay host, dispositivo ni formato guardado.
+#[test]
+fn test_default_audio_device_manager_matches_new() {
+    let defaulted = AudioDeviceManager::default();
+    let constructed = AudioDeviceManager::new();
+
+    for manager in [&defaulted, &constructed] {
+        assert!(manager.get_device().is_none());
+        assert!(manager.get_stream_config().is_none());
+        assert!(manager.get_sample_format().is_none());
+    }
+    // El hueco completo está vacío: no se almacenó host, dispositivo ni configuración.
+    assert!(defaulted.take_output().is_none());
+}

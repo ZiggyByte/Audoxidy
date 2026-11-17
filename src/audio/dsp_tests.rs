@@ -269,6 +269,29 @@ mod tests {
         assert!(!compressor.enabled);
     }
 
+    /// `Default` delegates to `new()`: a derived default would zero every parameter,
+    /// leaving a 0 dB threshold and no intensity curve.
+    #[test]
+    fn test_default_compressor_matches_new() {
+        let defaulted = Compressor::default();
+        let constructed = Compressor::new();
+
+        assert_eq!(defaulted.enabled, constructed.enabled);
+        assert!((defaulted.threshold - constructed.threshold).abs() < 1e-6);
+        assert!((defaulted.intensity - constructed.intensity).abs() < 1e-6);
+        assert!((defaulted.intensity_ratio - constructed.intensity_ratio).abs() < 1e-6);
+        assert!((defaulted.envelope - constructed.envelope).abs() < 1e-6);
+        assert_eq!(defaulted.lookahead_samples, constructed.lookahead_samples);
+
+        // The fields a derive would zero: `new()` sets the -3 dB threshold and runs
+        // `update_intensity_params()`, which derives the 4.0 ratio together with the
+        // attack, release, knee and makeup values computed in the same call.
+        assert!((defaulted.threshold - (-3.0)).abs() < 1e-6);
+        assert!((defaulted.intensity - 0.5).abs() < 1e-6);
+        assert!((defaulted.intensity_ratio - 4.0).abs() < 1e-6);
+        assert_eq!(defaulted.lookahead_samples, 44);
+    }
+
     #[test]
     fn test_compressor_params_defaults() {
         let compressor = Compressor::new();

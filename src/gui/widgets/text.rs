@@ -70,6 +70,10 @@ pub fn smart_truncate_text_with_suffix<'a, Message: Clone + 'a>(
 /// Alineaciones (Usando el enum `Alignment` de Iced):
 /// - `align_x`: Alineación HORIZONTAL (Start = Izquierda, Center = Centro, End = Derecha).
 /// - `align_y`: Alineación VERTICAL (Start = Arriba, Center = Centro, End = Abajo).
+// The content, the three typography choices, the wrapping rule, the suffix and the two
+// alignments are the independent knobs of one text element; this is the full-control
+// variant, so a struct would only move the same list behind a name.
+#[allow(clippy::too_many_arguments)]
 pub fn smart_truncate_text_advanced<'a, Message: Clone + 'a>(
     content: String,
     size: f32,

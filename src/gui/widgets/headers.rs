@@ -7,6 +7,11 @@ use crate::gui::dimensions::{
 use iced::widget::column;
 
 /// Construye una barra de ordenamiento interactiva, reciclable para cualquier tabla.
+// The arguments are the table's sort state — its columns, the active column, the widths
+// and the two in-flight hover/resize columns — plus the three callbacks that report that
+// state and the inset the bar sits at; the caller owns all of it, so a struct would only
+// be assembled to be read in the same call.
+#[allow(clippy::too_many_arguments)]
 pub fn build_sort_bar<'a, Message: Clone + 'a>(
     columns: &[SortColumn],
     current_sort: Option<SortColumn>,
@@ -178,6 +183,10 @@ pub fn build_sort_bar<'a, Message: Clone + 'a>(
 }
 
 /// Renderiza la cabecera de un grupo de artistas (Gris oscuro, 32px).
+// The name, the counts and the duration it prints, the three states it renders and the
+// height it fills are the header's own content, and the two messages are what it emits;
+// grouping them would only add a wrapper the caller fills field by field before one call.
+#[allow(clippy::too_many_arguments)]
 pub fn artist_header_widget<'a, Message: Clone + 'a>(
     name: String,
     is_collapsed: bool,
@@ -262,6 +271,10 @@ pub fn artist_header_widget<'a, Message: Clone + 'a>(
 }
 
 /// Renderiza la cabecera de un grupo de álbumes dentro de un artista.
+// The album's name, count and duration plus the expanded, selected and playing states it
+// paints and the height it fills; every caller sets them from the row it is rendering, so
+// a struct would be filled field by field for a single call.
+#[allow(clippy::too_many_arguments)]
 pub fn album_header_widget<'a, Message: Clone + 'a>(
     album_name: String,
     songs_count: usize,

@@ -165,6 +165,10 @@ where
 
 /// Toggler con control total de colores, incluyendo fondo del estado inactivo.
 /// - `inactive_bg_color`: Color de fondo cuando está desactivado (por defecto TRANSPARENT).
+// The arguments are the control's own state, its size and the five colors that paint it;
+// each call site chooses them together, and a struct would only be built to be read inside
+// the style closure.
+#[allow(clippy::too_many_arguments)]
 pub fn standard_toggler_full<'a, Message>(
     is_active: bool,
     on_toggle: impl Fn(bool) -> Message + 'a,

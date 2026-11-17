@@ -1447,6 +1447,10 @@ impl<'a, Message> CustomSlider<'a, Message> {
     }
 
     /// Estilo completo del input de teclado
+    // One builder call that sets the whole input palette: each argument lands on its own
+    // option field below, in order, and a caller that wants the full style names them
+    // together; a struct would only add a second type holding the same list.
+    #[allow(clippy::too_many_arguments)]
     pub fn input_style(
         mut self,
         bg: Option<Color>,

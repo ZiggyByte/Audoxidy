@@ -58,10 +58,10 @@ fn main() -> iced::Result {
     // restore the saved size, position and maximized state. Applying it here,
     // while the window is created, avoids the flash of opening at one size and
     // maximizing moments later.
-    let ui = &app_config.ui;
-    let window_maximized = ui.starts_maximized();
-    let window_size = ui.startup_size();
-    let window_position = match ui.startup_position() {
+    let ui_config = &app_config.ui;
+    let window_maximized = ui_config.starts_maximized();
+    let window_size = ui_config.startup_size();
+    let window_position = match ui_config.startup_position() {
         Some((x, y)) => iced::window::Position::Specific(iced::Point::new(x, y)),
         None => iced::window::Position::Centered,
     };

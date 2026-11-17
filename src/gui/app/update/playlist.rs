@@ -27,7 +27,7 @@ impl crate::gui::app::AudoxidyApp {
                         }
                         active_id
                     },
-                    |id| Message::SwitchPlaylist(id, false),
+                    |playlist_id| Message::SwitchPlaylist(playlist_id, false),
                 )
             }
             Message::PlayAlbum(songs) => {
@@ -47,7 +47,7 @@ impl crate::gui::app::AudoxidyApp {
                         }
                         active_id
                     },
-                    |id| Message::SwitchPlaylist(id, false),
+                    |playlist_id| Message::SwitchPlaylist(playlist_id, false),
                 )
             }
             Message::PlaySongIndex(idx) => {
@@ -254,11 +254,11 @@ impl crate::gui::app::AudoxidyApp {
                 let active_id = self.playlist_manager.active_playlist_id;
                 self.playlist_manager.playlists = playlists;
 
-                if let Some(id) = id_opt {
-                    if id > 0 {
+                if let Some(playlist_id) = id_opt {
+                    if playlist_id > 0 {
                         // Es un rename o create con ID específico
-                        return Task::done(Message::SwitchPlaylist(id, false));
-                    } else if id == 0 {
+                        return Task::done(Message::SwitchPlaylist(playlist_id, false));
+                    } else if playlist_id == 0 {
                         // Es un delete, verificar si la lista activa murió
                         let still_exists = self
                             .playlist_manager
@@ -396,8 +396,14 @@ impl crate::gui::app::AudoxidyApp {
                         }
                         (id, auto_play, groups, p_data, session_opt)
                     },
-                    |(id, auto_play, groups, p_data, session)| {
-                        Message::InternalPlaylistLoaded(id, auto_play, groups, p_data, session)
+                    |(playlist_id, auto_play, groups, p_data, session)| {
+                        Message::InternalPlaylistLoaded(
+                            playlist_id,
+                            auto_play,
+                            groups,
+                            p_data,
+                            session,
+                        )
                     },
                 )
             }
@@ -561,11 +567,11 @@ impl crate::gui::app::AudoxidyApp {
 
                 let prioritized = system.into_iter().chain(others);
 
-                for pl in prioritized {
+                for playlist in prioritized {
                     entries.push(ContextMenuEntry {
-                        label: pl.name.clone(),
+                        label: playlist.name.clone(),
                         icon: Some("playlist-music.svg".to_string()),
-                        action: Some(Message::SwitchPlaylist(pl.id, false)),
+                        action: Some(Message::SwitchPlaylist(playlist.id, false)),
                     });
                 }
 
@@ -605,8 +611,8 @@ impl crate::gui::app::AudoxidyApp {
                 self.focus = AppFocus::Playlist;
                 if self.playlist_manager.data_unloaded {
                     self.playlist_manager.data_unloaded = false;
-                    let id = self.playlist_manager.active_playlist_id;
-                    return self.update(Message::SwitchPlaylist(id, false));
+                    let playlist_id = self.playlist_manager.active_playlist_id;
+                    return self.update(Message::SwitchPlaylist(playlist_id, false));
                 }
                 focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
@@ -933,7 +939,7 @@ impl crate::gui::app::AudoxidyApp {
                         }
                         playlist_id
                     },
-                    |id| Message::SwitchPlaylist(id, false),
+                    |playlist_id| Message::SwitchPlaylist(playlist_id, false),
                 )
             }
             Message::PlaylistRequestSubMenu(linear_idx) => {
@@ -987,11 +993,11 @@ impl crate::gui::app::AudoxidyApp {
 
                 let prioritized = system.into_iter().chain(others);
 
-                for pl in prioritized {
+                for playlist in prioritized {
                     entries.push(ContextMenuEntry {
-                        label: pl.name.clone(),
+                        label: playlist.name.clone(),
                         icon: Some("playlist-music.svg".to_string()),
-                        action: Some(Message::PlaylistSendToList(linear_idx, pl.id)),
+                        action: Some(Message::PlaylistSendToList(linear_idx, playlist.id)),
                     });
                 }
 

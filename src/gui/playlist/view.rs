@@ -76,9 +76,9 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
 
     for p_data in playlists.iter() {
         let name = &p_data.name;
-        let id = p_data.id;
+        let playlist_id = p_data.id;
 
-        let is_active = id == manager.active_playlist_id;
+        let is_active = playlist_id == manager.active_playlist_id;
         let tab_color = if is_active {
             COLOR_TEXT_PRIMARY
         } else {
@@ -92,13 +92,13 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
         let tab_btn = button(tab)
             .padding([SPACE_XS, SPACE_XS])
             .style(|_t: &Theme, _s| button::Style::default().with_background(Color::TRANSPARENT))
-            .on_press(Message::SwitchPlaylist(id, false));
+            .on_press(Message::SwitchPlaylist(playlist_id, false));
 
         let tab_entries = vec![
             crate::gui::widgets::ContextMenuEntry {
                 label: "Reproducir".to_string(),
                 icon: Some("playlist-play-straight.svg".to_string()),
-                action: Some(Message::SwitchPlaylist(id, true)),
+                action: Some(Message::SwitchPlaylist(playlist_id, true)),
             },
             crate::gui::widgets::ContextMenuEntry {
                 label: "Nueva lista".to_string(),
@@ -115,7 +115,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 icon: Some("playlist-edit-straight.svg".to_string()),
                 action: Some(Message::OpenDialog(
                     crate::gui::app::ActiveDialog::RenamePlaylist {
-                        id,
+                        id: playlist_id,
                         current_name: name.clone(),
                         new_name: name.clone(),
                     },
@@ -126,7 +126,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 icon: Some("playlist-remove-straight.svg".to_string()),
                 action: Some(Message::OpenDialog(
                     crate::gui::app::ActiveDialog::DeleteConfirm {
-                        id,
+                        id: playlist_id,
                         name: name.clone(),
                     },
                 )),
@@ -141,7 +141,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 icon: Some("playlist-add-check-straight.svg".to_string()),
                 action: Some(Message::OpenDialog(
                     crate::gui::app::ActiveDialog::ExportConfirm {
-                        id,
+                        id: playlist_id,
                         name: name.clone(),
                         format: crate::gui::app::ExportFormat::M3U8,
                         mode: crate::gui::app::ExportMode::SingleFile,
@@ -158,7 +158,7 @@ fn build_tabs_bar<'a>(manager: &'a PlaylistManager) -> Element<'a, Message> {
                 icon: Some("export-straight.svg".to_string()),
                 action: Some(Message::OpenDialog(
                     crate::gui::app::ActiveDialog::ExportConfirm {
-                        id,
+                        id: playlist_id,
                         name: name.clone(),
                         format: crate::gui::app::ExportFormat::M3U8,
                         mode: crate::gui::app::ExportMode::PortableFolder,

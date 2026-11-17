@@ -47,54 +47,56 @@ impl Database {
         )?;
 
         let rows = stmt.query_map([fts_query.as_str()], |row| {
-            let mut song = SongData::default();
-            song.id = row.get(0)?;
-            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(2)?.as_deref(),
-            );
-            song.artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(3)?.as_deref(),
-            );
-            song.album = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(4)?.as_deref(),
-            );
+            let song_id: i64 = row.get(0)?;
             let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
             let album_hash = row.get::<_, Option<String>>(17)?;
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                crate::utils::covers::effective_cover_path(
-                    album_hash.as_deref(),
-                    album_cover_hash.as_deref(),
-                    override_hash.as_deref(),
-                    song.id,
-                )
-                .as_deref(),
-            );
-            song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(7)?.as_deref(),
-            );
-            song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(9)?.as_deref(),
-            ); // TEXT -> Option<Arc<str>>
-            song.bit_depth = row.get(10)?;
-            song.sample_rate = row.get(11)?;
-            song.channels = row.get(12)?;
-            song.genre = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
-            song.release_year = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(15)?.as_deref(),
-            );
-            song.album_artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(16)?.as_deref(),
-            );
-            song.album_hash = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(17)?.as_deref(),
-            );
-            Ok(Arc::new(song))
+            Ok(Arc::new(SongData {
+                id: song_id,
+                full_file_path: crate::utils::interner::intern_string(&row.get::<_, String>(1)?),
+                title: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(2)?.as_deref(),
+                ),
+                artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(3)?.as_deref(),
+                ),
+                album: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(4)?.as_deref(),
+                ),
+                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
+                    crate::utils::covers::effective_cover_path(
+                        album_hash.as_deref(),
+                        album_cover_hash.as_deref(),
+                        override_hash.as_deref(),
+                        song_id,
+                    )
+                    .as_deref(),
+                ),
+                duration_secs: row.get(6)?,
+                format: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(7)?.as_deref(),
+                ),
+                size: row.get(8)?,
+                track_number: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(9)?.as_deref(),
+                ), // TEXT -> Option<Arc<str>>
+                bit_depth: row.get(10)?,
+                sample_rate: row.get(11)?,
+                channels: row.get(12)?,
+                genre: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(14)?.as_deref(),
+                ),
+                release_year: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(15)?.as_deref(),
+                ),
+                album_artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(16)?.as_deref(),
+                ),
+                album_hash: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(17)?.as_deref(),
+                ),
+                ..SongData::default()
+            }))
         })?;
 
         let mut results = Vec::new();
@@ -120,56 +122,58 @@ impl Database {
         ")?;
 
         let rows = stmt.query_map([], |row| {
-            let mut song = SongData::default();
-            song.id = row.get(0)?;
-            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(2)?.as_deref(),
-            );
-            song.artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(3)?.as_deref(),
-            );
-            song.album = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(4)?.as_deref(),
-            );
+            let song_id: i64 = row.get(0)?;
             let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
             let album_hash = row.get::<_, Option<String>>(17)?;
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                crate::utils::covers::effective_cover_path(
-                    album_hash.as_deref(),
-                    album_cover_hash.as_deref(),
-                    override_hash.as_deref(),
-                    song.id,
-                )
-                .as_deref(),
-            );
-            song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(7)?.as_deref(),
-            );
-            song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(9)?.as_deref(),
-            );
-            song.bit_depth = row.get(10)?;
-            song.sample_rate = row.get(11)?;
-            song.channels = row.get(12)?;
-            song.genre = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
-            song.release_year = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(15)?.as_deref(),
-            );
-            song.album_artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(16)?.as_deref(),
-            );
-            // The row identity the views group by travels as `album_hash`; the
-            // integer album id is not carried because no reader consumes it.
-            song.album_hash = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(17)?.as_deref(),
-            );
-            Ok(Arc::new(song))
+            Ok(Arc::new(SongData {
+                id: song_id,
+                full_file_path: crate::utils::interner::intern_string(&row.get::<_, String>(1)?),
+                title: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(2)?.as_deref(),
+                ),
+                artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(3)?.as_deref(),
+                ),
+                album: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(4)?.as_deref(),
+                ),
+                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
+                    crate::utils::covers::effective_cover_path(
+                        album_hash.as_deref(),
+                        album_cover_hash.as_deref(),
+                        override_hash.as_deref(),
+                        song_id,
+                    )
+                    .as_deref(),
+                ),
+                duration_secs: row.get(6)?,
+                format: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(7)?.as_deref(),
+                ),
+                size: row.get(8)?,
+                track_number: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                bit_depth: row.get(10)?,
+                sample_rate: row.get(11)?,
+                channels: row.get(12)?,
+                genre: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(14)?.as_deref(),
+                ),
+                release_year: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(15)?.as_deref(),
+                ),
+                album_artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(16)?.as_deref(),
+                ),
+                // The row identity the views group by travels as `album_hash`; the
+                // integer album id is not carried because no reader consumes it.
+                album_hash: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(17)?.as_deref(),
+                ),
+                ..SongData::default()
+            }))
         })?;
 
         let mut songs = Vec::new();
@@ -328,54 +332,56 @@ impl Database {
         ")?;
 
         let rows = stmt.query_map([album_hash_id], |row| {
-            let mut song = SongData::default();
-            song.id = row.get(0)?;
-            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(2)?.as_deref(),
-            );
-            song.artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(3)?.as_deref(),
-            );
-            song.album = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(4)?.as_deref(),
-            );
+            let song_id: i64 = row.get(0)?;
             let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
             let album_hash = row.get::<_, Option<String>>(17)?;
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                crate::utils::covers::effective_cover_path(
-                    album_hash.as_deref(),
-                    album_cover_hash.as_deref(),
-                    override_hash.as_deref(),
-                    song.id,
-                )
-                .as_deref(),
-            );
-            song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(7)?.as_deref(),
-            );
-            song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(9)?.as_deref(),
-            );
-            song.bit_depth = row.get(10)?;
-            song.sample_rate = row.get(11)?;
-            song.channels = row.get(12)?;
-            song.genre = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
-            song.release_year = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(15)?.as_deref(),
-            );
-            song.album_artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(16)?.as_deref(),
-            );
-            song.album_hash = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(17)?.as_deref(),
-            );
-            Ok(Arc::new(song))
+            Ok(Arc::new(SongData {
+                id: song_id,
+                full_file_path: crate::utils::interner::intern_string(&row.get::<_, String>(1)?),
+                title: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(2)?.as_deref(),
+                ),
+                artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(3)?.as_deref(),
+                ),
+                album: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(4)?.as_deref(),
+                ),
+                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
+                    crate::utils::covers::effective_cover_path(
+                        album_hash.as_deref(),
+                        album_cover_hash.as_deref(),
+                        override_hash.as_deref(),
+                        song_id,
+                    )
+                    .as_deref(),
+                ),
+                duration_secs: row.get(6)?,
+                format: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(7)?.as_deref(),
+                ),
+                size: row.get(8)?,
+                track_number: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                bit_depth: row.get(10)?,
+                sample_rate: row.get(11)?,
+                channels: row.get(12)?,
+                genre: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(14)?.as_deref(),
+                ),
+                release_year: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(15)?.as_deref(),
+                ),
+                album_artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(16)?.as_deref(),
+                ),
+                album_hash: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(17)?.as_deref(),
+                ),
+                ..SongData::default()
+            }))
         })?;
 
         let mut songs = Vec::new();
@@ -405,54 +411,56 @@ impl Database {
         ")?;
 
         let rows = stmt.query_map([album_hash_id, artist_name], |row| {
-            let mut song = SongData::default();
-            song.id = row.get(0)?;
-            song.full_file_path = crate::utils::interner::intern_string(&row.get::<_, String>(1)?);
-            song.title = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(2)?.as_deref(),
-            );
-            song.artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(3)?.as_deref(),
-            );
-            song.album = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(4)?.as_deref(),
-            );
+            let song_id: i64 = row.get(0)?;
             let album_cover_hash = row.get::<_, Option<String>>(5)?;
             let override_hash = row.get::<_, Option<String>>(13)?;
             let album_hash = row.get::<_, Option<String>>(17)?;
-            song.compressed_cached_cover_root = crate::utils::interner::intern_string_opt(
-                crate::utils::covers::effective_cover_path(
-                    album_hash.as_deref(),
-                    album_cover_hash.as_deref(),
-                    override_hash.as_deref(),
-                    song.id,
-                )
-                .as_deref(),
-            );
-            song.duration_secs = row.get(6)?;
-            song.format = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(7)?.as_deref(),
-            );
-            song.size = row.get(8)?;
-            song.track_number = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(9)?.as_deref(),
-            );
-            song.bit_depth = row.get(10)?;
-            song.sample_rate = row.get(11)?;
-            song.channels = row.get(12)?;
-            song.genre = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(14)?.as_deref(),
-            );
-            song.release_year = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(15)?.as_deref(),
-            );
-            song.album_artist = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(16)?.as_deref(),
-            );
-            song.album_hash = crate::utils::interner::intern_string_opt(
-                row.get::<_, Option<String>>(17)?.as_deref(),
-            );
-            Ok(Arc::new(song))
+            Ok(Arc::new(SongData {
+                id: song_id,
+                full_file_path: crate::utils::interner::intern_string(&row.get::<_, String>(1)?),
+                title: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(2)?.as_deref(),
+                ),
+                artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(3)?.as_deref(),
+                ),
+                album: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(4)?.as_deref(),
+                ),
+                compressed_cached_cover_root: crate::utils::interner::intern_string_opt(
+                    crate::utils::covers::effective_cover_path(
+                        album_hash.as_deref(),
+                        album_cover_hash.as_deref(),
+                        override_hash.as_deref(),
+                        song_id,
+                    )
+                    .as_deref(),
+                ),
+                duration_secs: row.get(6)?,
+                format: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(7)?.as_deref(),
+                ),
+                size: row.get(8)?,
+                track_number: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(9)?.as_deref(),
+                ),
+                bit_depth: row.get(10)?,
+                sample_rate: row.get(11)?,
+                channels: row.get(12)?,
+                genre: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(14)?.as_deref(),
+                ),
+                release_year: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(15)?.as_deref(),
+                ),
+                album_artist: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(16)?.as_deref(),
+                ),
+                album_hash: crate::utils::interner::intern_string_opt(
+                    row.get::<_, Option<String>>(17)?.as_deref(),
+                ),
+                ..SongData::default()
+            }))
         })?;
 
         let mut songs = Vec::new();

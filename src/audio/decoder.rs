@@ -1910,14 +1910,14 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                     preload_pending = None;
                     preloaded_pending.clear();
                 }
-                AudioCommand::CrossfadeNext(ms) => {
+                AudioCommand::CrossfadeNext(milliseconds) => {
                     // Activa un crossfade manual con la duración indicada.
-                    let ms = if ms.is_finite() {
-                        ms.clamp(0.0, 10000.0)
+                    let milliseconds = if milliseconds.is_finite() {
+                        milliseconds.clamp(0.0, 10000.0)
                     } else {
                         0.0
                     };
-                    let preload_source = if ms > 0.0 {
+                    let preload_source = if milliseconds > 0.0 {
                         manual_preload_source(
                             preload_format.is_some(),
                             predecode_buffer.len(),
@@ -1994,7 +1994,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 cmd_out_channels,
                                 false, // manual: la GUI ya avanzó
                             );
-                            crossfade_duration_sec = ms / 1000.0;
+                            crossfade_duration_sec = milliseconds / 1000.0;
                             crossfade_elapsed_sec = 0.0;
                             crossfade_active = true;
                             // Inicializar traza de diagnóstico
@@ -2002,7 +2002,10 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             crossfade_start_time = Some(std::time::Instant::now());
                             last_trace_time = crossfade_start_time;
                             trace_iteration = 0;
-                            tracing::debug!("[XFADE_TRACE] Crossfade manual iniciado: {} ms", ms);
+                            tracing::debug!(
+                                "[XFADE_TRACE] Crossfade manual iniciado: {} ms",
+                                milliseconds
+                            );
                         }
                     } else if matches!(
                         preload_source,
@@ -2151,7 +2154,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                 cmd_out_channels,
                                 false, // manual: la GUI ya avanzó
                             );
-                            crossfade_duration_sec = ms / 1000.0;
+                            crossfade_duration_sec = milliseconds / 1000.0;
                             crossfade_elapsed_sec = 0.0;
                             crossfade_active = true;
                             // Inicializar traza de diagnóstico
@@ -2161,7 +2164,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             trace_iteration = 0;
                             tracing::debug!(
                                 "[XFADE_TRACE] Crossfade manual iniciado: {} ms (pre-carga abierta)",
-                                ms
+                                milliseconds
                             );
                         } else {
                             // La apertura falló: se descarta la pre-carga para que el
@@ -2170,7 +2173,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             predecode_buffer.clear();
                             tracing::info!("Crossfade manual sin pre-carga: transición inmediata.");
                         }
-                    } else if ms > 0.0 {
+                    } else if milliseconds > 0.0 {
                         // No hay audio pre-cargado listo (el usuario saltó antes de que
                         // la pre-carga abriera/decodificara): NO se puede mezclar. Se
                         // descarta la pre-carga para que el Load que envía la GUI haga
@@ -3673,16 +3676,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         dsp_lock.process_frame(frame);
                         // Meter: peak and RMS accumulation (post-DSP, pre-volume).
                         if out_ch >= 2 {
-                            let pl = frame[0].abs();
-                            let pr = frame[1].abs();
-                            if pl > meter_peak_l {
-                                meter_peak_l = pl;
+                            let left_magnitude = frame[0].abs();
+                            let right_magnitude = frame[1].abs();
+                            if left_magnitude > meter_peak_l {
+                                meter_peak_l = left_magnitude;
                             }
-                            if pr > meter_peak_r {
-                                meter_peak_r = pr;
+                            if right_magnitude > meter_peak_r {
+                                meter_peak_r = right_magnitude;
                             }
-                            rms_sum_l += pl * pl;
-                            rms_sum_r += pr * pr;
+                            rms_sum_l += left_magnitude * left_magnitude;
+                            rms_sum_r += right_magnitude * right_magnitude;
                         }
                         rms_count_l += 1;
                         rms_count_r += 1;
@@ -3703,16 +3706,16 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
                         // Meter: peak and RMS accumulation even when DSP is bypassed.
                         if out_ch >= 2 {
-                            let pl = frame[0].abs();
-                            let pr = frame[1].abs();
-                            if pl > meter_peak_l {
-                                meter_peak_l = pl;
+                            let left_magnitude = frame[0].abs();
+                            let right_magnitude = frame[1].abs();
+                            if left_magnitude > meter_peak_l {
+                                meter_peak_l = left_magnitude;
                             }
-                            if pr > meter_peak_r {
-                                meter_peak_r = pr;
+                            if right_magnitude > meter_peak_r {
+                                meter_peak_r = right_magnitude;
                             }
-                            rms_sum_l += pl * pl;
-                            rms_sum_r += pr * pr;
+                            rms_sum_l += left_magnitude * left_magnitude;
+                            rms_sum_r += right_magnitude * right_magnitude;
                         }
                         rms_count_l += 1;
                         rms_count_r += 1;

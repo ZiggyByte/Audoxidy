@@ -150,8 +150,10 @@ fn choose_device_lookup(
     let has_saved_id = saved_id.is_some_and(|s| !s.is_empty());
     let has_saved_name = saved_name.is_some_and(|s| !s.is_empty());
 
-    if let Some(id) = saved_id.filter(|s| !s.is_empty())
-        && let Some(index) = present.iter().position(|(present_id, _)| present_id == id)
+    if let Some(stable_id) = saved_id.filter(|s| !s.is_empty())
+        && let Some(index) = present
+            .iter()
+            .position(|(present_id, _)| present_id == stable_id)
     {
         return DeviceLookup::StableId(index);
     }
@@ -461,7 +463,7 @@ impl AudioDeviceManager {
     pub fn get_available_hosts() -> Vec<String> {
         cpal::available_hosts()
             .iter()
-            .map(|id| id.name().to_string())
+            .map(|host_id| host_id.name().to_string())
             .collect()
     }
 
@@ -487,8 +489,11 @@ impl AudioDeviceManager {
                         .description()
                         .map(|desc| desc.name().to_string())
                         .unwrap_or_else(|_| "Unknown".into());
-                    let id = d.id().map(|id| id.to_string()).ok();
-                    AudioDeviceInfo { name, id }
+                    let device_id = d.id().map(|cpal_device_id| cpal_device_id.to_string()).ok();
+                    AudioDeviceInfo {
+                        name,
+                        id: device_id,
+                    }
                 })
                 .collect()
         } else {
@@ -534,7 +539,7 @@ impl AudioDeviceManager {
             .as_deref()
             .filter(|s| !s.is_empty())
             .and_then(|raw| raw.parse::<cpal::DeviceId>().ok())
-            .map(|id| id.to_string());
+            .map(|cpal_device_id| cpal_device_id.to_string());
 
         let present_devices: Vec<cpal::Device> = host
             .output_devices()
@@ -544,7 +549,9 @@ impl AudioDeviceManager {
             .iter()
             .map(|d| {
                 (
-                    d.id().map(|id| id.to_string()).unwrap_or_default(),
+                    d.id()
+                        .map(|cpal_device_id| cpal_device_id.to_string())
+                        .unwrap_or_default(),
                     device_display_name(d),
                 )
             })

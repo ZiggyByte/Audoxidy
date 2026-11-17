@@ -480,7 +480,10 @@ impl AudioEngine {
         stream_config: &cpal::StreamConfig,
         sample_format: cpal::SampleFormat,
     ) {
-        let resolved_device_id = device.id().map(|id| id.to_string()).ok();
+        let resolved_device_id = device
+            .id()
+            .map(|cpal_device_id| cpal_device_id.to_string())
+            .ok();
         let mut s = self.state.write();
         store_stream_metadata(
             &mut s,

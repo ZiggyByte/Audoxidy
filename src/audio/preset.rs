@@ -399,11 +399,15 @@ pub fn preset_to_json(preset: &EqPreset) -> Result<String, serde_json::Error> {
 pub fn preset_from_json(json: &str) -> Result<EqPreset, serde_json::Error> {
     let mut file: EqPresetFile = serde_json::from_str(json)?;
     // If only one band set is present, convert from the other
-    if file.bands_20.is_none() && file.bands_31.is_some() {
-        let gains_20 = EqPreset::convert_31_to_20(file.bands_31.as_ref().unwrap());
+    if file.bands_20.is_none()
+        && let Some(bands_31) = file.bands_31.as_ref()
+    {
+        let gains_20 = EqPreset::convert_31_to_20(bands_31);
         file.bands_20 = Some(gains_20);
-    } else if file.bands_31.is_none() && file.bands_20.is_some() {
-        let gains_31 = EqPreset::convert_20_to_31(file.bands_20.as_ref().unwrap());
+    } else if file.bands_31.is_none()
+        && let Some(bands_20) = file.bands_20.as_ref()
+    {
+        let gains_31 = EqPreset::convert_20_to_31(bands_20);
         file.bands_31 = Some(gains_31);
     }
     Ok(EqPreset::new(

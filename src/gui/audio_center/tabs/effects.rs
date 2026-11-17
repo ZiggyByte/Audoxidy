@@ -36,6 +36,10 @@ pub(super) fn view_audio_effects<'a>(
     audio_manager: &'a AudioManager,
 ) -> Element<'a, crate::gui::app::Message> {
     // Helper manual inline effect param constructor
+    // The title, parameter label, current value, range, default, the three messages the
+    // control emits and its extra widget are one control description; the panel builds it
+    // per row, so a struct would be constructed and consumed on the same line.
+    #[allow(clippy::too_many_arguments)]
     fn view_effect<'a>(
         title: &'a str,
         param_label: &'a str,
@@ -67,6 +71,10 @@ pub(super) fn view_audio_effects<'a>(
         )
     }
 
+    // The same control description as `view_effect` plus the secondary control and the
+    // formatting of the primary readout; every caller names those together, so a struct
+    // would only move the list one line up.
+    #[allow(clippy::too_many_arguments)]
     fn view_effect_with_secondary<'a>(
         title: &'a str,
         param_label: &'a str,

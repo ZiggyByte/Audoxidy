@@ -407,6 +407,10 @@ impl Database {
     }
 
     /// Persiste el estado de reproducción de una playlist (última canción, posición, shuffle).
+    // Each argument binds one column of the `UPDATE PLAYLISTS` below, in the order the
+    // statement names them; a wrapper would have to be taken apart again to build the
+    // `params!` list.
+    #[allow(clippy::too_many_arguments)]
     pub fn update_playlist_persistence(
         &self,
         playlist_id: i64,

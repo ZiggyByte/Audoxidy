@@ -138,6 +138,10 @@ pub fn album_art_widget<'a, Message: 'a>(
 
 /// Widget universal para renderizar una fila de canción en cualquier vista de lista.
 /// Soporta: Diferentes alturas, miniaturas opcionales, resaltado de reproducción y selección.
+// The arguments are the row's own content and state plus the columns and widths the shared
+// row widget already needs; both list views fill them from the same place, so a struct
+// would be built once per row to be read once.
+#[allow(clippy::too_many_arguments)]
 pub fn universal_song_row_widget<'a, Message: Clone + 'a>(
     song: &crate::db::database::SongData,
     _song_idx: usize,

@@ -13,6 +13,7 @@ use crate::gui::app::tick::{TickKind, tick_fires};
 use crate::gui::app::update::memory::gc_blocked_by_preload;
 use crate::gui::app::update::meter::{METER_FADE_OUT_SECS, ballistic_step, peak_hold_step};
 use crate::gui::player::{AUTOSAVE_INTERVAL_SECS, autosave_due};
+use crate::utils::observability::{COVERS_TARGET, METRICS_TARGET};
 use iced::Task;
 
 impl crate::gui::app::AudoxidyApp {
@@ -274,7 +275,7 @@ impl crate::gui::app::AudoxidyApp {
         // snapshot accompanies every 500 ms tick, so `info` would spam the log.
         let fires = tick_fires();
         tracing::debug!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "tick_fires",
             frame = fires.frame,
             ui = fires.ui,
@@ -349,7 +350,7 @@ impl crate::gui::app::AudoxidyApp {
         // estructurados que consume la capa de métricas.
         let ram_bytes = crate::utils::memory_manager::MemoryManager::current_process_ram_bytes();
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "ram_usage_bytes",
             ram_usage_bytes = ram_bytes
         );
@@ -360,7 +361,7 @@ impl crate::gui::app::AudoxidyApp {
         // never discloses which covers the library holds.
         let cover_io = crate::utils::covers::cover_io_counters();
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "cover_io",
             cover_file_opens = cover_io.file_opens,
             cover_decodes = cover_io.decodes,
@@ -388,7 +389,7 @@ impl crate::gui::app::AudoxidyApp {
             // soft-looking grid was requested for another device pixel ratio or
             // simply for the bucket the current card edge maps to.
             tracing::info!(
-                target: "audoxidy::covers",
+                target: COVERS_TARGET,
                 cover_file_opens = cover_io.file_opens,
                 cover_decodes = cover_io.decodes,
                 cover_cache_hits = cover_io.cache_hits,
@@ -406,7 +407,7 @@ impl crate::gui::app::AudoxidyApp {
         let underruns = UNDERRUNS.swap(0, std::sync::atomic::Ordering::Relaxed);
         if underruns > 0 {
             tracing::warn!(
-                target: "audoxidy::metrics",
+                target: METRICS_TARGET,
                 metric = "underrun",
                 count = underruns
             );
@@ -415,7 +416,7 @@ impl crate::gui::app::AudoxidyApp {
         let peak = LATENCY_PEAK_US.load(std::sync::atomic::Ordering::Relaxed);
         if peak > 0 {
             tracing::info!(
-                target: "audoxidy::metrics",
+                target: METRICS_TARGET,
                 metric = "audio_latency",
                 latency_us = peak
             );

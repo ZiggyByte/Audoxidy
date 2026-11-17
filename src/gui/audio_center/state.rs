@@ -2,6 +2,7 @@
 
 use crate::audio::AudioManager;
 use crate::audio::device_manager::{AudioDeviceInfo, BitDepth};
+use crate::utils::observability::PERSISTENCE_TARGET;
 
 use super::messages::SystemSelection;
 
@@ -10,7 +11,7 @@ use super::messages::SystemSelection;
 pub(in crate::gui::audio_center) fn log_persist(key: &str, result: rusqlite::Result<()>) {
     if let Err(e) = result {
         tracing::warn!(
-            target: "audoxidy::persistence",
+            target: PERSISTENCE_TARGET,
             key,
             error = %e,
             "No se pudo persistir el ajuste"

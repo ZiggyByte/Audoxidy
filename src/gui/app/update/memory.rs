@@ -1,6 +1,7 @@
 //! Global memory purge handler extracted from the update dispatcher.
 
 use crate::gui::app::{AppFocus, Message};
+use crate::utils::observability::COVERS_TARGET;
 use iced::Task;
 
 /// Ventana de seguridad (segundos) tras el fin de la pre-carga durante la cual
@@ -69,7 +70,7 @@ impl crate::gui::app::AudoxidyApp {
                 if !is_library_focused {
                     let dropped = self.library_manager.cover_store.trim_outside_window();
                     tracing::debug!(
-                        target: "audoxidy::covers",
+                        target: COVERS_TARGET,
                         dropped,
                         retained_bytes = self.library_manager.cover_store.bytes(),
                         "GC: carátulas decodificadas fuera de la ventana liberadas"

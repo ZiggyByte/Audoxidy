@@ -30,6 +30,7 @@ use super::state::LibraryManager;
 use super::types::LibraryViewMode;
 use crate::gui::dimensions::LIST_ROW_HEADER;
 use crate::utils::covers::{CoverBudget, cover_metrics, decode_cover_file};
+use crate::utils::observability::COVERS_TARGET;
 
 /// Job queue capacity: a scroll burst waits in the queue instead of allocating
 /// one decode per card.
@@ -776,7 +777,7 @@ impl LibraryManager {
         self.cover_store.evict_to_budget();
 
         tracing::trace!(
-            target: "audoxidy::covers",
+            target: COVERS_TARGET,
             cover_requested_keys = requested.len(),
             cover_accepted_jobs = accepted,
             cover_retained_budget_bytes = budget,

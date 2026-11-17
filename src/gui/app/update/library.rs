@@ -5,7 +5,7 @@ use crate::gui::dimensions::LIBRARY_CONTENT_X_ORIGIN;
 use crate::gui::library::cover_cache::SCROLL_IDLE_MS;
 use crate::gui::library::grid_metrics::anchor_viewport_offset;
 use crate::gui::library::{GridMetrics, LIBRARY_SCROLL_ID};
-use crate::utils::observability::PERSISTENCE_TARGET;
+use crate::utils::observability::{METRICS_TARGET, PERSISTENCE_TARGET};
 use iced::Task;
 use iced::widget::operation::{AbsoluteOffset, focus, scroll_to};
 
@@ -838,7 +838,7 @@ impl crate::gui::app::AudoxidyApp {
             Message::CoverSweepFinished { removed, failed } => {
                 if removed + failed > 0 {
                     tracing::info!(
-                        target: "audoxidy::metrics",
+                        target: METRICS_TARGET,
                         metric = "cover_sweep",
                         removed,
                         failed,

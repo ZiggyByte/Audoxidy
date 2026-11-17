@@ -25,7 +25,6 @@ pub(crate) const PERSISTENCE_TARGET: &str = "audoxidy::persistence";
 /// Tracing target for cover-cache events: hits, misses, decodes and evictions.
 // The cache events are emitted from the GUI store, which is the only layer that
 // decides what the viewport shows; this module declares the routing key alone.
-#[allow(dead_code)]
 pub(crate) const COVERS_TARGET: &str = "audoxidy::covers";
 
 /// Inicializa el sistema de logging estructurado con tracing.
@@ -51,7 +50,7 @@ pub fn init_logging(config: &crate::utils::config::LoggingConfig) {
         .add_directive("rusqlite=warn".parse().unwrap())
         .add_directive("mio=warn".parse().unwrap())
         .add_directive("want=warn".parse().unwrap())
-        .add_directive("audoxidy::metrics=trace".parse().unwrap());
+        .add_directive(format!("{METRICS_TARGET}=trace").parse().unwrap());
 
     // Log a archivo con rotación por tamaño. La rotación se resuelve ANTES de
     // abrir el escritor: si se renombra el archivo con el descriptor ya abierto,

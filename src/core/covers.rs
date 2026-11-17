@@ -11,7 +11,7 @@
 
 use std::path::PathBuf;
 
-use crate::utils::observability::PERSISTENCE_TARGET;
+use crate::utils::observability::{METRICS_TARGET, PERSISTENCE_TARGET};
 
 use super::Core;
 use super::error::CoreError;
@@ -181,7 +181,7 @@ impl Core {
         }
 
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "cover_sweep",
             removed,
             failed,

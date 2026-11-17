@@ -41,7 +41,7 @@ fn visitor_records_fields() {
 
     tracing::subscriber::with_default(subscriber, || {
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "ram_usage_bytes",
             ram_usage_bytes = 4096u64
         );
@@ -58,27 +58,27 @@ fn metrics_events_update_counters() {
 
     tracing::subscriber::with_default(subscriber, || {
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "audio_frames_processed",
             frames = 480u64
         );
         tracing::warn!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "underrun",
             count = 3u64
         );
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "ram_usage_bytes",
             ram_usage_bytes = 1024u64
         );
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "audio_latency",
             latency_us = 500u64
         );
         tracing::info!(
-            target: "audoxidy::metrics",
+            target: METRICS_TARGET,
             metric = "audio_latency",
             latency_us = 300u64
         );

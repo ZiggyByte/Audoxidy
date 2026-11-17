@@ -1,6 +1,7 @@
 //! Background audio decoding thread — handles format reading, resampling, DSP,
 //! and pushing decoded audio into the ring buffer shared with the CPAL callback.
 
+use crate::utils::observability::METRICS_TARGET;
 use audioadapter_buffers::direct::SequentialSliceOfVecs;
 use crossbeam::channel::Receiver;
 use ringbuf::traits::{Observer, Producer};
@@ -2604,7 +2605,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                 frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;
                 if frames_since_metric >= out_rate as u64 {
                     tracing::info!(
-                        target: "audoxidy::metrics",
+                        target: METRICS_TARGET,
                         metric = "audio_frames_processed",
                         frames = frames_since_metric
                     );
@@ -3780,7 +3781,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
             frames_since_metric += (output_accumulator_f32.len() / out_channels.max(1)) as u64;
             if frames_since_metric >= out_rate as u64 {
                 tracing::info!(
-                    target: "audoxidy::metrics",
+                    target: METRICS_TARGET,
                     metric = "audio_frames_processed",
                     frames = frames_since_metric
                 );

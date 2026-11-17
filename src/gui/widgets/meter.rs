@@ -298,11 +298,11 @@ impl<Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeter
 
         // ── Draw peak hold markers: thin vertical lines ──
         if self.hold_l > METER_MIN_DB {
-            let hx = Self::db_to_x(self.hold_l, bar_left, bar_width);
+            let hold_x = Self::db_to_x(self.hold_l, bar_left, bar_width);
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: iced::Rectangle::new(
-                        iced::Point::new(hx, l_bar_y),
+                        iced::Point::new(hold_x, l_bar_y),
                         iced::Size::new(2.0, METER_BAR_HEIGHT),
                     ),
                     border: iced::Border::default(),
@@ -312,11 +312,11 @@ impl<Message> iced::advanced::Widget<Message, Theme, iced::Renderer> for VuMeter
             );
         }
         if self.hold_r > METER_MIN_DB {
-            let hx = Self::db_to_x(self.hold_r, bar_left, bar_width);
+            let hold_x = Self::db_to_x(self.hold_r, bar_left, bar_width);
             renderer.fill_quad(
                 iced::advanced::graphics::core::renderer::Quad {
                     bounds: iced::Rectangle::new(
-                        iced::Point::new(hx, r_bar_y),
+                        iced::Point::new(hold_x, r_bar_y),
                         iced::Size::new(2.0, METER_BAR_HEIGHT),
                     ),
                     border: iced::Border::default(),

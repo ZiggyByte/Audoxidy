@@ -144,7 +144,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
 
         let bounds = layout.bounds();
 
-        let bg = if self.checked { COLOR_ACCENT } else { COLOR_BG };
+        let background_color = if self.checked { COLOR_ACCENT } else { COLOR_BG };
         let border_color = if self.checked {
             COLOR_ACCENT
         } else {
@@ -161,7 +161,7 @@ impl<'a, Message: 'a> iced::advanced::Widget<Message, Theme, iced::Renderer>
                 },
                 ..Default::default()
             },
-            bg,
+            background_color,
         );
 
         if self.checked {
@@ -1074,14 +1074,14 @@ pub fn standard_search_input<'a, Message: Clone + 'a>(
             move |_t: &Theme, status: iced::widget::text_input::Status| {
                 let is_focused = matches!(status, iced::widget::text_input::Status::Focused { .. });
 
-                let (bg, txt) = if is_focused {
+                let (background_color, txt) = if is_focused {
                     (COLOR_CONTRAST, COLOR_TEXT_PRIMARY)
                 } else {
                     (COLOR_CONTRAST, COLOR_TEXT_SECONDARY)
                 };
 
                 iced::widget::text_input::Style {
-                    background: bg.into(),
+                    background: background_color.into(),
                     border: iced::Border {
                         radius: 0.0.into(),
                         width: 0.0,
@@ -1453,7 +1453,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
     #[allow(clippy::too_many_arguments)]
     pub fn input_style(
         mut self,
-        bg: Option<Color>,
+        background_color: Option<Color>,
         border: Option<Color>,
         border_focus: Option<Color>,
         border_width: f32,
@@ -1461,7 +1461,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
         font_size: f32,
         font_color: Option<Color>,
     ) -> Self {
-        self.options.input_bg_color = bg;
+        self.options.input_bg_color = background_color;
         self.options.input_border_color = border;
         self.options.input_border_hover_color = border_focus;
         self.options.input_border_width = border_width;
@@ -2203,20 +2203,20 @@ impl<'a, Message> CustomSlider<'a, Message> {
         };
 
         let (brd_color, brd_width) = if is_selected {
-            let bw = self.options.border_selected_width;
-            let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
-            (bc, bw)
+            let border_selected_width = self.options.border_selected_width;
+            let border_selected_color = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
+            (border_selected_color, border_selected_width)
         } else if is_hover {
-            let bw = self.options.border_hover_width;
-            let bc = self
+            let border_hover_width = self.options.border_hover_width;
+            let border_hover_color = self
                 .options
                 .border_hover_color
                 .unwrap_or(Color::TRANSPARENT);
-            (bc, bw)
+            (border_hover_color, border_hover_width)
         } else {
-            let bw = self.options.border_width;
-            let bc = self.options.border_color.unwrap_or(Color::TRANSPARENT);
-            (bc, bw)
+            let border_width = self.options.border_width;
+            let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+            (border_color, border_width)
         };
 
         let handle_rect = Rectangle {
@@ -2349,20 +2349,20 @@ impl<'a, Message> CustomSlider<'a, Message> {
         };
 
         let (brd_color, brd_width) = if is_selected {
-            let bw = self.options.border_selected_width;
-            let bc = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
-            (bc, bw)
+            let border_selected_width = self.options.border_selected_width;
+            let border_selected_color = self.options.border_selected_color.unwrap_or(COLOR_ACCENT);
+            (border_selected_color, border_selected_width)
         } else if is_hover {
-            let bw = self.options.border_hover_width;
-            let bc = self
+            let border_hover_width = self.options.border_hover_width;
+            let border_hover_color = self
                 .options
                 .border_hover_color
                 .unwrap_or(Color::TRANSPARENT);
-            (bc, bw)
+            (border_hover_color, border_hover_width)
         } else {
-            let bw = self.options.border_width;
-            let bc = self.options.border_color.unwrap_or(Color::TRANSPARENT);
-            (bc, bw)
+            let border_width = self.options.border_width;
+            let border_color = self.options.border_color.unwrap_or(Color::TRANSPARENT);
+            (border_color, border_width)
         };
 
         let handle_rect = Rectangle {
@@ -2484,7 +2484,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
             height: input_height,
         };
 
-        let bg = self.options.input_bg_color.unwrap_or(COLOR_BG);
+        let background_color = self.options.input_bg_color.unwrap_or(COLOR_BG);
         let border_color = if state.input_has_focus {
             self.options
                 .input_border_hover_color
@@ -2508,7 +2508,7 @@ impl<'a, Message> CustomSlider<'a, Message> {
                 },
                 ..Default::default()
             },
-            bg,
+            background_color,
         );
 
         let align_x = match self.options.input_align {

@@ -594,15 +594,15 @@ impl EqBand {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            for ch in 0..frame.len().min(self.states.len()) {
-                let s = &mut self.states[ch];
-                let x = frame[ch];
+            for channel in 0..frame.len().min(self.states.len()) {
+                let s = &mut self.states[channel];
+                let x = frame[channel];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
-                frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
+                frame[channel] = if y.abs() < 1e-20 { 0.0 } else { y };
                 s.x2 = s.x1;
                 s.x1 = x;
                 s.y2 = s.y1;
-                s.y1 = frame[ch];
+                s.y1 = frame[channel];
             }
         }
     }
@@ -718,13 +718,17 @@ struct ReverbChannelState {
 fn build_reverb_channels(sample_rate: f64) -> Vec<ReverbChannelState> {
     let scale = sample_rate / 44100.0;
     (0..REVERB_MAX_CHANNELS)
-        .map(|ch| {
-            let base: &[usize; 16] = if ch % 2 == 0 {
+        .map(|channel| {
+            let base: &[usize; 16] = if channel % 2 == 0 {
                 &FDN_DELAY_LENGTHS_L
             } else {
                 &FDN_DELAY_LENGTHS_R
             };
-            let off: usize = if ch < 2 { 0 } else { (ch * 53) % 700 + 100 };
+            let off: usize = if channel < 2 {
+                0
+            } else {
+                (channel * 53) % 700 + 100
+            };
             let delay_lines = base
                 .iter()
                 .map(|&b| DelayLine::new((((b + off) as f64) * scale).round() as usize))
@@ -785,13 +789,13 @@ impl Reverb {
     }
 
     fn update_params(&mut self) {
-        let rs = self.room_size as f64;
-        self.damping_coeff = 0.05 + rs * 0.3;
-        self.pre_delay_samples = (rs * 0.040 * self.sample_rate).round() as usize;
+        let room_size = self.room_size as f64;
+        self.damping_coeff = 0.05 + room_size * 0.3;
+        self.pre_delay_samples = (room_size * 0.040 * self.sample_rate).round() as usize;
         for st in self.channels.iter_mut() {
             st.pre_delay = DelayLine::new(self.pre_delay_samples.max(1));
         }
-        self.feedback_gain = 0.7 + rs * 0.25;
+        self.feedback_gain = 0.7 + room_size * 0.25;
     }
 
     fn process_channel(
@@ -863,13 +867,13 @@ impl Reverb {
         // La cantidad de reverb se ajusta por rol de canal (orden estándar
         // FL FR C LFE BL BR SL SR): el LFE NO lleva reverb (rumor grave) y el
         // centro lleva menos (mantiene la voz definida) — también ahorra CPU.
-        for (ch, sample) in frame.iter_mut().enumerate() {
-            let wet_scale = match ch {
+        for (channel, sample) in frame.iter_mut().enumerate() {
+            let wet_scale = match channel {
                 3 => continue, // LFE: sin reverb (passthrough)
                 2 => 0.7,      // Centro: reverb reducido
                 _ => 1.0,
             };
-            let Some(st) = self.channels.get_mut(ch) else {
+            let Some(st) = self.channels.get_mut(channel) else {
                 break;
             };
             Self::process_channel(
@@ -973,8 +977,8 @@ impl Compressor {
         self.sample_rate = sample_rate;
         self.lookahead_samples = (0.001 * sample_rate).round() as usize;
         self.lookahead_cap_frames = self.lookahead_samples.max(1);
-        let ch = self.lookahead_channels.max(1);
-        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+        let channels = self.lookahead_channels.max(1);
+        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * channels];
         self.lookahead_head = 0;
         self.lookahead_filled = 0;
         self.update_intensity_params();
@@ -1069,24 +1073,24 @@ impl Compressor {
         if !self.enabled {
             return;
         }
-        let ch = frame.len();
-        if ch == 0 || ch > COMPRESSOR_MAX_CHANNELS {
+        let channels = frame.len();
+        if channels == 0 || channels > COMPRESSOR_MAX_CHANNELS {
             return;
         }
 
         // Si cambió el número de canales, reasignar el buffer con el nuevo layout.
-        if ch != self.lookahead_channels {
-            self.lookahead_channels = ch;
+        if channels != self.lookahead_channels {
+            self.lookahead_channels = channels;
             self.lookahead_cap_frames = self.lookahead_samples.max(1);
-            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * channels];
             self.lookahead_head = 0;
             self.lookahead_filled = 0;
         }
 
         // Escribir el frame actual en la cabecera circular (sin asignaciones).
         let cap = self.lookahead_cap_frames;
-        let base = self.lookahead_head * ch;
-        self.lookahead_buf[base..base + ch].copy_from_slice(frame);
+        let base = self.lookahead_head * channels;
+        self.lookahead_buf[base..base + channels].copy_from_slice(frame);
         self.lookahead_head = (self.lookahead_head + 1) % cap;
         if self.lookahead_filled < cap {
             self.lookahead_filled += 1;
@@ -1104,13 +1108,13 @@ impl Compressor {
         let mut sum_sq = 0.0f64;
         let mut future_peak = 0.0f64;
         {
-            let start = self.lookahead_head * ch;
+            let start = self.lookahead_head * channels;
             let seg1 = &self.lookahead_buf[start..];
             let seg2 = &self.lookahead_buf[..start];
             sum_sq += Self::rms_peak_simd(seg1, &mut future_peak);
             sum_sq += Self::rms_peak_simd(seg2, &mut future_peak);
         }
-        let total_samples = cap * ch;
+        let total_samples = cap * channels;
         let rms_sq = sum_sq / total_samples as f64;
         let rms = rms_sq.sqrt().max(1e-10);
 
@@ -1162,14 +1166,14 @@ impl Compressor {
         };
 
         // Aplicar al frame más antiguo (en la cabecera) y copiarlo a la salida.
-        let oldest_base = self.lookahead_head * ch;
-        for s in self.lookahead_buf[oldest_base..oldest_base + ch].iter_mut() {
+        let oldest_base = self.lookahead_head * channels;
+        for s in self.lookahead_buf[oldest_base..oldest_base + channels].iter_mut() {
             *s *= gain * makeup_active;
             if !s.is_finite() {
                 *s = 0.0;
             }
         }
-        let n = frame.len().min(ch);
+        let n = frame.len().min(channels);
         frame[..n].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + n]);
     }
 
@@ -1463,15 +1467,15 @@ impl BiquadFilter {
 
         #[cfg(not(target_arch = "x86_64"))]
         {
-            for ch in 0..frame.len().min(self.states.len()) {
-                let s = &mut self.states[ch];
-                let x = frame[ch];
+            for channel in 0..frame.len().min(self.states.len()) {
+                let s = &mut self.states[channel];
+                let x = frame[channel];
                 let y = b0 * x + b1 * s.x1 + b2 * s.x2 - a1 * s.y1 - a2 * s.y2;
-                frame[ch] = if y.abs() < 1e-20 { 0.0 } else { y };
+                frame[channel] = if y.abs() < 1e-20 { 0.0 } else { y };
                 s.x2 = s.x1;
                 s.x1 = x;
                 s.y2 = s.y1;
-                s.y1 = frame[ch];
+                s.y1 = frame[channel];
             }
         }
     }
@@ -1504,8 +1508,8 @@ impl SubBass {
         self.filter.set_sample_rate(rate);
     }
     /// Redimensiona los canales del filtro sub-bass.
-    pub fn resize_channels(&mut self, ch: usize) {
-        self.filter.resize_channels(ch);
+    pub fn resize_channels(&mut self, channels: usize) {
+        self.filter.resize_channels(channels);
     }
     /// Procesa un frame aplicando el filtro sub-bass.
     pub fn process(&mut self, frame: &mut [f64]) {
@@ -1544,8 +1548,8 @@ impl MidBass {
         self.filter.set_sample_rate(rate);
     }
     /// Redimensiona los canales del filtro mid-bass.
-    pub fn resize_channels(&mut self, ch: usize) {
-        self.filter.resize_channels(ch);
+    pub fn resize_channels(&mut self, channels: usize) {
+        self.filter.resize_channels(channels);
     }
     /// Procesa un frame aplicando el filtro mid-bass.
     pub fn process(&mut self, frame: &mut [f64]) {
@@ -1585,9 +1589,9 @@ impl VoiceBoost {
         self.filter2.set_sample_rate(rate);
     }
     /// Redimensiona los canales de los filtros vocales.
-    pub fn resize_channels(&mut self, ch: usize) {
-        self.filter1.resize_channels(ch);
-        self.filter2.resize_channels(ch);
+    pub fn resize_channels(&mut self, channels: usize) {
+        self.filter1.resize_channels(channels);
+        self.filter2.resize_channels(channels);
     }
     /// Procesa un frame aplicando el refuerzo vocal.
     pub fn process(&mut self, frame: &mut [f64]) {
@@ -2067,8 +2071,8 @@ impl Limiter {
         self.sample_rate = sample_rate;
         self.lookahead_samples = (0.002 * sample_rate as f64).round() as usize;
         self.lookahead_cap_frames = self.lookahead_samples.max(1);
-        let ch = self.lookahead_channels.max(1);
-        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+        let channels = self.lookahead_channels.max(1);
+        self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * channels];
         self.lookahead_head = 0;
         self.lookahead_filled = 0;
     }
@@ -2111,24 +2115,24 @@ impl Limiter {
         if !self.enabled {
             return;
         }
-        let ch = frame.len();
-        if ch == 0 || ch > LIMITER_MAX_CHANNELS {
+        let channels = frame.len();
+        if channels == 0 || channels > LIMITER_MAX_CHANNELS {
             return;
         }
 
         // Si cambió el número de canales, reasignar el buffer con el nuevo layout.
-        if ch != self.lookahead_channels {
-            self.lookahead_channels = ch;
+        if channels != self.lookahead_channels {
+            self.lookahead_channels = channels;
             self.lookahead_cap_frames = self.lookahead_samples.max(1);
-            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * ch];
+            self.lookahead_buf = vec![0.0; self.lookahead_cap_frames * channels];
             self.lookahead_head = 0;
             self.lookahead_filled = 0;
         }
 
         // Escribir el frame actual en la cabecera circular (sin asignaciones).
         let cap = self.lookahead_cap_frames;
-        let base = self.lookahead_head * ch;
-        self.lookahead_buf[base..base + ch].copy_from_slice(frame);
+        let base = self.lookahead_head * channels;
+        self.lookahead_buf[base..base + channels].copy_from_slice(frame);
         self.lookahead_head = (self.lookahead_head + 1) % cap;
         if self.lookahead_filled < cap {
             self.lookahead_filled += 1;
@@ -2140,10 +2144,11 @@ impl Limiter {
 
         // El frame más antiguo está en la cabecera (buffer lleno). Copiar a un
         // buffer de pila para medir sin tocar el búfer circular.
-        let oldest_base = self.lookahead_head * ch;
+        let oldest_base = self.lookahead_head * channels;
         let mut oldest = [0.0f64; LIMITER_MAX_CHANNELS];
-        oldest[..ch].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + ch]);
-        let oldest = &oldest[..ch];
+        oldest[..channels]
+            .copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + channels]);
+        let oldest = &oldest[..channels];
 
         // True peak inter-sample (polyphase 2x).
         let true_peak = Self::true_peak(oldest);
@@ -2155,7 +2160,7 @@ impl Limiter {
                 sum_sq += s * s;
             }
         }
-        let rms = (sum_sq / ch as f64).sqrt().max(1e-10);
+        let rms = (sum_sq / channels as f64).sqrt().max(1e-10);
 
         let crest = true_peak / rms;
         self.crest_factor_smooth = 0.9 * self.crest_factor_smooth + 0.1 * crest;
@@ -2175,11 +2180,11 @@ impl Limiter {
         let ceiling_lin = 10.0_f64.powf((self.ceiling as f64) / 20.0);
         if self.envelope > ceiling_lin {
             let attenuation = ceiling_lin / self.envelope;
-            for s in self.lookahead_buf[oldest_base..oldest_base + ch].iter_mut() {
+            for s in self.lookahead_buf[oldest_base..oldest_base + channels].iter_mut() {
                 *s *= attenuation;
             }
         }
-        let n = frame.len().min(ch);
+        let n = frame.len().min(channels);
         frame[..n].copy_from_slice(&self.lookahead_buf[oldest_base..oldest_base + n]);
 
         for s in frame.iter_mut() {

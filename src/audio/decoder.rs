@@ -118,7 +118,7 @@ impl AudioDecoder for SymphoniaDecoder {
                 super::AudioError::UnsupportedFormat("parámetros de audio ausentes".into())
             })?;
         let sample_rate = audio_params.sample_rate.unwrap_or(44100);
-        let dur = derive_duration_sec(track, sample_rate).unwrap_or(0.0);
+        let duration = derive_duration_sec(track, sample_rate).unwrap_or(0.0);
         let ch_count = audio_params
             .channels
             .as_ref()
@@ -135,7 +135,7 @@ impl AudioDecoder for SymphoniaDecoder {
         Ok(DecodeStreamInfo {
             sample_rate,
             channels: ch_count as u16,
-            total_duration_sec: dur,
+            total_duration_sec: duration,
             channel_count: ch_count,
         })
     }
@@ -175,8 +175,8 @@ impl AudioDecoder for SymphoniaDecoder {
 
                 let mut data = Vec::with_capacity(frames * channels);
                 for i in 0..frames {
-                    for ch in 0..channels {
-                        data.push(self.decode_plane_pool[ch][i]);
+                    for channel in 0..channels {
+                        data.push(self.decode_plane_pool[channel][i]);
                     }
                 }
 
@@ -339,8 +339,8 @@ fn open_audio_source(path: &str) -> std::io::Result<Box<dyn MediaSource>> {
 /// que el decodificador dirija la transición por buffer/EOF.
 fn derive_duration_sec(track: &symphonia::core::formats::Track, fallback_rate: u32) -> Option<f64> {
     if let Some(tb) = track.time_base
-        && let Some(dur) = track.duration
-        && let Some(t) = tb.calc_duration(dur)
+        && let Some(duration) = track.duration
+        && let Some(t) = tb.calc_duration(duration)
     {
         return Some(t.as_secs_f64());
     }
@@ -718,7 +718,7 @@ fn preload_decode_batch(
     };
 
     let mut batch_out: Vec<f64> = Vec::new();
-    if let Some(rs) = preload_resampler.as_mut() {
+    if let Some(resampler) = preload_resampler.as_mut() {
         for c in 0..src_channels {
             if c < preload_resampler_in_buf.len()
                 && let Some(plane) = preload_plane_pool.get(c)
@@ -733,11 +733,11 @@ fn preload_decode_batch(
             preload_output_pool.resize(src_channels, Vec::new());
         }
         loop {
-            let needed = rs.input_frames_next();
+            let needed = resampler.input_frames_next();
             if preload_resampler_in_buf.is_empty() || preload_resampler_in_buf[0].len() < needed {
                 break;
             }
-            let out_frames = rs.output_frames_next();
+            let out_frames = resampler.output_frames_next();
             for c in 0..src_channels {
                 preload_input_pool[c].clear();
                 if c < preload_resampler_in_buf.len() {
@@ -753,7 +753,7 @@ fn preload_decode_batch(
             let mut output_adapter =
                 SequentialSliceOfVecs::new_mut(preload_output_pool, src_channels, out_frames)
                     .unwrap();
-            if rs
+            if resampler
                 .process_into_buffer(&input_adapter, &mut output_adapter, None)
                 .is_ok()
             {
@@ -1037,7 +1037,7 @@ fn tail_decode_batch(
             (0.74f64, 0.66f64, side_val, (side_val + 0.10).min(2.0))
         };
 
-        if let Some(rs) = tail_resampler.as_mut() {
+        if let Some(resampler) = tail_resampler.as_mut() {
             for c in 0..src_channels {
                 if c < tail_resampler_in_buf.len()
                     && let Some(plane) = tail_plane_pool.get(c)
@@ -1052,11 +1052,11 @@ fn tail_decode_batch(
                 tail_output_pool.resize(src_channels, Vec::new());
             }
             loop {
-                let needed = rs.input_frames_next();
+                let needed = resampler.input_frames_next();
                 if tail_resampler_in_buf.is_empty() || tail_resampler_in_buf[0].len() < needed {
                     break;
                 }
-                let out_frames = rs.output_frames_next();
+                let out_frames = resampler.output_frames_next();
                 for c in 0..src_channels {
                     tail_input_pool[c].clear();
                     if c < tail_resampler_in_buf.len() {
@@ -1072,7 +1072,7 @@ fn tail_decode_batch(
                 let mut output_adapter =
                     SequentialSliceOfVecs::new_mut(tail_output_pool, src_channels, out_frames)
                         .unwrap();
-                if rs
+                if resampler
                     .process_into_buffer(&input_adapter, &mut output_adapter, None)
                     .is_ok()
                 {
@@ -1709,9 +1709,9 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                                         continue;
                                     };
                                     let sample_rate = audio_params.sample_rate.unwrap_or(44100);
-                                    let dur =
+                                    let duration =
                                         derive_duration_sec(track, sample_rate).unwrap_or(0.0);
-                                    state.write().total_duration_sec = dur;
+                                    state.write().total_duration_sec = duration;
                                     state.write().sample_rate = sample_rate;
 
                                     // --- PURGA MAESTRA DE ESTADO (Anti-Residuos) ---
@@ -2944,7 +2944,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         )
                     };
 
-                    if let Some(rs) = resampler.as_mut() {
+                    if let Some(resampler) = resampler.as_mut() {
                         let resample_span = debug_batch_span!("batch_resample");
                         let resample_start = resample_span.as_ref().map(|_| Instant::now());
                         let _resample_enter = resample_span.as_ref().map(|s| s.enter());
@@ -2967,12 +2967,12 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                         }
 
                         loop {
-                            let needed = rs.input_frames_next();
+                            let needed = resampler.input_frames_next();
                             if resampler_in_buf.is_empty() || resampler_in_buf[0].len() < needed {
                                 break;
                             }
 
-                            let out_frames = rs.output_frames_next();
+                            let out_frames = resampler.output_frames_next();
 
                             for c in 0..src_channels {
                                 resample_input_pool[c].clear();
@@ -3000,7 +3000,7 @@ pub(crate) fn audio_decode_loop(command_rx: Receiver<AudioCommand>, engine: Audi
                             )
                             .unwrap();
 
-                            if rs
+                            if resampler
                                 .process_into_buffer(&input_adapter, &mut output_adapter, None)
                                 .is_ok()
                             {

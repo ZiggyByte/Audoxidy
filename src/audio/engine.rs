@@ -424,8 +424,8 @@ impl AudioEngine {
         } else {
             8 * 1024 * 1024
         };
-        let rb = HeapRb::<f32>::new(rb_size);
-        let (producer, consumer) = rb.split();
+        let ring_buffer = HeapRb::<f32>::new(rb_size);
+        let (producer, consumer) = ring_buffer.split();
 
         let state = Arc::new(RwLock::new(AudioState::default()));
         let dsp = Arc::new(RwLock::new(DspChain::default()));
@@ -960,24 +960,24 @@ impl AudioEngine {
         let prev_channels = prev.as_ref().map(|c| c.channels).unwrap_or(2);
         if prev_rate != stream_config.sample_rate || prev_channels != stream_config.channels {
             let sample_rate = stream_config.sample_rate as usize;
-            let ch = stream_config.channels as usize;
+            let channels = stream_config.channels as usize;
             let dur_secs = if crate::utils::is_low_resource() {
                 0.5
             } else {
                 2.0
             };
-            let rb_size = ((sample_rate * ch) as f64 * dur_secs) as usize;
+            let rb_size = ((sample_rate * channels) as f64 * dur_secs) as usize;
             tracing::info!(
                 "Ringbuf recreado: {} muestras ({} Hz x {} ch x {:.0}s). Anterior: {} Hz x {} ch.",
                 rb_size.max(384_000),
                 sample_rate,
-                ch,
+                channels,
                 dur_secs,
                 prev_rate,
                 prev_channels
             );
-            let rb = HeapRb::<f32>::new(rb_size.max(384_000));
-            let (producer, consumer) = rb.split();
+            let ring_buffer = HeapRb::<f32>::new(rb_size.max(384_000));
+            let (producer, consumer) = ring_buffer.split();
 
             {
                 let mut p_lock = self.buffer_producer.lock();

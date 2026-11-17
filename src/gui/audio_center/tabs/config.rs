@@ -357,19 +357,23 @@ pub(super) fn view_audio_config<'a>(
     {
         // db-lock: solo lectura — refresco best-effort, se omite si el lock falla
         if let Ok(db) = db_arc.try_lock() {
-            if let Ok(Some((sr, bd, ch))) = db.get_song_technical_meta_by_path(&current_path) {
-                if sr > 0 {
-                    file_sample_rate = sr;
+            if let Ok(Some((sample_rate, bd, channels))) =
+                db.get_song_technical_meta_by_path(&current_path)
+            {
+                if sample_rate > 0 {
+                    file_sample_rate = sample_rate;
                 }
                 file_bit_depth = bd;
-                file_channels = ch;
+                file_channels = channels;
             }
             if let Ok(Some(fmt)) = db.get_song_format_by_path(&current_path) {
                 file_format = fmt;
             }
-            if let Ok((tg, ag)) = db.get_replay_gain_by_path(&current_path) {
-                track_gain = tg;
-                album_gain = ag;
+            if let Ok((track_gain_value, album_gain_value)) =
+                db.get_replay_gain_by_path(&current_path)
+            {
+                track_gain = track_gain_value;
+                album_gain = album_gain_value;
             }
         }
     }
@@ -386,8 +390,8 @@ pub(super) fn view_audio_config<'a>(
         "--".to_string()
     };
 
-    let format_channels = |ch: u16| -> String {
-        match ch {
+    let format_channels = |channels: u16| -> String {
+        match channels {
             1 => "Mono".to_string(),
             2 => "Stereo".to_string(),
             3 => "Stereo + Sub".to_string(),
@@ -418,9 +422,11 @@ pub(super) fn view_audio_config<'a>(
     };
 
     let gain_str = match (album_gain, track_gain) {
-        (Some(ag), Some(tg)) => format!("{:.2} dB | {:.2} dB", ag, tg),
-        (Some(ag), None) => format!("{:.2} dB | --", ag),
-        (None, Some(tg)) => format!("-- | {:.2} dB", tg),
+        (Some(album_gain), Some(track_gain)) => {
+            format!("{:.2} dB | {:.2} dB", album_gain, track_gain)
+        }
+        (Some(album_gain), None) => format!("{:.2} dB | --", album_gain),
+        (None, Some(track_gain)) => format!("-- | {:.2} dB", track_gain),
         (None, None) => "-- | --".to_string(),
     };
 

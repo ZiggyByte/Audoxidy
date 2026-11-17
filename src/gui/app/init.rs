@@ -354,8 +354,8 @@ impl AudoxidyApp {
             let pipewire_quantum = match sys_quantum {
                 crate::gui::audio_center::SystemSelection::Default => None,
                 crate::gui::audio_center::SystemSelection::Automatic => {
-                    let sr = pipewire_rate.unwrap_or(48000);
-                    let frames = (sr as f64 * 10.0 / 1000.0) as u32;
+                    let sample_rate = pipewire_rate.unwrap_or(48000);
+                    let frames = (sample_rate as f64 * 10.0 / 1000.0) as u32;
                     Some(if frames < 256 {
                         256
                     } else if frames < 512 {

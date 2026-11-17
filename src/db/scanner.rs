@@ -187,7 +187,7 @@ impl Scanner {
                 .and_then(|probe| probe.read())
         {
             let props = tagged_file.properties();
-            song.sample_rate = props.sample_rate().map(|sr| sr as i64);
+            song.sample_rate = props.sample_rate().map(|sample_rate| sample_rate as i64);
             song.channels = props.channels().map(|ch| ch as i64);
             song.duration_secs = Some(props.duration().as_secs_f64());
             song.bit_depth = props.bit_depth().map(|b| b as i64);

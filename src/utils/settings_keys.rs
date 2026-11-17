@@ -117,3 +117,7 @@ pub const KEY_METER_INFINITE_HOLD: &str = "meter_infinite_hold";
 pub const KEY_LIBRARY_VIEW_MODE: &str = "library_view_mode";
 /// Playlist that was selected when the application last closed.
 pub const KEY_LAST_ACTIVE_PLAYLIST_ID: &str = "last_active_playlist_id";
+
+#[cfg(test)]
+#[path = "settings_keys_tests.rs"]
+mod tests;

@@ -184,6 +184,16 @@ fn span_close_events_deliver_recorded_latency() {
     );
 }
 
+/// Los tres destinos de enrutamiento son un contrato publicado: una directiva
+/// de `RUST_LOG` los nombra, así que un valor distinto mueve cada evento a un
+/// destino que ninguna directiva alcanza y el registro queda vacío sin error.
+#[test]
+fn tracing_targets_keep_their_published_values() {
+    assert_eq!(METRICS_TARGET, "audoxidy::metrics");
+    assert_eq!(PERSISTENCE_TARGET, "audoxidy::persistence");
+    assert_eq!(COVERS_TARGET, "audoxidy::covers");
+}
+
 /// Con el nivel por defecto (`info`) los spans de DEBUG quedan apagados y
 /// no generan eventos.
 #[test]

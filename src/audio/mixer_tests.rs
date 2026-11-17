@@ -596,11 +596,19 @@ fn test_pipeline_384khz_8ch_smoke() {
         sl: Some(6),
         sr: Some(7),
     };
-    let mut out = Vec::new();
-    AudioEngine::mix_channels_planar(&input, frames, 8, 8, &map8, (1.0, 1.0, 1.0, 1.0), &mut out);
-    assert_eq!(out.len(), frames * 8);
+    let mut output = Vec::new();
+    AudioEngine::mix_channels_planar(
+        &input,
+        frames,
+        8,
+        8,
+        &map8,
+        (1.0, 1.0, 1.0, 1.0),
+        &mut output,
+    );
+    assert_eq!(output.len(), frames * 8);
     let expected_frame = [1.0_f64, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-    for (i, frame) in out.chunks_exact(8).enumerate() {
+    for (i, frame) in output.chunks_exact(8).enumerate() {
         assert_eq!(
             frame,
             expected_frame.as_slice(),
@@ -621,8 +629,8 @@ fn test_ringbuf_sizes_at_high_rates() {
         (192_000, 6, 2_304_000),
         (384_000, 8, 6_144_000),
     ];
-    for (rate, ch, expected) in cases {
-        let rb_size = ((rate as f64 * ch as f64) * 2.0) as usize;
+    for (rate, channels, expected) in cases {
+        let rb_size = ((rate as f64 * channels as f64) * 2.0) as usize;
         assert_eq!(rb_size.max(384_000), expected.max(384_000));
     }
 }
@@ -644,21 +652,29 @@ fn test_pipeline_is_f64_until_ringbuf() {
     // La mezcla planar, el DSP y los buffers de salida son f64 por
     // construcción: cambiar cualquiera a f32 rompería la compilación.
     let planar: Vec<Vec<f64>> = vec![vec![0.0_f64; 8]; 2];
-    let mut out: Vec<f64> = Vec::new();
+    let mut output: Vec<f64> = Vec::new();
     let map = ChannelMap::default();
-    AudioEngine::mix_channels_planar(&planar, 8, 2, 2, &map, (0.74, 0.66, 0.81, 0.91), &mut out);
+    AudioEngine::mix_channels_planar(
+        &planar,
+        8,
+        2,
+        2,
+        &map,
+        (0.74, 0.66, 0.81, 0.91),
+        &mut output,
+    );
     let mut frame = [0.0_f64; 8];
     crate::audio::dsp::DspChain::default().process_frame(&mut frame);
 
     // El único estrechamiento a f32 es el bus ringbuf: se verifica el
     // round-trip completo productor/consumidor.
-    let rb = HeapRb::<f32>::new(1024);
-    let (mut prod, mut cons) = rb.split();
-    assert_eq!(prod.push_slice(&[0.1_f32, -0.1]), 2);
-    assert_eq!(cons.pop_slice(&mut [0.0_f32; 2]), 2);
+    let ring_buffer = HeapRb::<f32>::new(1024);
+    let (mut producer, mut consumer) = ring_buffer.split();
+    assert_eq!(producer.push_slice(&[0.1_f32, -0.1]), 2);
+    assert_eq!(consumer.pop_slice(&mut [0.0_f32; 2]), 2);
 
     // 8 frames × 2 canales de salida, todos f64.
-    assert_eq!(out.len(), 16);
+    assert_eq!(output.len(), 16);
 }
 
 // --- Predecode acotado por memoria y avance de posición durante el drenado ---
@@ -696,14 +712,14 @@ fn test_current_pos_advance_during_drain() {
     // La posición de reproducción avanza durante el drenado de la pre-carga:
     // batch / (tasa × canales) segundos por lote (~100ms por lote).
     let rate = 384_000usize;
-    let ch = 2usize;
+    let channels = 2usize;
     let batch = 76_800usize; // 100ms a 384000×2
-    let batch_secs = batch as f64 / (rate * ch) as f64;
+    let batch_secs = batch as f64 / (rate * channels) as f64;
     assert!((batch_secs - 0.1).abs() < 1e-9);
 
     // 8s de pre-carga drenados en lotes de 100ms → la suma avanza 8s exactos.
     let total_samples = batch * 80;
-    let total_secs = total_samples as f64 / (rate * ch) as f64;
+    let total_secs = total_samples as f64 / (rate * channels) as f64;
     assert!((total_secs - 8.0).abs() < 1e-9);
 }
 

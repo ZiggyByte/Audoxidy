@@ -141,22 +141,22 @@ fn test_smoothing_ramp_reaches_target_in_duration() {
     }
 
     // Advance the ramp in 100ms batches until completion.
-    let dt = 0.1;
+    let batch_dt = 0.1;
     let mut elapsed_total = 0.0;
     let mut reached = false;
     while elapsed_total < 3.0 {
-        if let Some((from, to, elapsed, dur)) = smooth_ramp {
-            let e = elapsed + dt;
-            let t = (e / dur).min(1.0);
+        if let Some((from, to, elapsed, duration)) = smooth_ramp {
+            let next_elapsed = elapsed + batch_dt;
+            let t = (next_elapsed / duration).min(1.0);
             applied_vol = from + (to - from) * t;
             if t >= 1.0 {
                 smooth_ramp = None;
                 reached = true;
             } else {
-                smooth_ramp = Some((from, to, e, dur));
+                smooth_ramp = Some((from, to, next_elapsed, duration));
             }
         }
-        elapsed_total += dt;
+        elapsed_total += batch_dt;
         if reached {
             break;
         }

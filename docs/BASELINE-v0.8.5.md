@@ -253,6 +253,12 @@ the memory attribution work to resolve with evidence. Both figures are recorded 
 neither is lost, and the **measured** value is the operative reference because its
 procedure and host are recorded above.
 
+The figures above describe a settled process with the library barely touched. Browsing and
+playback add the cover store and the engine buffers on top; that state is measured and
+budgeted separately in `MEMORY-ANALYSIS-2026-11-14.md` § 8, where the current peak is
+**~219 MiB** and the floor after browsing is **~214 MiB**. Use that document for anything
+about memory under use; this table stays the launch-state reference.
+
 ### Reproducible four-scenario measurement (Pss_Anon)
 
 **Metric hierarchy.** `Pss_Anon` (private anonymous heap) is the primary metric and the

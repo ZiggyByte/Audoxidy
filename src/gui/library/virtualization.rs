@@ -25,6 +25,28 @@ impl LibraryManager {
         self.cached_grid_rows.replace(None);
     }
 
+    /// Whether the decoded-cover store may drop everything outside the visible
+    /// window without touching a cover the reader is looking at.
+    ///
+    /// Two conditions, both required. The window must hold something: before the
+    /// first layout it is empty, and trimming against an empty window would drop
+    /// every entry instead of only the off-screen ones. And the library must not
+    /// be scrolling: the window moves on every scroll event, so a trim mid-scroll
+    /// turns the next scroll back into a re-decode burst.
+    ///
+    /// A trim never removes the visible window — the budget protects those
+    /// entries — so this only decides when the prefetch band and the scroll-back
+    /// cushion are released.
+    pub fn cover_trim_is_safe(&self, idle: std::time::Duration) -> bool {
+        if self.cover_store.window_len() == 0 {
+            return false;
+        }
+        match self.last_scroll_at {
+            Some(last) => last.elapsed() >= idle,
+            None => true,
+        }
+    }
+
     /// Genera la estructura jerárquica para la vista de biblioteca
     /// Este proceso es O(N) y solo se ejecuta cuando cambian los filtros o expansiones.
     pub fn get_view_structure(&self) -> (f32, Vec<LibraryVirtualArtist>) {

@@ -9,6 +9,15 @@ use iced::Task;
 /// audio pre-cargado (drenado + mezcla cruzada), y una purga la interrumpiría.
 pub(in crate::gui::app) const PRELOAD_GC_SAFETY_SECS: u64 = 20;
 
+/// Segundos sin desplazar la biblioteca tras los cuales el recorte de carátulas
+/// puede soltar todo lo que quede fuera de la ventana visible.
+///
+/// Con la biblioteca enfocada y quieta ese recorte libera la banda de precarga y
+/// el colchón de scroll atrás; durante la navegación no se toca nada, porque la
+/// ventana se mueve en cada evento y recortar detrás convertiría la vuelta atrás
+/// en una ristra de re-decodificaciones.
+pub(in crate::gui::app) const LIBRARY_COVER_TRIM_IDLE_SECS: u64 = 5;
+
 /// Indica si el GC global debe quedar bloqueado por la pre-carga: activa o
 /// dentro de la ventana de seguridad posterior a su fin.
 pub(in crate::gui::app) fn gc_blocked_by_preload(
@@ -67,7 +76,16 @@ impl crate::gui::app::AudoxidyApp {
                 // cushion are dead weight; the window the view is showing is kept, so
                 // returning to the same scroll position is still instant. A scroll
                 // into the trimmed band re-decodes those covers asynchronously.
-                if !is_library_focused {
+                //
+                // The same trim now also runs with the library focused once it has
+                // been still for `LIBRARY_COVER_TRIM_IDLE_SECS`: that is the moment
+                // the prefetch band stops being useful, and it is the difference
+                // between the memory a browsing session accumulates and the floor it
+                // returns to when the reader stops. The guard refuses while a scroll
+                // is recent and while no layout has run, so an active session and an
+                // empty window are both untouched.
+                let trim_idle = std::time::Duration::from_secs(LIBRARY_COVER_TRIM_IDLE_SECS);
+                if !is_library_focused || self.library_manager.cover_trim_is_safe(trim_idle) {
                     let dropped = self.library_manager.cover_store.trim_outside_window();
                     tracing::debug!(
                         target: COVERS_TARGET,
@@ -91,6 +109,10 @@ impl crate::gui::app::AudoxidyApp {
 
                 // 6. FINAL: Reclamar memoria física al SO (Linux)
                 crate::core::Core::execute_global_purge();
+
+                // Muestra de RSS tras la purga: es el punto que separa lo que el
+                // GC devolvió de lo que quedó retenido por diseño.
+                crate::utils::rss::log_rss("gc");
 
                 // 7. Sweep the cover files no row references any more. The task
                 //    runs on a worker and reads both guards there, so a scan or

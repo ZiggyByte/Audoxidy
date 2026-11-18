@@ -1,10 +1,16 @@
 # Memory analysis — 280 MB peak during playback at 384 kHz
 
-Last updated: 2026-11-15
+Last updated: 2026-11-18
 
 Scope: Audoxidy playback and browsing at 384,000 Hz stereo, with a library of 27,743 songs
 and a full-library playlist. Measured peak: ~280 MB. Floor after reclaim: ~210 MB. Earlier
 measured ceiling: ~190 MB.
+
+**Amendment 2026-11-18.** The cover-store trim now follows inactivity rather than focus, and
+the resulting peak is **~219 MiB** with a post-browsing floor of **~214 MiB** — see § 8, which
+also records the measured playback profile and the sampling method. The library this section
+was written against has since grown to **35,961 songs and 3,495 albums**, so the per-song
+holders below scale about 30 % above the counts stated here.
 
 This document records the evidence and the budget. It is a static, code-based attribution;
 the numbers come from the live application.
@@ -213,3 +219,103 @@ mask. Estimated cost drops from ~4 MB to ~1 MB; the path is rebuilt only when a 
 | Cover budget | `src/utils/covers.rs` (`COVER_BUDGET_MAX_BYTES`) |
 | Cover store ledger | `src/gui/library/cover_cache.rs` |
 | Interner cap | `src/utils/interner.rs` |
+
+---
+
+## 8. Navigation footprint and the cover-store trim (2026-11-18)
+
+The budget above measured the engine and the cover store separately. This section records
+what the whole process does while a reader browses and then settles, which is the state a
+desktop player spends its life in, and the change that brought it down.
+
+### The retention that showed up after browsing
+
+Scrolling the library moved the process from 204.2 MiB to a 256.8 MiB peak, and eight
+minutes after the scrolling stopped the 60 s purge had only returned it to 247.7 MiB. The
+cause was a policy, not an allocation: the purge trimmed the decoded-cover store **only
+when the library was out of focus**, so a reader who scrolled and then stayed in the library
+kept the prefetch band and the scroll-back cushion resident indefinitely.
+
+### The trim now follows inactivity, not focus
+
+`handle_memory` trims the decoded-cover store when either of these holds:
+
+- the library is out of focus, as before; or
+- the library is focused and has not scrolled for `LIBRARY_COVER_TRIM_IDLE_SECS` (5 s).
+
+`LibraryManager::cover_trim_is_safe` authorises that second case and refuses under two
+conditions. It refuses while the last scroll is younger than the threshold, because the
+window moves on every scroll event and trimming behind it turns a scroll back into a
+re-decode burst. And it refuses when the window is empty, which is the state before the
+first layout: `is_window` answers `false` for every path there, so a trim would drop the
+whole store instead of only the off-screen entries. That guard also protects the
+out-of-focus path, which previously had no such check.
+
+The visible window is never trimmed in either case — the budget protects its entries and
+`evict_to_budget` stops when only window entries remain — so a cover on screen cannot be
+released. An entry dropped outside the window is re-decoded asynchronously in 1–3 ms when
+it scrolls back into view, and the cell draws its placeholder for that interval.
+
+The next track's cover is unaffected: the 15 s preload builds an
+`iced::widget::image::Handle::from_path` and stores it in
+`player_ui_state.prefetched_next_handle`, which is a separate field outside the cover
+store. The trim never deletes a file either; the orphan sweep is a different path and only
+removes files no row references.
+
+### Measured, same four-step sequence before and after
+
+| Moment | Before the trim | After the trim |
+|---|---:|---:|
+| `startup` | 94.6 MiB | 94.5 MiB |
+| First purge, library loaded | 203.8 MiB | 204.2 MiB |
+| Peak while scrolling | 256.8 MiB | 241.5 MiB |
+| Purge after the scrolling stops | 247.7 MiB (8 min later) | **213.7 MiB (10 s later)** |
+
+The peak still rises while scrolling, which is the store filling as covers enter the
+window; what changed is that the floor comes back. The 60 s purge cadence means the drop
+lands within a minute of the reader stopping.
+
+### No leak: the anonymous set is flat under playback
+
+Six minutes of playback across four tracks, sampled once per purge:
+
+| Purge | RSS | `Pss_Anon` |
+|---|---:|---:|
+| 1 | 205.7 MiB | 103.7 MiB |
+| 2 | 211.4 MiB | 109.3 MiB |
+| 3 | 211.4 MiB | 109.3 MiB |
+| 4 | 211.4 MiB | 109.3 MiB |
+| 5 | 212.7 MiB | 109.3 MiB |
+| 6 | 215.5 MiB | 109.3 MiB |
+| 7 | 219.0 MiB | 109.3 MiB |
+
+`Pss_Anon` rises once (+5.6 MiB) when playback first starts — the ring at the device rate,
+the DSP state and the preload head — and then stays flat for five and a half minutes while
+RSS continues to climb by 7.6 MiB. Growth with a flat anonymous set is file-backed, and the
+connection pragmas bound it: `cache_size = -8000` (7.8 MB per connection, two connections)
+and `mmap_size = 16777216` (16 MiB window) over a 34.6 MB database. That is page cache the
+system can reclaim, not heap that the process holds.
+
+**Current peak: ~219 MiB** against the ~250 MiB recorded above, and the sustained floor
+after browsing is ~214 MiB instead of ~248 MiB.
+
+### How the numbers were taken
+
+The process samples `Rss`, `Pss`, `Pss_Anon` and `Private_Dirty` from
+`/proc/self/smaps_rollup` at four attribution points and emits one structured event per
+sample under the `audoxidy::memory` target (`src/utils/rss.rs`):
+
+| Label | Emitted from | What it separates |
+|---|---|---|
+| `startup` | the end of `AudoxidyApp::new` | engine + database + first library load |
+| `gc` | after the global purge | what the purge returned against what stayed |
+| `window` | window geometry persistence | viewport reflow and cover re-decode |
+| `scroll` | `Message::LibraryScroll` | the cover store against iced's textures |
+
+The scroll and window labels are rate-limited to one sample every 3 s and 2 s, so a drag or
+a fast scroll cannot flood the log, and reading one sample costs a file read.
+
+To reproduce: run a development build, note `startup`, wait for the first `gc`, scroll the
+library to the end and back, stop and let one purge run, then drag and resize the window and
+play a few tracks. Attribute each delta between consecutive samples to the holder the label
+names.

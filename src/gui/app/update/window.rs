@@ -598,6 +598,9 @@ impl crate::gui::app::AudoxidyApp {
                 tracing::warn!("Failed to persist window geometry: {e}");
             }
         }
+        // Muestra tras persistir la geometría: un cambio de tamaño refluye el
+        // viewport y vuelve a decodificar carátulas.
+        crate::utils::rss::log_rss_on_window();
     }
 }
 

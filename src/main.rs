@@ -14,8 +14,20 @@ fn main() -> iced::Result {
         config_path: core_paths.config_path.clone(),
     });
 
+    // 1.5 Resolver la capacidad del equipo antes de leer la configuración: el
+    //     resolutor de perfiles la necesita para distinguir una elección
+    //     explícita de `HighFidelity` de un perfil `Default` en un equipo que no
+    //     puede permitirse los búferes grandes.
+    let hardware_low_resource = audoxidy::utils::probe_low_resource_hardware();
+    audoxidy::utils::set_hardware_low_resource(hardware_low_resource);
+
     // 2. Cargar configuración (crea archivo por defecto si no existe)
     let app_config = audoxidy::utils::config::load_config_from(&core_paths.config_path);
+
+    // 2.5 Resolver el modo de bajos recursos con la sonda ya conocida. Se repite
+    //     aquí porque el camino que crea el archivo por defecto no aplica perfil,
+    //     y el motor de audio lee el flag al construirse.
+    audoxidy::utils::config::resolve_resource_profile(&app_config);
 
     // 3. Inicializar logging con configuración
     audoxidy::utils::observability::init_logging(&app_config.logging);
@@ -25,6 +37,12 @@ fn main() -> iced::Result {
         env!("CARGO_PKG_VERSION"),
         app_config.profile
     );
+    if hardware_low_resource {
+        tracing::info!(
+            "Audoxidy Performance: hardware de bajos recursos detectado; modo activo = {}",
+            audoxidy::utils::is_low_resource()
+        );
+    }
 
     // 4. Inicializar gestor de memoria
     audoxidy::utils::memory_manager::MemoryManager::init();

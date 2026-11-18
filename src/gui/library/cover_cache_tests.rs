@@ -2003,3 +2003,37 @@ fn test_same_title_versions_stay_separate() {
         "cada versión conserva su portada en la cuadrícula filtrada"
     );
 }
+
+/// The trim policy that lets the GC release the prefetch band while the library
+/// keeps focus. It has to refuse twice over: before any layout has run, because
+/// an empty window would turn "outside the viewport" into "everything", and
+/// while a scroll is recent, because recency is what makes scroll-back instant.
+#[test]
+fn cover_trim_refuses_before_the_first_layout() {
+    let manager = LibraryManager::default();
+    assert_eq!(manager.cover_store.window_len(), 0);
+    assert!(
+        !manager.cover_trim_is_safe(std::time::Duration::from_secs(5)),
+        "an empty window must never authorise a trim"
+    );
+}
+
+#[test]
+fn cover_trim_waits_for_the_idle_window() {
+    let mut manager = LibraryManager::default();
+    manager
+        .cover_store
+        .set_window(vec![("covers/a.avif".to_string(), 160)]);
+    let idle = std::time::Duration::from_secs(5);
+
+    // No scroll recorded yet: the reader has not moved, so the trim is safe.
+    assert!(manager.cover_trim_is_safe(idle));
+
+    // A scroll that just happened keeps the band and the cushion alive.
+    manager.last_scroll_at = Some(std::time::Instant::now());
+    assert!(!manager.cover_trim_is_safe(idle));
+
+    // Once the window has been still for longer than the threshold, it is safe.
+    manager.last_scroll_at = Some(std::time::Instant::now() - idle);
+    assert!(manager.cover_trim_is_safe(idle));
+}

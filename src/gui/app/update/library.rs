@@ -1076,6 +1076,10 @@ impl crate::gui::app::AudoxidyApp {
                 let previous_y = self.library_manager.scroll_offset.y;
                 let abs_offset = offset.absolute_offset();
                 self.library_manager.scroll_offset = iced::Vector::new(abs_offset.x, abs_offset.y);
+                // Muestra de RSS al desplazarse la biblioteca: es donde crecen
+                // juntos el store de carátulas y las texturas de iced. La propia
+                // función limita la frecuencia.
+                crate::utils::rss::log_rss_on_scroll();
                 self.library_manager.last_viewport = Some(iced::Rectangle {
                     x: offset.absolute_offset().x,
                     y: offset.absolute_offset().y,

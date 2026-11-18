@@ -436,6 +436,8 @@ gui::library::cover_cache::tests::test_cover_cache_order_tracks_recency_without_
 gui::library::cover_cache::tests::test_cover_cache_records_hit_and_miss
 gui::library::cover_cache::tests::test_cover_decode_worker_reports_a_missing_file
 gui::library::cover_cache::tests::test_cover_request_retries_after_a_full_queue
+gui::library::cover_cache_tests::cover_trim_refuses_before_the_first_layout
+gui::library::cover_cache_tests::cover_trim_waits_for_the_idle_window
 gui::library::cover_cache_tests::test_album_block_ambiguous_title_falls_back_to_the_row_path
 gui::library::cover_cache_tests::test_album_block_rows_carry_cover_path
 gui::library::cover_cache_tests::test_band_is_capped_by_the_budget_not_the_ceiling
@@ -593,6 +595,9 @@ utils::observability::tests::span_close_events_deliver_recorded_latency
 utils::observability::tests::tracing_targets_keep_their_published_values
 utils::observability::tests::visitor_records_fields
 utils::paths::tests::test_desktop_default_matches_app_paths
+utils::rss::tests::reads_a_field_absent_from_the_sample_as_zero
+utils::rss::tests::reads_a_malformed_value_as_zero_instead_of_panicking
+utils::rss::tests::reads_each_field_from_a_rollup_sample
 utils::settings_keys::tests::stored_key_names_are_frozen
 utils::tests::test_compare_songs_for_listing_by_track_number
 utils::tests::test_compare_songs_for_listing_different_artist

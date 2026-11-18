@@ -412,7 +412,7 @@ dependencies = [
 
 [[package]]
 name = "audoxidy"
-version = "0.8.5"
+version = "0.8.6"
 dependencies = [
  "async_ftp",
  "audioadapter",

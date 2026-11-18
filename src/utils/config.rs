@@ -139,13 +139,25 @@ impl AudioConfig {
                 buffer_size: None,
                 safety_buffer_secs: 2.0,
             },
+            // Un perfil de bajos recursos es de memoria y CPU, no de fidelidad:
+            // la frecuencia de muestreo, el número de canales y la profundidad
+            // de bits siguen a lo que negocien el archivo y el dispositivo,
+            // exactamente igual que en `Default`. Forzar 48 kHz / 16 bits /
+            // estéreo aquí truncaría un archivo de alta resolución justo en los
+            // equipos que menos pueden permitírselo, y contradice el valor
+            // central del reproductor.
+            //
+            // El tamaño del búfer también lo elige el dispositivo: fijar 512
+            // frames provoca underruns a frecuencias altas, y la memoria que
+            // ahorra este perfil viene de la duración del ring buffer en
+            // `AudioEngine::new`, no de aquí.
             ConfigProfile::LowResource => Self {
                 host: None,
                 device: None,
-                sample_rate: Some(48000),
-                bit_depth: Some(BitDepthConfig::Bits16),
-                channels: Some(2),
-                buffer_size: Some(512),
+                sample_rate: None,
+                bit_depth: None,
+                channels: None,
+                buffer_size: None,
                 safety_buffer_secs: 0.5,
             },
         }
@@ -568,7 +580,7 @@ pub fn load_config_from(path: &Path) -> AppConfig {
                     tracing::warn!("Config warning: {}", w);
                 }
                 if validation.is_valid() {
-                    apply_profile(&config);
+                    resolve_resource_profile(&config);
                     config
                 } else {
                     for e in &validation.errors {
@@ -681,7 +693,7 @@ pub fn check_config_reload() -> Option<AppConfig> {
         Ok(content) => match ron::from_str(&content) {
             Ok(config) => {
                 tracing::info!("Configuración recargada desde disco");
-                apply_profile(&config);
+                resolve_resource_profile(&config);
                 Some(config)
             }
             Err(e) => {
@@ -696,15 +708,19 @@ pub fn check_config_reload() -> Option<AppConfig> {
     }
 }
 
-fn apply_profile(config: &AppConfig) {
-    match config.profile {
-        ConfigProfile::LowResource => {
-            crate::utils::LOW_RESOURCE_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-        _ => {
-            crate::utils::LOW_RESOURCE_MODE.store(false, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
+pub fn resolve_resource_profile(config: &AppConfig) {
+    let active = match config.profile {
+        ConfigProfile::LowResource => true,
+        // `Default` significa "automático": delega en la sonda de hardware en
+        // vez de forzar el flag a `false`. Forzarlo apagaba el modo de bajos
+        // recursos en cada recarga de configuración, aunque el equipo lo
+        // necesitara, y con él crecían el ring buffer, los márgenes del
+        // viewport y los pools de carátulas.
+        ConfigProfile::Default => crate::utils::hardware_low_resource(),
+        // Una elección explícita de máxima fidelidad sí desactiva el modo.
+        ConfigProfile::HighFidelity => false,
+    };
+    crate::utils::set_effective_low_resource(active);
 }
 
 #[cfg(test)]

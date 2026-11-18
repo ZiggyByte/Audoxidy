@@ -198,6 +198,14 @@ impl CoverStore {
         self.budget.set_window(keys);
     }
 
+    /// Number of paths the current viewport window holds.
+    ///
+    /// Zero means no layout has run yet, and a trim in that state would drop
+    /// every entry instead of only the ones outside the viewport.
+    pub fn window_len(&self) -> usize {
+        self.budget.window_len()
+    }
+
     /// Returns whether the current window needs a path and bucket.
     pub fn is_window(&self, path: &str, bucket: u16) -> bool {
         self.budget.is_window(path, bucket)

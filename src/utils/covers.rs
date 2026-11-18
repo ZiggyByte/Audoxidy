@@ -896,6 +896,14 @@ impl CoverBudget {
             .is_some_and(|buckets| buckets.contains(&bucket))
     }
 
+    /// Number of paths the current viewport window holds.
+    ///
+    /// Zero means no layout has run yet. Trimming in that state would find every
+    /// entry outside an empty window and drop the lot, so callers gate on it.
+    pub fn window_len(&self) -> usize {
+        self.window.len()
+    }
+
     /// Drops least-recently-used entries outside the window until the retained
     /// bytes fit the budget.
     ///

@@ -223,21 +223,10 @@ impl AudoxidyApp {
         // CoreEvent channel: Core owns the sender; the GUI consumes the receiver.
         let core_event_rx = core.event_receiver();
 
-        // Detección de Hardware para modo de bajos recursos (RAM < 8GB o Cores < 4)
-        let mut sys = sysinfo::System::new_all();
-        sys.refresh_all();
-        let total_ram_gb = sys.total_memory() / 1024 / 1024 / 1024;
-        let cpu_cores = sys.cpus().len();
-        let low_resource_mode = total_ram_gb < 8 || cpu_cores < 4;
-
-        // Configurar flag global para que todos los módulos puedan consultarlo
-        crate::utils::LOW_RESOURCE_MODE
-            .store(low_resource_mode, std::sync::atomic::Ordering::Relaxed);
-
-        if low_resource_mode {
-            #[rustfmt::skip]
-            tracing::info!("Audoxidy Performance: Low resource mode ENABLED (RAM: {}GB, Cores: {})", total_ram_gb, cpu_cores);
-        }
+        // El modo de bajos recursos se resolvió en `main`, antes de leer la
+        // configuración, para que el perfil pudiera delegar en la sonda de
+        // hardware. Aquí solo se refleja en el estado de la aplicación.
+        let low_resource_mode = crate::utils::is_low_resource();
 
         // Construir el índice de filtros con las canciones ya cargadas
         let mut filters_manager = LibraryFiltersManager::default();
@@ -1107,6 +1096,10 @@ impl AudoxidyApp {
             },
             |_| Message::InitStartup,
         );
+
+        // Muestra de RSS al arrancar: la línea base contra la que se comparan
+        // las de GC, ventana y scroll.
+        crate::utils::rss::log_rss("startup");
 
         (
             Self {

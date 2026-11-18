@@ -4,6 +4,24 @@ All notable changes to Audoxidy will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.6] - 2026-11-18
+
+Bug-fix release for the 0.8.5 line: the decoded-cover store now releases what the reader has stopped looking at, the low-resource profile no longer truncates audio quality, and a configuration reload can no longer switch the resource mode off.
+
+### Fixed
+
+- **Memory stayed high after browsing** — the purge trimmed the decoded covers only with the library out of focus, so scrolling and then staying in the library kept the prefetch band and the scroll-back cushion resident indefinitely. The trim now also runs while the library is focused, once it has not scrolled for five seconds, and it refuses while a scroll is recent and while the visible window is empty. The cover on screen is never released, and a trimmed one is re-decoded asynchronously in 1–3 ms when it comes back. Measured on the same sequence: peak 256.8 → 241.5 MiB, floor after browsing 247.7 → 213.7 MiB
+- **A configuration reload switched the low-resource mode off** — the profile resolver forced the flag to `false` for any profile other than `LowResource`, and window handling reloads the configuration, so a machine the hardware probe had classified as low-resource lost its small buffers as soon as the window moved. The probe result is now stored separately and a `Default` profile defers to it; only an explicit `HighFidelity` disables the mode
+- **The low-resource profile capped audio quality** — it forced 48 kHz, 16-bit, two channels and a fixed 512-frame callback, which would have truncated a hi-res file on the machines least able to absorb the cost. Sample rate, channel count and bit depth now follow the file and the device, and the callback size is left to the device because 512 frames underrun at high rates. The profile still shortens the ring and the viewport margins, which is where its memory saving came from
+
+### Added
+
+- **Resident-set attribution** — samples `Rss`, `Pss`, `Pss_Anon` and `Private_Dirty` at startup, after each purge, on window geometry changes and while scrolling the library, with the two high-frequency points rate-limited. A memory delta then names the holder that grew, instead of inviting another hypothesis
+
+### Changed
+
+- The memory budget now records the footprint measured under use — **~219 MiB peak** and **~214 MiB floor after browsing** — along with the absence of a leak under playback: the anonymous set is flat across six minutes of playback and the residual growth is file-backed, bounded by the SQLite pragmas
+
 ## [0.8.5] - 2026-11-17
 
 Refactor & Optimization — a release that reorganizes the inside of the project without changing what the user sees or what the engine sounds like. It breaks the UI monoliths into single-responsibility modules, introduces a core that does not depend on `iced`, single-sources the dimension tokens and the persisted keys, and closes with a descriptive-naming pass and no duplicated data. Suite: 662 tests green.

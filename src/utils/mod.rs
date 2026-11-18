@@ -7,6 +7,7 @@ pub mod interner;
 pub mod memory_manager;
 pub mod observability;
 pub mod paths;
+pub mod rss;
 pub mod settings_keys;
 use crate::db::database::SongData;
 
@@ -42,9 +43,44 @@ pub fn song_matches_search(song: &SongData, query_lowercase: &str) -> bool {
 pub static LOW_RESOURCE_MODE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// Lo que encontró la sonda de hardware, con independencia del perfil elegido.
+///
+/// Se guarda aparte para que un perfil `Default` pueda delegar en ella: el
+/// perfil se vuelve a aplicar cada vez que se recarga la configuración, y sin
+/// este valor esa recarga forzaría el flag a `false` en un equipo que sí
+/// necesita los búferes pequeños.
+static HARDWARE_LOW_RESOURCE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// Devuelve `true` si el modo de bajos recursos está activo.
 pub fn is_low_resource() -> bool {
     LOW_RESOURCE_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Devuelve lo que encontró la sonda de hardware, ignorando el perfil.
+pub fn hardware_low_resource() -> bool {
+    HARDWARE_LOW_RESOURCE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Sondea el equipo: menos de 8 GB de RAM o menos de 4 núcleos cuenta como
+/// bajos recursos. Lee los totales una vez, así que es barato pero no gratis.
+pub fn probe_low_resource_hardware() -> bool {
+    let mut sys = sysinfo::System::new_all();
+    sys.refresh_all();
+    let total_ram_gb = sys.total_memory() / 1024 / 1024 / 1024;
+    let cpu_cores = sys.cpus().len();
+    total_ram_gb < 8 || cpu_cores < 4
+}
+
+/// Registra el resultado de la sonda. Debe ejecutarse antes de cargar la
+/// configuración, para que un perfil `Default` resuelva contra ella.
+pub fn set_hardware_low_resource(detected: bool) {
+    HARDWARE_LOW_RESOURCE.store(detected, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Fija el flag efectivo. Solo lo llama el resolutor de perfiles.
+pub(crate) fn set_effective_low_resource(active: bool) {
+    LOW_RESOURCE_MODE.store(active, std::sync::atomic::Ordering::Relaxed);
 }
 
 /// Columnas de ordenamiento disponibles en la biblioteca y listas.

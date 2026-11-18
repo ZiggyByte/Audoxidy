@@ -27,6 +27,10 @@ pub(crate) const PERSISTENCE_TARGET: &str = "audoxidy::persistence";
 // decides what the viewport shows; this module declares the routing key alone.
 pub(crate) const COVERS_TARGET: &str = "audoxidy::covers";
 
+/// Tracing target for resident-set samples: one event per attribution moment, so
+/// a memory delta can be tied to the holder that grew between two samples.
+pub(crate) const MEMORY_TARGET: &str = "audoxidy::memory";
+
 /// Inicializa el sistema de logging estructurado con tracing.
 /// - Niveles configurables por módulo
 /// - Rotación de archivos

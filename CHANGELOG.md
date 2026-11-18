@@ -4,6 +4,45 @@ All notable changes to Audoxidy will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
+## [0.8.5] - 2026-11-17
+
+Refactor & Optimization — la release que ordena el interior del proyecto sin cambiar lo que el usuario ve ni lo que el motor suena. Descompone los monolitos de la interfaz en módulos con responsabilidad única, introduce un núcleo independiente de `iced`, unifica los tokens de dimensión y las claves persistidas, y cierra con una pasada de nombres descriptivos y cero duplicaciones de datos. Suite: 662 tests verdes.
+
+### Added
+
+- **Núcleo independiente de la interfaz** — `src/core/` concentra la orquestación de audio, base de datos y escáner y la expone como comandos síncronos más un flujo de eventos; el shell gráfico ya no toca los servicios directamente
+- **Catálogo de claves persistidas** (`src/utils/settings_keys.rs`) — las 48 claves de la tabla de ajustes se declaran una vez y con el valor congelado, porque cada una es ya una fila en la base de datos de cada instalación
+- **Sistema de tokens de dimensión** — un único módulo es la fuente de todas las constantes numéricas de maquetación, con roles, unidades y superficies declarados
+- **Rejilla de álbumes adaptable al ancho** — un solo tamaño de tarjeta, sin huecos, calculado por una función pura de geometría que comparten la virtualización, el autodesplazamiento por teclado y las acciones de "mostrar en…"
+- **Estilo de icono global** — una implementación única para color, hover, activo y deshabilitado en las barras inferior de playlist y biblioteca y en el botón de cierre del centro de audio
+- **Shell de ventana nativo** — arrastre desde las tres barras superiores, redimensionado por bordes y esquinas, arranque maximizado y geometría persistida entre reinicios
+- **Taxonomía de ticks** — cinco cadencias (33 / 500 / 500 / 500 / 5000 ms) con identidad explícita por tipo, en lugar de recargas implícitas por receta
+- **Activos bajo `src/assets/{icons,fonts}`** — una sola raíz de ejecución y un punto único de resolución de rutas de icono
+
+### Performance
+
+- **Huella de memoria acotada** — atribución medida del consumo en reposo y reducciones aplicadas solo sobre hechos medidos: ~18,4 MB por una cabeza de precarga, ~3 MB del arena de filtros, 5,5 MB cuando una consulta de playlist coincide entera y 5–10 MB con la biblioteca sin foco, con el pico de 280 a 250 MB
+- **Caché de carátulas ligada al viewport** — presupuesto de 84 entradas (16.262.400 B) y carga perezosa: cero aperturas de archivo, cero decodificaciones y cero fallos de render al desplazarse dentro del margen de precarga; +14,3 MiB de pico y +10,5 MiB tras un recorrido completo, dentro del techo de 48 MiB
+- **Esquema y CRUD de base de datos** — metadatos de una sola fuente, política de reconstrucción limpia y consistencia FTS5 verificada
+- **DSP vectorizado** — el compresor usa un búfer circular con RMS y pico SIMD (`wide::f64x4`), el limitador inter-muestra de pico verdadero en polifase 2× y la reverb FWHT con conjuntos FDN decorrelacionados por canal
+- **Relleno de la cola del crossfade** — la decodificación de la cola llena la capacidad de una sola llamada en lugar de un paquete por iteración, lo que elimina el corte que aparecía a 96 kHz y se agravaba a 384 kHz
+
+### Fixed
+
+- **Corte audible de ~7 s al cambiar de pista** — `shrink_to_fit` sobre el búfer de precarga liberaba hasta 64 MB justo cuando el decodificador debía reanudar la decodificación, dejando un hueco en el ring buffer
+- **Cola del crossfade entrecortada** — el búfer de cola descartaba las muestras sobrantes del último paquete decodificado, perdiendo audio en cada iteración; ahora crece sin tope y se consume al ritmo real
+- **Fin de pista con la cola aún sonando** — al llegar al EOF se liberaba el decodificador de cola pero no el audio ya decodificado, cortando ~200 ms en seco; ahora se mezcla hasta agotarse de forma natural
+- **Mezcla f64 con fundidos activos** — el fade-in se aplica solo a la pista entrante y el fade-out solo a la saliente, sin que la salida normal vuelva a aplicarlos durante la mezcla
+- **Congelación de la interfaz por preferencia de escritor** — los bloques que mutan estado sueltan siempre el guard de lectura antes de pedir el de escritura, y nunca se retiene el cerrojo de la base mientras se encolan carátulas o se precargan listas
+- **Descarga de la biblioteca en la purga periódica de memoria** — la purga ya no vacía la biblioteca cargada
+
+### Changed
+
+- **Descomposición de los monolitos** — `app.rs`, `library.rs`, `playlist.rs`, el centro de audio y el módulo de base de datos se dividieron en archivos con una responsabilidad cada uno, con cero cambio de comportamiento, comprobado por proyección de líneas y multiconjunto de atributos
+- **Nombres descriptivos en todo el árbol** — cada enlace que guardaba un objeto, cadena, ruta, búfer o handle recibió el nombre de lo que contiene; las abreviaturas que se conservan (tokens de canal, símbolos matemáticos, notación de caja y delta) están documentadas con su razón
+- **Datos de una sola fuente** — familia de márgenes fundida en la escala de espaciado, tres destinos de traza compartidos, constantes de suavizado leídas de producción y nueve alias de tipo que retiran las tuplas anónimas
+- **Ledger de `clippy` de 43 a 2 avisos** — 24 correcciones, diecisiete exenciones documentadas con su motivo y dos constantes reservadas como único resto aceptado
+
 ## [0.8.0] - 2026-09-13
 
 Crate Modernization — mega-release que moderniza cada crate activa a su última versión estable en lotes pequeños y testeados, preservando el pipeline de audio f64 (el único narrowing a f32 sigue en el push al ringbuf). Suite: 311 tests verdes.

@@ -56,7 +56,7 @@ freeze, an unbounded growth in idle memory.
 | Toolchain | `rustc 1.98.1 (48a229cea 2026-09-01)` / `cargo 1.98.1 (797e8a9bc 2026-08-05)` |
 | Build profile | development (`cargo test`, `cargo build`); **never `--release`** |
 | Cargo `TMPDIR` | `$HOME/.cache/audoxidy-cargo-tmp` (disk-backed, never the RAM-backed `/tmp`) |
-| Repository version reference | `v0.8.5` (milestone name; `Cargo.toml` still reads `0.8.0`) |
+| Repository version reference | `v0.8.5` (`Cargo.toml` reads `0.8.5`) |
 
 **Execution environment — current.** The Rust toolchain is not installed on the host.
 Every command in this document runs inside the distrobox container `dev-audoxidy`; the
@@ -114,13 +114,13 @@ wc -l docs/baseline-tests-v0.8.5.txt
 ## Gate policy
 
 The baseline is enforced with two **HARD gates** and one **ADVISORY** class. The
-separation is deliberate: a later phase must not be able to claim a pass by re-defining
+separation is deliberate: a later release must not be able to claim a pass by re-defining
 the gate.
 
 | Class | Item | Rule |
 |-------|------|------|
-| **HARD gate** | Test count and test-name list | The suite must never drop below the recorded floor, and no recorded test name may disappear. A missing name is a failure even if the total count still meets the floor. Renames and additions are allowed (the floor is a minimum, not a ceiling), but a rename that removes a recorded name must be justified in the phase summary. |
-| **HARD gate** | Manual regression checklist | Every scenario in `## Manual regression checklist` must be executed and marked pass, or recorded as a deviation with severity and the phase expected to fix it. A failing scenario does not silently pass. |
+| **HARD gate** | Test count and test-name list | The suite must never drop below the recorded floor, and no recorded test name may disappear. A missing name is a failure even if the total count still meets the floor. Renames and additions are allowed (the floor is a minimum, not a ceiling), but a rename that removes a recorded name must be justified in the release notes. |
+| **HARD gate** | Manual regression checklist | Every scenario in `## Manual regression checklist` must be executed and marked pass, or recorded as a deviation with severity and the release expected to fix it. A failing scenario does not silently pass. |
 | **ADVISORY** | Timing and RSS metrics | Investigate a **sustained 10–15 %** delta against the recorded figures. This is never a build failure. Absolute numbers depend on host CPU, kernel, load, thermals and frequency scaling, so only same-machine comparisons are meaningful. |
 
 The advisory tolerance is the same policy `benches/BASELINES.md` already records for the
@@ -159,7 +159,7 @@ The authoritative name list is `docs/baseline-tests-v0.8.5.txt`: currently 649 s
 fully-qualified names, one per line, suitable for `diff`. The list is produced from a green
 run of the current tree, so it records every test the suite runs today.
 
-**Reproducible comparison command** (a later phase runs this and must see an empty
+**Reproducible comparison command** (a later release runs this and must see an empty
 *removed* list):
 
 ```bash
@@ -186,7 +186,7 @@ LC_ALL=C comm -13 docs/baseline-tests-v0.8.5.txt \
 
 This is the **pre-reduction reference** for the idle memory and CPU footprint. The
 attribution of the footprint (heap vs mmap vs GPU) and every reduction decision belong to
-the later memory phase; this section only records the starting point reproducibly.
+the later memory work; this section only records the starting point reproducibly.
 
 **Procedure.** Build and launch the application in development mode (never `--release`),
 from an isolated working directory with an isolated `HOME` so the library is empty and
@@ -237,7 +237,7 @@ Disk-backed `TMPDIR` is used for the build; the launched process itself needs no
   cadence, not the idle tick.
 - Roughly **two thirds of the RSS is shared/file-backed** (`Shared_Clean` 92696 kB,
   `Pss` 91912 kB against `Rss` 165352 kB). The private anonymous working set is only
-  ≈ 30 MB (`Pss_Anon` 30180 kB). Any reduction phase must reason on `Pss`/`Private`, not
+  ≈ 30 MB (`Pss_Anon` 30180 kB). Any reduction work must reason on `Pss`/`Private`, not
   on the headline RSS alone.
 - The capture spans exactly one **60-second reclaim cycle**: `FIXED_PURGE_INTERVAL_SECS`
   is 60 s, and the log shows the audio ring buffer being recreated and the output stream
@@ -249,7 +249,7 @@ footprint of **~270 MB RAM with an empty library and nothing playing** (`PROJECT
 The measurement above is **≈ 161 MiB** under the same nominal conditions — roughly 40 %
 lower. The two figures are not reconciled here; the difference may come from a different
 build/session, from RSS-vs-PSS accounting, or from GPU/driver mappings, and it is left for
-the memory attribution phase to resolve with evidence. Both figures are recorded so that
+the memory attribution work to resolve with evidence. Both figures are recorded so that
 neither is lost, and the **measured** value is the operative reference because its
 procedure and host are recorded above.
 
@@ -380,9 +380,9 @@ silently, with no error**. This is a defect of the recorded set. It is **not** f
 this baseline; any fix belongs to the tick work item that owns the inventory and holds the
 user's authorization (see Audoxidy Standard §8, which records the same defect).
 
-**Change rule.** Changing any cadence requires the tick phase's written inventory and the
+**Change rule.** Changing any cadence requires the written tick inventory and the
 user's explicit authorization. Nothing in this snapshot authorizes removing, merging or
-re-timing a tick; the snapshot exists so that a later phase can prove it changed nothing
+re-timing a tick; the snapshot exists so that a later release can prove it changed nothing
 by accident.
 
 ## Metrics snapshot
@@ -415,7 +415,7 @@ the metrics target, and the file and stderr layers explicitly exclude that targe
 metric events reach no sink and the atomics are only observable from inside the process.
 The capture could therefore not read the counters directly; the idle values above follow
 from the capture conditions and from the RSS measurement, and they are recorded as such.
-A later phase that needs the counters externally must add a sink or an in-app readout; that
+A later release that needs the counters externally must add a sink or an in-app readout; that
 is out of scope here.
 
 **Audio-safety signals.** `underrun_count` and `audio_latency_peak_us` are the audio-safety
@@ -425,7 +425,7 @@ of the baseline for exactly that reason.
 
 ## Benchmark baselines (referenced, not re-measured)
 
-The tracked criterion baselines are **referenced, not re-measured** in this phase. The
+The tracked criterion baselines are **referenced, not re-measured** in this release. The
 authority is `benches/BASELINES.md`:
 
 - the **`post-audio-core`** record — the authoritative baseline for the DSP-chain,
@@ -439,7 +439,7 @@ The comparison policy is the same in both records and is restated here so the tw
 comparison is **advisory**, a sustained **> 10–15 %** regression for the affected
 benchmark is a prompt to investigate, and it is **never a blocking gate**. Baseline data
 lives in the gitignored `target/criterion/**`; the version-controlled documents are the
-authority. No new benchmark numbers are captured in this phase.
+authority. No new benchmark numbers are captured in this release.
 
 ## Manual regression checklist
 
@@ -452,7 +452,7 @@ Every run must be performed with a **development build** (never `--release`), a 
 library and an audio device available. For each scenario record **precondition, steps,
 expected result, observed result, result (pass/fail), and evidence** (a log excerpt or a
 screenshot). A failure does not silently pass: it is recorded as a known deviation with
-its severity and the phase expected to fix it.
+its severity and the release expected to fix it.
 
 **Execution status: executed — all six scenarios pass.** The checklist was run by the
 repository owner against a development build with a populated library and an audio device
@@ -652,15 +652,15 @@ classification, are recorded here rather than dropped:
 
 | Log line | Classification |
 |----------|----------------|
-| `audoxidy::persistence: No se pudo guardar el estado de reproducción ... database is locked` and `No se pudo persistir el ajuste key="shuffle_session" error=database error: database is locked`, while the scan ran and not after it finished | **Expected and non-blocking.** The scanner writes through its own connection while SQLite allows one writer; during the scan the persistence tick cannot acquire the write lock, so the write is logged and retried on the next tick. Playback state and the shuffle session are best-effort by design, nothing is corrupted, and both writes resumed once the scan finished. **Follow-up, outside this phase's scope:** move playback-state persistence off the UI thread or give it a shorter busy timeout, so a heavy scan cannot delay the tick. |
+| `audoxidy::persistence: No se pudo guardar el estado de reproducción ... database is locked` and `No se pudo persistir el ajuste key="shuffle_session" error=database error: database is locked`, while the scan ran and not after it finished | **Expected and non-blocking.** The scanner writes through its own connection while SQLite allows one writer; during the scan the persistence tick cannot acquire the write lock, so the write is logged and retried on the next tick. Playback state and the shuffle session are best-effort by design, nothing is corrupted, and both writes resumed once the scan finished. **Follow-up, outside this release's scope:** move playback-state persistence off the UI thread or give it a shorter busy timeout, so a heavy scan cannot delay the tick. |
 | `iced_winit: More than 3 consecutive RedrawRequested events produced layout invalidation` during the aggressive manual resize | **Framework warning, non-blocking.** An iced diagnostic about layout invalidation under a flood of resize events, not a deadlock and not a leak; the window remained functional. |
 | One `No se pudo procesar/guardar la carátula ... Failed to decode image` | **Non-blocking.** A single unreadable embedded image; the scanner skipped that cover and continued with the rest. |
 | `lofty::mpeg: Using bitrate to estimate duration` | **Documented fallback, non-blocking.** The scanner estimates an MPEG duration from the bitrate when the container does not expose one. |
 
 The `database is locked` pair is the only one with a design consequence, and it is recorded
-as debt for the persistence path rather than as a failure of this phase: it appears only
+as debt for the persistence path rather than as a failure of this release: it appears only
 under a heavy scan on the same database, it costs a delayed best-effort write, and the
-phase's data was intact afterwards.
+release's data was intact afterwards.
 
 ---
 

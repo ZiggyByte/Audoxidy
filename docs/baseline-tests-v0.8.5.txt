@@ -163,7 +163,7 @@ core::guard_tests::test_identifier_guard_flags_required_forms
 core::guard_tests::test_identifier_guard_ignores_legitimate_technical_text
 core::guard_tests::test_identifier_guard_requires_context_for_number_pairs
 core::guard_tests::test_identifier_guard_scans_trailing_comments
-core::guard_tests::test_source_tree_has_no_planning_identifiers_in_comments
+core::guard_tests::test_source_tree_has_no_process_identifiers_in_comments
 core::library::tests::test_delete_songs_on_empty_db_succeeds
 core::library::tests::test_get_albums_returns_empty_for_fresh_db
 core::library::tests::test_get_all_folders_returns_empty_for_fresh_db

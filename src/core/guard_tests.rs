@@ -5,7 +5,7 @@
 //!
 //! 1. every file under `src/core/` is free of declarations that import the GUI
 //!    toolkit or the GUI module;
-//! 2. no code comment anywhere under `src/` carries a planning identifier; and
+//! 2. no code comment anywhere under `src/` carries a internal process identifier; and
 //! 3. the `handle_frame_tick` handler performs no heavy work: no database
 //!    access, system probe, subprocess, allocator trim, or system-media-panel
 //!    publish on the fast frame cadence.
@@ -39,7 +39,7 @@ const REQUIREMENT_FAMILIES: [&str; 22] = [
 ];
 
 /// Context words that turn a two-digit number pair into a plan identifier.
-const PLAN_CONTEXT_WORDS: [&str; 6] = ["plan", "task", "step", "fase", "phase", "paso"];
+const ENTRY_CONTEXT_WORDS: [&str; 6] = ["plan", "task", "step", "fase", "phase", "paso"];
 
 // ── Source navigation ─────────────────────────────────────────────
 
@@ -203,16 +203,16 @@ fn names_module_path(body: &str, path: &str) -> bool {
     false
 }
 
-// ── Guard 2: no planning identifiers in comments ──────────────────
+// ── Guard 2: no internal process identifiers in comments ──────────────────
 
-/// Report every comment in `source` that carries a planning identifier.
+/// Report every comment in `source` that carries a internal process identifier.
 ///
 /// Only comment text is inspected, and only the identifier forms named by the
 /// convention: single-letter decision and task identifiers, the explicit
-/// requirement-family allowlist, the fix and review markers, the phase word
+/// requirement-family allowlist, the fix and review markers, the stage word
 /// forms, and a two-digit number pair only when the same comment also names a
 /// plan, task or step context word.
-fn planning_identifiers_in_comments(source: &str) -> Vec<Violation> {
+fn process_identifiers_in_comments(source: &str) -> Vec<Violation> {
     let mut violations = Vec::new();
     for (index, raw_line) in source.lines().enumerate() {
         let Some(comment) = line_comment_text(raw_line) else {
@@ -253,7 +253,7 @@ fn forbidden_identifier(comment: &str) -> Option<String> {
         return Some(format!("review marker `{found}`"));
     }
     if let Some(found) = find_phase_word(comment) {
-        return Some(format!("phase word form `{found}`"));
+        return Some(format!("stage word form `{found}`"));
     }
     if let Some(found) = find_plan_pair(comment) {
         return Some(format!("plan identifier `{found}`"));
@@ -349,7 +349,7 @@ fn find_review_marker(text: &str) -> Option<String> {
     None
 }
 
-/// The phase word followed by whitespace and a digit, case-insensitive, with a
+/// The stage word followed by whitespace and a digit, case-insensitive, with a
 /// word boundary before the word. The boundary keeps the pattern out of longer
 /// words such as the DSP prose that names a polyphase filter.
 fn find_phase_word(text: &str) -> Option<String> {
@@ -418,7 +418,7 @@ fn find_two_digit_pair(text: &str) -> Option<String> {
 fn has_plan_context(text: &str) -> bool {
     text.to_ascii_lowercase()
         .split(|character: char| !is_word_char(character))
-        .any(|word| PLAN_CONTEXT_WORDS.contains(&word))
+        .any(|word| ENTRY_CONTEXT_WORDS.contains(&word))
 }
 
 /// Build a comment line without writing a literal comment marker before the
@@ -629,7 +629,7 @@ fn test_identifier_guard_flags_required_forms() {
     ];
     for source in &offenders {
         assert!(
-            !planning_identifiers_in_comments(source).is_empty(),
+            !process_identifiers_in_comments(source).is_empty(),
             "must flag: {source}"
         );
     }
@@ -650,7 +650,7 @@ fn test_identifier_guard_ignores_legitimate_technical_text() {
     ];
     for source in &legitimate {
         assert!(
-            planning_identifiers_in_comments(source).is_empty(),
+            process_identifiers_in_comments(source).is_empty(),
             "must not flag: {source}"
         );
     }
@@ -659,16 +659,16 @@ fn test_identifier_guard_ignores_legitimate_technical_text() {
 #[test]
 fn test_identifier_guard_requires_context_for_number_pairs() {
     let bare = comment_line("chapter 15-81 covers the range");
-    assert!(planning_identifiers_in_comments(&bare).is_empty());
+    assert!(process_identifiers_in_comments(&bare).is_empty());
 
     let with_context = comment_line("plan 15-81 covers the range");
-    assert!(!planning_identifiers_in_comments(&with_context).is_empty());
+    assert!(!process_identifiers_in_comments(&with_context).is_empty());
 }
 
 #[test]
 fn test_identifier_guard_scans_trailing_comments() {
     let source = format!("let value = 1; {}", comment_line("task T-07 follow-up"));
-    assert!(!planning_identifiers_in_comments(&source).is_empty());
+    assert!(!process_identifiers_in_comments(&source).is_empty());
 }
 
 #[test]
@@ -687,13 +687,13 @@ fn test_core_tree_has_no_forbidden_imports() {
 }
 
 #[test]
-fn test_source_tree_has_no_planning_identifiers_in_comments() {
+fn test_source_tree_has_no_process_identifiers_in_comments() {
     let files = rs_files_under(&source_root());
     assert!(!files.is_empty(), "the source scan inspected no files");
-    let violations = collect_tree_violations(&files, planning_identifiers_in_comments);
+    let violations = collect_tree_violations(&files, process_identifiers_in_comments);
     assert!(
         violations.is_empty(),
-        "code comments must not carry planning identifiers:\n{}",
+        "code comments must not carry internal process identifiers:\n{}",
         violations.join("\n")
     );
 }

@@ -39,7 +39,7 @@
 //!
 //! The boundary is enforced by the test-only guard module below, which fails the
 //! suite if a file under this directory imports the GUI toolkit or the GUI
-//! module, or if a code comment carries a planning identifier.
+//! module, or if a code comment carries an internal process identifier.
 
 pub mod audio_routing;
 pub mod context;

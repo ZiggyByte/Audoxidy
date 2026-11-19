@@ -129,26 +129,6 @@ impl PlaylistManager {
         self.invalidate_cache();
     }
 
-    /// Descarga los datos pesados de la RAM si no se están usando
-    pub fn unload(&mut self, is_focused: bool, is_playing: bool, is_active_tab: bool) {
-        if is_focused || is_playing || is_active_tab {
-            return;
-        }
-
-        if !self.groups.is_empty() {
-            tracing::debug!("Audoxidy GC: Unloading inactive Playlist data.");
-            self.groups.clear();
-            self.groups.shrink_to_fit();
-            self.filtered_groups = None;
-            self.playing_song_idx = None;
-            self.selected_idxs.clear();
-            self.focused_idx = None;
-            self.selection_pivot = None;
-            self.cached_visible_items.borrow_mut().take();
-            self.data_unloaded = true;
-        }
-    }
-
     /// Obtener la canción en un índice lineal
     pub fn get_song_at_linear_index(&self, linear_idx: usize) -> Option<&PlaylistSongRef> {
         let groups = self.active_groups();

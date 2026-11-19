@@ -39,18 +39,14 @@ impl crate::gui::app::AudoxidyApp {
 
                 // 1. Unload de recursos pesados con márgenes de seguridad
                 let is_library_focused = self.focus == AppFocus::Library;
-                let is_playlist_focused = self.focus == AppFocus::Playlist;
                 let is_playing = self.core.is_playing();
-                let is_loaded_in_player = self.playlist_manager.playing_song_idx.is_some();
-
-                // Descargar listas inactivas. La pestaña activa ya está cubierta
-                // por `is_playlist_focused`; el tercer argumento ya no fuerza `true`,
-                // que era lo que impedía toda descarga.
-                self.playlist_manager.unload(
-                    is_playlist_focused,
-                    is_playing || is_loaded_in_player,
-                    false,
-                );
+                // La playlist no se descarga. Su columna se dibuja siempre, así que
+                // vaciarla deja vacío algo que el usuario está viendo, y el único
+                // camino que la recargaba era un clic sobre ella: una lista recién
+                // creada con la biblioteca enfocada desaparecía en el siguiente GC y
+                // no volvía hasta reabrir la aplicación. Lo que se ahorraba son ~10 MB
+                // en una lista de 42.000 canciones, porque solo hay una cargada a la
+                // vez y al cambiar de lista se relee de la base.
 
                 // La biblioteca no se descarga: sus datos en RAM son el modelo que la
                 // vista necesita para dibujarse, y recortarlos obligaba a releer la

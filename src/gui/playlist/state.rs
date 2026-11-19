@@ -68,9 +68,6 @@ pub struct PlaylistManager {
 
     /// Caché de ítems visibles (aplanados y filtrados por colapso) compartida vía Arc
     pub cached_visible_items: std::cell::RefCell<Option<VisiblePlaylistItems>>,
-
-    /// Indica si los datos pesados han sido descargados de RAM por inactividad
-    pub data_unloaded: bool,
 }
 
 impl Default for PlaylistManager {
@@ -94,7 +91,6 @@ impl Default for PlaylistManager {
             last_viewport: None,
             tabs_viewport: None,
             cached_visible_items: std::cell::RefCell::new(None),
-            data_unloaded: false,
         }
     }
 }

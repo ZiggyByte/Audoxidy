@@ -115,6 +115,9 @@ impl MemoryManager {
     ///
     /// Debe llamarse una sola vez al arrancar la aplicación.
     pub fn init() {
+        // Antes que cualquier hilo de trabajo: el límite de arenas solo sirve si
+        // está puesto antes de que el escáner o los decodificadores asignen.
+        Self::limit_malloc_arenas();
         let now = Self::get_now_secs();
         LAST_GLOBAL_PURGE.store(now, Ordering::Relaxed);
     }
@@ -177,6 +180,43 @@ impl MemoryManager {
             malloc_trim(0);
         }
     }
+
+    /// Limita cuántos arenas de asignación mantiene glibc.
+    ///
+    /// glibc crea una arena por hilo que asigna con intensidad y no la devuelve
+    /// al sistema cuando el hilo termina: la conserva para reutilizarla. Un
+    /// escaneo de biblioteca corre en su propio hilo y deja esa arena detrás.
+    /// Medido sobre 42.160 archivos, el suelo tras la purga era ~150 MB más alto
+    /// que el de un arranque en frío con la misma biblioteca; con las arenas
+    /// limitadas a dos, el suelo baja de ~403 MB a ~250 MB.
+    ///
+    /// Se respeta `MALLOC_ARENA_MAX` si el entorno ya lo define, para que un
+    /// operador pueda ajustarlo sin recompilar.
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    fn limit_malloc_arenas() {
+        /// glibc: `M_ARENA_MAX`, el techo de arenas simultáneas.
+        const M_ARENA_MAX: i32 = -8;
+        /// Dos arenas bastan para este programa: su asignación intensa ocurre en
+        /// unos pocos hilos y el reparto extra solo añade memoria retenida.
+        const ARENA_LIMIT: i32 = 2;
+
+        if std::env::var_os("MALLOC_ARENA_MAX").is_some() {
+            return;
+        }
+
+        unsafe extern "C" {
+            fn mallopt(param: i32, value: i32) -> i32;
+        }
+        // SAFETY: `mallopt` solo ajusta parámetros del asignador; no recibe
+        // punteros ni memoria propia.
+        unsafe {
+            mallopt(M_ARENA_MAX, ARENA_LIMIT);
+        }
+    }
+
+    /// Sin glibc no hay arenas que limitar; el asignador de la plataforma decide.
+    #[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+    fn limit_malloc_arenas() {}
 
     /// Comprueba si la RAM del sistema supera el hard cap (75%).
     /// Si retorna `true`, el Tick handler debe forzar un `GlobalMemoryPurge` inmediato

@@ -299,6 +299,37 @@ system can reclaim, not heap that the process holds.
 **Current peak: ~219 MiB** against the ~250 MiB recorded above, and the sustained floor
 after browsing is ~214 MiB instead of ~248 MiB.
 
+### The scan residue: one allocator arena per heavy thread
+
+Scanning 42,160 files left the process at **403 MiB** after the purge, flat across four
+consecutive purges, while a cold start with the same library settled at **193 MiB**. Nothing
+in the scan path explains ~210 MiB: `Scanner` holds only the database handle and two atomics,
+the directory walk streams, and the only surviving collection is a `HashSet` of enqueued
+cover names.
+
+The cause is the allocator. glibc gives an arena to each thread that allocates heavily and
+keeps that arena for reuse when the thread exits instead of returning it to the system. The
+scan runs on its own thread, so its arena grew and stayed: reserved mappings that the process
+holds but no longer needs. `malloc_trim` runs on every purge and does not reclaim them, which
+is why the floor was flat rather than decaying.
+
+`MemoryManager::init` now calls `mallopt(M_ARENA_MAX, 2)` before any worker thread exists, and
+skips the call when `MALLOC_ARENA_MAX` is already set so an operator can override it. Measured
+on the same clean database, same machine, release build, scanning the same 42,160 files:
+
+| Condition | Floor after the scan |
+|---|---:|
+| No limit | 403 MiB |
+| `MALLOC_ARENA_MAX=2` in the environment | 250–255 MiB |
+| `mallopt` in the code | **226–228 MiB** |
+
+The mappings confirm the mechanism: after the change the process keeps two anonymous
+reservations of ~60 MiB that are almost entirely non-resident (260 KB and 0 KB), instead of
+growing heaps that stay populated.
+
+What remains — roughly 35–60 MiB above a cold start — belongs to SQLite and the FTS5 index
+built for 42,160 songs, and is a separate lever.
+
 ### How the numbers were taken
 
 The process samples `Rss`, `Pss`, `Pss_Anon` and `Private_Dirty` from

@@ -609,11 +609,6 @@ impl crate::gui::app::AudoxidyApp {
             }
             Message::PlaylistFocus => {
                 self.focus = AppFocus::Playlist;
-                if self.playlist_manager.data_unloaded {
-                    self.playlist_manager.data_unloaded = false;
-                    let playlist_id = self.playlist_manager.active_playlist_id;
-                    return self.update(Message::SwitchPlaylist(playlist_id, false));
-                }
                 focus(crate::gui::playlist::PLAYLIST_SCROLL_ID.clone())
             }
             Message::PlaylistDeselect => {
@@ -1312,11 +1307,6 @@ impl crate::gui::app::AudoxidyApp {
     }
 
     pub(in crate::gui::app) fn persist_playlist_state(&self) {
-        // An unloaded playlist has no rows to resolve the playing id against; writing
-        // now would erase the saved resume point.
-        if self.playlist_manager.data_unloaded {
-            return;
-        }
         let state = self.core.audio_state();
         let playlist_id = self.playlist_manager.active_playlist_id;
         let last_song_id = self
